@@ -1,0 +1,69 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+:root {
+  --bg-primary: #0a0e1a;
+  --bg-secondary: #0d1b2a;
+  --bg-elevated: #1a2744;
+  --border: #1e3a5f;
+  --accent-blue: #38bdf8;
+  --accent-orange: #f59e0b;
+  --accent-green: #34d399;
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Inter', sans-serif;
+  overflow: hidden;
+  height: 100vh;
+}
+
+.leaflet-container {
+  background: #0a0e1a !important;
+}
+
+.leaflet-popup-content-wrapper {
+  background: #0d1b2a !important;
+  border: 1px solid #1e3a5f !important;
+  border-radius: 8px !important;
+  color: #e2e8f0 !important;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.6) !important;
+}
+
+.leaflet-popup-tip {
+  background: #0d1b2a !important;
+}
+
+.leaflet-popup-close-button {
+  color: #94a3b8 !important;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #1e3a5f; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #38bdf8; }
+
+/* Progress bar */
+.progress-bar {
+  height: 6px;
+  border-radius: 9999px;
+  transition: width 0.3s ease;
+  background: linear-gradient(90deg, #38bdf8, #34d399);
+}
+
+/* Animations */
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.animate-fade-in { animation: fadeIn 0.2s ease; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.animate-spin { animation: spin 1s linear infinite; }
+
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+.animate-pulse { animation: pulse 2s ease-in-out infinite; }
