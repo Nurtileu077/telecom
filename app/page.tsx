@@ -6,6 +6,9 @@ import Sidebar from '@/components/Sidebar/Sidebar';
 import ImportModal, { ImportMode } from '@/components/Import/ImportModal';
 import { Subscriber, ProjectSettings, AnnotationType } from '@/types/network';
 import type { DrawingTool } from '@/components/Sidebar/NotesTab';
+import GeocodeSearch from '@/components/Geocoding/GeocodeSearch';
+import { exportPDF } from '@/components/Export/ExportPDF';
+import { calculateCost } from '@/components/Network/CostCalc';
 
 const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
   ssr: false,
@@ -29,7 +32,17 @@ export default function HomePage() {
   const [activeTool, setActiveTool] = useState<DrawingTool>(null);
   const [activeAnnotationType, setActiveAnnotationType] = useState<AnnotationType>('village');
   const [measureMode, setMeasureMode] = useState(false);
+  const [heatmapEnabled, setHeatmapEnabled] = useState(false);
   const flyToRef = useRef<((lat: number, lon: number, zoom?: number) => void) | null>(null);
+  const mapElRef = useRef<HTMLElement | null>(null);
+
+  const onExportPDF = useCallback(async () => {
+    if (!net.materials) { alert('Сначала постройте сеть'); return; }
+    const cost = calculateCost(net.materials, net.prices);
+    await exportPDF(net.projectName, net.districts, net.cables, net.materials, cost, mapElRef.current);
+  }, [net.projectName, net.districts, net.cables, net.materials, net.prices]);
+
+  const onPrintMap = useCallback(() => window.print(), []);
 
   const handleBuild = useCallback(async (subs: Subscriber[], s: ProjectSettings, source: string, mode: ImportMode) => {
     net.setSettings(s);
@@ -101,6 +114,8 @@ export default function HomePage() {
             className="bg-transparent text-sm text-[#e2e8f0] border-none outline-none w-44 focus:text-[#38bdf8] transition-colors"
           />
         </div>
+
+        <GeocodeSearch flyTo={flyToRef.current} />
 
         <div className="flex items-center gap-1.5 text-[10px] font-mono">
           <span className="px-2 py-0.5 bg-[#38bdf8]/10 border border-[#38bdf8]/30 text-[#38bdf8] rounded-md">👥 {net.totalSubscribers}</span>
@@ -180,6 +195,12 @@ export default function HomePage() {
           exportProjectJSON={net.exportProjectJSON}
           importProjectJSON={net.importProjectJSON}
           importHistory={net.importHistory}
+          prices={net.prices}
+          setPrices={net.setPrices}
+          heatmapEnabled={heatmapEnabled}
+          setHeatmapEnabled={setHeatmapEnabled}
+          onExportPDF={onExportPDF}
+          onPrintMap={onPrintMap}
         />
 
         <main className="flex-1 relative overflow-hidden">
@@ -188,6 +209,7 @@ export default function HomePage() {
             cables={net.cables}
             layers={net.layers}
             flyToRef={flyToRef}
+            mapElRef={mapElRef}
             annotations={net.annotations}
             activeTool={activeTool}
             setActiveTool={setActiveTool}
@@ -196,8 +218,11 @@ export default function HomePage() {
             deleteAnnotation={net.deleteAnnotation}
             editMode={net.editMode}
             onMapClick={handleMapClickAddSub}
+            moveEntity={net.moveEntity}
+            deleteSubscriber={net.deleteSubscriber}
             measureMode={measureMode}
             setMeasureMode={setMeasureMode}
+            heatmapEnabled={heatmapEnabled}
           />
 
           {net.status === 'routing' && net.osrmProgress.total > 0 && (

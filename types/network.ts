@@ -172,6 +172,60 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
   osrmDelay: 100,
 };
 
+export interface PriceCatalog {
+  currency: string;
+  cables: { 'ОКБ-10': number; 'ОКСНН-8': number; 'ОКСНН-4': number; 'ОКА-2': number };
+  olt: number;
+  splitter_1x4: number;
+  splitter_1x8: number;
+  splitter_1x16: number;
+  mufta: number;
+  orkBox: number;
+  ontBox: number;
+  ont: number;
+  pigtail: number;
+  patchcord: number;
+  kdzs: number;
+  clamp: number;
+  installLabor: number;
+}
+
+export const DEFAULT_PRICES: PriceCatalog = {
+  currency: '₸',
+  cables: { 'ОКБ-10': 350, 'ОКСНН-8': 280, 'ОКСНН-4': 180, 'ОКА-2': 95 },
+  olt: 2500000,
+  splitter_1x4: 8500,
+  splitter_1x8: 11000,
+  splitter_1x16: 18000,
+  mufta: 25000,
+  orkBox: 12000,
+  ontBox: 1800,
+  ont: 9500,
+  pigtail: 350,
+  patchcord: 850,
+  kdzs: 35,
+  clamp: 420,
+  installLabor: 0,
+};
+
+export interface OpticalBudgetInputs {
+  txPowerDbm: number;
+  distanceKm: number;
+  splitter1: '1:4' | '1:8' | '1:16' | 'none';
+  splitter2: '1:4' | '1:8' | '1:16' | 'none';
+  connectors: number;
+  splices: number;
+  reserveDb: number;
+}
+
+export interface OpticalBudgetResult {
+  rxPowerDbm: number;
+  totalLossDb: number;
+  breakdown: { name: string; lossDb: number }[];
+  status: 'ok' | 'warning' | 'fail';
+  margin: number;
+}
+
 export const DISTRICT_COLORS = [
   '#38bdf8',
   '#34d399',

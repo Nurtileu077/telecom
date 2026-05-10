@@ -3,6 +3,7 @@ import { useState, useRef, useCallback } from 'react';
 import { Subscriber, ProjectSettings } from '@/types/network';
 import { importExcel } from './ExcelImporter';
 import { importKmz } from './KmzImporter';
+import { importCsv, parseTabular } from './CsvImporter';
 
 export type ImportMode = 'replace' | 'append';
 
@@ -34,7 +35,22 @@ export default function ImportModal({ onClose, onBuild, currentSettings, hasExis
   const [dragging, setDragging] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [tab, setTab] = useState<'file' | 'paste'>('file');
+  const [pasteText, setPasteText] = useState('');
+  const [pasteDistrict, setPasteDistrict] = useState('Импорт');
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const parsePaste = useCallback(() => {
+    setError('');
+    try {
+      const subs = parseTabular(pasteText, pasteDistrict);
+      if (subs.length === 0) throw new Error('Не нашёл корректных координат. Формат: lat<tab>lon<tab>desc');
+      setSubscribers(subs);
+      setFileName(`Вставка (${pasteDistrict})`);
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }, [pasteText, pasteDistrict]);
 
   const handleFile = useCallback(async (file: File) => {
     setLoading(true); setError(''); setFileName(file.name);
@@ -45,8 +61,10 @@ export default function ImportModal({ onClose, onBuild, currentSettings, hasExis
         subs = await importExcel(file);
       } else if (ext.endsWith('.kml') || ext.endsWith('.kmz')) {
         subs = await importKmz(file);
+      } else if (ext.endsWith('.csv') || ext.endsWith('.tsv') || ext.endsWith('.txt')) {
+        subs = await importCsv(file);
       } else {
-        throw new Error('Используйте .xlsx, .kml или .kmz');
+        throw new Error('Используйте .xlsx, .kml, .kmz или .csv');
       }
       if (subs.length === 0) throw new Error('Файл не содержит данных абонентов');
       setSubscribers(subs);
@@ -103,7 +121,37 @@ export default function ImportModal({ onClose, onBuild, currentSettings, hasExis
             </div>
           )}
 
+          {/* File vs Paste tabs */}
           {!subscribers && (
+            <div className="flex gap-1 bg-[#0a0e1a] p-1 rounded-lg">
+              <button onClick={() => setTab('file')} className={`flex-1 py-1.5 text-xs rounded ${tab === 'file' ? 'bg-[#38bdf8]/15 text-[#38bdf8]' : 'text-[#64748b]'}`}>📂 Файл</button>
+              <button onClick={() => setTab('paste')} className={`flex-1 py-1.5 text-xs rounded ${tab === 'paste' ? 'bg-[#38bdf8]/15 text-[#38bdf8]' : 'text-[#64748b]'}`}>📋 Вставка</button>
+            </div>
+          )}
+
+          {!subscribers && tab === 'paste' && (
+            <div className="space-y-2">
+              <input
+                value={pasteDistrict}
+                onChange={(e) => setPasteDistrict(e.target.value)}
+                placeholder="Название района"
+                className="w-full bg-[#0a0e1a] border border-[#1e3a5f] rounded px-2 py-1.5 text-xs text-[#e2e8f0] focus:outline-none focus:border-[#38bdf8]"
+              />
+              <textarea
+                value={pasteText}
+                onChange={(e) => setPasteText(e.target.value)}
+                rows={8}
+                placeholder={`Вставьте координаты:\n40.777053\t68.320873\tАдрес\n40.768823\t68.318157\tАдрес 2`}
+                className="w-full bg-[#0a0e1a] border border-[#1e3a5f] rounded px-2 py-1.5 text-[10px] text-[#e2e8f0] font-mono focus:outline-none focus:border-[#38bdf8] resize-none"
+              />
+              <button onClick={parsePaste} disabled={!pasteText.trim()} className="w-full py-1.5 bg-[#34d399]/15 hover:bg-[#34d399]/25 disabled:opacity-30 text-[#34d399] text-xs rounded transition-colors">
+                ✓ Распознать
+              </button>
+              {error && <p className="text-xs text-[#f87171]">⚠️ {error}</p>}
+            </div>
+          )}
+
+          {!subscribers && tab === 'file' && (
             <div
               className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer ${dragging ? 'border-[#38bdf8] bg-[#38bdf8]/5' : 'border-[#1e3a5f] hover:border-[#38bdf8]/50'}`}
               onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
@@ -111,7 +159,7 @@ export default function ImportModal({ onClose, onBuild, currentSettings, hasExis
               onDrop={handleDrop}
               onClick={() => fileRef.current?.click()}
             >
-              <input ref={fileRef} type="file" accept=".xlsx,.xls,.kml,.kmz" className="hidden"
+              <input ref={fileRef} type="file" accept=".xlsx,.xls,.kml,.kmz,.csv,.tsv,.txt" className="hidden"
                      onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
               {loading ? (
                 <div className="flex flex-col items-center gap-2">
@@ -122,7 +170,7 @@ export default function ImportModal({ onClose, onBuild, currentSettings, hasExis
                 <>
                   <div className="text-3xl mb-2">📂</div>
                   <p className="text-sm text-[#e2e8f0] mb-1">Перетащите файл или нажмите</p>
-                  <p className="text-xs text-[#64748b]">.xlsx, .xls, .kml, .kmz</p>
+                  <p className="text-xs text-[#64748b]">.xlsx, .xls, .kml, .kmz, .csv, .tsv</p>
                 </>
               )}
               {error && <p className="mt-2 text-xs text-[#f87171]">⚠️ {error}</p>}

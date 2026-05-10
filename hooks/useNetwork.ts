@@ -3,6 +3,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import {
   District, Cable, Subscriber, ProjectSettings, Materials, LayerVisibility,
   DEFAULT_SETTINGS, Project, MapAnnotation, ImportRecord, ValidationIssue,
+  PriceCatalog, DEFAULT_PRICES,
 } from '@/types/network';
 import { buildNetwork } from '@/components/Network/AutoBuild';
 import { calculateMaterials, validateNetwork } from '@/components/Network/MaterialCalc';
@@ -39,6 +40,17 @@ export function useNetwork() {
   const [allSubscribers, setAllSubscribers] = useState<Subscriber[]>([]);
   const [materials, setMaterials] = useState<Materials | null>(null);
   const [settings, setSettings] = useState<ProjectSettings>(DEFAULT_SETTINGS);
+  const [prices, setPrices] = useState<PriceCatalog>(() => {
+    if (typeof window === 'undefined') return DEFAULT_PRICES;
+    try {
+      const saved = localStorage.getItem('gpon-prices');
+      return saved ? { ...DEFAULT_PRICES, ...JSON.parse(saved) } : DEFAULT_PRICES;
+    } catch { return DEFAULT_PRICES; }
+  });
+  const setPricesAndStore = useCallback((p: PriceCatalog) => {
+    setPrices(p);
+    try { localStorage.setItem('gpon-prices', JSON.stringify(p)); } catch {}
+  }, []);
   const [layers, setLayers] = useState<LayerVisibility>(DEFAULT_LAYERS);
   const [status, setStatus] = useState<BuildStatus>('idle');
   const [osrmProgress, setOsrmProgress] = useState<OSRMProgress>({ done: 0, total: 0, current: '' });
@@ -179,6 +191,53 @@ export function useNetwork() {
     await runBuild(merged);
   }, [allSubscribers, runBuild]);
 
+  // Move a TB or ORK (manual edit): update coords and rebuild cables only (no re-cluster)
+  const moveEntity = useCallback((kind: 'tb' | 'ork' | 'olt', id: string, lat: number, lon: number) => {
+    setDistricts((prev) => prev.map((d) => {
+      if (kind === 'olt' && d.olt.id === id) {
+        return { ...d, olt: { ...d.olt, lat, lon } };
+      }
+      return {
+        ...d,
+        olt: {
+          ...d.olt,
+          transitBoxes: d.olt.transitBoxes.map((tb) => {
+            if (kind === 'tb' && tb.id === id) return { ...tb, lat, lon };
+            return {
+              ...tb,
+              orks: tb.orks.map((ork) => kind === 'ork' && ork.id === id ? { ...ork, lat, lon } : ork),
+            };
+          }),
+        },
+      };
+    }));
+    // Update cable endpoints touching this id
+    setCables((prev) => prev.map((c) => {
+      if (c.fromId === id || c.toId === id) {
+        const coords = [...c.coords];
+        if (c.fromId === id) coords[0] = [lat, lon];
+        if (c.toId === id) coords[coords.length - 1] = [lat, lon];
+        // recalc straight-line length
+        let len = 0;
+        for (let i = 1; i < coords.length; i++) {
+          const [la, lo] = coords[i - 1];
+          const [lb, lob] = coords[i];
+          const R = 6371000;
+          const dLat = ((lb - la) * Math.PI) / 180;
+          const dLon = ((lob - lo) * Math.PI) / 180;
+          const a = Math.sin(dLat / 2) ** 2 + Math.cos((la * Math.PI) / 180) * Math.cos((lb * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+          len += R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        }
+        return { ...c, coords, lengthM: len, routedByOSRM: false };
+      }
+      return c;
+    }));
+  }, []);
+
+  const rebuildFromCurrent = useCallback(async () => {
+    if (allSubscribers.length > 0) await runBuild(allSubscribers);
+  }, [allSubscribers, runBuild]);
+
   // Projects
   function loadProjects(): Project[] {
     try {
@@ -298,6 +357,7 @@ export function useNetwork() {
   return {
     projectId, projectName, setProjectName,
     districts, cables, annotations, materials, settings, setSettings,
+    prices, setPrices: setPricesAndStore,
     importHistory, allSubscribers,
     layers, toggleLayer,
     status, osrmProgress, stopOSRM,
@@ -306,7 +366,7 @@ export function useNetwork() {
     autoSaveEnabled, setAutoSaveEnabled, lastSavedAt,
     buildFromSubscribers, appendSubscribers,
     addAnnotation, updateAnnotation, deleteAnnotation,
-    addSubscriberAt, deleteSubscriber,
+    addSubscriberAt, deleteSubscriber, moveEntity, rebuildFromCurrent,
     saveProject, loadProject, deleteProject, listProjects, newProject,
     exportProjectJSON, importProjectJSON,
     totalSubscribers, totalCableKm, totalOrks,

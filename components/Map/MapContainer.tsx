@@ -11,6 +11,7 @@ interface Props {
   cables: Cable[];
   layers: LayerVisibility;
   flyToRef?: React.MutableRefObject<((lat: number, lon: number, zoom?: number) => void) | null>;
+  mapElRef?: React.MutableRefObject<HTMLElement | null>;
   // Annotations
   annotations: MapAnnotation[];
   activeTool: DrawingTool;
@@ -21,9 +22,13 @@ interface Props {
   // Edit mode
   editMode: boolean;
   onMapClick?: (lat: number, lon: number) => void;
+  moveEntity?: (kind: 'tb' | 'ork' | 'olt', id: string, lat: number, lon: number) => void;
+  deleteSubscriber?: (id: string) => void;
   // Measure
   measureMode: boolean;
   setMeasureMode: (v: boolean) => void;
+  // Heatmap
+  heatmapEnabled: boolean;
 }
 
 const CABLE_COLORS: Record<string, string> = {
@@ -67,6 +72,7 @@ export default function LeafletMap(props: Props) {
   const annoGroupRef = useRef<any>(null);
   const drawGroupRef = useRef<any>(null);
   const measureGroupRef = useRef<any>(null);
+  const heatLayerRef = useRef<any>(null);
   const drawStateRef = useRef<{ coords: [number, number][]; tempLayer?: any }>({ coords: [] });
   const measureStateRef = useRef<{ coords: [number, number][]; layer?: any; total: number }>({ coords: [], total: 0 });
 
@@ -106,6 +112,9 @@ export default function LeafletMap(props: Props) {
         propsRef.current.flyToRef.current = (lat, lon, zoom = 16) => {
           map.flyTo([lat, lon], zoom, { duration: 1.0 });
         };
+      }
+      if (propsRef.current.mapElRef) {
+        propsRef.current.mapElRef.current = containerRef.current;
       }
 
       // Map click handler
@@ -247,8 +256,15 @@ export default function LeafletMap(props: Props) {
             html: `<div style="width:40px;height:22px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;font-family:monospace;background:linear-gradient(135deg,#f59e0b,#fbbf24);border:2px solid #f59e0b;border-radius:4px;color:#0a0e1a;box-shadow:0 2px 8px rgba(0,0,0,0.5)">OLT</div>`,
             className: '', iconSize: [40, 22], iconAnchor: [20, 11],
           });
-          const m = L.marker([olt.lat, olt.lon], { icon });
+          const draggable = !!propsRef.current.editMode;
+          const m = L.marker([olt.lat, olt.lon], { icon, draggable });
           m.bindPopup(`<b>${olt.id}</b><br/>${olt.model}<br/>Район: ${district.name}<br/>Ёмкость: ${olt.capacity}<br/>TB: ${olt.transitBoxes.length}`);
+          if (draggable) {
+            m.on('dragend', (e: any) => {
+              const ll = e.target.getLatLng();
+              propsRef.current.moveEntity?.('olt', olt.id, ll.lat, ll.lng);
+            });
+          }
           group.addLayer(m);
         }
         for (const tb of olt.transitBoxes) {
@@ -257,8 +273,15 @@ export default function LeafletMap(props: Props) {
               html: `<div style="width:30px;height:18px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;font-family:monospace;background:#1a2744;border:2px solid #38bdf8;border-radius:3px;color:#38bdf8;box-shadow:0 1px 4px rgba(0,0,0,0.4)">TB</div>`,
               className: '', iconSize: [30, 18], iconAnchor: [15, 9],
             });
-            const m = L.marker([tb.lat, tb.lon], { icon });
-            m.bindPopup(`<b>${tb.id}</b><br/>OLT: ${olt.id}<br/>ОРК: ${tb.orks.length}<br/>Муфта: ${tb.muftaType}`);
+            const draggable = !!propsRef.current.editMode;
+            const m = L.marker([tb.lat, tb.lon], { icon, draggable });
+            m.bindPopup(`<b>${tb.id}</b><br/>OLT: ${olt.id}<br/>ОРК: ${tb.orks.length}<br/>Муфта: ${tb.muftaType}${draggable ? '<br/><i style="color:#64748b;font-size:10px">Перетащи для перемещения</i>' : ''}`);
+            if (draggable) {
+              m.on('dragend', (e: any) => {
+                const ll = e.target.getLatLng();
+                propsRef.current.moveEntity?.('tb', tb.id, ll.lat, ll.lng);
+              });
+            }
             group.addLayer(m);
           }
           for (const ork of tb.orks) {
@@ -267,8 +290,15 @@ export default function LeafletMap(props: Props) {
                 html: `<div style="width:32px;height:18px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;font-family:monospace;background:#1a2744;border:2px solid #f59e0b;border-radius:3px;color:#f59e0b;box-shadow:0 1px 4px rgba(0,0,0,0.4)">ОРК</div>`,
                 className: '', iconSize: [32, 18], iconAnchor: [16, 9],
               });
-              const m = L.marker([ork.lat, ork.lon], { icon });
-              m.bindPopup(`<b>${ork.id}</b><br/>Сплиттер: ${ork.splitter}<br/>Або.: ${ork.subscribers.length}<br/>Муфта: ${tb.id}`);
+              const draggable = !!propsRef.current.editMode;
+              const m = L.marker([ork.lat, ork.lon], { icon, draggable });
+              m.bindPopup(`<b>${ork.id}</b><br/>Сплиттер: ${ork.splitter}<br/>Або.: ${ork.subscribers.length}<br/>Муфта: ${tb.id}${draggable ? '<br/><i style="color:#64748b;font-size:10px">Перетащи для перемещения</i>' : ''}`);
+              if (draggable) {
+                m.on('dragend', (e: any) => {
+                  const ll = e.target.getLatLng();
+                  propsRef.current.moveEntity?.('ork', ork.id, ll.lat, ll.lng);
+                });
+              }
               group.addLayer(m);
             }
             if (layers.subscribers && zoom >= 13) {
@@ -277,7 +307,13 @@ export default function LeafletMap(props: Props) {
                   radius: 4, fillColor: district.color, fillOpacity: 0.8,
                   color: district.color, weight: 1,
                 });
-                c.bindPopup(`<b>${sub.desc}</b><br/>ОРК: ${ork.id}<br/>Волокна: ${sub.fibers.working}+${sub.fibers.spare}`);
+                c.bindPopup(`<b>${sub.desc}</b><br/>ОРК: ${ork.id}<br/>Волокна: ${sub.fibers.working}+${sub.fibers.spare}${propsRef.current.editMode ? '<br/><button onclick="window.__deleteSub__(\'' + sub.id + '\')" style="margin-top:6px;padding:2px 8px;background:#f87171;color:#fff;border:none;border-radius:3px;font-size:10px;cursor:pointer">Удалить</button>' : ''}`);
+                c.on('contextmenu', (e: any) => {
+                  e.originalEvent.preventDefault();
+                  if (propsRef.current.editMode && confirm(`Удалить абонента «${sub.desc}»?`)) {
+                    propsRef.current.deleteSubscriber?.(sub.id);
+                  }
+                });
                 group.addLayer(c);
               }
             }
@@ -437,8 +473,40 @@ export default function LeafletMap(props: Props) {
   }
 
   // Re-render whenever data changes
-  useEffect(() => { renderData(); }, [props.districts, props.cables, props.layers]);
+  useEffect(() => { renderData(); }, [props.districts, props.cables, props.layers, props.editMode]);
   useEffect(() => { renderAnnotations(); }, [props.annotations]);
+
+  // Heatmap
+  useEffect(() => {
+    if (!mapRef.current) return;
+    (async () => {
+      const L = await import('leaflet');
+      await import('leaflet.heat');
+      if (heatLayerRef.current) {
+        mapRef.current.removeLayer(heatLayerRef.current);
+        heatLayerRef.current = null;
+      }
+      if (!props.heatmapEnabled) return;
+      const points: [number, number, number][] = [];
+      for (const d of props.districts) {
+        for (const sub of d.subscribers) {
+          points.push([sub.lat, sub.lon, 0.7]);
+        }
+      }
+      if (points.length === 0) return;
+      // @ts-ignore
+      heatLayerRef.current = (L as any).heatLayer(points, {
+        radius: 25, blur: 18, maxZoom: 17, max: 1.0,
+        gradient: { 0.2: '#3b82f6', 0.4: '#34d399', 0.6: '#fbbf24', 0.8: '#f97316', 1.0: '#ef4444' },
+      }).addTo(mapRef.current);
+    })();
+  }, [props.heatmapEnabled, props.districts]);
+
+  // Expose delete subscriber to window for popup buttons
+  useEffect(() => {
+    (window as any).__deleteSub__ = (id: string) => propsRef.current.deleteSubscriber?.(id);
+    return () => { delete (window as any).__deleteSub__; };
+  }, []);
 
   return (
     <div className="relative w-full h-full">

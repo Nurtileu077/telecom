@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import {
   District, Cable, Materials, LayerVisibility, ValidationIssue,
-  MapAnnotation, AnnotationType, Project, ImportRecord,
+  MapAnnotation, AnnotationType, Project, ImportRecord, PriceCatalog,
 } from '@/types/network';
 import LayersTab from './LayersTab';
 import MaterialsTab from './MaterialsTab';
@@ -11,6 +11,8 @@ import GroupsTab from './GroupsTab';
 import NotesTab, { DrawingTool } from './NotesTab';
 import StatsTab from './StatsTab';
 import ProjectsTab from './ProjectsTab';
+import CostTab from './CostTab';
+import ToolsTab from './ToolsTab';
 
 interface Props {
   districts: District[];
@@ -42,15 +44,24 @@ interface Props {
   exportProjectJSON: () => void;
   importProjectJSON: (file: File) => Promise<void>;
   importHistory: ImportRecord[];
+
+  prices: PriceCatalog;
+  setPrices: (p: PriceCatalog) => void;
+  heatmapEnabled: boolean;
+  setHeatmapEnabled: (v: boolean) => void;
+  onExportPDF: () => void;
+  onPrintMap: () => void;
 }
 
-type Tab = 'layers' | 'materials' | 'schema' | 'groups' | 'notes' | 'stats' | 'projects';
+type Tab = 'layers' | 'materials' | 'schema' | 'groups' | 'notes' | 'stats' | 'projects' | 'cost' | 'tools';
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'layers',    label: 'Слои',     icon: '🗂' },
-  { id: 'notes',     label: 'Заметки',  icon: '📝' },
+  { id: 'notes',     label: 'Замет.',   icon: '📝' },
   { id: 'materials', label: 'Матер.',   icon: '📦' },
+  { id: 'cost',      label: 'Цена',     icon: '💰' },
   { id: 'stats',     label: 'Стат.',    icon: '📊' },
+  { id: 'tools',     label: 'Инстр.',   icon: '🧰' },
   { id: 'schema',    label: 'Схема',    icon: '🌳' },
   { id: 'groups',    label: 'ОРК',      icon: '👥' },
   { id: 'projects',  label: 'Проекты',  icon: '💾' },
@@ -61,7 +72,7 @@ export default function Sidebar(props: Props) {
 
   return (
     <aside className="w-[300px] flex-shrink-0 bg-[#0d1b2a] border-r border-[#1e3a5f] flex flex-col h-full">
-      <div className="grid grid-cols-7 border-b border-[#1e3a5f] gap-px bg-[#1e3a5f]/30">
+      <div className="grid grid-cols-9 border-b border-[#1e3a5f] gap-px bg-[#1e3a5f]/30">
         {TABS.map((tab) => (
           <button
             key={tab.id}
@@ -117,6 +128,17 @@ export default function Sidebar(props: Props) {
         )}
         {activeTab === 'groups' && (
           <GroupsTab districts={props.districts} flyTo={props.flyTo} />
+        )}
+        {activeTab === 'cost' && (
+          <CostTab materials={props.materials} prices={props.prices} setPrices={props.setPrices} />
+        )}
+        {activeTab === 'tools' && (
+          <ToolsTab
+            onShowHeatmap={() => props.setHeatmapEnabled(!props.heatmapEnabled)}
+            heatmapEnabled={props.heatmapEnabled}
+            onExportPDF={props.onExportPDF}
+            onPrintMap={props.onPrintMap}
+          />
         )}
         {activeTab === 'projects' && (
           <ProjectsTab
