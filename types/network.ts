@@ -70,8 +70,44 @@ export interface Project {
   updatedAt: string;
   districts: District[];
   cables: Cable[];
+  annotations: MapAnnotation[];
+  importHistory: ImportRecord[];
   settings: ProjectSettings;
 }
+
+export interface ImportRecord {
+  id: string;
+  source: string;
+  districts: string[];
+  count: number;
+  importedAt: string;
+}
+
+export type AnnotationType = 'village' | 'note' | 'problem' | 'area' | 'photo' | 'cable-route';
+export type AnnotationShape = 'point' | 'polygon' | 'line' | 'circle';
+
+export interface MapAnnotation {
+  id: string;
+  type: AnnotationType;
+  shape: AnnotationShape;
+  coords: [number, number][];
+  name: string;
+  description: string;
+  color: string;
+  radius?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const ANNOTATION_PRESETS: Record<AnnotationType, { icon: string; color: string; label: string }> = {
+  village:     { icon: '🏘',  color: '#34d399', label: 'Село / нас.пункт' },
+  note:        { icon: '📝',  color: '#38bdf8', label: 'Заметка' },
+  problem:     { icon: '⚠️',  color: '#f87171', label: 'Проблема' },
+  area:        { icon: '⬜',  color: '#a78bfa', label: 'Зона' },
+  photo:       { icon: '📷',  color: '#fbbf24', label: 'Фото-точка' },
+  'cable-route':{ icon: '〰',  color: '#f59e0b', label: 'Маршрут кабеля' },
+};
+
 
 export interface ProjectSettings {
   maxPerORK: number;

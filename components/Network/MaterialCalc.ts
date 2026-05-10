@@ -1,4 +1,4 @@
-import { District, Cable, Materials, ProjectSettings } from '@/types/network';
+import { District, Cable, Materials, ProjectSettings, ValidationIssue } from '@/types/network';
 import { haversineM } from './KMeans';
 
 function cableLength(cables: Cable[], type: Cable['type']): number {
@@ -77,8 +77,8 @@ export function calculateMaterials(
   };
 }
 
-export function validateNetwork(districts: District[], cables: Cable[]) {
-  const issues: Array<{ type: 'warning' | 'error'; message: string; entityId?: string }> = [];
+export function validateNetwork(districts: District[], cables: Cable[]): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
 
   for (const d of districts) {
     for (const tb of d.olt.transitBoxes) {

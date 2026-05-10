@@ -1,6 +1,9 @@
 'use client';
-import { useState, useCallback, useRef } from 'react';
-import { District, Cable, Subscriber, ProjectSettings, Materials, LayerVisibility, DEFAULT_SETTINGS, Project } from '@/types/network';
+import { useState, useCallback, useRef, useEffect } from 'react';
+import {
+  District, Cable, Subscriber, ProjectSettings, Materials, LayerVisibility,
+  DEFAULT_SETTINGS, Project, MapAnnotation, ImportRecord, ValidationIssue,
+} from '@/types/network';
 import { buildNetwork } from '@/components/Network/AutoBuild';
 import { calculateMaterials, validateNetwork } from '@/components/Network/MaterialCalc';
 import { routeCables } from '@/components/Network/OSRMRouter';
@@ -18,26 +21,56 @@ const DEFAULT_LAYERS: LayerVisibility = {
   cableOKB10: true, cableOKSNN8: true, cableOKSNN4: true, cableOKA2: true,
 };
 
+const STORAGE_KEY = 'gpon-projects-v2';
+const CURRENT_KEY = 'gpon-current-project';
+const AUTOSAVE_INTERVAL_MS = 30000;
+
+function newId(prefix = 'id') {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export function useNetwork() {
+  const [projectId, setProjectId] = useState<string>(() => newId('proj'));
+  const [projectName, setProjectName] = useState('Новый проект');
   const [districts, setDistricts] = useState<District[]>([]);
   const [cables, setCables] = useState<Cable[]>([]);
+  const [annotations, setAnnotations] = useState<MapAnnotation[]>([]);
+  const [importHistory, setImportHistory] = useState<ImportRecord[]>([]);
+  const [allSubscribers, setAllSubscribers] = useState<Subscriber[]>([]);
   const [materials, setMaterials] = useState<Materials | null>(null);
   const [settings, setSettings] = useState<ProjectSettings>(DEFAULT_SETTINGS);
   const [layers, setLayers] = useState<LayerVisibility>(DEFAULT_LAYERS);
   const [status, setStatus] = useState<BuildStatus>('idle');
   const [osrmProgress, setOsrmProgress] = useState<OSRMProgress>({ done: 0, total: 0, current: '' });
-  const [validationIssues, setValidationIssues] = useState<ReturnType<typeof validateNetwork>>([]);
-  const [projectName, setProjectName] = useState('Новый проект');
+  const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([]);
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
+  const [editMode, setEditMode] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+
   const abortRef = useRef<AbortController | null>(null);
 
-  const buildFromSubscribers = useCallback(async (subscribers: Subscriber[]) => {
+  // Auto-load last project on mount
+  useEffect(() => {
+    try {
+      const lastId = localStorage.getItem(CURRENT_KEY);
+      if (lastId) {
+        const projects = loadProjects();
+        const p = projects.find((x) => x.id === lastId);
+        if (p) loadProjectInternal(p);
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Internal: build network from arbitrary subscriber set
+  const runBuild = useCallback(async (subs: Subscriber[], replaceCables = true) => {
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
     abortRef.current = controller;
 
     try {
       setStatus('clustering');
-      const { districts: newDistricts, cables: newCables } = buildNetwork(subscribers, settings);
+      const { districts: newDistricts, cables: newCables } = buildNetwork(subs, settings);
 
       setStatus('routing');
       let finalCables = newCables;
@@ -47,10 +80,8 @@ export function useNetwork() {
           newCables,
           settings.osrmDelay,
           false,
-          (done, total, current) => {
-            setOsrmProgress({ done, total, current });
-          },
-          controller.signal
+          (done, total, current) => setOsrmProgress({ done, total, current }),
+          controller.signal,
         );
       }
 
@@ -71,35 +102,187 @@ export function useNetwork() {
     }
   }, [settings]);
 
+  // Replace all subscribers — fresh build
+  const buildFromSubscribers = useCallback(async (newSubs: Subscriber[], source: string) => {
+    const merged = [...newSubs];
+    setAllSubscribers(merged);
+    const record: ImportRecord = {
+      id: newId('imp'),
+      source,
+      districts: Array.from(new Set(newSubs.map((s) => s.district))),
+      count: newSubs.length,
+      importedAt: new Date().toISOString(),
+    };
+    setImportHistory([record]);
+    await runBuild(merged);
+  }, [runBuild]);
+
+  // Append new subscribers and rebuild combined network
+  const appendSubscribers = useCallback(async (newSubs: Subscriber[], source: string) => {
+    // Avoid duplicate coordinates
+    const seen = new Set(allSubscribers.map((s) => `${s.lat.toFixed(6)},${s.lon.toFixed(6)}`));
+    const filtered = newSubs.filter((s) => !seen.has(`${s.lat.toFixed(6)},${s.lon.toFixed(6)}`));
+    const merged = [...allSubscribers, ...filtered];
+    setAllSubscribers(merged);
+    const record: ImportRecord = {
+      id: newId('imp'),
+      source,
+      districts: Array.from(new Set(filtered.map((s) => s.district))),
+      count: filtered.length,
+      importedAt: new Date().toISOString(),
+    };
+    setImportHistory((prev) => [...prev, record]);
+    await runBuild(merged);
+  }, [allSubscribers, runBuild]);
+
   const stopOSRM = useCallback(() => {
     if (abortRef.current) abortRef.current.abort();
   }, []);
 
+  // Annotation operations
+  const addAnnotation = useCallback((a: Omit<MapAnnotation, 'id' | 'createdAt' | 'updatedAt'>) => {
+    const ann: MapAnnotation = {
+      ...a,
+      id: newId('ann'),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    setAnnotations((prev) => [...prev, ann]);
+    return ann;
+  }, []);
+
+  const updateAnnotation = useCallback((id: string, patch: Partial<MapAnnotation>) => {
+    setAnnotations((prev) => prev.map((a) =>
+      a.id === id ? { ...a, ...patch, updatedAt: new Date().toISOString() } : a,
+    ));
+  }, []);
+
+  const deleteAnnotation = useCallback((id: string) => {
+    setAnnotations((prev) => prev.filter((a) => a.id !== id));
+  }, []);
+
+  // Manual subscriber actions
+  const addSubscriberAt = useCallback(async (lat: number, lon: number, district: string, desc: string) => {
+    const sub: Subscriber = {
+      id: newId('sub'),
+      lat, lon, desc, district,
+      fibers: { working: 2, spare: 1 },
+    };
+    const merged = [...allSubscribers, sub];
+    setAllSubscribers(merged);
+    await runBuild(merged);
+  }, [allSubscribers, runBuild]);
+
+  const deleteSubscriber = useCallback(async (subId: string) => {
+    const merged = allSubscribers.filter((s) => s.id !== subId);
+    setAllSubscribers(merged);
+    await runBuild(merged);
+  }, [allSubscribers, runBuild]);
+
+  // Projects
+  function loadProjects(): Project[] {
+    try {
+      const data = localStorage.getItem(STORAGE_KEY);
+      return data ? JSON.parse(data) : [];
+    } catch { return []; }
+  }
+
+  const listProjects = useCallback((): Project[] => loadProjects(), []);
+
   const saveProject = useCallback(() => {
     const project: Project = {
-      id: Date.now().toString(),
+      id: projectId,
       name: projectName,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      districts,
-      cables,
-      settings,
+      districts, cables, annotations, importHistory, settings,
     };
-    const projects = JSON.parse(localStorage.getItem('gpon-projects') || '[]') as Project[];
-    projects.unshift(project);
-    localStorage.setItem('gpon-projects', JSON.stringify(projects.slice(0, 20)));
+    const projects = loadProjects();
+    const idx = projects.findIndex((p) => p.id === projectId);
+    if (idx >= 0) {
+      projects[idx] = { ...projects[idx], ...project, createdAt: projects[idx].createdAt };
+    } else {
+      projects.unshift(project);
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(projects.slice(0, 50)));
+    localStorage.setItem(CURRENT_KEY, projectId);
+    setLastSavedAt(new Date().toISOString());
     return project;
-  }, [districts, cables, settings, projectName]);
+  }, [projectId, projectName, districts, cables, annotations, importHistory, settings]);
 
-  const loadProject = useCallback((project: Project) => {
-    setDistricts(project.districts);
-    setCables(project.cables);
-    setSettings(project.settings);
-    setProjectName(project.name);
-    const mats = calculateMaterials(project.districts, project.cables, project.settings);
-    setMaterials(mats);
-    setStatus('done');
+  function loadProjectInternal(p: Project) {
+    setProjectId(p.id);
+    setProjectName(p.name);
+    setDistricts(p.districts || []);
+    setCables(p.cables || []);
+    setAnnotations(p.annotations || []);
+    setImportHistory(p.importHistory || []);
+    setSettings({ ...DEFAULT_SETTINGS, ...p.settings });
+    // Reconstruct allSubscribers from districts
+    const subs = (p.districts || []).flatMap((d) => d.subscribers);
+    setAllSubscribers(subs);
+    if (p.districts?.length) {
+      const mats = calculateMaterials(p.districts, p.cables, p.settings);
+      setMaterials(mats);
+      setStatus('done');
+    } else {
+      setMaterials(null);
+      setStatus('idle');
+    }
+  }
+
+  const loadProject = useCallback((p: Project) => {
+    loadProjectInternal(p);
   }, []);
+
+  const deleteProject = useCallback((id: string) => {
+    const projects = loadProjects().filter((p) => p.id !== id);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
+  }, []);
+
+  const newProject = useCallback(() => {
+    setProjectId(newId('proj'));
+    setProjectName('Новый проект');
+    setDistricts([]);
+    setCables([]);
+    setAnnotations([]);
+    setImportHistory([]);
+    setAllSubscribers([]);
+    setMaterials(null);
+    setValidationIssues([]);
+    setStatus('idle');
+    localStorage.removeItem(CURRENT_KEY);
+  }, []);
+
+  const exportProjectJSON = useCallback(() => {
+    const project: Project = {
+      id: projectId, name: projectName,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      districts, cables, annotations, importHistory, settings,
+    };
+    const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${projectName.replace(/[^\w\s-]/g, '_')}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [projectId, projectName, districts, cables, annotations, importHistory, settings]);
+
+  const importProjectJSON = useCallback(async (file: File) => {
+    const text = await file.text();
+    const p = JSON.parse(text) as Project;
+    loadProjectInternal(p);
+  }, []);
+
+  // Auto-save
+  useEffect(() => {
+    if (!autoSaveEnabled) return;
+    if (districts.length === 0 && annotations.length === 0) return;
+    const t = setInterval(() => saveProject(), AUTOSAVE_INTERVAL_MS);
+    return () => clearInterval(t);
+  }, [autoSaveEnabled, districts.length, annotations.length, saveProject]);
 
   const toggleLayer = useCallback((key: keyof LayerVisibility) => {
     setLayers((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -107,16 +290,25 @@ export function useNetwork() {
 
   const totalSubscribers = districts.reduce((s, d) => s + d.subscribers.length, 0);
   const totalCableKm = Math.round(cables.reduce((s, c) => s + c.lengthM, 0) / 100) / 10;
-  const totalOrks = districts.reduce((s, d) => s + d.olt.transitBoxes.reduce((ts, tb) => ts + tb.orks.length, 0), 0);
+  const totalOrks = districts.reduce(
+    (s, d) => s + d.olt.transitBoxes.reduce((ts, tb) => ts + tb.orks.length, 0),
+    0,
+  );
 
   return {
-    districts, cables, materials, settings, setSettings,
+    projectId, projectName, setProjectName,
+    districts, cables, annotations, materials, settings, setSettings,
+    importHistory, allSubscribers,
     layers, toggleLayer,
     status, osrmProgress, stopOSRM,
     validationIssues,
-    projectName, setProjectName,
-    buildFromSubscribers,
-    saveProject, loadProject,
+    editMode, setEditMode,
+    autoSaveEnabled, setAutoSaveEnabled, lastSavedAt,
+    buildFromSubscribers, appendSubscribers,
+    addAnnotation, updateAnnotation, deleteAnnotation,
+    addSubscriberAt, deleteSubscriber,
+    saveProject, loadProject, deleteProject, listProjects, newProject,
+    exportProjectJSON, importProjectJSON,
     totalSubscribers, totalCableKm, totalOrks,
   };
 }
