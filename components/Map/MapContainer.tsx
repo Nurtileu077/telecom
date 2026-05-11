@@ -58,16 +58,16 @@ const BASEMAPS: Record<BaseMap, { url: string; attribution: string; subdomains?:
     attribution: '©OpenStreetMap ©CartoDB', subdomains: 'abcd', maxZoom: 20,
   },
   light: {
-    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-    attribution: '©OpenStreetMap contributors', maxZoom: 19,
+    url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+    attribution: '©OpenStreetMap ©CartoDB', subdomains: 'abcd', maxZoom: 20,
   },
   satellite: {
-    url: 'https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
-    attribution: '©Google Satellite', subdomains: '0123', maxZoom: 20,
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    attribution: '©Esri World Imagery', maxZoom: 19,
   },
   hybrid: {
-    url: 'https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
-    attribution: '©Google Hybrid', subdomains: '0123', maxZoom: 20,
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    attribution: '©Esri World Imagery', maxZoom: 19,
   },
 };
 
@@ -230,7 +230,13 @@ export default function LeafletMap(props: Props) {
         attribution: bm.attribution, subdomains: (bm.subdomains ?? '') as any, maxZoom: bm.maxZoom ?? 20,
       }).addTo(mapRef.current);
       tileLayerRef.current = tile;
-      // hybrid mode already includes labels via lyrs=y — no overlay needed
+      // For hybrid: add CartoDB labels overlay on top of Esri satellite
+      if (baseMap === 'hybrid') {
+        hybridLabelsRef.current = L.tileLayer(
+          'https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png',
+          { attribution: '', subdomains: 'abcd' as any, maxZoom: 20, pane: 'shadowPane' },
+        ).addTo(mapRef.current);
+      }
     });
   }, [baseMap]);
 
