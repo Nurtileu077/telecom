@@ -18,14 +18,32 @@ interface Props {
   heatmapEnabled: boolean;
   onExportPDF: () => void;
   onPrintMap: () => void;
+  onRerouteOSRM: () => void;
+  osrmStatus: 'idle' | 'routing' | 'done' | 'error' | string;
+  hasCables: boolean;
 }
 
-export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap }: Props) {
+export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onRerouteOSRM, osrmStatus, hasCables }: Props) {
   const [inputs, setInputs] = useState<OpticalBudgetInputs>(DEFAULT_INPUTS);
   const result = useMemo(() => calculateOpticalBudget(inputs), [inputs]);
 
   return (
     <div className="overflow-y-auto h-full p-3 space-y-4">
+      {/* OSRM routing */}
+      <section>
+        <h3 className="text-[10px] uppercase tracking-widest text-[#64748b] mb-2">Маршрутизация кабелей</h3>
+        <button
+          onClick={onRerouteOSRM}
+          disabled={!hasCables || osrmStatus === 'routing'}
+          className="w-full py-2 px-3 text-xs font-semibold rounded-lg border transition-all disabled:opacity-40 disabled:cursor-not-allowed bg-[#38bdf8]/10 border-[#38bdf8]/50 text-[#38bdf8] hover:bg-[#38bdf8]/20"
+        >
+          {osrmStatus === 'routing' ? '⏳ Маршрутизация...' : '🛣 Проложить по дорогам (OSRM)'}
+        </button>
+        <p className="text-[9px] text-[#64748b] mt-1">
+          Перестраивает все кабели по дорогам через router.project-osrm.org. Занимает 1–2 мин.
+        </p>
+      </section>
+
       {/* Visualization tools */}
       <section>
         <h3 className="text-[10px] uppercase tracking-widest text-[#64748b] mb-2">Визуализация</h3>

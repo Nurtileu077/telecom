@@ -51,6 +51,8 @@ interface Props {
   setHeatmapEnabled: (v: boolean) => void;
   onExportPDF: () => void;
   onPrintMap: () => void;
+  onRerouteOSRM: () => void;
+  osrmStatus: string;
 }
 
 type Tab = 'layers' | 'materials' | 'schema' | 'groups' | 'notes' | 'stats' | 'projects' | 'cost' | 'tools';
@@ -138,6 +140,9 @@ export default function Sidebar(props: Props) {
             heatmapEnabled={props.heatmapEnabled}
             onExportPDF={props.onExportPDF}
             onPrintMap={props.onPrintMap}
+            onRerouteOSRM={props.onRerouteOSRM}
+            osrmStatus={props.osrmStatus}
+            hasCables={props.cables.length > 0}
           />
         )}
         {activeTab === 'projects' && (

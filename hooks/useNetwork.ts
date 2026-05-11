@@ -151,6 +151,35 @@ export function useNetwork() {
     if (abortRef.current) abortRef.current.abort();
   }, []);
 
+  // Re-route existing cables with OSRM (without re-clustering)
+  const rerouteWithOSRM = useCallback(async () => {
+    if (cables.length === 0) return;
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    try {
+      setStatus('routing');
+      const routed = await routeCables(
+        cables,
+        200,
+        false,
+        (done, total, current) => setOsrmProgress({ done, total, current }),
+        controller.signal,
+      );
+      if (!controller.signal.aborted) {
+        setCables(routed);
+        const mats = calculateMaterials(districts, routed, settings);
+        setMaterials(mats);
+        setStatus('done');
+      }
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        setStatus('error');
+        console.error(err);
+      }
+    }
+  }, [cables, districts, settings]);
+
   // Annotation operations
   const addAnnotation = useCallback((a: Omit<MapAnnotation, 'id' | 'createdAt' | 'updatedAt'>) => {
     const ann: MapAnnotation = {
@@ -360,7 +389,7 @@ export function useNetwork() {
     prices, setPrices: setPricesAndStore,
     importHistory, allSubscribers,
     layers, toggleLayer,
-    status, osrmProgress, stopOSRM,
+    status, osrmProgress, stopOSRM, rerouteWithOSRM,
     validationIssues,
     editMode, setEditMode,
     autoSaveEnabled, setAutoSaveEnabled, lastSavedAt,

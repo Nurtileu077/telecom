@@ -201,6 +201,8 @@ export default function HomePage() {
           setHeatmapEnabled={setHeatmapEnabled}
           onExportPDF={onExportPDF}
           onPrintMap={onPrintMap}
+          onRerouteOSRM={net.rerouteWithOSRM}
+          osrmStatus={net.status}
         />
 
         <main className="flex-1 relative overflow-hidden">
@@ -225,20 +227,30 @@ export default function HomePage() {
             heatmapEnabled={heatmapEnabled}
           />
 
-          {net.status === 'routing' && net.osrmProgress.total > 0 && (
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-[#0d1b2a] border border-[#1e3a5f] rounded-xl p-3 shadow-xl min-w-[280px] animate-fade-in z-[500]">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-[#e2e8f0]">🛣 Прокладка маршрутов</span>
-                <span className="text-xs font-mono text-[#38bdf8]">{net.osrmProgress.done}/{net.osrmProgress.total}</span>
-              </div>
-              <div className="h-1.5 bg-[#1e3a5f] rounded-full overflow-hidden mb-1">
-                <div className="progress-bar" style={{ width: `${osrmPercent}%` }} />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-[#64748b] truncate max-w-[180px]">{net.osrmProgress.current}</span>
-                <button onClick={net.stopOSRM} className="text-[10px] text-[#f87171] hover:text-[#fca5a5] transition-colors ml-2 flex-shrink-0">
-                  Остановить
-                </button>
+          {net.status === 'routing' && (
+            <div className="absolute inset-0 flex items-end justify-center pb-8 z-[500] pointer-events-none">
+              <div className="bg-[#0d1b2a]/98 border border-[#38bdf8]/40 rounded-2xl p-5 shadow-2xl min-w-[340px] max-w-[420px] pointer-events-auto animate-fade-in">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-5 h-5 border-2 border-[#38bdf8] border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                  <span className="text-sm font-semibold text-[#e2e8f0]">Прокладка кабелей по дорогам</span>
+                </div>
+                {net.osrmProgress.total > 0 && (
+                  <>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-[11px] text-[#94a3b8] truncate mr-3">{net.osrmProgress.current || 'Запрос к OSRM...'}</span>
+                      <span className="text-xs font-mono text-[#38bdf8] flex-shrink-0">{net.osrmProgress.done} / {net.osrmProgress.total}</span>
+                    </div>
+                    <div className="h-2 bg-[#1e3a5f] rounded-full overflow-hidden mb-2">
+                      <div className="progress-bar h-full" style={{ width: `${osrmPercent}%` }} />
+                    </div>
+                  </>
+                )}
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-[#64748b]">router.project-osrm.org — бесплатный сервер</span>
+                  <button onClick={net.stopOSRM} className="text-xs text-[#f87171] hover:text-[#fca5a5] transition-colors border border-[#f87171]/30 rounded px-2 py-0.5 ml-3">
+                    ✕ Стоп
+                  </button>
+                </div>
               </div>
             </div>
           )}

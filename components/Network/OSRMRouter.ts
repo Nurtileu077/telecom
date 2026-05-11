@@ -4,23 +4,55 @@ const OSRM_BASE = 'https://router.project-osrm.org/route/v1/driving';
 
 export type ProgressCallback = (done: number, total: number, current: string) => void;
 
+async function fetchRoute(
+  lat1: number, lon1: number,
+  lat2: number, lon2: number,
+  signal: AbortSignal,
+): Promise<[number, number][]> {
+  const url = `${OSRM_BASE}/${lon1},${lat1};${lon2},${lat2}?overview=full&geometries=geojson`;
+  const res = await fetch(url, { signal: AbortSignal.any
+    ? AbortSignal.any([signal, AbortSignal.timeout(12000)])
+    : signal,
+  });
+  if (!res.ok) throw new Error(`OSRM HTTP ${res.status}`);
+  const data = await res.json();
+  if (data.code !== 'Ok' || !data.routes?.[0]) throw new Error('No route');
+  return data.routes[0].geometry.coordinates.map(
+    ([lon, lat]: [number, number]) => [lat, lon] as [number, number],
+  );
+}
+
 export async function getRoute(
   lat1: number, lon1: number,
-  lat2: number, lon2: number
+  lat2: number, lon2: number,
 ): Promise<[number, number][]> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12000);
   try {
-    const url = `${OSRM_BASE}/${lon1},${lat1};${lon2},${lat2}?overview=full&geometries=geojson`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    if (!res.ok) throw new Error('OSRM error');
-    const data = await res.json();
-    if (data.code !== 'Ok' || !data.routes?.[0]) throw new Error('No route');
-    const coords: [number, number][] = data.routes[0].geometry.coordinates.map(
-      ([lon, lat]: [number, number]) => [lat, lon]
-    );
-    return coords;
+    return await fetchRoute(lat1, lon1, lat2, lon2, ctrl.signal);
   } catch {
     return [[lat1, lon1], [lat2, lon2]];
+  } finally {
+    clearTimeout(timer);
   }
+}
+
+function calcLength(coords: [number, number][]): number {
+  let len = 0;
+  const R = 6371000;
+  for (let i = 1; i < coords.length; i++) {
+    const [la, lo] = coords[i - 1];
+    const [lb, lob] = coords[i];
+    const dLat = ((lb - la) * Math.PI) / 180;
+    const dLon = ((lob - lo) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos((la * Math.PI) / 180) *
+        Math.cos((lb * Math.PI) / 180) *
+        Math.sin(dLon / 2) ** 2;
+    len += R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+  return len;
 }
 
 export async function routeCables(
@@ -28,48 +60,59 @@ export async function routeCables(
   delay: number,
   routeDrops: boolean,
   onProgress: ProgressCallback,
-  signal: AbortSignal
+  signal: AbortSignal,
 ): Promise<Cable[]> {
   const priority: Cable['type'][] = ['ОКБ-10', 'ОКСНН-8', 'ОКСНН-4', 'ОКА-2'];
-  const toRoute = cables.filter((c) => {
-    if (!routeDrops && c.type === 'ОКА-2') return false;
-    return true;
-  });
-  toRoute.sort((a, b) => priority.indexOf(a.type) - priority.indexOf(b.type));
+  const toRoute = cables
+    .filter((c) => routeDrops || c.type !== 'ОКА-2')
+    .sort((a, b) => priority.indexOf(a.type) - priority.indexOf(b.type));
 
   const result = new Map<string, Cable>(cables.map((c) => [c.id, c]));
   let done = 0;
 
   for (const cable of toRoute) {
     if (signal.aborted) break;
+
     const from = cable.coords[0];
     const to = cable.coords[cable.coords.length - 1];
-    onProgress(done, toRoute.length, `${cable.type} ${cable.fromId}→${cable.toId}`);
+    onProgress(done, toRoute.length, `${cable.type}: ${cable.fromId} → ${cable.toId}`);
 
-    const routedCoords = await getRoute(from[0], from[1], to[0], to[1]);
+    let routedCoords: [number, number][] | null = null;
 
-    let lengthM = 0;
-    for (let i = 1; i < routedCoords.length; i++) {
-      const [lat1, lon1] = routedCoords[i - 1];
-      const [lat2, lon2] = routedCoords[i];
-      const R = 6371000;
-      const dLat = ((lat2 - lat1) * Math.PI) / 180;
-      const dLon = ((lon2 - lon1) * Math.PI) / 180;
-      const a = Math.sin(dLat / 2) ** 2 + Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
-      lengthM += R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    // Try up to 2 times
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (signal.aborted) break;
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 12000);
+        // combine with outer signal manually
+        signal.addEventListener('abort', () => ctrl.abort(), { once: true });
+        const coords = await fetchRoute(from[0], from[1], to[0], to[1], ctrl.signal);
+        clearTimeout(timer);
+        routedCoords = coords;
+        break;
+      } catch {
+        if (attempt === 0 && !signal.aborted) {
+          // small pause before retry
+          await new Promise((r) => setTimeout(r, 500));
+        }
+      }
     }
 
-    result.set(cable.id, {
-      ...cable,
-      coords: routedCoords,
-      lengthM,
-      routedByOSRM: routedCoords.length > 2,
-    });
+    if (routedCoords && routedCoords.length > 2) {
+      result.set(cable.id, {
+        ...cable,
+        coords: routedCoords,
+        lengthM: calcLength(routedCoords),
+        routedByOSRM: true,
+      });
+    }
+    // else: keep original straight-line coords
 
     done++;
-    if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+    if (delay > 0 && !signal.aborted) await new Promise((r) => setTimeout(r, delay));
   }
 
   onProgress(toRoute.length, toRoute.length, '');
-  return cables.map((c) => result.get(c.id) || c);
+  return cables.map((c) => result.get(c.id) ?? c);
 }

@@ -1,109 +1,202 @@
 import { District, Cable } from '@/types/network';
 
-const CABLE_STYLES: Record<string, { color: string; width: number }> = {
-  'ОКБ-10':   { color: 'ff00d4fc', width: 5 },
-  'ОКСНН-8':  { color: 'ffec8a00', width: 3.5 },
-  'ОКСНН-4':  { color: 'ff3a92fb', width: 2.5 },
-  'ОКА-2':    { color: '8099d499', width: 1.5 },
+// KML colors are AABBGGRR (alpha, blue, green, red)
+const CABLE_STYLES: Record<string, { color: string; width: number; label: string }> = {
+  'ОКБ-10':  { color: 'fffc00d4', width: 5,   label: 'ОКБ-10 магистраль (8 вол.)' },
+  'ОКСНН-8': { color: 'ff008aec', width: 3.5,  label: 'ОКСНН-8 распределительный (8 вол.)' },
+  'ОКСНН-4': { color: 'ffFB923A', width: 2.5,  label: 'ОКСНН-4 питающий (4 вол.)' },
+  'ОКА-2':   { color: '8099d499', width: 1.5,  label: 'ОКА-2 дроп абонентский (2 вол.)' },
 };
 
-function escapeXml(s: string): string {
+// Material specs per item type
+const SPECS = {
+  olt: `Тип: OLT (Optical Line Terminal)\nМодель: ZTE C300/C320 или Huawei MA5800\nПорты: 8×GPON\nМощность TX: +3 дБм\nВолокон: 64–128 або. на порт`,
+  tb:  `Тип: Транзитная муфта МТОК-96А\nВолокон: 96\nСплиттер L1: 1:4 или 1:8 (PLC)\nПигтейл: SC/APC`,
+  ork: `Тип: ОРК (оптический распределительный кабинет)\nВолокон: 8–16\nСплиттер L2: 1:8 или 1:16 (PLC)\nПодключение: SC/APC адаптер`,
+  sub: `Тип: ONT (Optical Network Terminal)\nМодель: ZTE F601/F609 или HUAWEI HG8310M\nРазъём: SC/APC`,
+};
+
+function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function placemark(name: string, desc: string, lat: number, lon: number, styleUrl: string): string {
-  return `<Placemark>
-  <name>${escapeXml(name)}</name>
-  <description><![CDATA[${desc}]]></description>
-  <styleUrl>#${styleUrl}</styleUrl>
-  <Point><coordinates>${lon},${lat},0</coordinates></Point>
-</Placemark>`;
+function html(lines: string): string {
+  return lines.split('\n').join('<br/>');
 }
 
-function linePlacemark(name: string, coords: [number, number][], styleUrl: string, desc = ''): string {
-  const coordStr = coords.map(([lat, lon]) => `${lon},${lat},0`).join(' ');
+function pt(name: string, desc: string, lat: number, lon: number, style: string): string {
   return `<Placemark>
-  <name>${escapeXml(name)}</name>
+  <name>${esc(name)}</name>
   <description><![CDATA[${desc}]]></description>
-  <styleUrl>#${styleUrl}</styleUrl>
-  <LineString><tessellate>1</tessellate><coordinates>${coordStr}</coordinates></LineString>
-</Placemark>`;
+  <styleUrl>#${style}</styleUrl>
+  <Point><coordinates>${lon},${lat},0</coordinates></Point>
+</Placemark>\n`;
+}
+
+function line(name: string, coords: [number, number][], style: string, desc = ''): string {
+  const cs = coords.map(([lat, lon]) => `${lon},${lat},0`).join(' ');
+  return `<Placemark>
+  <name>${esc(name)}</name>
+  <description><![CDATA[${desc}]]></description>
+  <styleUrl>#${style}</styleUrl>
+  <LineString><tessellate>1</tessellate><coordinates>${cs}</coordinates></LineString>
+</Placemark>\n`;
+}
+
+function fmtLen(m: number): string {
+  return m >= 1000 ? `${(m / 1000).toFixed(3)} км` : `${Math.round(m)} м`;
 }
 
 export async function exportKMZ(districts: District[], cables: Cable[]): Promise<Blob> {
   const JSZip = (await import('jszip')).default;
 
+  // ---- Styles ----
+  const styles = `
+<Style id="olt">
+  <IconStyle><color>ff14b8f5</color><scale>1.6</scale>
+    <Icon><href>http://maps.google.com/mapfiles/kml/shapes/square.png</href></Icon>
+  </IconStyle>
+  <LabelStyle><color>ff14b8f5</color><scale>0.9</scale></LabelStyle>
+</Style>
+<Style id="tb">
+  <IconStyle><color>ff00c8ff</color><scale>1.2</scale>
+    <Icon><href>http://maps.google.com/mapfiles/kml/shapes/square.png</href></Icon>
+  </IconStyle>
+  <LabelStyle><color>ff00c8ff</color><scale>0.7</scale></LabelStyle>
+</Style>
+<Style id="ork">
+  <IconStyle><color>ff008aec</color><scale>1.1</scale>
+    <Icon><href>http://maps.google.com/mapfiles/kml/shapes/target.png</href></Icon>
+  </IconStyle>
+  <LabelStyle><color>ff008aec</color><scale>0.65</scale></LabelStyle>
+</Style>
+<Style id="sub">
+  <IconStyle><color>ff34d399</color><scale>0.55</scale>
+    <Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon>
+  </IconStyle>
+  <LabelStyle><scale>0</scale></LabelStyle>
+</Style>
+${Object.entries(CABLE_STYLES).map(([t, s]) =>
+  `<Style id="cable-${t}"><LineStyle><color>${s.color}</color><width>${s.width}</width></LineStyle></Style>`,
+).join('\n')}
+`.trim();
+
+  // ---- KML body ----
   let kml = `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
 <Document>
-<name>GPON Network</name>
-<Style id="olt"><IconStyle><color>ff00d4fc</color><scale>1.5</scale><Icon><href>http://maps.google.com/mapfiles/kml/shapes/square.png</href></Icon></IconStyle></Style>
-<Style id="tb"><IconStyle><color>ffec8a00</color><scale>1.1</scale><Icon><href>http://maps.google.com/mapfiles/kml/shapes/square.png</href></Icon></IconStyle></Style>
-<Style id="ork"><IconStyle><color>ff3a92fb</color><scale>1.0</scale><Icon><href>http://maps.google.com/mapfiles/kml/shapes/target.png</href></Icon></IconStyle></Style>
-<Style id="sub"><IconStyle><color>ff34d399</color><scale>0.6</scale><Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon></IconStyle></Style>
-${Object.entries(CABLE_STYLES).map(([type, s]) =>
-  `<Style id="cable-${type}"><LineStyle><color>${s.color}</color><width>${s.width}</width></LineStyle></Style>`
-).join('\n')}
+<name>GPON Network — ${new Date().toLocaleDateString('ru')}</name>
+${styles}
 `;
 
-  // OLT folder
-  kml += `<Folder><name>📡 OLT — Узлы связи</name>\n`;
+  // Summary stats
+  const totalSubs = districts.reduce((s, d) => s + d.subscribers.length, 0);
+  const totalOrks = districts.reduce((s, d) => s + d.olt.transitBoxes.reduce((t, tb) => t + tb.orks.length, 0), 0);
+  const totalTbs  = districts.reduce((s, d) => s + d.olt.transitBoxes.length, 0);
+  const totalCableM = cables.reduce((s, c) => s + c.lengthM, 0);
+  const routedCount = cables.filter((c) => c.routedByOSRM).length;
+
+  kml += `<description><![CDATA[
+<b>GPON Проект</b><br/>
+Районов: ${districts.length}<br/>
+Абонентов: ${totalSubs}<br/>
+OLT: ${districts.length}<br/>
+Транзитных муфт МТОК-96А: ${totalTbs}<br/>
+ОРК шкафов: ${totalOrks}<br/>
+Кабелей всего: ${cables.length} сегм. / ${fmtLen(totalCableM)}<br/>
+Проложено по дороге: ${routedCount} из ${cables.length} сегм.<br/>
+Дата: ${new Date().toLocaleString('ru')}
+]]></description>\n`;
+
+  // ---- OLT ----
+  kml += `<Folder><name>📡 OLT — Узлы связи (${districts.length} шт.)</name>\n`;
   for (const d of districts) {
-    kml += placemark(d.olt.id, `Модель: ${d.olt.model}<br/>Район: ${d.name}<br/>Ёмкость: ${d.olt.capacity} або.`, d.olt.lat, d.olt.lon, 'olt');
+    const desc = `<b>${esc(d.olt.id)}</b><br/>
+Район: ${esc(d.name)}<br/>
+${html(SPECS.olt)}<br/>
+<br/>
+<b>Статистика:</b><br/>
+Транзитных муфт: ${d.olt.transitBoxes.length}<br/>
+ОРК шкафов: ${d.olt.transitBoxes.reduce((s, tb) => s + tb.orks.length, 0)}<br/>
+Абонентов: ${d.subscribers.length}`;
+    kml += pt(d.olt.id, desc, d.olt.lat, d.olt.lon, 'olt');
   }
   kml += `</Folder>\n`;
 
-  // Transit Boxes folder
-  kml += `<Folder><name>🔷 Транзитные муфты МТОК-96А</name>\n`;
+  // ---- Transit Boxes ----
+  kml += `<Folder><name>🔷 Транзитные муфты МТОК-96А (${totalTbs} шт.)</name>\n`;
   for (const d of districts) {
-    kml += `<Folder><name>${d.name}</name>\n`;
+    if (d.olt.transitBoxes.length === 0) continue;
+    kml += `<Folder><name>${esc(d.name)}</name>\n`;
     for (const tb of d.olt.transitBoxes) {
-      kml += placemark(tb.id, `Район: ${d.name}<br/>OLT: ${d.olt.id}<br/>ОРК: ${tb.orks.length}`, tb.lat, tb.lon, 'tb');
+      const desc = `<b>${esc(tb.id)}</b><br/>
+Район: ${esc(d.name)}<br/>
+OLT: ${esc(d.olt.id)}<br/>
+Муфта: ${esc(tb.muftaType)}<br/>
+ОРК подключено: ${tb.orks.length}<br/>
+<br/>
+${html(SPECS.tb)}`;
+      kml += pt(tb.id, desc, tb.lat, tb.lon, 'tb');
     }
     kml += `</Folder>\n`;
   }
   kml += `</Folder>\n`;
 
-  // ORK folder
-  kml += `<Folder><name>📦 ОРК шкафы</name>\n`;
+  // ---- ORK ----
+  kml += `<Folder><name>📦 ОРК шкафы (${totalOrks} шт.)</name>\n`;
   for (const d of districts) {
-    kml += `<Folder><name>${d.name}</name>\n`;
+    kml += `<Folder><name>${esc(d.name)}</name>\n`;
     for (const tb of d.olt.transitBoxes) {
       for (const ork of tb.orks) {
-        kml += placemark(ork.id, `PLC ${ork.splitter}, ${ork.subscribers.length} або.<br/>Муфта: ${tb.id}`, ork.lat, ork.lon, 'ork');
+        const desc = `<b>${esc(ork.id)}</b><br/>
+Район: ${esc(d.name)}<br/>
+Транзитная муфта: ${esc(tb.id)}<br/>
+Сплиттер: PLC ${esc(ork.splitter)}<br/>
+Абонентов: ${ork.subscribers.length}<br/>
+<br/>
+${html(SPECS.ork)}`;
+        kml += pt(ork.id, desc, ork.lat, ork.lon, 'ork');
       }
     }
     kml += `</Folder>\n`;
   }
   kml += `</Folder>\n`;
 
-  // Subscribers folder
-  kml += `<Folder><name>🏠 Абоненты</name>\n`;
+  // ---- Subscribers ----
+  kml += `<Folder><name>🏠 Абоненты (${totalSubs} або.)</name>\n`;
   for (const d of districts) {
-    kml += `<Folder><name>${d.name} (${d.subscribers.length} або.)</name>\n`;
+    kml += `<Folder><name>${esc(d.name)} (${d.subscribers.length} або.)</name>\n`;
     for (const sub of d.subscribers) {
-      kml += placemark(`#${sub.id} — ${sub.desc}`, `Район: ${d.name}<br/>ОРК: ${sub.orkId || '—'}<br/>Волокна: ${sub.fibers.working} раб. + ${sub.fibers.spare} зап.`, sub.lat, sub.lon, 'sub');
+      const ork = d.olt.transitBoxes.flatMap((tb) => tb.orks).find((o) => o.id === sub.orkId);
+      const desc = `<b>${esc(sub.desc)}</b><br/>
+Район: ${esc(d.name)}<br/>
+ОРК: ${esc(sub.orkId || '—')}<br/>
+Сплиттер: ${ork ? esc(ork.splitter) : '—'}<br/>
+Волокна: ${sub.fibers.working} раб. + ${sub.fibers.spare} зап.<br/>
+<br/>
+${html(SPECS.sub)}`;
+      kml += pt(`${sub.desc}`, desc, sub.lat, sub.lon, 'sub');
     }
     kml += `</Folder>\n`;
   }
   kml += `</Folder>\n`;
 
-  // Cable folders by type
-  const cableTypes: Cable['type'][] = ['ОКБ-10', 'ОКСНН-8', 'ОКСНН-4', 'ОКА-2'];
-  const cableNames: Record<string, string> = {
-    'ОКБ-10': '🟡 Кабель ОКБ-10 (магистраль, 8 вол.)',
-    'ОКСНН-8': '🔵 Кабель ОКСНН-8 (распределительный, 8 вол.)',
-    'ОКСНН-4': '🟠 Кабель ОКСНН-4 (питающий, 4 вол.)',
-    'ОКА-2': '🟢 Кабель ОКА-2 дроп (абонентский, 2 вол.)',
-  };
-
-  for (const type of cableTypes) {
+  // ---- Cables by type ----
+  const cableTypeOrder: Cable['type'][] = ['ОКБ-10', 'ОКСНН-8', 'ОКСНН-4', 'ОКА-2'];
+  for (const type of cableTypeOrder) {
     const typeCables = cables.filter((c) => c.type === type);
     if (typeCables.length === 0) continue;
-    kml += `<Folder><name>${cableNames[type]}</name>\n`;
+    const styleInfo = CABLE_STYLES[type];
+    const totalTypeM = typeCables.reduce((s, c) => s + c.lengthM, 0);
+    kml += `<Folder><name>${styleInfo.label} — ${typeCables.length} уч. / ${fmtLen(totalTypeM)}</name>\n`;
     for (const cable of typeCables) {
-      const desc = `Длина: ${Math.round(cable.lengthM)} м<br/>От: ${cable.fromId}<br/>До: ${cable.toId}<br/>Маршрут: ${cable.routedByOSRM ? 'по дорогам' : 'прямая'}`;
-      kml += linePlacemark(`${cable.fromId}→${cable.toId}`, cable.coords, `cable-${type}`, desc);
+      const routed = cable.routedByOSRM ? '✅ по дороге (OSRM)' : '⚠️ прямая линия';
+      const desc = `<b>${esc(cable.fromId)} → ${esc(cable.toId)}</b><br/>
+Тип: ${esc(cable.type)}<br/>
+Длина: ${fmtLen(cable.lengthM)}<br/>
+Маршрут: ${routed}<br/>
+Точек: ${cable.coords.length}`;
+      kml += line(`${cable.fromId}→${cable.toId}`, cable.coords, `cable-${type}`, desc);
     }
     kml += `</Folder>\n`;
   }
@@ -112,6 +205,5 @@ ${Object.entries(CABLE_STYLES).map(([type, s]) =>
 
   const zip = new JSZip();
   zip.file('doc.kml', kml);
-  const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
-  return blob;
+  return zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 9 } });
 }
