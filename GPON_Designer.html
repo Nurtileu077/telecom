@@ -1,0 +1,1267 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GPON Designer — Туркестан</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg0:#0a0e1a;--bg1:#0d1b2a;--bg2:#1a2744;--border:#1e3a5f;
+  --blue:#38bdf8;--orange:#f59e0b;--green:#34d399;--purple:#a78bfa;
+  --pink:#f472b6;--red:#f87171;--yellow:#fbbf24;--teal:#fb923c;
+  --t1:#e2e8f0;--t2:#94a3b8;--t3:#64748b;--t4:#475569;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',sans-serif;background:var(--bg0);color:var(--t1);height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+/* HEADER */
+.hdr{background:linear-gradient(135deg,var(--bg1),var(--bg2));border-bottom:1px solid var(--border);padding:9px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0;box-shadow:0 2px 20px rgba(0,100,200,.2);z-index:100}
+.logo{font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:700;color:var(--blue);letter-spacing:1.5px;white-space:nowrap}
+.logo span{color:var(--orange)}.logo em{color:var(--green);font-size:11px;font-style:normal}
+.hdr-mid{flex:1;display:flex;align-items:center;gap:8px}
+#proj-name{background:transparent;border:1px solid transparent;border-radius:5px;color:var(--t1);font-size:13px;font-family:'Inter',sans-serif;padding:3px 8px;outline:none;min-width:180px;transition:border-color .15s}
+#proj-name:focus{border-color:var(--border);background:var(--bg1)}
+.hstats{display:flex;gap:6px;flex-wrap:wrap}
+.bdg{background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.25);border-radius:5px;padding:3px 9px;font-size:9px;font-family:'JetBrains Mono',monospace;color:var(--blue);text-align:center;white-space:nowrap}
+.bdg b{font-size:13px;font-weight:700;display:block;color:var(--t1)}
+.hdr-btns{display:flex;gap:6px;flex-shrink:0}
+.hbtn{border:none;border-radius:6px;padding:6px 12px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;cursor:pointer;letter-spacing:.8px;transition:all .15s;white-space:nowrap}
+.hbtn:hover{transform:scale(1.04)}
+.hbtn-import{background:linear-gradient(135deg,var(--blue),#0284c7);color:#fff}
+.hbtn-build{background:linear-gradient(135deg,var(--green),#059669);color:#fff}
+.hbtn-save{background:var(--bg2);border:1px solid var(--border);color:var(--t2)}
+
+/* PROGRESS BAR */
+#pb-wrap{position:fixed;top:0;left:0;right:0;height:3px;z-index:9999;display:none}
+#pb{height:100%;background:linear-gradient(90deg,var(--blue),var(--green));width:0%;transition:width .2s}
+#toast{position:fixed;bottom:70px;left:50%;transform:translateX(-50%);background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:7px 18px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--blue);z-index:9990;display:none;box-shadow:0 4px 20px rgba(0,0,0,.5);pointer-events:none}
+
+/* MAIN */
+.main{display:flex;flex:1;overflow:hidden}
+
+/* SIDEBAR */
+.sb{width:300px;background:var(--bg1);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;flex-shrink:0}
+.tabs{display:flex;border-bottom:1px solid var(--border);flex-shrink:0}
+.tab{flex:1;padding:8px 2px;font-size:9px;font-weight:600;font-family:'JetBrains Mono',monospace;color:var(--t4);background:none;border:none;cursor:pointer;letter-spacing:.8px;text-transform:uppercase;border-bottom:2px solid transparent;transition:all .15s}
+.tab:hover{color:var(--t2)}.tab.on{color:var(--blue);border-bottom-color:var(--blue)}
+.pane{display:none;flex:1;overflow-y:auto;flex-direction:column}
+.pane.on{display:flex}
+.pane::-webkit-scrollbar{width:4px}
+.pane::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.sl{padding:8px 12px 4px;font-size:9px;font-family:'JetBrains Mono',monospace;color:var(--t3);letter-spacing:1.5px;text-transform:uppercase}
+.sep{height:1px;background:var(--border);margin:3px 0}
+.ltog{display:flex;align-items:center;gap:7px;padding:5px 12px;cursor:pointer;transition:background .15s;user-select:none}
+.ltog:hover{background:rgba(56,189,248,.05)}
+.ldot{width:10px;height:10px;border-radius:3px;flex-shrink:0}
+.lname{font-size:11px;color:var(--t1);flex:1}
+.lcnt{font-size:9px;color:var(--t3);font-family:'JetBrains Mono',monospace;min-width:24px;text-align:right}
+.sw{width:28px;height:16px;background:var(--border);border-radius:8px;position:relative;transition:background .2s;flex-shrink:0;cursor:pointer}
+.sw.on{background:#0ea5e9}
+.sw::after{content:'';position:absolute;width:10px;height:10px;background:#fff;border-radius:50%;top:3px;left:3px;transition:transform .2s}
+.sw.on::after{transform:translateX(12px)}
+.leg{display:flex;align-items:center;gap:7px;padding:3px 12px;font-size:10px;color:var(--t2)}
+.ll{width:22px;height:2px;border-radius:2px;flex-shrink:0}
+.li{width:17px;height:17px;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:7px;font-weight:700;flex-shrink:0}
+
+/* MATERIALS */
+.mcat{margin:0 10px 10px}
+.mcat-title{font-size:9px;font-family:'JetBrains Mono',monospace;color:var(--orange);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;padding-bottom:3px;border-bottom:1px solid rgba(245,158,11,.2)}
+.mrow{display:flex;align-items:center;gap:7px;padding:4px 7px;background:rgba(30,58,95,.3);border-radius:5px;margin-bottom:2px}
+.mico{font-size:12px;flex-shrink:0}
+.minf{flex:1}.mname{font-size:10px;color:var(--t1)}.mspec{font-size:9px;color:var(--t3);font-family:'JetBrains Mono',monospace}
+.mqty{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--blue);text-align:right}
+.munit{font-size:9px;color:var(--t3);text-align:right}
+.mtotal{background:rgba(56,189,248,.05);border:1px solid rgba(56,189,248,.15);border-radius:7px;padding:8px 10px;margin:4px 10px 10px}
+.mtrow{display:flex;justify-content:space-between;font-size:10px;color:var(--t2);padding:2px 0}
+.mtrow span{color:var(--t1);font-family:'JetBrains Mono',monospace;font-weight:600}
+
+/* GROUPS */
+.grp{border:1px solid var(--border);border-radius:6px;margin:3px 10px;overflow:hidden;cursor:pointer;transition:border-color .15s}
+.grp:hover{border-color:var(--blue)}
+.ghdr{display:flex;align-items:center;gap:6px;padding:6px 9px;background:rgba(30,58,95,.4)}
+.gname{font-size:11px;color:var(--t1);flex:1}
+.gspl{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--orange)}
+.gcli{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--t3);padding:3px 9px 5px;display:flex;flex-wrap:wrap;gap:2px}
+.ctag{border-radius:3px;padding:1px 4px;font-size:9px;cursor:pointer;transition:opacity .15s}
+.ctag:hover{opacity:.7}
+.gprog{height:3px;background:var(--border);margin:0 9px 4px;border-radius:2px}
+.gprog-fill{height:100%;border-radius:2px;transition:width .3s}
+
+/* SCHEMA */
+.schema{padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.9;color:var(--t4)}
+
+/* SIDEBAR BOTTOM */
+.sb-bot{padding:8px 10px;border-top:1px solid var(--border);flex-shrink:0}
+.srch{width:100%;background:rgba(30,58,95,.5);border:1px solid var(--border);border-radius:6px;color:var(--t1);padding:6px 10px;font-size:11px;outline:none;transition:border-color .15s;margin-bottom:5px}
+.srch:focus{border-color:var(--blue)}
+.fnote{font-size:10px;color:var(--green);font-family:'JetBrains Mono',monospace;padding:4px 7px;background:rgba(52,211,153,.08);border:1px solid rgba(52,211,153,.2);border-radius:5px}
+#srch-cnt{font-size:9px;color:var(--t3);font-family:'JetBrains Mono',monospace;text-align:center;padding:2px 0}
+
+/* MAP */
+#map{flex:1;z-index:1}
+#mload{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(13,27,42,.95);border:1px solid var(--border);border-radius:10px;padding:16px 24px;z-index:500;text-align:center;font-family:'JetBrains Mono',monospace;display:none;min-width:220px}
+.sp{font-size:20px;animation:spin .8s linear infinite;display:block;margin-bottom:5px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.lt{font-size:11px;color:var(--blue)}.lp{font-size:10px;color:var(--green);margin-top:3px}
+
+/* EMPTY STATE */
+#empty-state{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;z-index:400;pointer-events:none}
+.es-icon{font-size:48px;margin-bottom:12px;opacity:.4}
+.es-title{font-size:16px;color:var(--t2);margin-bottom:6px}
+.es-sub{font-size:12px;color:var(--t3)}
+
+/* EXPORT BUTTONS */
+.ebar{position:fixed;bottom:14px;right:14px;z-index:1000;display:flex;gap:6px}
+.ebtn{border:none;border-radius:7px;color:#fff;padding:7px 13px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;cursor:pointer;letter-spacing:.8px;transition:transform .15s;box-shadow:0 4px 12px rgba(0,0,0,.3)}
+.ebtn:hover{transform:scale(1.05)}.ebtn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.e-kmz{background:linear-gradient(135deg,#059669,#047857)}
+.e-xls{background:linear-gradient(135deg,#16a34a,#15803d)}
+.e-osrm{background:linear-gradient(135deg,#7c3aed,#6d28d9)}
+
+/* POPUP */
+.leaflet-popup-content-wrapper{background:var(--bg1);border:1px solid var(--border);border-radius:8px;color:var(--t1);box-shadow:0 4px 20px rgba(0,0,0,.5)}
+.leaflet-popup-tip{background:var(--bg1)}
+.leaflet-popup-content{margin:10px 13px;min-width:190px;max-width:270px}
+.pt{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;margin-bottom:5px}
+.pr{font-size:10px;color:var(--t2);margin-bottom:2px;display:flex;justify-content:space-between;gap:5px}
+.pr span{color:var(--t1);text-align:right;font-size:10px}
+.pr-addr{font-size:10px;color:var(--t2);margin-bottom:3px;line-height:1.4;word-break:break-word}
+.ptag{display:inline-block;border-radius:3px;padding:1px 6px;font-size:9px;font-family:'JetBrains Mono',monospace;margin-top:4px;margin-right:2px}
+.tg{background:rgba(52,211,153,.1);border:1px solid rgba(52,211,153,.3);color:var(--green)}
+.tb2{background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.3);color:var(--blue)}
+.to{background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);color:var(--orange)}
+.tr{background:rgba(251,146,60,.1);border:1px solid rgba(251,146,60,.3);color:var(--teal)}
+.pmat{margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:9px;color:var(--t3);line-height:1.7}
+
+/* MODAL */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:2000;display:none;align-items:center;justify-content:center}
+.modal-bg.open{display:flex}
+.modal{background:var(--bg1);border:1px solid var(--border);border-radius:12px;padding:24px;width:500px;max-width:95vw;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.modal-title{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:var(--blue);margin-bottom:16px}
+.drop-zone{border:2px dashed var(--border);border-radius:8px;padding:30px;text-align:center;cursor:pointer;transition:border-color .2s;background:rgba(30,58,95,.2)}
+.drop-zone:hover,.drop-zone.drag{border-color:var(--blue);background:rgba(56,189,248,.05)}
+.drop-zone-icon{font-size:32px;margin-bottom:8px}
+.drop-zone-text{font-size:13px;color:var(--t2)}.drop-zone-sub{font-size:11px;color:var(--t3);margin-top:4px}
+.modal-section{margin-top:16px}
+.modal-section-title{font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--t3);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px}
+.setting-row{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.setting-label{font-size:12px;color:var(--t1);flex:1}
+.setting-val{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--blue);min-width:30px;text-align:right}
+input[type=range]{flex:1;accent-color:var(--blue)}
+.preview-box{background:rgba(30,58,95,.4);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-top:10px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--t2);line-height:1.8;display:none}
+.preview-box.show{display:block}
+.modal-actions{display:flex;gap:8px;margin-top:16px;justify-content:flex-end}
+.mabtn{border:none;border-radius:7px;padding:8px 16px;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;cursor:pointer;transition:all .15s}
+.mabtn-cancel{background:var(--bg2);color:var(--t2);border:1px solid var(--border)}
+.mabtn-go{background:linear-gradient(135deg,var(--green),#059669);color:#fff}
+.mabtn-go:disabled{opacity:.4;cursor:not-allowed}
+.leaflet-control-attribution{background:rgba(13,27,42,.8)!important;color:var(--t4)!important;font-size:9px}
+.leaflet-control-attribution a{color:var(--blue)!important}
+</style>
+</head>
+<body>
+
+<div id="pb-wrap"><div id="pb"></div></div>
+<div id="toast"></div>
+
+<!-- HEADER -->
+<div class="hdr">
+  <div>
+    <div class="logo">GPON<span>DESIGN</span> <em>v1</em></div>
+    <div style="font-size:9px;color:var(--t3);font-family:'JetBrains Mono',monospace">OLT→TB→ОРК→Абонент</div>
+  </div>
+  <div class="hdr-mid">
+    <input id="proj-name" value="Новый проект" title="Название проекта">
+    <div class="hstats">
+      <div class="bdg"><b id="h-subs">0</b>Або.</div>
+      <div class="bdg"><b id="h-orks">0</b>ОРК</div>
+      <div class="bdg"><b id="h-tbs">0</b>ТМ</div>
+      <div class="bdg"><b id="h-km">0</b>км</div>
+      <div class="bdg"><b id="h-status" style="font-size:9px;color:var(--t3)">ПУСТО</b>Статус</div>
+    </div>
+  </div>
+  <div class="hdr-btns">
+    <button class="hbtn hbtn-import" onclick="openImport()">📂 Импорт</button>
+    <button class="hbtn hbtn-build" id="btn-build" onclick="buildNetwork()" disabled>⚡ Построить</button>
+    <button class="hbtn hbtn-save" onclick="saveProject()">💾 Сохранить</button>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div class="main">
+<div class="sb">
+  <div class="tabs">
+    <button class="tab on" onclick="stab('layers')">🗂Слои</button>
+    <button class="tab" onclick="stab('mats')">📦Матер.</button>
+    <button class="tab" onclick="stab('groups')">👥ОРК</button>
+    <button class="tab" onclick="stab('schema')">🌳Схема</button>
+  </div>
+
+  <!-- LAYERS -->
+  <div class="pane on" id="pane-layers">
+    <div class="sl">Районы</div>
+    <div id="district-list"><div style="padding:10px 12px;font-size:11px;color:var(--t3)">Импортируйте данные...</div></div>
+    <div class="sep"></div>
+    <div class="sl">Объекты</div>
+    <div class="ltog" onclick="togType('olt')"><div class="ldot" style="background:#fcd34d;box-shadow:0 0 4px #fcd34d80"></div><div class="lname">OLT узлы</div><div class="lcnt" id="cnt-olt">0</div><div class="sw on" id="sw-t-olt"></div></div>
+    <div class="ltog" onclick="togType('tb')"><div class="ldot" style="background:var(--blue);border-radius:2px"></div><div class="lname">Транзитные муфты</div><div class="lcnt" id="cnt-tb">0</div><div class="sw on" id="sw-t-tb"></div></div>
+    <div class="ltog" onclick="togType('ork')"><div class="ldot" style="background:var(--teal);border-radius:2px"></div><div class="lname">ОРК шкафы</div><div class="lcnt" id="cnt-ork">0</div><div class="sw on" id="sw-t-ork"></div></div>
+    <div class="ltog" onclick="togType('subs')"><div class="ldot" style="background:var(--green)"></div><div class="lname">Абоненты</div><div class="lcnt" id="cnt-subs">0</div><div class="sw on" id="sw-t-subs"></div></div>
+    <div class="ltog" onclick="togType('cables')"><div class="ldot" style="background:var(--t4)"></div><div class="lname">Кабели ВОЛС</div><div class="lcnt" id="cnt-cables">0</div><div class="sw on" id="sw-t-cables"></div></div>
+    <div class="sep"></div>
+    <div class="sl">Легенда</div>
+    <div class="leg"><div class="ll" style="background:#fcd34d;height:4px"></div>ОКБ-10 магістраль</div>
+    <div class="leg"><div class="ll" style="background:var(--blue);height:3px"></div>ОКСНН-8 (OLT→ТМ)</div>
+    <div class="leg"><div class="ll" style="background:var(--teal);height:2px"></div>ОКСНН-4 (ТМ→ОРК)</div>
+    <div class="leg"><div class="ll" style="height:1px;border-top:1px dashed var(--green);background:none"></div>ОКА-2 дроп (ОРК→Або.)</div>
+    <div style="height:6px"></div>
+    <div class="leg"><div class="li" style="background:rgba(252,211,77,.2);border:2px solid #fcd34d;color:#fcd34d;border-radius:5px">OLT</div>Узел связи</div>
+    <div class="leg"><div class="li" style="background:rgba(56,189,248,.15);border:2px solid var(--blue);color:var(--blue)">TB</div>Транзитная муфта</div>
+    <div class="leg"><div class="li" style="background:rgba(251,146,60,.15);border:2px solid var(--teal);color:var(--teal);font-size:7px">ОРК</div>Опт. шкаф (L2)</div>
+  </div>
+
+  <!-- MATERIALS -->
+  <div class="pane" id="pane-mats">
+    <div id="mat-content" style="padding:20px 12px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--t3)">
+      ⏳ Постройте сеть для расчёта материалов
+    </div>
+  </div>
+
+  <!-- GROUPS / ORK -->
+  <div class="pane" id="pane-groups" style="padding-bottom:8px">
+    <div class="sl">Список ОРК шкафов</div>
+    <div id="grp-list"><div style="padding:10px 12px;font-size:11px;color:var(--t3)">Нет данных...</div></div>
+  </div>
+
+  <!-- SCHEMA -->
+  <div class="pane" id="pane-schema">
+    <div class="schema" id="schema-content">
+      <span style="color:var(--t3)">Схема появится после построения сети</span>
+    </div>
+  </div>
+
+  <div class="sb-bot">
+    <input class="srch" id="srch" type="text" placeholder="🔍 Поиск по адресу...">
+    <div id="srch-cnt"></div>
+    <div class="fnote">🟢 +1 запасное волокно на каждого або.</div>
+  </div>
+</div>
+
+<!-- MAP -->
+<div style="position:relative;flex:1;display:flex">
+  <div id="map" style="flex:1"></div>
+  <div id="empty-state">
+    <div class="es-icon">📡</div>
+    <div class="es-title">Проект пуст</div>
+    <div class="es-sub">Нажмите "Импорт" чтобы загрузить<br>Excel (.xlsx) или KMZ/KML файл</div>
+  </div>
+  <div id="mload">
+    <span class="sp">⚙</span>
+    <div class="lt" id="load-text">Кластеризация...</div>
+    <div class="lp" id="lprog"></div>
+  </div>
+</div>
+</div>
+
+<!-- EXPORT BUTTONS -->
+<div class="ebar">
+  <button class="ebtn e-osrm" id="btn-osrm" onclick="startOSRM()" disabled>🛣 OSRM</button>
+  <button class="ebtn e-xls"  id="btn-xls"  onclick="exportExcel()" disabled>↓ Excel</button>
+  <button class="ebtn e-kmz"  id="btn-kmz"  onclick="exportKMZ()" disabled>↓ KMZ</button>
+</div>
+
+<!-- IMPORT MODAL -->
+<div class="modal-bg" id="modal-import">
+<div class="modal">
+  <div class="modal-title">📂 Импорт данных</div>
+
+  <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()" ondragover="dzDrag(event)" ondragleave="dzLeave()" ondrop="dzDrop(event)">
+    <div class="drop-zone-icon">📁</div>
+    <div class="drop-zone-text">Перетащите файл или кликните</div>
+    <div class="drop-zone-sub">Поддерживается: .xlsx .xls .kml .kmz</div>
+  </div>
+  <input type="file" id="file-input" accept=".xlsx,.xls,.kml,.kmz" style="display:none" onchange="fileSelected(this)">
+
+  <div class="preview-box" id="preview-box"></div>
+
+  <div class="modal-section">
+    <div class="modal-section-title">⚙ Параметры сети</div>
+    <div class="setting-row">
+      <div class="setting-label">Макс. або. на ОРК (1:8 сплиттер)</div>
+      <input type="range" id="s-maxork" min="4" max="16" value="8" oninput="document.getElementById('v-maxork').textContent=this.value">
+      <div class="setting-val" id="v-maxork">8</div>
+    </div>
+    <div class="setting-row">
+      <div class="setting-label">Макс. ОРК на транз. муфту</div>
+      <input type="range" id="s-maxtb" min="2" max="8" value="4" oninput="document.getElementById('v-maxtb').textContent=this.value">
+      <div class="setting-val" id="v-maxtb">4</div>
+    </div>
+    <div class="setting-row">
+      <div class="setting-label">Запас длины кабеля</div>
+      <input type="range" id="s-reserve" min="5" max="25" value="10" oninput="document.getElementById('v-reserve').textContent=this.value+'%'">
+      <div class="setting-val" id="v-reserve">10%</div>
+    </div>
+    <div class="setting-row">
+      <div class="setting-label">Запасных волокон на або.</div>
+      <input type="range" id="s-spare" min="0" max="3" value="1" oninput="document.getElementById('v-spare').textContent=this.value">
+      <div class="setting-val" id="v-spare">1</div>
+    </div>
+  </div>
+
+  <div class="modal-actions">
+    <button class="mabtn mabtn-cancel" onclick="closeImport()">Отмена</button>
+    <button class="mabtn mabtn-go" id="btn-go" onclick="runImport()" disabled>⚡ Построить сеть</button>
+  </div>
+</div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════
+const APP = {
+  project: null,          // { name, districts, cables, settings }
+  importedRaw: null,      // raw parsed data before build
+  settings: { maxPerORK:8, maxORKperTB:4, reserve:1.10, spareFibers:1 },
+  osrmDone: false,
+};
+
+const DISTRICT_COLORS = [
+  '#38bdf8','#34d399','#f59e0b','#a78bfa',
+  '#f472b6','#fb923c','#fbbf24','#f87171',
+  '#60a5fa','#4ade80','#e879f9','#2dd4bf',
+];
+
+// ═══════════════════════════════════════════════════════
+// MAP INIT
+// ═══════════════════════════════════════════════════════
+const map = L.map('map', { center:[43.0,68.0], zoom:7, preferCanvas:true });
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
+  attribution:'© OpenStreetMap © CARTO', subdomains:'abcd', maxZoom:19
+}).addTo(map);
+
+const LY = {
+  olt:    L.layerGroup().addTo(map),
+  tb:     L.layerGroup().addTo(map),
+  ork:    L.layerGroup().addTo(map),
+  subs:   L.layerGroup().addTo(map),
+  cables: L.layerGroup().addTo(map),
+};
+const typeOn = { olt:true, tb:true, ork:true, subs:true, cables:true };
+const districtVisibility = {};
+let allSubMarkers = [];
+
+// ═══════════════════════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════════════════════
+const delay = ms => new Promise(r => setTimeout(r, ms));
+function hav(la1,lo1,la2,lo2) {
+  const R=6371000,p1=la1*Math.PI/180,p2=la2*Math.PI/180;
+  const dp=(la2-la1)*Math.PI/180,dl=(lo2-lo1)*Math.PI/180;
+  const a=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
+  return Math.max(5, Math.round(R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a))));
+}
+function centroid(pts) {
+  return {
+    lat: pts.reduce((s,p)=>s+p.lat,0)/pts.length,
+    lon: pts.reduce((s,p)=>s+p.lon,0)/pts.length
+  };
+}
+function kmeans(pts, k, iters=30, seed=42) {
+  let rng = seed;
+  function rand() { rng=(rng*1664525+1013904223)&0xffffffff; return (rng>>>0)/0xffffffff; }
+  if(pts.length<=k) return { centers:pts.map(p=>({lat:p.lat,lon:p.lon})), clusters:pts.map((_,i)=>[i]) };
+  const chosen=new Set(); const centers=[];
+  while(centers.length<k){ const i=Math.floor(rand()*pts.length); if(!chosen.has(i)){chosen.add(i);centers.push({lat:pts[i].lat,lon:pts[i].lon});} }
+  for(let it=0;it<iters;it++){
+    const clusters=Array.from({length:k},()=>[]);
+    pts.forEach((p,i)=>{
+      let best=0,bd=Infinity;
+      centers.forEach((c,ci)=>{const d=(p.lat-c.lat)**2+(p.lon-c.lon)**2;if(d<bd){bd=d;best=ci;}});
+      clusters[best].push(i);
+    });
+    let changed=false;
+    clusters.forEach((cl,ci)=>{
+      if(!cl.length)return;
+      const nlat=cl.reduce((s,i)=>s+pts[i].lat,0)/cl.length;
+      const nlon=cl.reduce((s,i)=>s+pts[i].lon,0)/cl.length;
+      if(Math.abs(nlat-centers[ci].lat)>1e-9||Math.abs(nlon-centers[ci].lon)>1e-9)changed=true;
+      centers[ci]={lat:nlat,lon:nlon};
+    });
+    if(!changed)break;
+    return {centers, clusters};
+  }
+  const clusters=Array.from({length:k},()=>[]);
+  pts.forEach((p,i)=>{
+    let best=0,bd=Infinity;
+    centers.forEach((c,ci)=>{const d=(p.lat-c.lat)**2+(p.lon-c.lon)**2;if(d<bd){bd=d;best=ci;}});
+    clusters[best].push(i);
+  });
+  return {centers,clusters};
+}
+function showToast(msg,dur=0){
+  const t=document.getElementById('toast');t.textContent=msg;t.style.display='block';
+  if(dur)setTimeout(()=>t.style.display='none',dur);
+}
+function setPB(pct){
+  document.getElementById('pb-wrap').style.display=pct<100?'block':'none';
+  document.getElementById('pb').style.width=pct+'%';
+}
+function setLoad(show,text='',prog=''){
+  document.getElementById('mload').style.display=show?'block':'none';
+  document.getElementById('load-text').textContent=text;
+  document.getElementById('lprog').textContent=prog;
+}
+
+// ═══════════════════════════════════════════════════════
+// IMPORT — EXCEL
+// ═══════════════════════════════════════════════════════
+function parseExcel(buf) {
+  const wb = XLSX.read(new Uint8Array(buf), {type:'array'});
+  const result = {};
+  wb.SheetNames.forEach(shName => {
+    const ws = wb.Sheets[shName];
+    const rows = XLSX.utils.sheet_to_json(ws, {header:1});
+    const pts = [];
+    for(let i=1;i<rows.length;i++){
+      const r=rows[i]; if(!r||!r[0])continue;
+      let lat,lon,desc='';
+      const cell0 = String(r[0]).trim();
+      // Format: "lat, lon" in one cell
+      if(cell0.includes(',')) {
+        const parts=cell0.split(',');
+        lat=parseFloat(parts[0]); lon=parseFloat(parts[1]);
+        desc = r[2]?String(r[2]).trim() : '';
+      } else {
+        lat=parseFloat(r[0]); lon=parseFloat(r[1]);
+        desc = r[2]?String(r[2]).trim() : '';
+      }
+      if(isNaN(lat)||isNaN(lon))continue;
+      if(lat<35||lat>60||lon<50||lon>90)continue;
+      pts.push({lat,lon,desc});
+    }
+    if(pts.length>0) result[shName.trim()]=pts;
+  });
+  return result;
+}
+
+// ═══════════════════════════════════════════════════════
+// IMPORT — KMZ/KML
+// ═══════════════════════════════════════════════════════
+async function parseKMZ(buf) {
+  let kmlText;
+  try {
+    const zip = await JSZip.loadAsync(buf);
+    const kmlFile = Object.values(zip.files).find(f=>f.name.endsWith('.kml'));
+    if(!kmlFile) throw new Error('No KML in KMZ');
+    kmlText = await kmlFile.async('text');
+  } catch(e) {
+    kmlText = new TextDecoder().decode(buf);
+  }
+  return parseKML(kmlText);
+}
+
+function parseKML(kmlText) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(kmlText,'text/xml');
+  const result = {};
+
+  // Try to find districts from folder names
+  function processFolder(folder, districtName) {
+    const name = folder.querySelector(':scope > name')?.textContent?.trim() || districtName;
+    const placemarks = folder.querySelectorAll(':scope > Placemark');
+    const subFolders = folder.querySelectorAll(':scope > Folder');
+
+    placemarks.forEach(pm => {
+      const point = pm.querySelector('Point > coordinates');
+      if(!point) return;
+      const [lon,lat] = point.textContent.trim().split(',').map(Number);
+      if(isNaN(lat)||isNaN(lon)) return;
+      if(lat<35||lat>60||lon<50||lon>90) return;
+      const desc = pm.querySelector('description')?.textContent?.trim() ||
+                   pm.querySelector('name')?.textContent?.trim() || '';
+      if(!result[districtName]) result[districtName]=[];
+      result[districtName].push({lat,lon,desc});
+    });
+
+    subFolders.forEach(sf => processFolder(sf, districtName || name));
+  }
+
+  // Top-level folders = districts
+  const topFolders = doc.querySelectorAll('Document > Folder');
+  if(topFolders.length>0) {
+    topFolders.forEach(f => {
+      const fname = f.querySelector(':scope > name')?.textContent?.trim() || 'Район';
+      // Skip cable folders
+      if(/(кабель|cable|ОК|ВОЛС|дроп|drop|линия)/i.test(fname)) return;
+      processFolder(f, fname);
+    });
+  }
+
+  // If no results, grab all placemarks with Point
+  if(Object.keys(result).length===0) {
+    const pms = doc.querySelectorAll('Placemark');
+    pms.forEach(pm => {
+      const point = pm.querySelector('Point > coordinates');
+      if(!point) return;
+      const [lon,lat] = point.textContent.trim().split(',').map(Number);
+      if(isNaN(lat)||isNaN(lon)||lat<35||lat>60||lon<50||lon>90) return;
+      const desc = pm.querySelector('description')?.textContent?.trim() ||
+                   pm.querySelector('name')?.textContent?.trim() || '';
+      if(!result['Импорт']) result['Импорт']=[];
+      result['Импорт'].push({lat,lon,desc});
+    });
+  }
+
+  return result;
+}
+
+// ═══════════════════════════════════════════════════════
+// AUTOBUILD NETWORK
+// ═══════════════════════════════════════════════════════
+function buildNetworkFromRaw(rawData, settings) {
+  const { maxPerORK, maxORKperTB, reserve, spareFibers } = settings;
+  const districts = [];
+  const cables = [];
+  let orkCounter = 0, tbCounter = 0;
+
+  const distNames = Object.keys(rawData);
+  distNames.forEach((dname, di) => {
+    const pts = rawData[dname];
+    const color = DISTRICT_COLORS[di % DISTRICT_COLORS.length];
+
+    // OLT = centroid of all district points
+    const oltPos = centroid(pts);
+
+    // Cluster into ORKs
+    const kOrk = Math.max(1, Math.ceil(pts.length / maxPerORK));
+    const { centers: orkCenters, clusters: orkClusters } = kmeans(pts, kOrk);
+
+    const orks = [];
+    orkCenters.forEach((oc, i) => {
+      const idxs = orkClusters ? orkClusters[i] || [] : [i];
+      if(!idxs.length) return;
+      const subs = idxs.map(j => ({
+        ...pts[j],
+        id: `sub-${di}-${j}`,
+        district: dname,
+        fibers: { working: 2, spare: spareFibers }
+      }));
+      orkCounter++;
+      orks.push({
+        id: `ORK-${dname[0]}-${orkCounter}`,
+        lat: oc.lat, lon: oc.lon,
+        district: dname,
+        spl: subs.length <= 4 ? '1:4' : '1:8',
+        subs
+      });
+    });
+
+    // Cluster ORKs into Transit Boxes
+    const kTB = Math.max(1, Math.ceil(orks.length / maxORKperTB));
+    const orkPts = orks.map(o => ({lat:o.lat,lon:o.lon}));
+    const { centers: tbCenters, clusters: tbClusters } = kmeans(orkPts, kTB);
+
+    const tbs = [];
+    tbCenters.forEach((tc, i) => {
+      const idxs = tbClusters ? tbClusters[i] || [] : [i];
+      if(!idxs.length) return;
+      const tbOrks = idxs.map(j => orks[j]).filter(Boolean);
+      tbCounter++;
+      const tb = {
+        id: `TB-${dname[0]}-${tbCounter}`,
+        lat: tc.lat, lon: tc.lon,
+        district: dname,
+        orks: tbOrks
+      };
+      tbOrks.forEach(o => o.tbId = tb.id);
+      tbs.push(tb);
+
+      // Cable: OLT → TB
+      const d1 = hav(oltPos.lat, oltPos.lon, tc.lat, tc.lon);
+      cables.push({
+        id: `c-dist-${tbCounter}`,
+        type: 'ОКСНН-8',
+        fromId: `OLT-${dname}`, toId: tb.id,
+        coords: [[oltPos.lat,oltPos.lon],[tc.lat,tc.lon]],
+        lengthM: Math.round(d1*reserve),
+        routed: false
+      });
+
+      // Cables: TB → each ORK
+      tbOrks.forEach(ork => {
+        const d2 = hav(tc.lat,tc.lon,ork.lat,ork.lon);
+        cables.push({
+          id: `c-feed-${ork.id}`,
+          type: 'ОКСНН-4',
+          fromId: tb.id, toId: ork.id,
+          coords: [[tc.lat,tc.lon],[ork.lat,ork.lon]],
+          lengthM: Math.round(d2*reserve),
+          routed: false
+        });
+        // Cables: ORK → each subscriber
+        ork.subs.forEach(sub => {
+          const d3 = hav(ork.lat,ork.lon,sub.lat,sub.lon);
+          cables.push({
+            id: `c-drop-${sub.id}`,
+            type: 'ОКА-2',
+            fromId: ork.id, toId: sub.id,
+            coords: [[ork.lat,ork.lon],[sub.lat,sub.lon]],
+            lengthM: Math.round(d3*reserve),
+            routed: false
+          });
+        });
+      });
+    });
+
+    const olt = {
+      id: `OLT-${dname}`,
+      lat: oltPos.lat, lon: oltPos.lon,
+      district: dname,
+      model: 'Huawei MA5800-X7',
+      tbs
+    };
+
+    // Trunk cable
+    cables.push({
+      id: `c-trunk-${dname}`,
+      type: 'ОКБ-10',
+      fromId: olt.id, toId: olt.id,
+      coords: [[olt.lat,olt.lon],[olt.lat+0.0001,olt.lon+0.0001]],
+      lengthM: 10, routed: false
+    });
+
+    districts.push({ name:dname, color, olt, orks, tbs, pts: pts.map(p=>({...p,district:dname})) });
+  });
+
+  return { districts, cables };
+}
+
+// ═══════════════════════════════════════════════════════
+// RENDER MAP
+// ═══════════════════════════════════════════════════════
+function renderNetwork(project) {
+  // Clear all layers
+  Object.values(LY).forEach(l => l.clearLayers());
+  allSubMarkers = [];
+
+  const { districts, cables } = project;
+  let cntOrk=0, cntTB=0, cntSubs=0, cntCables=0;
+
+  districts.forEach(d => {
+    districtVisibility[d.name] = true;
+
+    // OLT marker
+    const oltIcon = L.divIcon({
+      html:`<div style="width:32px;height:32px;background:linear-gradient(135deg,#f59e0b,#d97706);border:2px solid #fcd34d;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#0a0e1a;font-family:'JetBrains Mono',monospace;box-shadow:0 0 12px rgba(245,158,11,.7)">OLT</div>`,
+      iconSize:[32,32],iconAnchor:[16,32],popupAnchor:[0,-34]
+    });
+    L.marker([d.olt.lat,d.olt.lon],{icon:oltIcon}).bindPopup(`
+      <div class="pt" style="color:#fcd34d">🏢 OLT — ${d.name}</div>
+      <div class="pr">Модель: <span>${d.olt.model}</span></div>
+      <div class="pr">Або.: <span>${d.pts.length}</span></div>
+      <div class="pr">ТМ: <span>${d.tbs.length}</span></div>
+      <div class="pr">ОРК: <span>${d.orks.length}</span></div>
+      <div class="pmat"><div>📦 OLT Huawei MA5800-X7</div><div>⬡ PLC Splitter 1:4 (L1)</div></div>
+      <span class="ptag to">OLT</span><span class="ptag tb2">${d.name}</span>
+    `).addTo(LY.olt);
+
+    // Transit Boxes
+    d.tbs.forEach(tb => {
+      cntTB++;
+      const tbIcon = L.divIcon({
+        html:`<div style="width:24px;height:24px;background:rgba(56,189,248,.12);border:2px solid ${d.color};border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:7px;font-weight:700;color:${d.color};font-family:'JetBrains Mono',monospace;box-shadow:0 0 7px ${d.color}60">TB</div>`,
+        iconSize:[24,24],iconAnchor:[12,12],popupAnchor:[0,-13]
+      });
+      L.marker([tb.lat,tb.lon],{icon:tbIcon}).bindPopup(`
+        <div class="pt" style="color:${d.color}">⬦ ${tb.id}</div>
+        <div class="pr">Район: <span>${d.name}</span></div>
+        <div class="pr">ОРК: <span>${tb.orks.length} шт.</span></div>
+        <div class="pmat"><div>🔧 Муфта МТОК-96А IP68</div><div>🔌 ОКСНН-8 → ОКСНН-4</div></div>
+        <span class="ptag tb2">Транз. муфта</span>
+      `).addTo(LY.tb);
+    });
+
+    // ORKs & Subscribers
+    d.orks.forEach(ork => {
+      cntOrk++;
+      const maxP = ork.spl==='1:4'?4:8;
+      const loadPct = Math.round(ork.subs.length/maxP*100);
+      const lc = loadPct>=90?'#f87171':loadPct>=70?'#fbbf24':'#34d399';
+      const orkIcon = L.divIcon({
+        html:`<div style="width:26px;height:22px;background:rgba(251,146,60,.12);border:2px solid ${d.color};border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:6px;font-weight:700;color:${d.color};font-family:'JetBrains Mono',monospace;box-shadow:0 0 6px ${d.color}50;flex-direction:column"><div>ОРК</div></div>`,
+        iconSize:[26,22],iconAnchor:[13,11],popupAnchor:[0,-12]
+      });
+      L.marker([ork.lat,ork.lon],{icon:orkIcon}).bindPopup(`
+        <div class="pt" style="color:${d.color}">📦 ${ork.id}</div>
+        <div class="pr">Район: <span>${d.name}</span></div>
+        <div class="pr">Сплиттер: <span>PLC ${ork.spl} L2</span></div>
+        <div class="pr">Загрузка: <span style="color:${lc}">${ork.subs.length}/${maxP} (${loadPct}%)</span></div>
+        <div class="pmat"><div>📦 ОРК шкаф IP55</div><div>📡 PLC ${ork.spl} SC/APC</div><div>🔌 Адаптеры × ${ork.subs.length}</div></div>
+        <span class="ptag tr">ОРК/L2</span>
+      `).addTo(LY.ork);
+
+      ork.subs.forEach(sub => {
+        cntSubs++;
+        const m = L.circleMarker([sub.lat,sub.lon],{
+          radius:4, color:'#0d1b2a', weight:1.2,
+          fillColor:d.color, fillOpacity:0.85
+        }).bindPopup(`
+          <div class="pt" style="color:${d.color}">📍 Абонент</div>
+          <div class="pr">Район: <span>${d.name}</span></div>
+          <div class="pr-addr">Адрес: ${sub.desc||'—'}</div>
+          <div class="pr">ОРК: <span>${ork.id}</span></div>
+          <div class="pr">Волокон: <span>2 раб. + <b style="color:var(--green)">${sub.fibers.spare} зап.</b></span></div>
+          <div class="pmat"><div>🏠 ONT ZTE F601 / HW EG8010H</div><div>📦 Бокс ОРБ-32 (ОК4)</div><div>🔌 Патч-корд SC/APC-SC/UPC</div></div>
+          <span class="ptag tg">+${sub.fibers.spare} зап.вол.</span><span class="ptag tb2">${d.name}</span>
+        `);
+        LY.subs.addLayer(m);
+        allSubMarkers.push({m, district:d.name, desc:(sub.desc||'').toLowerCase(), lat:sub.lat, lon:sub.lon});
+      });
+    });
+  });
+
+  // Cables
+  cables.forEach(c => {
+    if(c.coords.length<2) return;
+    const dist = APP.project.districts.find(d=>d.tbs.find(t=>t.id===c.fromId)||d.olt.id===c.fromId||d.orks.find(o=>o.id===c.fromId));
+    const color = dist?dist.color:'#64748b';
+    let weight=1.5, opacity=0.45, dash='4,4';
+    if(c.type==='ОКБ-10'){weight=5;opacity=.9;dash=null;/* yellow */}
+    else if(c.type==='ОКСНН-8'){weight=3;opacity=.75;dash=null;}
+    else if(c.type==='ОКСНН-4'){weight=2;opacity=.65;dash=null;}
+    L.polyline(c.coords,{
+      color: c.type==='ОКБ-10'?'#fcd34d':color,
+      weight, opacity, dashArray:dash
+    }).bindTooltip(`${c.type} — ${c.lengthM}м`).addTo(LY.cables);
+    cntCables++;
+  });
+
+  // Update UI
+  document.getElementById('cnt-olt').textContent = districts.length;
+  document.getElementById('cnt-tb').textContent  = cntTB;
+  document.getElementById('cnt-ork').textContent = cntOrk;
+  document.getElementById('cnt-subs').textContent= cntSubs;
+  document.getElementById('cnt-cables').textContent= cntCables;
+  document.getElementById('h-subs').textContent  = cntSubs;
+  document.getElementById('h-orks').textContent  = cntOrk;
+  document.getElementById('h-tbs').textContent   = cntTB;
+
+  const totalKm = cables.reduce((s,c)=>s+c.lengthM,0)/1000;
+  document.getElementById('h-km').textContent = totalKm.toFixed(1);
+  document.getElementById('h-status').textContent='ГОТОВО';
+  document.getElementById('h-status').style.color='var(--green)';
+
+  document.getElementById('empty-state').style.display='none';
+
+  // Fit map
+  if(cntSubs>0){
+    const allPts=districts.flatMap(d=>d.pts);
+    const lats=allPts.map(p=>p.lat), lons=allPts.map(p=>p.lon);
+    map.fitBounds([[Math.min(...lats),Math.min(...lons)],[Math.max(...lats),Math.max(...lons)]],{padding:[30,30]});
+  }
+
+  renderDistrictList(districts);
+  renderGroupList(districts);
+  renderMaterials(districts, cables);
+  renderSchema(districts);
+
+  document.getElementById('btn-osrm').disabled=false;
+  document.getElementById('btn-xls').disabled=false;
+  document.getElementById('btn-kmz').disabled=false;
+}
+
+// ═══════════════════════════════════════════════════════
+// SIDEBAR RENDERING
+// ═══════════════════════════════════════════════════════
+function renderDistrictList(districts) {
+  const el = document.getElementById('district-list');
+  el.innerHTML = '';
+  districts.forEach(d => {
+    const row = document.createElement('div');
+    row.className = 'ltog';
+    row.innerHTML=`<div class="ldot" style="background:${d.color};box-shadow:0 0 4px ${d.color}80"></div>
+      <div class="lname">${d.name}</div><div class="lcnt">${d.pts.length}</div>
+      <div class="sw on" id="sw-d-${d.name}"></div>`;
+    row.addEventListener('click', ()=>togDistrict(d.name));
+    el.appendChild(row);
+  });
+}
+
+function renderGroupList(districts) {
+  const el = document.getElementById('grp-list');
+  el.innerHTML = '';
+  districts.forEach(d => {
+    d.orks.forEach(ork => {
+      const maxP = ork.spl==='1:4'?4:8;
+      const pct = Math.round(ork.subs.length/maxP*100);
+      const lc = pct>=90?'#f87171':pct>=70?'#fbbf24':'#34d399';
+      const div = document.createElement('div');
+      div.className='grp';
+      div.innerHTML=`<div class="ghdr">
+        <div class="ldot" style="background:${d.color};border-radius:50%;width:8px;height:8px"></div>
+        <div class="gname">${ork.id}</div>
+        <div class="gspl">SPL ${ork.spl}</div>
+        <div style="font-size:9px;color:${lc};font-family:'JetBrains Mono',monospace">${ork.subs.length}/${maxP}</div>
+      </div>
+      <div class="gprog"><div class="gprog-fill" style="width:${pct}%;background:${lc}"></div></div>
+      <div class="gcli">${ork.subs.map(s=>`<span class="ctag" style="color:${d.color};border:1px solid ${d.color}30;background:${d.color}12" onclick="flyTo(${s.lat},${s.lon},17)">#${s.id.split('-').pop()}</span>`).join('')}</div>`;
+      div.addEventListener('click',e=>{if(e.target.classList.contains('ctag'))return;flyTo(ork.lat,ork.lon,15);});
+      el.appendChild(div);
+    });
+  });
+}
+
+function renderSchema(districts) {
+  const el = document.getElementById('schema-content');
+  let html = '';
+  districts.forEach(d => {
+    html += `<span style="color:var(--orange);font-weight:700">${d.olt.id}</span> <span style="color:var(--t4)">══ ОКБ-10 ══</span> <span style="color:var(--orange)">L1 SPL 1:4</span>\n│\n`;
+    d.tbs.forEach((tb,ti) => {
+      const last = ti===d.tbs.length-1;
+      html+=`${last?'└':'├'}─ <span style="color:var(--t4)">ОКСНН-8</span> ─ <span style="color:var(--blue)">${tb.id}</span>\n`;
+      tb.orks.forEach((ork,oi) => {
+        const lastO=oi===tb.orks.length-1;
+        html+=`${last?'  ':'│ '}${lastO?'└':'├'}─ <span style="color:var(--t4)">ОКСНН-4</span> ─ <span style="color:var(--teal)">${ork.id}</span> <span style="color:var(--green)">→ ${ork.subs.length} або.</span>\n`;
+      });
+    });
+    html+='\n';
+  });
+  el.innerHTML = html;
+}
+
+function renderMaterials(districts, cables) {
+  const settings = APP.settings;
+  const res = settings.reserve;
+
+  const cByType = {'ОКБ-10':0,'ОКСНН-8':0,'ОКСНН-4':0,'ОКА-2':0};
+  cables.forEach(c => { if(cByType[c.type]!==undefined) cByType[c.type]+=c.lengthM; });
+
+  const totalSubs = districts.reduce((s,d)=>s+d.pts.length,0);
+  const totalOrks = districts.reduce((s,d)=>s+d.orks.length,0);
+  const totalTBs  = districts.reduce((s,d)=>s+d.tbs.length,0);
+  const splitter14_l1 = districts.length;
+  const splitter14_l2 = districts.reduce((s,d)=>s+d.orks.filter(o=>o.spl==='1:4').length,0);
+  const splitter18_l2 = districts.reduce((s,d)=>s+d.orks.filter(o=>o.spl==='1:8').length,0);
+  const mufta = districts.length + totalTBs;
+  const totalM = Object.values(cByType).reduce((s,v)=>s+v,0);
+  const kdz = Math.ceil(totalM/1000)*50+200;
+  const clamps = Math.ceil((cByType['ОКСНН-8']+cByType['ОКСНН-4'])/50);
+
+  document.getElementById('mat-content').innerHTML = `
+  <div style="padding:4px 0">
+  <div class="mcat"><div class="mcat-title">🔌 Кабели ВОЛС</div>
+    <div class="mrow"><div class="mico">🟡</div><div class="minf"><div class="mname">ОКБ-10 магістраль</div><div class="mspec">Брон., 8 вол., G.652D</div></div><div><div class="mqty">${Math.ceil(cByType['ОКБ-10']*res)}</div><div class="munit">м</div></div></div>
+    <div class="mrow"><div class="mico">🔵</div><div class="minf"><div class="mname">ОКСНН-8 OLT→ТМ</div><div class="mspec">Самонес., 8 вол., G.652D</div></div><div><div class="mqty">${Math.ceil(cByType['ОКСНН-8']*res)}</div><div class="munit">м</div></div></div>
+    <div class="mrow"><div class="mico">🟠</div><div class="minf"><div class="mname">ОКСНН-4 ТМ→ОРК</div><div class="mspec">Самонес., 4 вол., G.652D</div></div><div><div class="mqty">${Math.ceil(cByType['ОКСНН-4']*res)}</div><div class="munit">м</div></div></div>
+    <div class="mrow"><div class="mico">🟢</div><div class="minf"><div class="mname">ОКА-2 дроп FTTH</div><div class="mspec">Аб., 2 вол., G.657A</div></div><div><div class="mqty">${Math.ceil(cByType['ОКА-2']*res)}</div><div class="munit">м</div></div></div>
+  </div>
+  <div class="mcat"><div class="mcat-title">⬡ Сплиттеры PLC</div>
+    <div class="mrow"><div class="mico">🔶</div><div class="minf"><div class="mname">PLC 1:4 SC/APC (L1)</div><div class="mspec">В корпусе OLT</div></div><div><div class="mqty">${splitter14_l1}</div><div class="munit">шт.</div></div></div>
+    ${splitter14_l2>0?`<div class="mrow"><div class="mico">🟣</div><div class="minf"><div class="mname">PLC 1:4 SC/APC (L2)</div><div class="mspec">В ОРК шкафу</div></div><div><div class="mqty">${splitter14_l2}</div><div class="munit">шт.</div></div></div>`:''}
+    <div class="mrow"><div class="mico">🟣</div><div class="minf"><div class="mname">PLC 1:8 SC/APC (L2)</div><div class="mspec">В ОРК шкафу</div></div><div><div class="mqty">${splitter18_l2}</div><div class="munit">шт.</div></div></div>
+  </div>
+  <div class="mcat"><div class="mcat-title">📦 Оборудование</div>
+    <div class="mrow"><div class="mico">🔧</div><div class="minf"><div class="mname">Муфта МТОК-96А IP68</div><div class="mspec">OLT + транзитные узлы</div></div><div><div class="mqty">${mufta}</div><div class="munit">шт.</div></div></div>
+    <div class="mrow"><div class="mico">📦</div><div class="minf"><div class="mname">ОРК шкаф IP55</div><div class="mspec">Со сплиттером и адаптерами</div></div><div><div class="mqty">${totalOrks}</div><div class="munit">шт.</div></div></div>
+    <div class="mrow"><div class="mico">📦</div><div class="minf"><div class="mname">Бокс ОРБ-32 (ОК4)</div><div class="mspec">На каждого абонента</div></div><div><div class="mqty">${totalSubs}</div><div class="munit">шт.</div></div></div>
+    <div class="mrow"><div class="mico">🏠</div><div class="minf"><div class="mname">ONT ZTE F601 / HW EG8010H</div><div class="mspec">GPON терминал</div></div><div><div class="mqty">${totalSubs}</div><div class="munit">шт.</div></div></div>
+    <div class="mrow"><div class="mico">🔌</div><div class="minf"><div class="mname">Пигтейл SC/APC 1м</div><div class="mspec">G.657A одномодовый</div></div><div><div class="mqty">${mufta*12+totalSubs}</div><div class="munit">шт.</div></div></div>
+    <div class="mrow"><div class="mico">🔌</div><div class="minf"><div class="mname">Патч-корд SC/APC-SC/UPC 3м</div><div class="mspec">Абонентский</div></div><div><div class="mqty">${totalSubs}</div><div class="munit">шт.</div></div></div>
+    <div class="mrow"><div class="mico">🔩</div><div class="minf"><div class="mname">Гильзы КДЗС 40мм</div><div class="mspec">Для сварки волокон</div></div><div><div class="mqty">${kdz}</div><div class="munit">шт.</div></div></div>
+    <div class="mrow"><div class="mico">🔩</div><div class="minf"><div class="mname">Зажимы анкерные СТС-10</div><div class="mspec">Каждые 50м воздушной прокладки</div></div><div><div class="mqty">${clamps}</div><div class="munit">шт.</div></div></div>
+  </div>
+  <div class="mtotal">
+    <div style="font-size:9px;color:var(--t3);font-family:'JetBrains Mono',monospace;margin-bottom:4px">📊 ИТОГО</div>
+    <div class="mtrow">Общая длина ВОЛС: <span>${(totalM/1000).toFixed(2)} км</span></div>
+    <div class="mtrow">ОКА-2 дроп: <span>${(cByType['ОКА-2']/1000).toFixed(2)} км</span></div>
+    <div class="mtrow">Транзитных муфт: <span>${totalTBs}</span></div>
+    <div class="mtrow">ОРК шкафов: <span>${totalOrks}</span></div>
+    <div class="mtrow">Абонентов: <span>${totalSubs}</span></div>
+    <div style="margin-top:4px;font-size:9px;color:var(--t4);font-family:'JetBrains Mono',monospace">* Кабели с запасом +${Math.round((res-1)*100)}%</div>
+  </div>
+  <div style="height:60px"></div>
+  </div>`;
+}
+
+// ═══════════════════════════════════════════════════════
+// UI CONTROLS
+// ═══════════════════════════════════════════════════════
+function stab(n){
+  ['layers','mats','groups','schema'].forEach((t,i)=>{
+    document.querySelectorAll('.tab')[i].classList.toggle('on',t===n);
+    document.getElementById('pane-'+t).classList.toggle('on',t===n);
+  });
+}
+// Fix pane id mismatch
+document.getElementById('pane-mats'); // mats
+
+function togType(t){
+  const sw=document.getElementById('sw-t-'+t);
+  typeOn[t]=!typeOn[t];
+  sw.classList.toggle('on',typeOn[t]);
+  if(typeOn[t]) map.addLayer(LY[t]); else map.removeLayer(LY[t]);
+}
+function togDistrict(name){
+  districtVisibility[name]=!districtVisibility[name];
+  document.getElementById('sw-d-'+name)?.classList.toggle('on',districtVisibility[name]);
+  // toggle all subs in this district
+  allSubMarkers.forEach(x=>{
+    if(x.district!==name)return;
+    if(districtVisibility[name]) LY.subs.addLayer(x.m); else LY.subs.removeLayer(x.m);
+  });
+}
+function flyTo(lat,lon,z){map.flyTo([lat,lon],z,{animate:true,duration:1})}
+
+// Search
+document.getElementById('srch').addEventListener('input',function(){
+  const q=this.value.toLowerCase().trim();
+  const cnt=document.getElementById('srch-cnt');
+  if(!q){allSubMarkers.forEach(x=>x.m.setStyle({fillOpacity:.85,radius:4}));cnt.textContent='';return;}
+  let found=0,first=null;
+  allSubMarkers.forEach(x=>{
+    const m=x.desc.includes(q)||x.district.toLowerCase().includes(q);
+    x.m.setStyle({fillOpacity:m?.9:.05,radius:m?5:3});
+    if(m){found++;if(!first)first=x;}
+  });
+  cnt.textContent=`Найдено: ${found}`;
+  if(first)map.flyTo([first.lat,first.lon],14,{animate:true,duration:1});
+});
+
+// ═══════════════════════════════════════════════════════
+// IMPORT MODAL
+// ═══════════════════════════════════════════════════════
+let pendingFile = null;
+function openImport(){document.getElementById('modal-import').classList.add('open')}
+function closeImport(){document.getElementById('modal-import').classList.remove('open');pendingFile=null}
+
+function dzDrag(e){e.preventDefault();document.getElementById('drop-zone').classList.add('drag')}
+function dzLeave(){document.getElementById('drop-zone').classList.remove('drag')}
+function dzDrop(e){
+  e.preventDefault();dzLeave();
+  const file=e.dataTransfer.files[0];
+  if(file) processFile(file);
+}
+function fileSelected(inp){if(inp.files[0])processFile(inp.files[0]);inp.value='';}
+
+async function processFile(file){
+  pendingFile=file;
+  document.getElementById('btn-go').disabled=true;
+  const pb=document.getElementById('preview-box');
+  pb.className='preview-box'; pb.textContent='Читаем файл...';
+  pb.classList.add('show');
+
+  try{
+    const buf=await file.arrayBuffer();
+    let raw;
+    if(file.name.endsWith('.xlsx')||file.name.endsWith('.xls')) raw=parseExcel(buf);
+    else raw=await parseKMZ(buf);
+
+    const districts=Object.keys(raw);
+    const total=Object.values(raw).reduce((s,a)=>s+a.length,0);
+    if(total===0)throw new Error('Не найдено точек в файле');
+
+    APP.importedRaw=raw;
+    pb.innerHTML=`<b style="color:var(--green)">✓ Файл прочитан</b>\n`+
+      `Районов: ${districts.length}\n`+
+      `Точек итого: ${total}\n`+
+      districts.map(d=>`  • ${d}: ${raw[d].length} або.`).join('\n');
+    document.getElementById('btn-go').disabled=false;
+    document.getElementById('drop-zone').querySelector('.drop-zone-text').textContent=file.name;
+  } catch(e){
+    pb.innerHTML=`<span style="color:var(--red)">❌ Ошибка: ${e.message}</span>`;
+  }
+}
+
+async function runImport(){
+  if(!APP.importedRaw)return;
+  const settings={
+    maxPerORK:+document.getElementById('s-maxork').value,
+    maxORKperTB:+document.getElementById('s-maxtb').value,
+    reserve:1+(+document.getElementById('s-reserve').value)/100,
+    spareFibers:+document.getElementById('s-spare').value,
+  };
+  APP.settings=settings;
+  closeImport();
+  setLoad(true,'Кластеризация ОРК...','');
+  setPB(10);
+  await delay(50);
+
+  const {districts,cables}=buildNetworkFromRaw(APP.importedRaw,settings);
+  APP.project={name:document.getElementById('proj-name').value,districts,cables,settings};
+
+  setPB(60);
+  setLoad(true,'Отрисовка карты...','');
+  await delay(50);
+
+  renderNetwork(APP.project);
+  setPB(100);
+  setLoad(false);
+  document.getElementById('btn-build').disabled=false;
+  showToast(`✅ Построено: ${districts.length} районов, ${districts.reduce((s,d)=>s+d.pts.length,0)} або.`,3000);
+}
+
+async function buildNetwork(){
+  if(!APP.project)return;
+  await runImport();
+}
+
+// ═══════════════════════════════════════════════════════
+// OSRM
+// ═══════════════════════════════════════════════════════
+async function osrmRoute(lo1,la1,lo2,la2,profile='driving'){
+  const u=`https://router.project-osrm.org/route/v1/${profile}/${lo1},${la1};${lo2},${la2}?overview=full&geometries=geojson`;
+  const r=await(await fetch(u)).json();
+  if(r.code==='Ok'&&r.routes[0]) return r.routes[0];
+  return null;
+}
+
+async function startOSRM(){
+  if(!APP.project){return;}
+  const btn=document.getElementById('btn-osrm');
+  btn.textContent='⏳ OSRM...'; btn.disabled=true;
+  APP.osrmDone=false;
+  document.getElementById('pb-wrap').style.display='block';
+
+  const backbone = APP.project.cables.filter(c=>c.type==='ОКСНН-8'||c.type==='ОКСНН-4');
+  const drops    = APP.project.cables.filter(c=>c.type==='ОКА-2');
+  const total    = backbone.length + drops.length;
+  let done=0;
+
+  // ── Шаг 1: магістральные кабели (driving) ──
+  showToast('🛣 Шаг 1/2 — Магістральные кабели...');
+  setLoad(true,'OSRM: магістральные кабели...','');
+  for(const cable of backbone){
+    if(cable.coords.length<2){done++;continue;}
+    const [la1,lo1]=cable.coords[0];
+    const [la2,lo2]=cable.coords[cable.coords.length-1];
+    try{
+      const rt=await osrmRoute(lo1,la1,lo2,la2,'driving');
+      if(rt){
+        cable.coords=rt.geometry.coordinates.map(([ln,lt])=>[lt,ln]);
+        cable.lengthM=Math.round(rt.distance*APP.settings.reserve);
+        cable.routed=true;
+      }
+    }catch(e){}
+    done++;
+    setPB(Math.round(done/total*100));
+    setLoad(true,'OSRM: магістральные кабели...',`${done}/${total}`);
+    await delay(80);
+  }
+
+  // ── Шаг 2: дроп-кабели ОКА-2 (foot — пешеходный маршрут) ──
+  showToast('🏘 Шаг 2/2 — Дроп-кабели ОКА-2...');
+  setLoad(true,'OSRM: дроп-кабели ОКА-2...','');
+  for(const cable of drops){
+    if(cable.coords.length<2){done++;continue;}
+    const [la1,lo1]=cable.coords[0];
+    const [la2,lo2]=cable.coords[cable.coords.length-1];
+    // Пропускаем очень короткие дропы (< 30м) — маршрутизация не нужна
+    if(hav(la1,lo1,la2,lo2)<30){done++;continue;}
+    try{
+      const rt=await osrmRoute(lo1,la1,lo2,la2,'foot');
+      if(rt){
+        cable.coords=rt.geometry.coordinates.map(([ln,lt])=>[lt,ln]);
+        cable.lengthM=Math.round(rt.distance*APP.settings.reserve);
+        cable.routed=true;
+      }
+    }catch(e){}
+    done++;
+    setPB(Math.round(done/total*100));
+    setLoad(true,'OSRM: дроп-кабели ОКА-2...',`${done}/${total}`);
+    // Минимальная задержка для дропов чтобы не перегружать API
+    await delay(50);
+  }
+
+  setLoad(false);
+
+  // Re-render cables only
+  LY.cables.clearLayers();
+  APP.project.cables.forEach(c=>{
+    if(c.coords.length<2)return;
+    const dist=APP.project.districts.find(d=>d.tbs.find(t=>t.id===c.fromId)||d.olt.id===c.fromId||d.orks.find(o=>o.id===c.fromId));
+    const color=dist?dist.color:'#64748b';
+    let weight=1.5,opacity=.45,dash='4,4';
+    if(c.type==='ОКБ-10'){weight=5;opacity=.9;dash=null;}
+    else if(c.type==='ОКСНН-8'){weight=3;opacity=.75;dash=null;}
+    else if(c.type==='ОКСНН-4'){weight=2;opacity=.65;dash=null;}
+    else if(c.type==='ОКА-2'){weight=1.5;opacity=.6;/* dash остаётся */}
+    L.polyline(c.coords,{color:c.type==='ОКБ-10'?'#fcd34d':color,weight,opacity,dashArray:dash})
+     .bindTooltip(`${c.type} — ${c.lengthM}м${c.routed?' 🛣':''}`).addTo(LY.cables);
+  });
+
+  setPB(100);
+  document.getElementById('pb-wrap').style.display='none';
+  APP.osrmDone=true;
+  const routedDrops=drops.filter(c=>c.routed).length;
+  btn.textContent='✅ OSRM готово';
+  showToast(`✅ Готово: ${backbone.length} магістральных + ${routedDrops} дроп-кабелей по дорогам`,4000);
+  renderMaterials(APP.project.districts,APP.project.cables);
+}
+
+// ═══════════════════════════════════════════════════════
+// EXPORT KMZ
+// ═══════════════════════════════════════════════════════
+async function exportKMZ(){
+  const btn=document.getElementById('btn-kmz');
+  btn.textContent='⏳...';btn.disabled=true;
+  const kml=buildKML();
+  const zip=new JSZip();
+  zip.file('doc.kml',kml);
+  const blob=await zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:9}});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download=`${document.getElementById('proj-name').value||'GPON'}.kmz`;a.click();
+  btn.textContent='↓ KMZ';btn.disabled=false;
+}
+
+function buildKML(){
+  if(!APP.project)return '';
+  const {districts,cables}=APP.project;
+  let k=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n<name>${document.getElementById('proj-name').value}</name>\n`;
+  k+=`<Style id="s_olt"><IconStyle><scale>1.4</scale><Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_square.png</href></Icon></IconStyle></Style>\n`;
+  k+=`<Style id="s_tb"><IconStyle><scale>1.1</scale><Icon><href>http://maps.google.com/mapfiles/kml/paddle/blue-circle.png</href></Icon></IconStyle></Style>\n`;
+  k+=`<Style id="s_ork"><IconStyle><scale>0.9</scale><Icon><href>http://maps.google.com/mapfiles/kml/paddle/orange-circle.png</href></Icon></IconStyle></Style>\n`;
+  k+=`<Style id="s_sub"><IconStyle><scale>0.6</scale><Icon><href>http://maps.google.com/mapfiles/kml/paddle/grn-circle-lv.png</href></Icon></IconStyle></Style>\n`;
+  k+=`<Style id="s_ok10"><LineStyle><color>ff00d4fc</color><width>5</width></LineStyle><PolyStyle><fill>0</fill></PolyStyle></Style>\n`;
+  k+=`<Style id="s_ok8"><LineStyle><color>ffec8a00</color><width>3.5</width></LineStyle><PolyStyle><fill>0</fill></PolyStyle></Style>\n`;
+  k+=`<Style id="s_ok4"><LineStyle><color>ff3a92fb</color><width>2.5</width></LineStyle><PolyStyle><fill>0</fill></PolyStyle></Style>\n`;
+  k+=`<Style id="s_ok2"><LineStyle><color>8099d499</color><width>1.5</width></LineStyle><PolyStyle><fill>0</fill></PolyStyle></Style>\n`;
+
+  // OLT folder
+  k+=`<Folder><name>📡 OLT — Узлы связи</name>\n`;
+  districts.forEach(d=>{k+=`<Placemark><name>OLT ${d.name}</name><styleUrl>#s_olt</styleUrl><description>OLT. ${d.pts.length} або. ${d.tbs.length} ТМ. ${d.orks.length} ОРК.</description><Point><coordinates>${d.olt.lon},${d.olt.lat},0</coordinates></Point></Placemark>\n`;});
+  k+=`</Folder>\n`;
+
+  // TB folder
+  k+=`<Folder><name>🔷 Транзитные муфты МТОК-96А</name>\n`;
+  districts.forEach(d=>{d.tbs.forEach(tb=>{k+=`<Placemark><name>${tb.id}</name><styleUrl>#s_tb</styleUrl><description>${d.name}. ОРК: ${tb.orks.length}.</description><Point><coordinates>${tb.lon},${tb.lat},0</coordinates></Point></Placemark>\n`;});});
+  k+=`</Folder>\n`;
+
+  // ORK folder
+  k+=`<Folder><name>📦 ОРК — Оптические шкафы</name>\n`;
+  districts.forEach(d=>{d.orks.forEach(ork=>{k+=`<Placemark><name>${ork.id}</name><styleUrl>#s_ork</styleUrl><description>${d.name}. PLC ${ork.spl}. Або: ${ork.subs.length}. ТМ: ${ork.tbId}.</description><Point><coordinates>${ork.lon},${ork.lat},0</coordinates></Point></Placemark>\n`;});});
+  k+=`</Folder>\n`;
+
+  // Subscribers by district
+  k+=`<Folder><name>🏠 Абоненты</name>\n`;
+  districts.forEach(d=>{
+    k+=`<Folder><name>${d.name} (${d.pts.length})</name>\n`;
+    d.orks.forEach(ork=>ork.subs.forEach(s=>{
+      k+=`<Placemark><name>${s.id}</name><styleUrl>#s_sub</styleUrl><description>${s.desc}\nОРК: ${ork.id}\nВолокон: 2 раб. + ${s.fibers.spare} зап.\nОКА-2 G.657A. ONT ZTE F601. Бокс ОРБ-32.</description><Point><coordinates>${s.lon},${s.lat},0</coordinates></Point></Placemark>\n`;
+    }));
+    k+=`</Folder>\n`;
+  });
+  k+=`</Folder>\n`;
+
+  // Cables by type
+  const cableGroups={'ОКБ-10':'🟡 Кабель ОКБ-10 — Магістраль (8 вол.)','ОКСНН-8':'🔵 Кабель ОКСНН-8 — Распределительный (OLT→ТМ)','ОКСНН-4':'🟠 Кабель ОКСНН-4 — Питающий (ТМ→ОРК)','ОКА-2':'🟢 Кабель ОКА-2 — Дроп FTTH (ОРК→Або.)'};
+  const styleMap={'ОКБ-10':'s_ok10','ОКСНН-8':'s_ok8','ОКСНН-4':'s_ok4','ОКА-2':'s_ok2'};
+  Object.entries(cableGroups).forEach(([type,title])=>{
+    const cabs=cables.filter(c=>c.type===type);
+    if(!cabs.length)return;
+    k+=`<Folder><name>${title}</name>\n`;
+    cabs.forEach(c=>{
+      const coords=c.coords.map(([la,lo])=>`${lo},${la},0`).join(' ');
+      k+=`<Placemark><name>${type} ${c.fromId}→${c.toId}</name><styleUrl>#${styleMap[type]}</styleUrl><description>${c.lengthM}м${c.routed?' (OSRM)':' (прямая)'}</description><LineString><tessellate>1</tessellate><coordinates>${coords}</coordinates></LineString></Placemark>\n`;
+    });
+    k+=`</Folder>\n`;
+  });
+
+  k+=`</Document></kml>`;
+  return k;
+}
+
+// ═══════════════════════════════════════════════════════
+// EXPORT EXCEL
+// ═══════════════════════════════════════════════════════
+function exportExcel(){
+  if(!APP.project){return;}
+  const {districts,cables}=APP.project;
+  const res=APP.settings.reserve;
+  const wb=XLSX.utils.book_new();
+
+  // Sheet 1 — Materials
+  const cByType={'ОКБ-10':0,'ОКСНН-8':0,'ОКСНН-4':0,'ОКА-2':0};
+  cables.forEach(c=>{if(cByType[c.type]!==undefined)cByType[c.type]+=c.lengthM;});
+  const totalSubs=districts.reduce((s,d)=>s+d.pts.length,0);
+  const totalOrks=districts.reduce((s,d)=>s+d.orks.length,0);
+  const totalTBs=districts.reduce((s,d)=>s+d.tbs.length,0);
+  const spl14=districts.reduce((s,d)=>s+d.orks.filter(o=>o.spl==='1:4').length,0)+districts.length;
+  const spl18=districts.reduce((s,d)=>s+d.orks.filter(o=>o.spl==='1:8').length,0);
+  const mufta=districts.length+totalTBs;
+  const totalM=Object.values(cByType).reduce((s,v)=>s+v,0);
+  const matRows=[
+    ['Категория','Наименование','Марка / Тип','Кол-во','Ед.','Примечание'],
+    ['Кабель ВОЛС','Магістральный кабель','ОКБ-10 G.652D',Math.ceil(cByType['ОКБ-10']*res),'м',`с запасом +${Math.round((res-1)*100)}%`],
+    ['Кабель ВОЛС','Распределительный','ОКСНН-8 G.652D',Math.ceil(cByType['ОКСНН-8']*res),'м','OLT→Транзитные муфты'],
+    ['Кабель ВОЛС','Питающий','ОКСНН-4 G.652D',Math.ceil(cByType['ОКСНН-4']*res),'м','ТМ→ОРК шкафы'],
+    ['Кабель ВОЛС','Абонентский дроп','ОКА-2 G.657A',Math.ceil(cByType['ОКА-2']*res),'м','2 раб. + 1 зап.волокно'],
+    ['Оборудование','OLT','Huawei MA5800-X7',districts.length,'шт',''],
+    ['Оборудование','Сплиттер L1 1:4','PLC 1:4 SC/APC',districts.length,'шт','Один на OLT'],
+    ['Оборудование','Сплиттер L2 1:4','PLC 1:4 SC/APC',spl14-districts.length,'шт','В ОРК шкафах'],
+    ['Оборудование','Сплиттер L2 1:8','PLC 1:8 SC/APC',spl18,'шт','В ОРК шкафах'],
+    ['Оборудование','Муфта транзитная','МТОК-96А IP68',mufta,'шт','OLT + транзитные узлы'],
+    ['Оборудование','ОРК шкаф уличный','ОРК IP55',totalOrks,'шт','Со сплиттером и адаптерами'],
+    ['Оборудование','Бокс абонентский','ОРБ-32 (ОК4)',totalSubs,'шт','На каждого абонента'],
+    ['Оборудование','ONT терминал','ZTE F601 / HW EG8010H',totalSubs,'шт',''],
+    ['Монтаж','Пигтейл SC/APC','1м G.657A',mufta*12+totalSubs,'шт',''],
+    ['Монтаж','Патч-корд','SC/APC-SC/UPC 3м',totalSubs,'шт',''],
+    ['Монтаж','Гильзы КДЗС','40мм термоусадка',Math.ceil(totalM/1000)*50+200,'шт',''],
+    ['Монтаж','Зажим анкерный','СТС-10',Math.ceil((cByType['ОКСНН-8']+cByType['ОКСНН-4'])/50),'шт','каждые 50м воздушной прокладки'],
+  ];
+  const ws1=XLSX.utils.aoa_to_sheet(matRows);
+  ws1['!cols']=[{wch:18},{wch:28},{wch:22},{wch:10},{wch:6},{wch:30}];
+  XLSX.utils.book_append_sheet(wb,ws1,'Материалы');
+
+  // Sheet 2 — Subscribers
+  const subRows=[['№','Район','ОРК','Адрес','Широта','Долгота','Волокна','Кабель','Бокс','ONT']];
+  let n=1;
+  districts.forEach(d=>d.orks.forEach(ork=>ork.subs.forEach(s=>{
+    subRows.push([n++,d.name,ork.id,s.desc,s.lat.toFixed(6),s.lon.toFixed(6),`2 раб. + ${s.fibers.spare} зап.`,'ОКА-2 G.657A','ОРБ-32 (ОК4)','ZTE F601']);
+  })));
+  const ws2=XLSX.utils.aoa_to_sheet(subRows);
+  ws2['!cols']=[{wch:5},{wch:14},{wch:14},{wch:45},{wch:12},{wch:12},{wch:14},{wch:14},{wch:12},{wch:12}];
+  XLSX.utils.book_append_sheet(wb,ws2,'Абоненты');
+
+  // Sheet 3 — ORK
+  const orkRows=[['№','Район','ОРК ID','Широта','Долгота','Сплиттер','Або.','Макс.','Загрузка%','ТМ']];
+  let m=1;
+  districts.forEach(d=>d.orks.forEach(ork=>{
+    const maxP=ork.spl==='1:4'?4:8;
+    orkRows.push([m++,d.name,ork.id,ork.lat.toFixed(6),ork.lon.toFixed(6),`PLC ${ork.spl}`,ork.subs.length,maxP,Math.round(ork.subs.length/maxP*100)+'%',ork.tbId]);
+  }));
+  const ws3=XLSX.utils.aoa_to_sheet(orkRows);
+  ws3['!cols']=[{wch:5},{wch:14},{wch:16},{wch:12},{wch:12},{wch:10},{wch:7},{wch:7},{wch:10},{wch:14}];
+  XLSX.utils.book_append_sheet(wb,ws3,'ОРК шкафы');
+
+  // Sheet 4 — Cables
+  const cableRows=[['№','Тип','От','До','Длина (м)','С запасом (м)','Вол.','Маршрут']];
+  cables.forEach((c,i)=>{
+    const fib={'ОКБ-10':8,'ОКСНН-8':8,'ОКСНН-4':4,'ОКА-2':2}[c.type]||2;
+    cableRows.push([i+1,c.type,c.fromId,c.toId,c.lengthM,Math.ceil(c.lengthM),fib,c.routed?'OSRM (по дороге)':'Прямая линия']);
+  });
+  const ws4=XLSX.utils.aoa_to_sheet(cableRows);
+  ws4['!cols']=[{wch:5},{wch:12},{wch:20},{wch:20},{wch:12},{wch:14},{wch:6},{wch:20}];
+  XLSX.utils.book_append_sheet(wb,ws4,'Кабели');
+
+  XLSX.writeFile(wb,`${document.getElementById('proj-name').value||'GPON'}_отчёт.xlsx`);
+}
+
+// ═══════════════════════════════════════════════════════
+// SAVE/LOAD PROJECT
+// ═══════════════════════════════════════════════════════
+function saveProject(){
+  if(!APP.project){showToast('Нет данных для сохранения',2000);return;}
+  const key='gpon_'+Date.now();
+  APP.project.name=document.getElementById('proj-name').value;
+  localStorage.setItem(key,JSON.stringify(APP.project));
+  showToast(`✅ Проект "${APP.project.name}" сохранён`,2500);
+}
+</script>
+</body>
+</html>
