@@ -1,5 +1,5 @@
 'use client';
-import { Materials, District, Cable } from '@/types/network';
+import { Materials, District, Cable, CABLE_SIZES } from '@/types/network';
 import { exportExcel } from '@/components/Export/ExportExcel';
 import { exportKMZ } from '@/components/Export/ExportKMZ';
 
@@ -72,12 +72,9 @@ export default function MaterialsTab({ materials, districts, cables }: Props) {
     URL.revokeObjectURL(url);
   };
 
-  const cableRows: Row[] = [
-    { category: '', name: 'Магістральный', spec: 'ОКБ-10 G.652D', qty: materials.cables['ОКБ-10'], unit: 'м', note: '+10%' },
-    { category: '', name: 'Распределительный', spec: 'ОКСНН-8 G.652D', qty: materials.cables['ОКСНН-8'], unit: 'м' },
-    { category: '', name: 'Питающий', spec: 'ОКСНН-4 G.652D', qty: materials.cables['ОКСНН-4'], unit: 'м' },
-    { category: '', name: 'Абонентский дроп', spec: 'ОКА-2 G.657A', qty: materials.cables['ОКА-2'], unit: 'м' },
-  ];
+  const cableRows: Row[] = CABLE_SIZES
+    .filter((t) => (materials.cables[t] || 0) > 0)
+    .map((t) => ({ category: '', name: t, spec: `${t} G.652D`, qty: materials.cables[t] || 0, unit: 'м' }));
 
   const equipRows: Row[] = [
     { category: '', name: 'OLT', spec: 'Huawei MA5800-X7', qty: materials.equipment.oltUnits, unit: 'шт' },
@@ -85,8 +82,7 @@ export default function MaterialsTab({ materials, districts, cables }: Props) {
     { category: '', name: 'Сплиттер L2 1:4', spec: 'PLC 1:4 SC/APC', qty: materials.equipment.splitter_1x4_L2, unit: 'шт' },
     { category: '', name: 'Сплиттер L2 1:8', spec: 'PLC 1:8 SC/APC', qty: materials.equipment.splitter_1x8_L2, unit: 'шт' },
     { category: '', name: 'Муфта транзитная', spec: 'МТОК-96А IP68', qty: materials.equipment.muftaMTOK96A, unit: 'шт' },
-    { category: '', name: 'ОРК шкаф', spec: 'ОРК IP55', qty: materials.equipment.orkBox, unit: 'шт' },
-    { category: '', name: 'Бокс абонентский', spec: 'ОРБ-32 (ОК4)', qty: materials.equipment.boxORB32, unit: 'шт' },
+    { category: '', name: 'Бокс распределительный', spec: 'IP55', qty: materials.equipment.boksCount, unit: 'шт' },
     { category: '', name: 'ONT терминал', spec: 'ZTE F601', qty: materials.equipment.ontZTE_F601, unit: 'шт' },
   ];
 

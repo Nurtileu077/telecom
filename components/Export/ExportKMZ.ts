@@ -2,10 +2,14 @@ import { District, Cable } from '@/types/network';
 
 // KML colors are AABBGGRR (alpha, blue, green, red)
 const CABLE_STYLES: Record<string, { color: string; width: number; label: string }> = {
-  'ОКБ-10':  { color: 'fffc00d4', width: 5,   label: 'ОКБ-10 магистраль (8 вол.)' },
-  'ОКСНН-8': { color: 'ff008aec', width: 3.5,  label: 'ОКСНН-8 распределительный (8 вол.)' },
-  'ОКСНН-4': { color: 'ffFB923A', width: 2.5,  label: 'ОКСНН-4 питающий (4 вол.)' },
-  'ОКА-2':   { color: '8099d499', width: 1.5,  label: 'ОКА-2 дроп абонентский (2 вол.)' },
+  'ОК-4':  { color: '8099d499', width: 1.5, label: 'ОК-4 дроп (4 вол.)' },
+  'ОК-8':  { color: 'ff80de4a', width: 2,   label: 'ОК-8 абонентский (8 вол.)' },
+  'ОК-12': { color: 'fffb923a', width: 2.5, label: 'ОК-12 распределительный (12 вол.)' },
+  'ОК-16': { color: 'fffaa560', width: 3,   label: 'ОК-16 распределительный (16 вол.)' },
+  'ОК-24': { color: 'ff0b9ef5', width: 3.5, label: 'ОК-24 питающий (24 вол.)' },
+  'ОК-32': { color: 'ff24bffb', width: 4,   label: 'ОК-32 питающий (32 вол.)' },
+  'ОК-48': { color: 'ff008aec', width: 5,   label: 'ОК-48 магистральный (48 вол.)' },
+  'ОК-96': { color: 'ff7171f8', width: 6,   label: 'ОК-96 магистральный (96 вол.)' },
 };
 
 // Material specs per item type
@@ -182,7 +186,7 @@ ${html(SPECS.sub)}`;
   kml += `</Folder>\n`;
 
   // ---- Cables by type ----
-  const cableTypeOrder: Cable['type'][] = ['ОКБ-10', 'ОКСНН-8', 'ОКСНН-4', 'ОКА-2'];
+  const cableTypeOrder: Cable['type'][] = ['ОК-4', 'ОК-8', 'ОК-12', 'ОК-16', 'ОК-24', 'ОК-32', 'ОК-48', 'ОК-96'];
   for (const type of cableTypeOrder) {
     const typeCables = cables.filter((c) => c.type === type);
     if (typeCables.length === 0) continue;

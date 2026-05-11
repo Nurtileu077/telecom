@@ -1,4 +1,7 @@
-import { Subscriber, ORK, TransitBox, OLT, Cable, District, ProjectSettings, DISTRICT_COLORS } from '@/types/network';
+import {
+  Subscriber, ORK, TransitBox, OLT, Cable, District, ProjectSettings, DISTRICT_COLORS,
+  CABLE_FIBERS, selectCableType,
+} from '@/types/network';
 import { kmeans, centroid, haversineM } from './KMeans';
 
 let cableIdCounter = 0;
@@ -50,7 +53,7 @@ export function buildNetwork(
       const cluster = orkClusters[i];
       if (cluster.length === 0) continue;
       const orkCenter = centroid(cluster);
-      const orkId = `ОРК-${districtName.slice(0, 4).replace(/\s/g, '')}-${i + 1}`;
+      const orkId = `Бокс-${districtName.slice(0, 4).replace(/\s/g, '')}-${i + 1}`;
       const splitter: '1:4' | '1:8' | '1:16' =
         cluster.length <= 4 ? '1:4' : cluster.length <= 8 ? '1:8' : '1:16';
 
@@ -62,6 +65,7 @@ export function buildNetwork(
       const updatedOrkSubs = orkSubs.map((s) => ({ ...s, orkId }));
       updatedSubs.push(...updatedOrkSubs);
 
+      const orkSubCount = updatedOrkSubs.length;
       orks.push({
         id: orkId,
         lat: orkCenter.lat,
@@ -70,8 +74,8 @@ export function buildNetwork(
         splitter,
         tbId: '',
         subscribers: updatedOrkSubs,
-        cableType: 'ОКСНН-4',
-        box: 'ОРБ-32',
+        cableType: selectCableType(orkSubCount),
+        boxType: orkSubCount <= 4 ? 'Бокс-8' : orkSubCount <= 8 ? 'Бокс-16' : 'ОРКСп-16',
       });
     }
 
@@ -88,7 +92,7 @@ export function buildNetwork(
       const cluster = tbClusters[i];
       if (cluster.length === 0) continue;
       const tbCenter = centroid(cluster);
-      const tbId = `TB-${districtName.slice(0, 4).replace(/\s/g, '')}-${i + 1}`;
+      const tbId = `Муфта-${districtName.slice(0, 4).replace(/\s/g, '')}-${i + 1}`;
 
       const tbOrks = cluster
         .map((p) => orks.find((o) => o.id === p.id))
@@ -101,6 +105,9 @@ export function buildNetwork(
         if (idx >= 0) orks[idx] = o;
       }
 
+      const tbSubCount = updatedTBOrks.reduce((s, o) => s + o.subscribers.length, 0);
+      const tbCableType = selectCableType(tbSubCount);
+
       const tb: TransitBox = {
         id: tbId,
         lat: tbCenter.lat,
@@ -108,26 +115,27 @@ export function buildNetwork(
         district: districtName,
         oltId: olt.id,
         orks: updatedTBOrks,
-        inCable: 'ОКСНН-8',
-        outCable: 'ОКСНН-4',
+        inCable: tbCableType,
+        outCable: 'ОК-8',
         muftaType: 'МТОК-96А',
       };
       transitBoxes.push(tb);
 
-      // Cable: OLT → TB (ОКСНН-8)
-      cables.push(makeCable('ОКСНН-8', 8, olt.id, tbId, [
+      // Cable: OLT → TB
+      cables.push(makeCable(tbCableType, olt.id, tbId, [
         [olt.lat, olt.lon], [tb.lat, tb.lon]
       ]));
 
-      // Cables: TB → each ORK (ОКСНН-4)
+      // Cables: TB → each ORK
       for (const ork of updatedTBOrks) {
-        cables.push(makeCable('ОКСНН-4', 4, tbId, ork.id, [
+        const orkCableType = selectCableType(ork.subscribers.length);
+        cables.push(makeCable(orkCableType, tbId, ork.id, [
           [tb.lat, tb.lon], [ork.lat, ork.lon]
         ]));
 
-        // Cables: ORK → each subscriber (ОКА-2)
+        // Cables: ORK → each subscriber (ОК-4, 2 fibers needed for 1 sub)
         for (const sub of ork.subscribers) {
-          cables.push(makeCable('ОКА-2', 2, ork.id, sub.id, [
+          cables.push(makeCable('ОК-4', ork.id, sub.id, [
             [ork.lat, ork.lon], [sub.lat, sub.lon]
           ]));
         }
@@ -149,7 +157,6 @@ export function buildNetwork(
 
 function makeCable(
   type: Cable['type'],
-  fibers: Cable['fibers'],
   fromId: string,
   toId: string,
   coords: [number, number][]
@@ -160,7 +167,7 @@ function makeCable(
   return {
     id: newCableId(),
     type,
-    fibers,
+    fibers: CABLE_FIBERS[type],
     fromId,
     toId,
     coords,

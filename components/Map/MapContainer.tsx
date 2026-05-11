@@ -32,14 +32,22 @@ interface Props {
 }
 
 const CABLE_COLORS: Record<string, string> = {
-  'ОКБ-10': '#00d4fc', 'ОКСНН-8': '#ec8a00', 'ОКСНН-4': '#3a92fb', 'ОКА-2': '#99d499',
+  'ОК-4':  '#99d499', 'ОК-8':  '#4ade80',
+  'ОК-12': '#3a92fb', 'ОК-16': '#60a5fa',
+  'ОК-24': '#f59e0b', 'ОК-32': '#fbbf24',
+  'ОК-48': '#ec8a00', 'ОК-96': '#f87171',
 };
 const CABLE_WEIGHTS: Record<string, number> = {
-  'ОКБ-10': 5, 'ОКСНН-8': 3.5, 'ОКСНН-4': 2.5, 'ОКА-2': 1.5,
+  'ОК-4':  1.5, 'ОК-8':  2,
+  'ОК-12': 2.5, 'ОК-16': 3,
+  'ОК-24': 3.5, 'ОК-32': 4,
+  'ОК-48': 5,   'ОК-96': 6,
 };
 const CABLE_LAYER_KEY: Record<string, keyof LayerVisibility> = {
-  'ОКБ-10': 'cableOKB10', 'ОКСНН-8': 'cableOKSNN8',
-  'ОКСНН-4': 'cableOKSNN4', 'ОКА-2': 'cableOKA2',
+  'ОК-4': 'cableOK4', 'ОК-8': 'cableOK8',
+  'ОК-12': 'cableOK12', 'ОК-16': 'cableOK16',
+  'ОК-24': 'cableOK24', 'ОК-32': 'cableOK32',
+  'ОК-48': 'cableOK48', 'ОК-96': 'cableOK96',
 };
 
 type BaseMap = 'dark' | 'light' | 'satellite' | 'hybrid';
@@ -249,12 +257,12 @@ export default function LeafletMap(props: Props) {
         for (const cable of cables) {
           const layerKey = CABLE_LAYER_KEY[cable.type];
           if (!layers[layerKey]) continue;
-          if (cable.type === 'ОКА-2' && zoom < 14) continue;
+          if (cable.type === 'ОК-4' && zoom < 14) continue;
 
           const poly = L.polyline(cable.coords, {
             color: CABLE_COLORS[cable.type] || '#888',
             weight: CABLE_WEIGHTS[cable.type] || 2,
-            opacity: cable.type === 'ОКА-2' ? 0.6 : 0.85,
+            opacity: cable.type === 'ОК-4' ? 0.6 : 0.85,
           });
           poly.bindTooltip(
             `<b>${cable.type}</b><br/>${cable.fromId} → ${cable.toId}<br/>Длина: ${Math.round(cable.lengthM)} м`,

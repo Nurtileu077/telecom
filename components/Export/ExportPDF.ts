@@ -77,21 +77,21 @@ export async function exportPDF(
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(9);
 
+  const cableSizes = ['ОК-4','ОК-8','ОК-12','ОК-16','ОК-24','ОК-32','ОК-48','ОК-96'] as const;
   const matRows: [string, string, string][] = [
-    ['OKB-10 (trunk, 8 fibers)', `${materials.cables['ОКБ-10']}`, 'm'],
-    ['OKSNN-8 (distribution)', `${materials.cables['ОКСНН-8']}`, 'm'],
-    ['OKSNN-4 (feeder)', `${materials.cables['ОКСНН-4']}`, 'm'],
-    ['OKA-2 (drop)', `${materials.cables['ОКА-2']}`, 'm'],
-    ['OLT Huawei MA5800-X7', `${materials.equipment.oltUnits}`, 'pcs'],
-    ['Splitter 1:4 PLC', `${materials.equipment.splitter_1x4_L1 + materials.equipment.splitter_1x4_L2}`, 'pcs'],
-    ['Splitter 1:8 PLC', `${materials.equipment.splitter_1x8_L2}`, 'pcs'],
-    ['Splitter 1:16 PLC', `${materials.equipment.splitter_1x16_L2}`, 'pcs'],
+    ...cableSizes
+      .filter((t) => (materials.cables[t] || 0) > 0)
+      .map((t) => [`Cable ${t} G.652D`, `${materials.cables[t]}`, 'm'] as [string, string, string]),
+    ['OLT Huawei MA5800 / ZTE C300', `${materials.equipment.oltUnits}`, 'pcs'],
+    ['Splitter 1:4 PLC (L1)', `${materials.equipment.splitter_1x4_L1}`, 'pcs'],
+    ['Splitter 1:4 PLC (L2)', `${materials.equipment.splitter_1x4_L2}`, 'pcs'],
+    ['Splitter 1:8 PLC (L2)', `${materials.equipment.splitter_1x8_L2}`, 'pcs'],
+    ['Splitter 1:16 PLC (L2)', `${materials.equipment.splitter_1x16_L2}`, 'pcs'],
     ['Mufta MTOK-96A IP68', `${materials.equipment.muftaMTOK96A}`, 'pcs'],
-    ['ORK cabinet IP55', `${materials.equipment.orkBox}`, 'pcs'],
-    ['Subscriber box ORB-32', `${materials.equipment.boxORB32}`, 'pcs'],
-    ['ONT ZTE F601', `${materials.equipment.ontZTE_F601}`, 'pcs'],
+    ['Box IP55', `${materials.equipment.boksCount}`, 'pcs'],
+    ['ONT ZTE F601 / HG8310M', `${materials.equipment.ontZTE_F601}`, 'pcs'],
     ['Pigtail SC/APC', `${materials.equipment.pigtailSCAPC}`, 'pcs'],
-    ['Patchcord', `${materials.equipment.patchcord}`, 'pcs'],
+    ['Patchcord SC/APC', `${materials.equipment.patchcord}`, 'pcs'],
     ['KDZS sleeve 40mm', `${materials.equipment.kdzsGilzy}`, 'pcs'],
     ['Anchor clamp', `${materials.equipment.clamps}`, 'pcs'],
   ];

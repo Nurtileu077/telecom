@@ -123,8 +123,7 @@ export default function CostTab({ materials, prices, setPrices }: Props) {
               <PriceInput label="Сплиттер 1:8" value={prices.splitter_1x8} onChange={(v) => updatePrice('splitter_1x8', v)} />
               <PriceInput label="Сплиттер 1:16" value={prices.splitter_1x16} onChange={(v) => updatePrice('splitter_1x16', v)} />
               <PriceInput label="Муфта МТОК-96А" value={prices.mufta} onChange={(v) => updatePrice('mufta', v)} />
-              <PriceInput label="ОРК шкаф" value={prices.orkBox} onChange={(v) => updatePrice('orkBox', v)} />
-              <PriceInput label="Бокс ОРБ-32" value={prices.ontBox} onChange={(v) => updatePrice('ontBox', v)} />
+              <PriceInput label="Бокс распределительный" value={prices.boks} onChange={(v) => updatePrice('boks', v)} />
               <PriceInput label="ONT ZTE F601" value={prices.ont} onChange={(v) => updatePrice('ont', v)} />
               <PriceInput label="Пигтейл" value={prices.pigtail} onChange={(v) => updatePrice('pigtail', v)} />
               <PriceInput label="Патч-корд" value={prices.patchcord} onChange={(v) => updatePrice('patchcord', v)} />

@@ -16,8 +16,8 @@ export interface ORK {
   splitter: '1:4' | '1:8' | '1:16';
   tbId: string;
   subscribers: Subscriber[];
-  cableType: 'ОКСНН-4';
-  box: 'ОРБ-32';
+  cableType: CableType;
+  boxType: string;
 }
 
 export interface TransitBox {
@@ -27,8 +27,8 @@ export interface TransitBox {
   district: string;
   oltId: string;
   orks: ORK[];
-  inCable: 'ОКСНН-8';
-  outCable: 'ОКСНН-4';
+  inCable: CableType;
+  outCable: CableType;
   muftaType: 'МТОК-96А';
 }
 
@@ -43,12 +43,22 @@ export interface OLT {
   l1Splitter: '1:4';
 }
 
-export type CableType = 'ОКБ-10' | 'ОКСНН-8' | 'ОКСНН-4' | 'ОКА-2';
+export type CableType = 'ОК-4' | 'ОК-8' | 'ОК-12' | 'ОК-16' | 'ОК-24' | 'ОК-32' | 'ОК-48' | 'ОК-96';
+
+export const CABLE_SIZES: CableType[] = ['ОК-4', 'ОК-8', 'ОК-12', 'ОК-16', 'ОК-24', 'ОК-32', 'ОК-48', 'ОК-96'];
+export const CABLE_FIBERS: Record<CableType, number> = {
+  'ОК-4': 4, 'ОК-8': 8, 'ОК-12': 12, 'ОК-16': 16,
+  'ОК-24': 24, 'ОК-32': 32, 'ОК-48': 48, 'ОК-96': 96,
+};
+export function selectCableType(subs: number, sparePerSub = 1): CableType {
+  const needed = subs * (1 + sparePerSub);
+  return CABLE_SIZES.find((t) => CABLE_FIBERS[t] >= needed) ?? 'ОК-96';
+}
 
 export interface Cable {
   id: string;
   type: CableType;
-  fibers: 8 | 4 | 2;
+  fibers: number;
   fromId: string;
   toId: string;
   coords: [number, number][];
@@ -120,10 +130,14 @@ export interface ProjectSettings {
 
 export interface Materials {
   cables: {
-    'ОКБ-10': number;
-    'ОКСНН-8': number;
-    'ОКСНН-4': number;
-    'ОКА-2': number;
+    'ОК-4': number;
+    'ОК-8': number;
+    'ОК-12': number;
+    'ОК-16': number;
+    'ОК-24': number;
+    'ОК-32': number;
+    'ОК-48': number;
+    'ОК-96': number;
     total: number;
   };
   equipment: {
@@ -133,8 +147,7 @@ export interface Materials {
     splitter_1x8_L2: number;
     splitter_1x16_L2: number;
     muftaMTOK96A: number;
-    orkBox: number;
-    boxORB32: number;
+    boksCount: number;
     ontZTE_F601: number;
     pigtailSCAPC: number;
     patchcord: number;
@@ -157,10 +170,14 @@ export interface LayerVisibility {
   ork: boolean;
   subscribers: boolean;
   cables: boolean;
-  cableOKB10: boolean;
-  cableOKSNN8: boolean;
-  cableOKSNN4: boolean;
-  cableOKA2: boolean;
+  cableOK4: boolean;
+  cableOK8: boolean;
+  cableOK12: boolean;
+  cableOK16: boolean;
+  cableOK24: boolean;
+  cableOK32: boolean;
+  cableOK48: boolean;
+  cableOK96: boolean;
 }
 
 export const DEFAULT_SETTINGS: ProjectSettings = {
@@ -174,13 +191,16 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
 
 export interface PriceCatalog {
   currency: string;
-  cables: { 'ОКБ-10': number; 'ОКСНН-8': number; 'ОКСНН-4': number; 'ОКА-2': number };
+  cables: {
+    'ОК-4': number; 'ОК-8': number; 'ОК-12': number; 'ОК-16': number;
+    'ОК-24': number; 'ОК-32': number; 'ОК-48': number; 'ОК-96': number;
+  };
   olt: number;
   splitter_1x4: number;
   splitter_1x8: number;
   splitter_1x16: number;
   mufta: number;
-  orkBox: number;
+  boks: number;
   ontBox: number;
   ont: number;
   pigtail: number;
@@ -192,13 +212,16 @@ export interface PriceCatalog {
 
 export const DEFAULT_PRICES: PriceCatalog = {
   currency: '₸',
-  cables: { 'ОКБ-10': 350, 'ОКСНН-8': 280, 'ОКСНН-4': 180, 'ОКА-2': 95 },
+  cables: {
+    'ОК-4': 95, 'ОК-8': 140, 'ОК-12': 180, 'ОК-16': 220,
+    'ОК-24': 290, 'ОК-32': 360, 'ОК-48': 490, 'ОК-96': 760,
+  },
   olt: 2500000,
   splitter_1x4: 8500,
   splitter_1x8: 11000,
   splitter_1x16: 18000,
   mufta: 25000,
-  orkBox: 12000,
+  boks: 12000,
   ontBox: 1800,
   ont: 9500,
   pigtail: 350,

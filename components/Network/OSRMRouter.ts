@@ -62,9 +62,9 @@ export async function routeCables(
   onProgress: ProgressCallback,
   signal: AbortSignal,
 ): Promise<Cable[]> {
-  const priority: Cable['type'][] = ['ОКБ-10', 'ОКСНН-8', 'ОКСНН-4', 'ОКА-2'];
+  const priority: Cable['type'][] = ['ОК-96', 'ОК-48', 'ОК-32', 'ОК-24', 'ОК-16', 'ОК-12', 'ОК-8', 'ОК-4'];
   const toRoute = cables
-    .filter((c) => routeDrops || c.type !== 'ОКА-2')
+    .filter((c) => routeDrops || c.type !== 'ОК-4')
     .sort((a, b) => priority.indexOf(a.type) - priority.indexOf(b.type));
 
   const result = new Map<string, Cable>(cables.map((c) => [c.id, c]));

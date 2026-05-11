@@ -1,9 +1,5 @@
-import { District, Cable, Materials, ProjectSettings, ValidationIssue } from '@/types/network';
+import { District, Cable, Materials, ProjectSettings, ValidationIssue, CABLE_SIZES, CableType } from '@/types/network';
 import { haversineM } from './KMeans';
-
-function cableLength(cables: Cable[], type: Cable['type']): number {
-  return cables.filter((c) => c.type === type).reduce((s, c) => s + c.lengthM, 0);
-}
 
 export function calculateMaterials(
   districts: District[],
@@ -12,11 +8,15 @@ export function calculateMaterials(
 ): Materials {
   const reserve = settings.cableReserve;
 
-  const okb10M = cableLength(cables, 'ОКБ-10') * reserve;
-  const oksnн8M = cableLength(cables, 'ОКСНН-8') * reserve;
-  const oksnн4M = cableLength(cables, 'ОКСНН-4') * reserve;
-  const oka2M = cableLength(cables, 'ОКА-2') * reserve;
-  const totalM = okb10M + oksnн8M + oksnн4M + oka2M;
+  // Build cables object dynamically
+  const cablesByType = {} as Record<CableType, number>;
+  for (const t of CABLE_SIZES) cablesByType[t] = 0;
+  for (const c of cables) {
+    if (cablesByType[c.type] !== undefined) {
+      cablesByType[c.type] = (cablesByType[c.type] || 0) + c.lengthM * reserve;
+    }
+  }
+  const totalM = Object.values(cablesByType).reduce((a, b) => a + b, 0);
   const totalKm = totalM / 1000;
 
   const oltUnits = districts.length;
@@ -46,16 +46,23 @@ export function calculateMaterials(
 
   const pigtailSCAPC = totalMufta * 12 + subCount;
   const kdzsGilzy = Math.ceil(totalKm * 4) + 200;
-  const aerialM = (oksnн8M + oksnн4M);
+  // Use distribution cables (ОК-8 and above) for clamp estimation
+  const aerialM = (cablesByType['ОК-8'] || 0) + (cablesByType['ОК-12'] || 0) +
+    (cablesByType['ОК-16'] || 0) + (cablesByType['ОК-24'] || 0) +
+    (cablesByType['ОК-32'] || 0) + (cablesByType['ОК-48'] || 0) + (cablesByType['ОК-96'] || 0);
   const clamps = Math.ceil(aerialM / 50);
   const cable_reserve_m = totalM - (totalM / reserve);
 
   return {
     cables: {
-      'ОКБ-10': Math.round(okb10M),
-      'ОКСНН-8': Math.round(oksnн8M),
-      'ОКСНН-4': Math.round(oksnн4M),
-      'ОКА-2': Math.round(oka2M),
+      'ОК-4':  Math.round(cablesByType['ОК-4']  || 0),
+      'ОК-8':  Math.round(cablesByType['ОК-8']  || 0),
+      'ОК-12': Math.round(cablesByType['ОК-12'] || 0),
+      'ОК-16': Math.round(cablesByType['ОК-16'] || 0),
+      'ОК-24': Math.round(cablesByType['ОК-24'] || 0),
+      'ОК-32': Math.round(cablesByType['ОК-32'] || 0),
+      'ОК-48': Math.round(cablesByType['ОК-48'] || 0),
+      'ОК-96': Math.round(cablesByType['ОК-96'] || 0),
       total: Math.round(totalM),
     },
     equipment: {
@@ -65,8 +72,7 @@ export function calculateMaterials(
       splitter_1x8_L2,
       splitter_1x16_L2,
       muftaMTOK96A: totalMufta,
-      orkBox: orkCount,
-      boxORB32: subCount,
+      boksCount: orkCount,
       ontZTE_F601: subCount,
       pigtailSCAPC,
       patchcord: subCount,
@@ -106,7 +112,7 @@ export function validateNetwork(districts: District[], cables: Cable[]): Validat
   }
 
   // Drop cables > 300m
-  const dropCables = cables.filter((c) => c.type === 'ОКА-2' && c.lengthM > 300);
+  const dropCables = cables.filter((c) => c.type === 'ОК-4' && c.lengthM > 300);
   for (const c of dropCables.slice(0, 10)) {
     issues.push({
       type: 'warning',

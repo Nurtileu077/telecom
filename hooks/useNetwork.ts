@@ -19,7 +19,8 @@ export interface OSRMProgress {
 
 const DEFAULT_LAYERS: LayerVisibility = {
   olt: true, tb: true, ork: true, subscribers: true, cables: true,
-  cableOKB10: true, cableOKSNN8: true, cableOKSNN4: true, cableOKA2: true,
+  cableOK4: true, cableOK8: true, cableOK12: true, cableOK16: true,
+  cableOK24: true, cableOK32: true, cableOK48: true, cableOK96: true,
 };
 
 const STORAGE_KEY = 'gpon-projects-v2';
