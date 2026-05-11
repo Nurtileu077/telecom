@@ -52,22 +52,22 @@ const CABLE_LAYER_KEY: Record<string, keyof LayerVisibility> = {
 
 type BaseMap = 'dark' | 'light' | 'satellite' | 'hybrid';
 
-const BASEMAPS: Record<BaseMap, { url: string; attribution: string; subdomains?: string; maxZoom?: number }> = {
+const BASEMAPS: Record<BaseMap, { url: string; attribution: string; subdomains?: string; maxZoom?: number; crossOrigin?: boolean }> = {
   dark: {
-    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    attribution: '©OpenStreetMap ©CartoDB', subdomains: 'abcd', maxZoom: 20,
+    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+    attribution: '©OpenStreetMap ©CartoDB', subdomains: 'abcd', maxZoom: 19, crossOrigin: true,
   },
   light: {
-    url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-    attribution: '©OpenStreetMap ©CartoDB', subdomains: 'abcd', maxZoom: 20,
+    url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+    attribution: '©OpenStreetMap ©CartoDB', subdomains: 'abcd', maxZoom: 19, crossOrigin: true,
   },
   satellite: {
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    attribution: '©Esri World Imagery', maxZoom: 19,
+    attribution: '©Esri World Imagery', maxZoom: 19, crossOrigin: true,
   },
   hybrid: {
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    attribution: '©Esri World Imagery', maxZoom: 19,
+    attribution: '©Esri World Imagery', maxZoom: 19, crossOrigin: true,
   },
 };
 
@@ -103,10 +103,13 @@ export default function LeafletMap(props: Props) {
       L.control.zoom({ position: 'bottomright' }).addTo(map);
 
       // Base layer
-      const tile = L.tileLayer(BASEMAPS.dark.url, {
-        attribution: BASEMAPS.dark.attribution,
-        subdomains: (BASEMAPS.dark.subdomains ?? '') as any,
-        maxZoom: BASEMAPS.dark.maxZoom ?? 20,
+      const bm0 = BASEMAPS.dark;
+      const tile = L.tileLayer(bm0.url, {
+        attribution: bm0.attribution,
+        subdomains: (bm0.subdomains ?? '') as any,
+        maxZoom: bm0.maxZoom ?? 19,
+        crossOrigin: bm0.crossOrigin ?? false,
+        errorTileUrl: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
       }).addTo(map);
       tileLayerRef.current = tile;
 
@@ -231,7 +234,11 @@ export default function LeafletMap(props: Props) {
       if (hybridLabelsRef.current) { hybridLabelsRef.current.remove(); hybridLabelsRef.current = null; }
       const bm = BASEMAPS[baseMap];
       const tile = L.tileLayer(bm.url, {
-        attribution: bm.attribution, subdomains: (bm.subdomains ?? '') as any, maxZoom: bm.maxZoom ?? 20,
+        attribution: bm.attribution,
+        subdomains: (bm.subdomains ?? '') as any,
+        maxZoom: bm.maxZoom ?? 19,
+        crossOrigin: bm.crossOrigin ?? false,
+        errorTileUrl: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
       }).addTo(mapRef.current);
       tileLayerRef.current = tile;
       // For hybrid: add CartoDB labels overlay on top of Esri satellite
