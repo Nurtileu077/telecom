@@ -116,6 +116,10 @@ export default function LeafletMap(props: Props) {
       measureGroupRef.current = L.layerGroup().addTo(map);
       mapRef.current = map;
 
+      // Force Leaflet to recalculate container size after layout settles
+      setTimeout(() => { map.invalidateSize(); }, 100);
+      setTimeout(() => { map.invalidateSize(); }, 500);
+
       if (propsRef.current.flyToRef) {
         propsRef.current.flyToRef.current = (lat, lon, zoom = 16) => {
           map.flyTo([lat, lon], zoom, { duration: 1.0 });
@@ -538,8 +542,8 @@ export default function LeafletMap(props: Props) {
   }, []);
 
   return (
-    <div className="relative w-full h-full">
-      <div ref={containerRef} className="w-full h-full" />
+    <div className="relative w-full h-full" style={{ position: 'absolute', inset: 0 }}>
+      <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'absolute', inset: 0 }} />
 
       {/* Basemap switcher */}
       <div className="absolute top-3 right-3 flex flex-col gap-1 z-[400]">
