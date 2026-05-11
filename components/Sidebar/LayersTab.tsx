@@ -13,7 +13,8 @@ function Toggle({ on, onChange, label }: { on: boolean; onChange: () => void; la
       <span className="text-xs text-[#94a3b8]">{label}</span>
       <button
         onClick={onChange}
-        className={`w-8 h-4 rounded-full transition-colors duration-200 relative ${on ? 'bg-[#38bdf8]' : 'bg-[#1e3a5f]'}`}
+        className={`w-8 h-4 rounded-full transition-colors duration-200 relative overflow-hidden ${on ? 'bg-[#38bdf8]' : 'bg-[#1e3a5f]'}`}
+        style={{ minWidth: '2rem' }}
       >
         <span className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform duration-200 ${on ? 'translate-x-4' : 'translate-x-0.5'}`} />
       </button>
@@ -58,7 +59,8 @@ export default function LayersTab({ districts, layers, toggleLayer }: Props) {
                 </div>
                 <button
                   onClick={() => toggleLayer(key)}
-                  className={`w-8 h-4 rounded-full transition-colors duration-200 relative ${layers[key] ? 'bg-[#38bdf8]' : 'bg-[#1e3a5f]'}`}
+                  className={`w-8 h-4 rounded-full transition-colors duration-200 relative overflow-hidden ${layers[key] ? 'bg-[#38bdf8]' : 'bg-[#1e3a5f]'}`}
+                  style={{ minWidth: '2rem' }}
                 >
                   <span className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform duration-200 ${layers[key] ? 'translate-x-4' : 'translate-x-0.5'}`} />
                 </button>

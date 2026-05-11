@@ -44,22 +44,22 @@ const CABLE_LAYER_KEY: Record<string, keyof LayerVisibility> = {
 
 type BaseMap = 'dark' | 'light' | 'satellite' | 'hybrid';
 
-const BASEMAPS: Record<BaseMap, { url: string; attribution: string; subdomains?: string }> = {
+const BASEMAPS: Record<BaseMap, { url: string; attribution: string; subdomains?: string; maxZoom?: number }> = {
   dark: {
     url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    attribution: '©OSM ©CartoDB', subdomains: 'abcd',
+    attribution: '©OpenStreetMap ©CartoDB', subdomains: 'abcd', maxZoom: 20,
   },
   light: {
-    url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-    attribution: '©OSM ©CartoDB', subdomains: 'abcd',
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution: '©OpenStreetMap contributors', maxZoom: 19,
   },
   satellite: {
     url: 'https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
-    attribution: '©Google', subdomains: '0123',
+    attribution: '©Google Satellite', subdomains: '0123', maxZoom: 20,
   },
   hybrid: {
     url: 'https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
-    attribution: '©Google', subdomains: '0123',
+    attribution: '©Google Hybrid', subdomains: '0123', maxZoom: 20,
   },
 };
 
@@ -97,8 +97,8 @@ export default function LeafletMap(props: Props) {
       // Base layer
       const tile = L.tileLayer(BASEMAPS.dark.url, {
         attribution: BASEMAPS.dark.attribution,
-        subdomains: BASEMAPS.dark.subdomains as any,
-        maxZoom: 20,
+        subdomains: (BASEMAPS.dark.subdomains ?? '') as any,
+        maxZoom: BASEMAPS.dark.maxZoom ?? 20,
       }).addTo(map);
       tileLayerRef.current = tile;
 
@@ -161,6 +161,26 @@ export default function LeafletMap(props: Props) {
       map.on('zoomend', () => {
         renderData();
       });
+
+      // After map ready: render existing data and fit bounds if already loaded
+      setTimeout(() => {
+        renderData();
+        renderAnnotations();
+        const districts = propsRef.current.districts;
+        if (districts.length > 0) {
+          const pts: [number, number][] = [];
+          for (const d of districts) {
+            pts.push([d.olt.lat, d.olt.lon]);
+            for (const tb of d.olt.transitBoxes) {
+              pts.push([tb.lat, tb.lon]);
+              for (const ork of tb.orks) pts.push([ork.lat, ork.lon]);
+            }
+          }
+          if (pts.length > 0) {
+            try { map.fitBounds(L.latLngBounds(pts), { padding: [60, 60], maxZoom: 15 }); } catch {}
+          }
+        }
+      }, 200);
     });
 
     return () => {
@@ -199,7 +219,7 @@ export default function LeafletMap(props: Props) {
       if (hybridLabelsRef.current) { hybridLabelsRef.current.remove(); hybridLabelsRef.current = null; }
       const bm = BASEMAPS[baseMap];
       const tile = L.tileLayer(bm.url, {
-        attribution: bm.attribution, subdomains: bm.subdomains as any, maxZoom: 20,
+        attribution: bm.attribution, subdomains: (bm.subdomains ?? '') as any, maxZoom: bm.maxZoom ?? 20,
       }).addTo(mapRef.current);
       tileLayerRef.current = tile;
       // hybrid mode already includes labels via lyrs=y — no overlay needed
@@ -467,25 +487,8 @@ export default function LeafletMap(props: Props) {
     measureGroupRef.current.addLayer(label);
   }
 
-  // Re-render whenever data changes; auto-fit bounds when districts first appear
-  useEffect(() => {
-    renderData();
-    const map = mapRef.current;
-    if (!map || props.districts.length === 0) return;
-    import('leaflet').then((L) => {
-      const allPoints: [number, number][] = [];
-      for (const d of props.districts) {
-        allPoints.push([d.olt.lat, d.olt.lon]);
-        for (const tb of d.olt.transitBoxes) {
-          allPoints.push([tb.lat, tb.lon]);
-          for (const ork of tb.orks) allPoints.push([ork.lat, ork.lon]);
-        }
-      }
-      if (allPoints.length > 0) {
-        try { map.fitBounds(L.latLngBounds(allPoints), { padding: [60, 60], maxZoom: 15 }); } catch {}
-      }
-    });
-  }, [props.districts, props.cables, props.layers, props.editMode]);
+  // Re-render whenever data changes
+  useEffect(() => { renderData(); }, [props.districts, props.cables, props.layers, props.editMode]);
   useEffect(() => { renderAnnotations(); }, [props.annotations]);
 
   // Heatmap
