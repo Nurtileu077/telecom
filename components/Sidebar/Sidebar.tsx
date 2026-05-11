@@ -72,20 +72,20 @@ export default function Sidebar(props: Props) {
 
   return (
     <aside className="w-[300px] flex-shrink-0 bg-[#0d1b2a] border-r border-[#1e3a5f] flex flex-col h-full">
-      <div className="grid grid-cols-9 border-b border-[#1e3a5f] gap-px bg-[#1e3a5f]/30">
+      <div className="flex flex-wrap border-b border-[#1e3a5f] bg-[#0d1b2a]">
         {TABS.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`py-2 px-1 text-[9px] font-medium transition-all duration-200 flex flex-col items-center gap-0.5 ${
+            className={`flex-1 min-w-[54px] py-1.5 px-1 text-[9px] font-medium transition-all duration-200 flex flex-col items-center gap-0.5 border-b-2 ${
               activeTab === tab.id
-                ? 'bg-[#38bdf8]/10 text-[#38bdf8]'
-                : 'bg-[#0d1b2a] text-[#64748b] hover:text-[#94a3b8]'
+                ? 'border-[#38bdf8] bg-[#38bdf8]/10 text-[#38bdf8]'
+                : 'border-transparent text-[#64748b] hover:text-[#94a3b8] hover:bg-[#1e3a5f]/20'
             }`}
             title={tab.label}
           >
-            <span className="text-sm">{tab.icon}</span>
-            <span className="text-[8px]">{tab.label}</span>
+            <span className="text-sm leading-none">{tab.icon}</span>
+            <span className="text-[8px] leading-tight mt-0.5">{tab.label}</span>
           </button>
         ))}
       </div>

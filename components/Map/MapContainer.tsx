@@ -54,12 +54,12 @@ const BASEMAPS: Record<BaseMap, { url: string; attribution: string; subdomains?:
     attribution: '©OSM ©CartoDB', subdomains: 'abcd',
   },
   satellite: {
-    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    attribution: '©Esri',
+    url: 'https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+    attribution: '©Google', subdomains: '0123',
   },
   hybrid: {
-    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    attribution: '©Esri', // overlay with labels added separately
+    url: 'https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+    attribution: '©Google', subdomains: '0123',
   },
 };
 
@@ -202,12 +202,7 @@ export default function LeafletMap(props: Props) {
         attribution: bm.attribution, subdomains: bm.subdomains as any, maxZoom: 20,
       }).addTo(mapRef.current);
       tileLayerRef.current = tile;
-      if (baseMap === 'hybrid') {
-        const lbl = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
-          maxZoom: 20, attribution: '',
-        }).addTo(mapRef.current);
-        hybridLabelsRef.current = lbl;
-      }
+      // hybrid mode already includes labels via lyrs=y — no overlay needed
     });
   }, [baseMap]);
 
@@ -472,8 +467,25 @@ export default function LeafletMap(props: Props) {
     measureGroupRef.current.addLayer(label);
   }
 
-  // Re-render whenever data changes
-  useEffect(() => { renderData(); }, [props.districts, props.cables, props.layers, props.editMode]);
+  // Re-render whenever data changes; auto-fit bounds when districts first appear
+  useEffect(() => {
+    renderData();
+    const map = mapRef.current;
+    if (!map || props.districts.length === 0) return;
+    import('leaflet').then((L) => {
+      const allPoints: [number, number][] = [];
+      for (const d of props.districts) {
+        allPoints.push([d.olt.lat, d.olt.lon]);
+        for (const tb of d.olt.transitBoxes) {
+          allPoints.push([tb.lat, tb.lon]);
+          for (const ork of tb.orks) allPoints.push([ork.lat, ork.lon]);
+        }
+      }
+      if (allPoints.length > 0) {
+        try { map.fitBounds(L.latLngBounds(allPoints), { padding: [60, 60], maxZoom: 15 }); } catch {}
+      }
+    });
+  }, [props.districts, props.cables, props.layers, props.editMode]);
   useEffect(() => { renderAnnotations(); }, [props.annotations]);
 
   // Heatmap
