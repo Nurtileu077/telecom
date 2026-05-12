@@ -1,5 +1,6 @@
 'use client';
 import { useState, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { Subscriber, ProjectSettings } from '@/types/network';
 import { importExcel } from './ExcelImporter';
 import { importKmz } from './KmzImporter';
@@ -103,9 +104,17 @@ export default function ImportModal({ onClose, onBuild, currentSettings, hasExis
       }, {} as Record<string, number>)
     : {};
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
-      <div className="relative bg-[#0d1b2a] border border-[#1e3a5f] rounded-xl shadow-2xl w-[500px] max-h-[90vh] overflow-y-auto">
+  const ui = (
+    <div
+      className="fixed inset-0 z-[10050] flex items-center justify-center bg-black/70 p-3"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="import-modal-title"
+    >
+      <div
+        className="relative bg-[#0d1b2a] border border-[#1e3a5f] rounded-xl shadow-2xl w-full max-w-[500px] max-h-[90vh] overflow-y-auto animate-fade-in"
+        onClick={(e) => e.stopPropagation()}
+      >
         {isSubmitting && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 rounded-xl bg-[#0a0e1a]/85 backdrop-blur-sm">
             <div className="w-8 h-8 border-2 border-[#38bdf8] border-t-transparent rounded-full animate-spin" />
@@ -113,7 +122,7 @@ export default function ImportModal({ onClose, onBuild, currentSettings, hasExis
           </div>
         )}
         <div className="flex items-center justify-between p-4 border-b border-[#1e3a5f]">
-          <h2 className="text-sm font-semibold text-[#e2e8f0]">Импорт данных</h2>
+          <h2 id="import-modal-title" className="text-sm font-semibold text-[#e2e8f0]">Импорт данных</h2>
           <button type="button" onClick={onClose} disabled={isSubmitting} className="text-[#64748b] hover:text-[#e2e8f0] transition-colors disabled:opacity-40">✕</button>
         </div>
 
@@ -307,4 +316,7 @@ export default function ImportModal({ onClose, onBuild, currentSettings, hasExis
       </div>
     </div>
   );
+
+  if (typeof document === 'undefined') return null;
+  return createPortal(ui, document.body);
 }

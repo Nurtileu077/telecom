@@ -294,8 +294,8 @@ export default function HomePage() {
 
       {/* Add subscriber dialog */}
       {showAddSub && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
-          <div className="bg-[#0d1b2a] border border-[#1e3a5f] rounded-xl shadow-2xl w-[360px] p-4">
+        <div className="fixed inset-0 z-[10050] flex items-center justify-center bg-black/70 p-3">
+          <div className="bg-[#0d1b2a] border border-[#1e3a5f] rounded-xl shadow-2xl w-full max-w-[360px] p-4 animate-fade-in" onClick={(e) => e.stopPropagation()}>
             <h2 className="text-sm font-semibold text-[#e2e8f0] mb-3">➕ Новый абонент</h2>
             <div className="space-y-2 mb-4">
               <div className="text-[10px] text-[#64748b]">
@@ -329,8 +329,8 @@ export default function HomePage() {
 
       {/* Help modal */}
       {showHelp && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in" onClick={() => setShowHelp(false)}>
-          <div className="bg-[#0d1b2a] border border-[#1e3a5f] rounded-xl shadow-2xl w-[520px] max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[10050] flex items-center justify-center bg-black/70 p-3" onClick={() => setShowHelp(false)}>
+          <div className="bg-[#0d1b2a] border border-[#1e3a5f] rounded-xl shadow-2xl w-full max-w-[520px] max-h-[85vh] overflow-y-auto animate-fade-in" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between p-4 border-b border-[#1e3a5f]">
               <h2 className="text-sm font-semibold text-[#e2e8f0]">📖 Справка и горячие клавиши</h2>
               <button onClick={() => setShowHelp(false)} className="text-[#64748b] hover:text-[#e2e8f0]">✕</button>
