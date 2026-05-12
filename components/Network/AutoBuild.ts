@@ -119,7 +119,9 @@ export function buildNetwork(
     for (let i = 0; i < tbClusters.length; i++) {
       const cluster = tbClusters[i];
       if (cluster.length === 0) continue;
-      const tbCenter = centroid(cluster);
+      // Bias TB toward OLT: include OLT position in centroid so the muft is placed
+      // on the OLT-facing side of the cluster, avoiding cable backtracking
+      const tbCenter = centroid([{ lat: oltPos.lat, lon: oltPos.lon, id: '_olt' }, ...cluster]);
       const tbId = `Муфта-${districtName.slice(0, 4).replace(/\s/g, '')}-${i + 1}`;
 
       const tbOrks = cluster
@@ -165,7 +167,7 @@ export function buildNetwork(
 
         // Cables: ORK/Бокс → each subscriber
         // P2P: ОК-8 aerial drop; GPON: ОК-4 indoor drop
-        const dropType = isP2P ? 'ОК-8' : 'ОК-4';
+        const dropType = 'ОК-4';
         for (const sub of ork.subscribers) {
           cables.push(makeCableForSub(dropType, ork.id, sub, [
             [ork.lat, ork.lon], [sub.lat, sub.lon],

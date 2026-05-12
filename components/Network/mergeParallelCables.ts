@@ -22,15 +22,19 @@ function selectCableForFibers(fibers: number): Cable['type'] {
   return CABLE_SIZES.find((t) => CABLE_FIBERS[t] >= fibers) ?? 'ОК-96';
 }
 
-// Compare two coordinates with ~11 m tolerance (4 decimal places)
-function coordsMatch(a: [number, number], b: [number, number]): boolean {
-  return Math.abs(a[0] - b[0]) < 0.0001 && Math.abs(a[1] - b[1]) < 0.0001;
+// Snap a coordinate to a 0.0003° grid (~33 m) for fuzzy road-segment matching.
+// OSRM's overview=full can return slightly different intermediate waypoints for
+// routes of different lengths on the same physical road — the grid absorbs those
+// variations while still distinguishing parallel streets (typically >30 m apart).
+const GRID = 0.0003;
+function coordKey(c: [number, number]): string {
+  return `${Math.round(c[0] / GRID)},${Math.round(c[1] / GRID)}`;
 }
 
-// Length of the shared coordinate prefix between two routes
+// Length of the shared coordinate prefix between two routes (grid-snapped comparison)
 function sharedPrefixLen(a: [number, number][], b: [number, number][]): number {
   let i = 0;
-  while (i < a.length && i < b.length && coordsMatch(a[i], b[i])) i++;
+  while (i < a.length && i < b.length && coordKey(a[i]) === coordKey(b[i])) i++;
   return i;
 }
 
