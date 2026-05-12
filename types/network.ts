@@ -73,6 +73,14 @@ export interface District {
   subscribers: Subscriber[];
 }
 
+export interface InlineJoint {
+  id: string;
+  lat: number;
+  lon: number;
+  parentId: string;
+  branchCount: number;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -80,6 +88,7 @@ export interface Project {
   updatedAt: string;
   districts: District[];
   cables: Cable[];
+  joints?: InlineJoint[];
   annotations: MapAnnotation[];
   importHistory: ImportRecord[];
   settings: ProjectSettings;

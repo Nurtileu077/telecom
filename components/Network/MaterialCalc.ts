@@ -4,7 +4,8 @@ import { haversineM } from './KMeans';
 export function calculateMaterials(
   districts: District[],
   cables: Cable[],
-  settings: ProjectSettings
+  settings: ProjectSettings,
+  extraJoints: number = 0,
 ): Materials {
   const reserve = settings.cableReserve;
 
@@ -41,8 +42,10 @@ export function calculateMaterials(
     }
   }
 
+  // Стыковочные муфты на длинных перегонах + транзитные муфты от консолидации
+  // (точки расхождения магистрали на ответвления).
   const spliceJoints = Math.ceil(totalKm / 2);
-  const totalMufta = tbCount + spliceJoints;
+  const totalMufta = tbCount + spliceJoints + extraJoints;
 
   const pigtailSCAPC = totalMufta * 12 + subCount;
   const kdzsGilzy = Math.ceil(totalKm * 4) + 200;

@@ -2,13 +2,14 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   District, Cable, LayerVisibility, MapAnnotation, AnnotationType,
-  ANNOTATION_PRESETS,
+  ANNOTATION_PRESETS, InlineJoint,
 } from '@/types/network';
 import type { DrawingTool } from '@/components/Sidebar/NotesTab';
 
 interface Props {
   districts: District[];
   cables: Cable[];
+  joints?: InlineJoint[];
   layers: LayerVisibility;
   flyToRef?: React.MutableRefObject<((lat: number, lon: number, zoom?: number) => void) | null>;
   mapElRef?: React.MutableRefObject<HTMLElement | null>;
@@ -260,7 +261,7 @@ export default function LeafletMap(props: Props) {
     if (!map || !group) return;
     import('leaflet').then((L) => {
       group.clearLayers();
-      const { districts, cables, layers } = propsRef.current;
+      const { districts, cables, layers, joints } = propsRef.current;
       const zoom = map.getZoom();
 
       if (layers.cables) {
@@ -279,6 +280,22 @@ export default function LeafletMap(props: Props) {
             { sticky: true, className: 'text-xs' },
           );
           group.addLayer(poly);
+        }
+      }
+
+      // In-line муфты — точки расхождения магистрали (создаются консолидацией)
+      if (layers.tb && joints && zoom >= 13) {
+        for (const j of joints) {
+          const icon = L.divIcon({
+            html: `<div style="width:14px;height:14px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;background:#0d1b2a;border:1.5px solid #38bdf8;border-radius:50%;color:#38bdf8;box-shadow:0 0 4px rgba(56,189,248,0.6)">⊕</div>`,
+            className: '', iconSize: [14, 14], iconAnchor: [7, 7],
+          });
+          const m = L.marker([j.lat, j.lon], { icon });
+          m.bindTooltip(
+            `<b>Транзитная муфта</b><br/>${j.id}<br/>Ответвлений: ${j.branchCount}`,
+            { sticky: true, className: 'text-xs' },
+          );
+          group.addLayer(m);
         }
       }
 
@@ -506,7 +523,7 @@ export default function LeafletMap(props: Props) {
   }
 
   // Re-render whenever data changes
-  useEffect(() => { renderData(); }, [props.districts, props.cables, props.layers, props.editMode]);
+  useEffect(() => { renderData(); }, [props.districts, props.cables, props.joints, props.layers, props.editMode]);
   useEffect(() => { renderAnnotations(); }, [props.annotations]);
 
   // Heatmap

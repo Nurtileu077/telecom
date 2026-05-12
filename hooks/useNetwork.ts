@@ -3,11 +3,12 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import {
   District, Cable, Subscriber, ProjectSettings, Materials, LayerVisibility,
   DEFAULT_SETTINGS, Project, MapAnnotation, ImportRecord, ValidationIssue,
-  PriceCatalog, DEFAULT_PRICES,
+  PriceCatalog, DEFAULT_PRICES, InlineJoint,
 } from '@/types/network';
 import { buildNetwork } from '@/components/Network/AutoBuild';
 import { calculateMaterials, validateNetwork } from '@/components/Network/MaterialCalc';
 import { routeCables } from '@/components/Network/OSRMRouter';
+import { consolidateCables } from '@/components/Network/Consolidation';
 
 export type BuildStatus = 'idle' | 'importing' | 'clustering' | 'routing' | 'calculating' | 'done' | 'error';
 
@@ -36,6 +37,7 @@ export function useNetwork() {
   const [projectName, setProjectName] = useState('Новый проект');
   const [districts, setDistricts] = useState<District[]>([]);
   const [cables, setCables] = useState<Cable[]>([]);
+  const [joints, setJoints] = useState<InlineJoint[]>([]);
   const [annotations, setAnnotations] = useState<MapAnnotation[]>([]);
   const [importHistory, setImportHistory] = useState<ImportRecord[]>([]);
   const [allSubscribers, setAllSubscribers] = useState<Subscriber[]>([]);
@@ -98,12 +100,19 @@ export function useNetwork() {
         );
       }
 
+      // После OSRM — объединяем параллельные кабели, идущие по одному
+      // маршруту, в единую магистраль большей жильности; в точках расхождения
+      // создаём in-line муфты.
+      const { cables: consolidated, joints: newJoints } = consolidateCables(finalCables);
+      finalCables = consolidated;
+
       setStatus('calculating');
-      const mats = calculateMaterials(newDistricts, finalCables, settings);
+      const mats = calculateMaterials(newDistricts, finalCables, settings, newJoints.length);
       const issues = validateNetwork(newDistricts, finalCables);
 
       setDistricts(newDistricts);
       setCables(finalCables);
+      setJoints(newJoints);
       setMaterials(mats);
       setValidationIssues(issues);
       setStatus('done');
@@ -168,8 +177,10 @@ export function useNetwork() {
         controller.signal,
       );
       if (!controller.signal.aborted) {
-        setCables(routed);
-        const mats = calculateMaterials(districts, routed, settings);
+        const { cables: consolidated, joints: newJoints } = consolidateCables(routed);
+        setCables(consolidated);
+        setJoints(newJoints);
+        const mats = calculateMaterials(districts, consolidated, settings, newJoints.length);
         setMaterials(mats);
         setStatus('done');
       }
@@ -284,7 +295,7 @@ export function useNetwork() {
       name: projectName,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      districts, cables, annotations, importHistory, settings,
+      districts, cables, joints, annotations, importHistory, settings,
     };
     const projects = loadProjects();
     const idx = projects.findIndex((p) => p.id === projectId);
@@ -304,6 +315,7 @@ export function useNetwork() {
     setProjectName(p.name);
     setDistricts(p.districts || []);
     setCables(p.cables || []);
+    setJoints(p.joints || []);
     setAnnotations(p.annotations || []);
     setImportHistory(p.importHistory || []);
     setSettings({ ...DEFAULT_SETTINGS, ...p.settings });
@@ -311,7 +323,7 @@ export function useNetwork() {
     const subs = (p.districts || []).flatMap((d) => d.subscribers);
     setAllSubscribers(subs);
     if (p.districts?.length) {
-      const mats = calculateMaterials(p.districts, p.cables, p.settings);
+      const mats = calculateMaterials(p.districts, p.cables, p.settings, (p.joints || []).length);
       setMaterials(mats);
       setStatus('done');
     } else {
@@ -334,6 +346,7 @@ export function useNetwork() {
     setProjectName('Новый проект');
     setDistricts([]);
     setCables([]);
+    setJoints([]);
     setAnnotations([]);
     setImportHistory([]);
     setAllSubscribers([]);
@@ -348,7 +361,7 @@ export function useNetwork() {
       id: projectId, name: projectName,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      districts, cables, annotations, importHistory, settings,
+      districts, cables, joints, annotations, importHistory, settings,
     };
     const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -386,7 +399,7 @@ export function useNetwork() {
 
   return {
     projectId, projectName, setProjectName,
-    districts, cables, annotations, materials, settings, setSettings,
+    districts, cables, joints, annotations, materials, settings, setSettings,
     prices, setPrices: setPricesAndStore,
     importHistory, allSubscribers,
     layers, toggleLayer,
