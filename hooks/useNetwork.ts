@@ -94,16 +94,15 @@ export function useNetwork() {
         finalCables = await routeCables(
           newCables,
           settings.osrmDelay,
-          false,
+          true, // routeDrops — нужно для слияния дропов с магистралью по общим дорогам
           (done, total, current) => setOsrmProgress({ done, total, current }),
           controller.signal,
         );
       }
 
-      // После OSRM — объединяем параллельные кабели, идущие по одному
-      // маршруту, в единую магистраль большей жильности; в точках расхождения
-      // создаём in-line муфты.
-      const { cables: consolidated, joints: newJoints } = consolidateCables(finalCables);
+      // Глобальная консолидация: одна дорога — один кабель, размер по числу
+      // абонентов, муфты в точках расхождения.
+      const { cables: consolidated, joints: newJoints } = consolidateCables(finalCables, newDistricts);
       finalCables = consolidated;
 
       setStatus('calculating');
@@ -172,12 +171,12 @@ export function useNetwork() {
       const routed = await routeCables(
         cables,
         200,
-        false,
+        true,
         (done, total, current) => setOsrmProgress({ done, total, current }),
         controller.signal,
       );
       if (!controller.signal.aborted) {
-        const { cables: consolidated, joints: newJoints } = consolidateCables(routed);
+        const { cables: consolidated, joints: newJoints } = consolidateCables(routed, districts);
         setCables(consolidated);
         setJoints(newJoints);
         const mats = calculateMaterials(districts, consolidated, settings, newJoints.length);
