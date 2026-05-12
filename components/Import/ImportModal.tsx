@@ -34,7 +34,7 @@ export default function ImportModal({ onClose, onBuild, currentSettings, hasExis
 
   const [subscribers, setSubscribers] = useState<Subscriber[] | null>(null);
   const [fileName, setFileName] = useState<string>('');
-  const [settings, setSettings] = useState<ProjectSettings>({ networkType: 'p2p', ...currentSettings });
+  const [settings, setSettings] = useState<ProjectSettings>({ ...currentSettings, networkType: currentSettings.networkType ?? 'p2p' });
   const [mode, setMode] = useState<ImportMode>(hasExistingData ? 'append' : 'replace');
   const [dragging, setDragging] = useState(false);
   const [loading, setLoading] = useState(false);
