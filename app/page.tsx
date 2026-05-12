@@ -35,6 +35,7 @@ export default function HomePage() {
   const [heatmapEnabled, setHeatmapEnabled] = useState(false);
   const flyToRef = useRef<((lat: number, lon: number, zoom?: number) => void) | null>(null);
   const mapElRef = useRef<HTMLElement | null>(null);
+  const importBuildLockRef = useRef(false);
 
   const onExportPDF = useCallback(async () => {
     if (!net.materials) { alert('Сначала постройте сеть'); return; }
@@ -45,12 +46,17 @@ export default function HomePage() {
   const onPrintMap = useCallback(() => window.print(), []);
 
   const handleBuild = useCallback(async (subs: Subscriber[], s: ProjectSettings, source: string, mode: ImportMode) => {
-    net.setSettings(s);
-    setShowImport(false);
-    if (mode === 'append') {
-      await net.appendSubscribers(subs, source);
-    } else {
-      await net.buildFromSubscribers(subs, source);
+    importBuildLockRef.current = true;
+    try {
+      net.setSettings(s);
+      if (mode === 'append') {
+        await net.appendSubscribers(subs, source, s);
+      } else {
+        await net.buildFromSubscribers(subs, source, s);
+      }
+      setShowImport(false);
+    } finally {
+      importBuildLockRef.current = false;
     }
   }, [net]);
 
@@ -85,7 +91,7 @@ export default function HomePage() {
         if (e.key === 'e') net.setEditMode(!net.editMode);
         if (e.key === 'm') setMeasureMode((m) => !m);
         if (e.key === 'Escape') {
-          setShowImport(false);
+          if (!importBuildLockRef.current) setShowImport(false);
           setShowHelp(false);
           setShowAddSub(null);
         }

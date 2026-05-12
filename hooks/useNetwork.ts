@@ -76,22 +76,23 @@ export function useNetwork() {
   }, []);
 
   // Internal: build network from arbitrary subscriber set
-  const runBuild = useCallback(async (subs: Subscriber[], replaceCables = true) => {
+  const runBuild = useCallback(async (subs: Subscriber[], replaceCables = true, buildSettings?: ProjectSettings) => {
+    const s = buildSettings ?? settings;
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
     abortRef.current = controller;
 
     try {
       setStatus('clustering');
-      const { districts: newDistricts, cables: newCables } = buildNetwork(subs, settings);
+      const { districts: newDistricts, cables: newCables } = buildNetwork(subs, s);
 
       setStatus('routing');
       let finalCables = newCables;
 
-      if (settings.useOSRM) {
+      if (s.useOSRM) {
         finalCables = await routeCables(
           newCables,
-          settings.osrmDelay,
+          s.osrmDelay,
           false,
           (done, total, current) => setOsrmProgress({ done, total, current }),
           controller.signal,
@@ -99,7 +100,7 @@ export function useNetwork() {
       }
 
       setStatus('calculating');
-      const mats = calculateMaterials(newDistricts, finalCables, settings);
+      const mats = calculateMaterials(newDistricts, finalCables, s);
       const issues = validateNetwork(newDistricts, finalCables);
 
       setDistricts(newDistricts);
@@ -111,12 +112,13 @@ export function useNetwork() {
       if (!controller.signal.aborted) {
         setStatus('error');
         console.error(err);
+        throw err;
       }
     }
   }, [settings]);
 
   // Replace all subscribers — fresh build
-  const buildFromSubscribers = useCallback(async (newSubs: Subscriber[], source: string) => {
+  const buildFromSubscribers = useCallback(async (newSubs: Subscriber[], source: string, buildSettings?: ProjectSettings) => {
     const merged = [...newSubs];
     setAllSubscribers(merged);
     const record: ImportRecord = {
@@ -127,11 +129,11 @@ export function useNetwork() {
       importedAt: new Date().toISOString(),
     };
     setImportHistory([record]);
-    await runBuild(merged);
+    await runBuild(merged, true, buildSettings);
   }, [runBuild]);
 
   // Append new subscribers and rebuild combined network
-  const appendSubscribers = useCallback(async (newSubs: Subscriber[], source: string) => {
+  const appendSubscribers = useCallback(async (newSubs: Subscriber[], source: string, buildSettings?: ProjectSettings) => {
     // Avoid duplicate coordinates
     const seen = new Set(allSubscribers.map((s) => `${s.lat.toFixed(6)},${s.lon.toFixed(6)}`));
     const filtered = newSubs.filter((s) => !seen.has(`${s.lat.toFixed(6)},${s.lon.toFixed(6)}`));
@@ -145,7 +147,7 @@ export function useNetwork() {
       importedAt: new Date().toISOString(),
     };
     setImportHistory((prev) => [...prev, record]);
-    await runBuild(merged);
+    await runBuild(merged, true, buildSettings);
   }, [allSubscribers, runBuild]);
 
   const stopOSRM = useCallback(() => {

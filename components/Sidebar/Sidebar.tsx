@@ -73,7 +73,7 @@ export default function Sidebar(props: Props) {
   const [activeTab, setActiveTab] = useState<Tab>('layers');
 
   return (
-    <aside className="w-[300px] flex-shrink-0 bg-[#0d1b2a] border-r border-[#1e3a5f] flex flex-col h-full">
+    <aside className="relative z-20 w-[300px] flex-shrink-0 bg-[#0d1b2a] border-r border-[#1e3a5f] flex flex-col h-full">
       <div className="flex flex-wrap border-b border-[#1e3a5f] bg-[#0d1b2a]">
         {TABS.map((tab) => (
           <button

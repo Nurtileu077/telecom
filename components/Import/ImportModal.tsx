@@ -9,7 +9,7 @@ export type ImportMode = 'replace' | 'append';
 
 interface Props {
   onClose: () => void;
-  onBuild: (subscribers: Subscriber[], settings: ProjectSettings, source: string, mode: ImportMode) => void;
+  onBuild: (subscribers: Subscriber[], settings: ProjectSettings, source: string, mode: ImportMode) => void | Promise<void>;
   currentSettings: ProjectSettings;
   hasExistingData: boolean;
 }
@@ -38,7 +38,21 @@ export default function ImportModal({ onClose, onBuild, currentSettings, hasExis
   const [tab, setTab] = useState<'file' | 'paste'>('file');
   const [pasteText, setPasteText] = useState('');
   const [pasteDistrict, setPasteDistrict] = useState('Импорт');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const submitBuild = async () => {
+    if (!subscribers || isSubmitting) return;
+    setIsSubmitting(true);
+    setError('');
+    try {
+      await Promise.resolve(onBuild(subscribers, settings, fileName, mode));
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Ошибка построения сети';
+      setError(msg);
+      setIsSubmitting(false);
+    }
+  };
 
   const parsePaste = useCallback(() => {
     setError('');
@@ -91,10 +105,16 @@ export default function ImportModal({ onClose, onBuild, currentSettings, hasExis
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
-      <div className="bg-[#0d1b2a] border border-[#1e3a5f] rounded-xl shadow-2xl w-[500px] max-h-[90vh] overflow-y-auto">
+      <div className="relative bg-[#0d1b2a] border border-[#1e3a5f] rounded-xl shadow-2xl w-[500px] max-h-[90vh] overflow-y-auto">
+        {isSubmitting && (
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 rounded-xl bg-[#0a0e1a]/85 backdrop-blur-sm">
+            <div className="w-8 h-8 border-2 border-[#38bdf8] border-t-transparent rounded-full animate-spin" />
+            <p className="text-xs text-[#94a3b8] px-6 text-center">Кластеризация и прокладка кабелей… Окно закроется по готовности.</p>
+          </div>
+        )}
         <div className="flex items-center justify-between p-4 border-b border-[#1e3a5f]">
           <h2 className="text-sm font-semibold text-[#e2e8f0]">Импорт данных</h2>
-          <button onClick={onClose} className="text-[#64748b] hover:text-[#e2e8f0] transition-colors">✕</button>
+          <button type="button" onClick={onClose} disabled={isSubmitting} className="text-[#64748b] hover:text-[#e2e8f0] transition-colors disabled:opacity-40">✕</button>
         </div>
 
         <div className="p-4 space-y-4">
@@ -265,13 +285,20 @@ export default function ImportModal({ onClose, onBuild, currentSettings, hasExis
           )}
         </div>
 
+        {error && subscribers && (
+          <div className="px-4 pb-2">
+            <p className="text-xs text-[#f87171]">⚠️ {error}</p>
+          </div>
+        )}
+
         <div className="p-4 border-t border-[#1e3a5f] flex gap-2">
-          <button onClick={onClose} className="flex-1 py-2 px-4 border border-[#1e3a5f] rounded-lg text-xs text-[#94a3b8] hover:text-[#e2e8f0] transition-colors">
+          <button type="button" onClick={onClose} disabled={isSubmitting} className="flex-1 py-2 px-4 border border-[#1e3a5f] rounded-lg text-xs text-[#94a3b8] hover:text-[#e2e8f0] transition-colors disabled:opacity-40">
             Отмена
           </button>
           <button
-            onClick={() => { if (subscribers) onBuild(subscribers, settings, fileName, mode); }}
-            disabled={!subscribers}
+            type="button"
+            onClick={submitBuild}
+            disabled={!subscribers || isSubmitting}
             className="flex-1 py-2 px-4 bg-[#38bdf8] hover:bg-[#7dd3fc] disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-xs font-semibold text-[#0a0e1a] transition-colors"
           >
             {mode === 'append' ? '➕ Добавить и построить' : '🚀 Построить сеть'}
