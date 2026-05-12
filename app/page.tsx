@@ -209,6 +209,8 @@ export default function HomePage() {
           onPrintMap={onPrintMap}
           onRerouteOSRM={net.rerouteWithOSRM}
           osrmStatus={net.status}
+          settings={net.settings}
+          setSettings={net.setSettings}
         />
 
         <main className="flex-1 relative overflow-hidden">

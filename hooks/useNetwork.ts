@@ -341,6 +341,7 @@ export function useNetwork() {
     setAllSubscribers([]);
     setMaterials(null);
     setValidationIssues([]);
+    setSettings(DEFAULT_SETTINGS);
     setStatus('idle');
     localStorage.removeItem(CURRENT_KEY);
   }, []);
@@ -366,6 +367,13 @@ export function useNetwork() {
     const p = JSON.parse(text) as Project;
     loadProjectInternal(p);
   }, []);
+
+  useEffect(() => {
+    if (districts.length === 0) return;
+    if (status === 'routing' || status === 'clustering' || status === 'calculating') return;
+    setMaterials(calculateMaterials(districts, cables, settings));
+    setValidationIssues(validateNetwork(districts, cables));
+  }, [districts, cables, settings, status]);
 
   // Auto-save
   useEffect(() => {

@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import {
   District, Cable, Materials, LayerVisibility, ValidationIssue,
-  MapAnnotation, AnnotationType, Project, ImportRecord, PriceCatalog,
+  MapAnnotation, AnnotationType, Project, ImportRecord, PriceCatalog, ProjectSettings,
 } from '@/types/network';
 import LayersTab from './LayersTab';
 import MaterialsTab from './MaterialsTab';
@@ -53,6 +53,8 @@ interface Props {
   onPrintMap: () => void;
   onRerouteOSRM: () => void;
   osrmStatus: string;
+  settings: ProjectSettings;
+  setSettings: React.Dispatch<React.SetStateAction<ProjectSettings>>;
 }
 
 type Tab = 'layers' | 'materials' | 'schema' | 'groups' | 'notes' | 'stats' | 'projects' | 'cost' | 'tools';
@@ -143,6 +145,8 @@ export default function Sidebar(props: Props) {
             onRerouteOSRM={props.onRerouteOSRM}
             osrmStatus={props.osrmStatus}
             hasCables={props.cables.length > 0}
+            settings={props.settings}
+            setSettings={props.setSettings}
           />
         )}
         {activeTab === 'projects' && (

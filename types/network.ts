@@ -55,6 +55,12 @@ export function selectCableType(subs: number, sparePerSub = 1): CableType {
   return CABLE_SIZES.find((t) => CABLE_FIBERS[t] >= needed) ?? 'ОК-96';
 }
 
+/** Минимальный тип кабеля по числу волокон (для объединения параллельных трасс в учёте). */
+export function selectCableTypeByFiberCount(minFibers: number): CableType {
+  const n = Math.max(1, Math.ceil(minFibers));
+  return CABLE_SIZES.find((t) => CABLE_FIBERS[t] >= n) ?? 'ОК-96';
+}
+
 export interface Cable {
   id: string;
   type: CableType;
@@ -126,6 +132,10 @@ export interface ProjectSettings {
   cableReserve: number;
   useOSRM: boolean;
   osrmDelay: number;
+  /** Фаза A: в смете объединять параллельные магистрали (не ОК-4) в один физический участок */
+  consolidateParallelTrunksForMaterials: boolean;
+  /** Порог «одинаковых концов» трасс для объединения, м */
+  parallelMergeRadiusM: number;
 }
 
 export interface Materials {
@@ -187,6 +197,8 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
   cableReserve: 1.10,
   useOSRM: true,
   osrmDelay: 100,
+  consolidateParallelTrunksForMaterials: true,
+  parallelMergeRadiusM: 18,
 };
 
 export interface PriceCatalog {

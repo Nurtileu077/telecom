@@ -1,6 +1,6 @@
 'use client';
-import { useState, useMemo } from 'react';
-import { OpticalBudgetInputs } from '@/types/network';
+import { useState, useMemo, type Dispatch, type SetStateAction } from 'react';
+import { OpticalBudgetInputs, ProjectSettings } from '@/types/network';
 import { calculateOpticalBudget } from '@/components/Network/OpticalBudget';
 
 const DEFAULT_INPUTS: OpticalBudgetInputs = {
@@ -21,9 +21,14 @@ interface Props {
   onRerouteOSRM: () => void;
   osrmStatus: 'idle' | 'routing' | 'done' | 'error' | string;
   hasCables: boolean;
+  settings: ProjectSettings;
+  setSettings: Dispatch<SetStateAction<ProjectSettings>>;
 }
 
-export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onRerouteOSRM, osrmStatus, hasCables }: Props) {
+export default function ToolsTab({
+  onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onRerouteOSRM, osrmStatus, hasCables,
+  settings, setSettings,
+}: Props) {
   const [inputs, setInputs] = useState<OpticalBudgetInputs>(DEFAULT_INPUTS);
   const result = useMemo(() => calculateOpticalBudget(inputs), [inputs]);
 
@@ -40,8 +45,38 @@ export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, o
           {osrmStatus === 'routing' ? '⏳ Маршрутизация...' : '🛣 Проложить по дорогам (OSRM)'}
         </button>
         <p className="text-[9px] text-[#64748b] mt-1">
-          Трасса от муфты к ОРК строится цепочкой (не звездой), чтобы реже дублировать один участок улицы. Отводы ОК-4 к домам — отдельно. router.project-osrm.org; при многих точках — несколько минут.
+          Топология TB→ОРК — дерево (MST), отводы ОК-4 к домам отдельно. router.project-osrm.org; при большом числе точек — несколько минут.
         </p>
+      </section>
+
+      <section>
+        <h3 className="text-[10px] uppercase tracking-widest text-[#64748b] mb-2">Учёт материалов (фаза A)</h3>
+        <label className="flex items-start gap-2 cursor-pointer mb-2">
+          <input
+            type="checkbox"
+            className="mt-0.5 rounded border-[#1e3a5f]"
+            checked={settings.consolidateParallelTrunksForMaterials}
+            onChange={(e) => setSettings((s) => ({ ...s, consolidateParallelTrunksForMaterials: e.target.checked }))}
+          />
+          <span className="text-[11px] text-[#94a3b8] leading-snug">
+            Объединять параллельные магистрали в смете (один участок — max длина, сумма волокон → один тип). ОК-4 не объединяем. Карта без изменений.
+          </span>
+        </label>
+        <div className="flex items-center gap-2">
+          <span className="text-[9px] text-[#64748b] whitespace-nowrap">Порог «одинаковых концов», м</span>
+          <input
+            type="number"
+            min={8}
+            max={50}
+            step={1}
+            value={settings.parallelMergeRadiusM}
+            onChange={(e) => {
+              const v = Math.min(50, Math.max(8, Number(e.target.value) || 18));
+              setSettings((s) => ({ ...s, parallelMergeRadiusM: v }));
+            }}
+            className="w-14 bg-[#0a0e1a] border border-[#1e3a5f] rounded px-1 py-0.5 text-[10px] text-[#e2e8f0]"
+          />
+        </div>
       </section>
 
       {/* Visualization tools */}
