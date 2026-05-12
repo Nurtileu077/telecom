@@ -307,7 +307,7 @@ export function useNetwork() {
     localStorage.setItem(CURRENT_KEY, projectId);
     setLastSavedAt(new Date().toISOString());
     return project;
-  }, [projectId, projectName, districts, cables, annotations, importHistory, settings]);
+  }, [projectId, projectName, districts, cables, joints, annotations, importHistory, settings]);
 
   function loadProjectInternal(p: Project) {
     setProjectId(p.id);
