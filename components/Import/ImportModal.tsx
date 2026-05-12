@@ -1,5 +1,6 @@
 'use client';
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Subscriber, ProjectSettings } from '@/types/network';
 import { importExcel } from './ExcelImporter';
 import { importKmz } from './KmzImporter';
@@ -28,9 +29,12 @@ const TEST_SUBSCRIBERS: Subscriber[] = [
 ];
 
 export default function ImportModal({ onClose, onBuild, currentSettings, hasExistingData }: Props) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+
   const [subscribers, setSubscribers] = useState<Subscriber[] | null>(null);
   const [fileName, setFileName] = useState<string>('');
-  const [settings, setSettings] = useState<ProjectSettings>(currentSettings);
+  const [settings, setSettings] = useState<ProjectSettings>({ networkType: 'p2p', ...currentSettings });
   const [mode, setMode] = useState<ImportMode>(hasExistingData ? 'append' : 'replace');
   const [dragging, setDragging] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -89,8 +93,8 @@ export default function ImportModal({ onClose, onBuild, currentSettings, hasExis
       }, {} as Record<string, number>)
     : {};
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
+  const content = (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
       <div className="bg-[#0d1b2a] border border-[#1e3a5f] rounded-xl shadow-2xl w-[500px] max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-4 border-b border-[#1e3a5f]">
           <h2 className="text-sm font-semibold text-[#e2e8f0]">Импорт данных</h2>
@@ -309,4 +313,7 @@ export default function ImportModal({ onClose, onBuild, currentSettings, hasExis
       </div>
     </div>
   );
+
+  if (!mounted) return null;
+  return createPortal(content, document.body);
 }
