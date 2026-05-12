@@ -8,6 +8,7 @@ import {
 import { buildNetwork } from '@/components/Network/AutoBuild';
 import { calculateMaterials, validateNetwork } from '@/components/Network/MaterialCalc';
 import { routeCables } from '@/components/Network/OSRMRouter';
+import { mergeParallelCables } from '@/components/Network/mergeParallelCables';
 
 export type BuildStatus = 'idle' | 'importing' | 'clustering' | 'routing' | 'calculating' | 'done' | 'error';
 
@@ -56,6 +57,7 @@ export function useNetwork() {
   const [status, setStatus] = useState<BuildStatus>('idle');
   const [osrmProgress, setOsrmProgress] = useState<OSRMProgress>({ done: 0, total: 0, current: '' });
   const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([]);
+  const [splitPoints, setSplitPoints] = useState<[number, number][]>([]);
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
   const [editMode, setEditMode] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
@@ -88,14 +90,19 @@ export function useNetwork() {
       setStatus('routing');
       let finalCables = newCables;
 
+      let mergedSplitPoints: [number, number][] = [];
+
       if (settings.useOSRM) {
-        finalCables = await routeCables(
+        const routed = await routeCables(
           newCables,
           settings.osrmDelay,
           false,
           (done, total, current) => setOsrmProgress({ done, total, current }),
           controller.signal,
         );
+        const merged = mergeParallelCables(routed);
+        finalCables = merged.cables;
+        mergedSplitPoints = merged.splitPoints;
       }
 
       setStatus('calculating');
@@ -104,6 +111,7 @@ export function useNetwork() {
 
       setDistricts(newDistricts);
       setCables(finalCables);
+      setSplitPoints(mergedSplitPoints);
       setMaterials(mats);
       setValidationIssues(issues);
       setStatus('done');
@@ -168,8 +176,10 @@ export function useNetwork() {
         controller.signal,
       );
       if (!controller.signal.aborted) {
-        setCables(routed);
-        const mats = calculateMaterials(districts, routed, settings);
+        const { cables: merged, splitPoints: pts } = mergeParallelCables(routed);
+        setCables(merged);
+        setSplitPoints(pts);
+        const mats = calculateMaterials(districts, merged, settings);
         setMaterials(mats);
         setStatus('done');
       }
@@ -386,7 +396,7 @@ export function useNetwork() {
 
   return {
     projectId, projectName, setProjectName,
-    districts, cables, annotations, materials, settings, setSettings,
+    districts, cables, splitPoints, annotations, materials, settings, setSettings,
     prices, setPrices: setPricesAndStore,
     importHistory, allSubscribers,
     layers, toggleLayer,

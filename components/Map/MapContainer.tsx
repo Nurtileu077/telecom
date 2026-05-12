@@ -9,6 +9,7 @@ import type { DrawingTool } from '@/components/Sidebar/NotesTab';
 interface Props {
   districts: District[];
   cables: Cable[];
+  splitPoints?: [number, number][];
   layers: LayerVisibility;
   flyToRef?: React.MutableRefObject<((lat: number, lon: number, zoom?: number) => void) | null>;
   mapElRef?: React.MutableRefObject<HTMLElement | null>;
@@ -260,7 +261,7 @@ export default function LeafletMap(props: Props) {
     if (!map || !group) return;
     import('leaflet').then((L) => {
       group.clearLayers();
-      const { districts, cables, layers } = propsRef.current;
+      const { districts, cables, splitPoints = [], layers } = propsRef.current;
       const zoom = map.getZoom();
 
       if (layers.cables) {
@@ -351,6 +352,18 @@ export default function LeafletMap(props: Props) {
               }
             }
           }
+        }
+      }
+      // Render splice closure (муфта) markers at cable branch points
+      if (layers.cables && splitPoints.length > 0 && zoom >= 12) {
+        for (const [lat, lon] of splitPoints) {
+          const icon = L.divIcon({
+            html: `<div style="width:14px;height:14px;background:#f97316;border:2px solid #fff;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,0.6)" title="Муфта (разветвление)"></div>`,
+            className: '', iconSize: [14, 14], iconAnchor: [7, 7],
+          });
+          const m = L.marker([lat, lon], { icon });
+          m.bindTooltip('Муфта (разветвление)', { sticky: true, className: 'text-xs' });
+          group.addLayer(m);
         }
       }
     });

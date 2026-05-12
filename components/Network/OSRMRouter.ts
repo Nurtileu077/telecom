@@ -1,6 +1,51 @@
 import { Cable } from '@/types/network';
 
 const OSRM_BASE = 'https://router.project-osrm.org/route/v1/driving';
+const OSRM_NEAREST = 'https://router.project-osrm.org/nearest/v1/driving';
+
+/**
+ * Snap an arbitrary lat/lon to the nearest point on the OSRM road network.
+ * Falls back to the original coordinates if the request fails.
+ */
+export async function snapToRoad(
+  lat: number,
+  lon: number,
+): Promise<[number, number]> {
+  try {
+    const url = `${OSRM_NEAREST}/${lon},${lat}?number=1`;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    const res = await fetch(url, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!res.ok) return [lat, lon];
+    const data = await res.json();
+    const loc = data?.waypoints?.[0]?.location;
+    if (!loc) return [lat, lon];
+    // OSRM returns [lon, lat]
+    return [loc[1], loc[0]];
+  } catch {
+    return [lat, lon];
+  }
+}
+
+/**
+ * Snap a batch of [lat, lon] points to the nearest road.
+ * Returns a parallel array of snapped coordinates.
+ */
+export async function snapBatchToRoad(
+  points: [number, number][],
+  signal: AbortSignal,
+): Promise<[number, number][]> {
+  const results: [number, number][] = [];
+  for (const [lat, lon] of points) {
+    if (signal.aborted) {
+      results.push([lat, lon]);
+      continue;
+    }
+    results.push(await snapToRoad(lat, lon));
+  }
+  return results;
+}
 
 export type ProgressCallback = (done: number, total: number, current: string) => void;
 
@@ -67,14 +112,32 @@ export async function routeCables(
     .filter((c) => routeDrops || c.type !== 'ОК-4')
     .sort((a, b) => priority.indexOf(a.type) - priority.indexOf(b.type));
 
+  // Cache snapped road positions so each unique node is snapped only once
+  const snapCache = new Map<string, [number, number]>();
+  async function getSnapped(lat: number, lon: number): Promise<[number, number]> {
+    const key = `${lat.toFixed(6)},${lon.toFixed(6)}`;
+    if (snapCache.has(key)) return snapCache.get(key)!;
+    const snapped = await snapToRoad(lat, lon);
+    snapCache.set(key, snapped);
+    return snapped;
+  }
+
   const result = new Map<string, Cable>(cables.map((c) => [c.id, c]));
   let done = 0;
 
   for (const cable of toRoute) {
     if (signal.aborted) break;
 
-    const from = cable.coords[0];
-    const to = cable.coords[cable.coords.length - 1];
+    const rawFrom = cable.coords[0];
+    const rawTo = cable.coords[cable.coords.length - 1];
+
+    // Snap endpoints to the nearest road so OSRM doesn't produce crooked
+    // detours caused by centroids placed mid-block.
+    const [from, to] = await Promise.all([
+      getSnapped(rawFrom[0], rawFrom[1]),
+      getSnapped(rawTo[0], rawTo[1]),
+    ]);
+
     onProgress(done, toRoute.length, `${cable.type}: ${cable.fromId} → ${cable.toId}`);
 
     let routedCoords: [number, number][] | null = null;

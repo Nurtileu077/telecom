@@ -209,6 +209,7 @@ export default function HomePage() {
           <LeafletMap
             districts={net.districts}
             cables={net.cables}
+            splitPoints={net.splitPoints}
             layers={net.layers}
             flyToRef={flyToRef}
             mapElRef={mapElRef}
