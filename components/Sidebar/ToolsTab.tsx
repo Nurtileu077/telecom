@@ -40,7 +40,7 @@ export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, o
           {osrmStatus === 'routing' ? '⏳ Маршрутизация...' : '🛣 Проложить по дорогам (OSRM)'}
         </button>
         <p className="text-[9px] text-[#64748b] mt-1">
-          Все сегменты, включая отводы ОК-4 к абонентам, через router.project-osrm.org. При большом числе точек может занять несколько минут.
+          Трасса от муфты к ОРК строится цепочкой (не звездой), чтобы реже дублировать один участок улицы. Отводы ОК-4 к домам — отдельно. router.project-osrm.org; при многих точках — несколько минут.
         </p>
       </section>
 

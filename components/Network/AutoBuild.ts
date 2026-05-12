@@ -126,14 +126,24 @@ export function buildNetwork(
         [olt.lat, olt.lon], [tb.lat, tb.lon]
       ]));
 
-      // Cables: TB → each ORK
-      for (const ork of updatedTBOrks) {
-        const orkCableType = selectCableType(ork.subscribers.length);
-        cables.push(makeCable(orkCableType, tbId, ork.id, [
-          [tb.lat, tb.lon], [ork.lat, ork.lon]
+      // Цепочка TB → ОРК₁ → ОРК₂ → … (вместо звезды TB→каждый ОРК): один проход по улицам,
+      // без нескольких параллельных OSRM-маршрутов на один и тот же участок.
+      const orderedOrks = orderOrksChainFromTb(tb.lat, tb.lon, updatedTBOrks);
+      for (let ci = 0; ci < orderedOrks.length; ci++) {
+        const downstreamSubs = orderedOrks.slice(ci).reduce((s, o) => s + o.subscribers.length, 0);
+        const segmentType = selectCableType(downstreamSubs);
+        const fromId = ci === 0 ? tbId : orderedOrks[ci - 1].id;
+        const fromLat = ci === 0 ? tb.lat : orderedOrks[ci - 1].lat;
+        const fromLon = ci === 0 ? tb.lon : orderedOrks[ci - 1].lon;
+        const to = orderedOrks[ci];
+        cables.push(makeCable(segmentType, fromId, to.id, [
+          [fromLat, fromLon],
+          [to.lat, to.lon],
         ]));
+      }
 
-        // Cables: ORK → each subscriber (ОК-4, 2 fibers needed for 1 sub)
+      // Отводы ОРК → абонент
+      for (const ork of updatedTBOrks) {
         for (const sub of ork.subscribers) {
           cables.push(makeCable('ОК-4', ork.id, sub.id, [
             [ork.lat, ork.lon], [sub.lat, sub.lon]
@@ -153,6 +163,31 @@ export function buildNetwork(
   }
 
   return { districts, cables };
+}
+
+/** Ближайший-сосед от муфты: цепочка по трассе без N полных параллельных линий «TB→ОРК». */
+function orderOrksChainFromTb(tbLat: number, tbLon: number, orks: ORK[]): ORK[] {
+  if (orks.length <= 1) return [...orks];
+  const remaining = [...orks];
+  const ordered: ORK[] = [];
+  let curLat = tbLat;
+  let curLon = tbLon;
+  while (remaining.length > 0) {
+    let bestI = 0;
+    let bestD = Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const d = haversineM(curLat, curLon, remaining[i].lat, remaining[i].lon);
+      if (d < bestD) {
+        bestD = d;
+        bestI = i;
+      }
+    }
+    const next = remaining.splice(bestI, 1)[0];
+    ordered.push(next);
+    curLat = next.lat;
+    curLon = next.lon;
+  }
+  return ordered;
 }
 
 function makeCable(
