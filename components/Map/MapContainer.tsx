@@ -4,6 +4,7 @@ import {
   District, Cable, LayerVisibility, MapAnnotation, AnnotationType,
   ANNOTATION_PRESETS,
 } from '@/types/network';
+import { mergedDisplayTypeForSegment } from '@/components/Network/CablePhysicalSegments';
 import type { DrawingTool } from '@/components/Sidebar/NotesTab';
 
 interface Props {
@@ -264,21 +265,56 @@ export default function LeafletMap(props: Props) {
       const zoom = map.getZoom();
 
       if (layers.cables) {
+        /** Для чертежа: лучше линия по фактической длине и, при равенстве, по OSRM-трассе. */
+        const pickBestCoordsCable = (g: Cable[]) =>
+          g.reduce((best, c) => {
+            if (c.lengthM > best.lengthM + 0.5) return c;
+            if (c.lengthM < best.lengthM - 0.5) return best;
+            if (c.routedByOSRM && !best.routedByOSRM) return c;
+            if (!c.routedByOSRM && best.routedByOSRM) return best;
+            return c.coords.length > best.coords.length ? c : best;
+          }, g[0]);
+
         for (const cable of cables) {
+          if (cable.type !== 'ОК-4') continue;
           const layerKey = CABLE_LAYER_KEY[cable.type];
           if (!layers[layerKey]) continue;
-          // Абонентские отводы — ОК-4; показываем с тем же zoom, что и точки абонентов (≥13)
-          if (cable.type === 'ОК-4' && zoom < 13) continue;
+          if (zoom < 13) continue;
 
           const poly = L.polyline(cable.coords, {
             color: CABLE_COLORS[cable.type] || '#888',
             weight: CABLE_WEIGHTS[cable.type] || 2,
-            opacity: cable.type === 'ОК-4' ? 0.6 : 0.85,
+            opacity: 0.6,
           });
           poly.bindTooltip(
             `<b>${cable.type}</b><br/>${cable.fromId} → ${cable.toId}<br/>Длина: ${Math.round(cable.lengthM)} м`,
             { sticky: true, className: 'text-xs' },
           );
+          group.addLayer(poly);
+        }
+
+        const trunks = cables.filter((c) => c.type !== 'ОК-4');
+        const trunkGroups = new Map<string, Cable[]>();
+        for (const c of trunks) {
+          const key = c.physicalSegmentId ?? `solo:${c.id}`;
+          const arr = trunkGroups.get(key);
+          if (arr) arr.push(c);
+          else trunkGroups.set(key, [c]);
+        }
+        for (const trunkGroup of trunkGroups.values()) {
+          const { type: dispType } = mergedDisplayTypeForSegment(trunkGroup);
+          const layerKey = CABLE_LAYER_KEY[dispType];
+          if (!layers[layerKey]) continue;
+          const ref = pickBestCoordsCable(trunkGroup);
+          const poly = L.polyline(ref.coords, {
+            color: CABLE_COLORS[dispType] || '#888',
+            weight: CABLE_WEIGHTS[dispType] || 2,
+            opacity: 0.85,
+          });
+          const tip = trunkGroup.length > 1
+            ? `<b>${dispType}</b> (${trunkGroup.length} паралл.)<br/>${trunkGroup.map((x) => `${x.type}: ${x.fromId} → ${x.toId} (${Math.round(x.lengthM)} м)`).join('<br/>')}`
+            : `<b>${ref.type}</b><br/>${ref.fromId} → ${ref.toId}<br/>Длина: ${Math.round(ref.lengthM)} м`;
+          poly.bindTooltip(tip, { sticky: true, className: 'text-xs' });
           group.addLayer(poly);
         }
       }

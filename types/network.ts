@@ -70,6 +70,8 @@ export interface Cable {
   coords: [number, number][];
   lengthM: number;
   routedByOSRM: boolean;
+  /** Одинаковый id — один рисуемый сегмент при объединении параллельных магистралей */
+  physicalSegmentId?: string;
 }
 
 export interface District {

@@ -7,6 +7,7 @@ import {
 } from '@/types/network';
 import { buildNetwork } from '@/components/Network/AutoBuild';
 import { calculateMaterials, validateNetwork } from '@/components/Network/MaterialCalc';
+import { applyPhysicalSegmentIds, totalCableLengthMeters } from '@/components/Network/CablePhysicalSegments';
 import { routeCables } from '@/components/Network/OSRMRouter';
 
 export type BuildStatus = 'idle' | 'importing' | 'clustering' | 'routing' | 'calculating' | 'done' | 'error';
@@ -26,6 +27,10 @@ const DEFAULT_LAYERS: LayerVisibility = {
 const STORAGE_KEY = 'gpon-projects-v2';
 const CURRENT_KEY = 'gpon-current-project';
 const AUTOSAVE_INTERVAL_MS = 30000;
+
+function mergeRadiusM(s: ProjectSettings) {
+  return s.parallelMergeRadiusM > 0 ? s.parallelMergeRadiusM : 18;
+}
 
 function newId(prefix = 'id') {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -100,11 +105,12 @@ export function useNetwork() {
       }
 
       setStatus('calculating');
-      const mats = calculateMaterials(newDistricts, finalCables, s);
-      const issues = validateNetwork(newDistricts, finalCables);
+      const layoutCables = applyPhysicalSegmentIds(finalCables, s.consolidateParallelTrunksForMaterials, mergeRadiusM(s));
+      const mats = calculateMaterials(newDistricts, layoutCables, s);
+      const issues = validateNetwork(newDistricts, layoutCables);
 
       setDistricts(newDistricts);
-      setCables(finalCables);
+      setCables(layoutCables);
       setMaterials(mats);
       setValidationIssues(issues);
       setStatus('done');
@@ -170,8 +176,9 @@ export function useNetwork() {
         controller.signal,
       );
       if (!controller.signal.aborted) {
-        setCables(routed);
-        const mats = calculateMaterials(districts, routed, settings);
+        const layoutCables = applyPhysicalSegmentIds(routed, settings.consolidateParallelTrunksForMaterials, mergeRadiusM(settings));
+        setCables(layoutCables);
+        const mats = calculateMaterials(districts, layoutCables, settings);
         setMaterials(mats);
         setStatus('done');
       }
@@ -244,27 +251,30 @@ export function useNetwork() {
       };
     }));
     // Update cable endpoints touching this id
-    setCables((prev) => prev.map((c) => {
-      if (c.fromId === id || c.toId === id) {
-        const coords = [...c.coords];
-        if (c.fromId === id) coords[0] = [lat, lon];
-        if (c.toId === id) coords[coords.length - 1] = [lat, lon];
-        // recalc straight-line length
-        let len = 0;
-        for (let i = 1; i < coords.length; i++) {
-          const [la, lo] = coords[i - 1];
-          const [lb, lob] = coords[i];
-          const R = 6371000;
-          const dLat = ((lb - la) * Math.PI) / 180;
-          const dLon = ((lob - lo) * Math.PI) / 180;
-          const a = Math.sin(dLat / 2) ** 2 + Math.cos((la * Math.PI) / 180) * Math.cos((lb * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
-          len += R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    setCables((prev) => {
+      const updated = prev.map((c) => {
+        if (c.fromId === id || c.toId === id) {
+          const coords = [...c.coords];
+          if (c.fromId === id) coords[0] = [lat, lon];
+          if (c.toId === id) coords[coords.length - 1] = [lat, lon];
+          // recalc straight-line length
+          let len = 0;
+          for (let i = 1; i < coords.length; i++) {
+            const [la, lo] = coords[i - 1];
+            const [lb, lob] = coords[i];
+            const R = 6371000;
+            const dLat = ((lb - la) * Math.PI) / 180;
+            const dLon = ((lob - lo) * Math.PI) / 180;
+            const a = Math.sin(dLat / 2) ** 2 + Math.cos((la * Math.PI) / 180) * Math.cos((lb * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+            len += R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+          }
+          return { ...c, coords, lengthM: len, routedByOSRM: false };
         }
-        return { ...c, coords, lengthM: len, routedByOSRM: false };
-      }
-      return c;
-    }));
-  }, []);
+        return c;
+      });
+      return applyPhysicalSegmentIds(updated, settings.consolidateParallelTrunksForMaterials, mergeRadiusM(settings));
+    });
+  }, [settings]);
 
   const rebuildFromCurrent = useCallback(async () => {
     if (allSubscribers.length > 0) await runBuild(allSubscribers);
@@ -305,15 +315,18 @@ export function useNetwork() {
     setProjectId(p.id);
     setProjectName(p.name);
     setDistricts(p.districts || []);
-    setCables(p.cables || []);
+    const mergedS = { ...DEFAULT_SETTINGS, ...p.settings } as ProjectSettings;
+    setSettings(mergedS);
+    const rawCables = p.cables || [];
+    const layoutCables = applyPhysicalSegmentIds(rawCables, mergedS.consolidateParallelTrunksForMaterials, mergeRadiusM(mergedS));
+    setCables(layoutCables);
     setAnnotations(p.annotations || []);
     setImportHistory(p.importHistory || []);
-    setSettings({ ...DEFAULT_SETTINGS, ...p.settings });
     // Reconstruct allSubscribers from districts
     const subs = (p.districts || []).flatMap((d) => d.subscribers);
     setAllSubscribers(subs);
     if (p.districts?.length) {
-      const mats = calculateMaterials(p.districts, p.cables, p.settings);
+      const mats = calculateMaterials(p.districts, layoutCables, mergedS);
       setMaterials(mats);
       setStatus('done');
     } else {
@@ -368,6 +381,20 @@ export function useNetwork() {
     loadProjectInternal(p);
   }, []);
 
+  // Чертёж: при смене объединения / радиуса пересчитать physicalSegmentId без полной пересборки
+  useEffect(() => {
+    if (districts.length === 0) return;
+    if (status === 'routing' || status === 'clustering' || status === 'calculating' || status === 'importing') return;
+    setCables((prev) =>
+      applyPhysicalSegmentIds(prev, settings.consolidateParallelTrunksForMaterials, mergeRadiusM(settings)),
+    );
+  }, [
+    settings.consolidateParallelTrunksForMaterials,
+    settings.parallelMergeRadiusM,
+    districts.length,
+    status,
+  ]);
+
   useEffect(() => {
     if (districts.length === 0) return;
     if (status === 'routing' || status === 'clustering' || status === 'calculating') return;
@@ -388,7 +415,9 @@ export function useNetwork() {
   }, []);
 
   const totalSubscribers = districts.reduce((s, d) => s + d.subscribers.length, 0);
-  const totalCableKm = Math.round(cables.reduce((s, c) => s + c.lengthM, 0) / 100) / 10;
+  const totalCableKm = Math.round(
+    totalCableLengthMeters(cables, settings.consolidateParallelTrunksForMaterials, mergeRadiusM(settings)) / 100,
+  ) / 10;
   const totalOrks = districts.reduce(
     (s, d) => s + d.olt.transitBoxes.reduce((ts, tb) => ts + tb.orks.length, 0),
     0,
