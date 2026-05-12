@@ -1,6 +1,6 @@
 import {
   Subscriber, ORK, TransitBox, OLT, Cable, District, ProjectSettings, DISTRICT_COLORS,
-  CABLE_FIBERS, selectCableType,
+  CABLE_FIBERS, selectCableType, OBJECT_FIBERS,
 } from '@/types/network';
 import { kmeans, centroid, haversineM } from './KMeans';
 
@@ -27,7 +27,12 @@ export function buildNetwork(
     const color = DISTRICT_COLORS[colorIdx % DISTRICT_COLORS.length];
     colorIdx++;
 
-    const oltPos = centroid(subs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id })));
+    // Separate P2P subscribers — they get direct cables and don't join GPON clustering
+    const p2pSubs = subs.filter((s) => s.connectionType === 'p2p');
+    const gponSubs = subs.filter((s) => s.connectionType !== 'p2p');
+    const clusterSubs = gponSubs.length > 0 ? gponSubs : subs;
+
+    const oltPos = centroid(clusterSubs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id })));
     const olt: OLT = {
       id: `OLT-${districtName.slice(0, 8).replace(/\s/g, '')}`,
       lat: oltPos.lat,
@@ -39,10 +44,17 @@ export function buildNetwork(
       l1Splitter: '1:4',
     };
 
-    // Cluster subscribers into ORKs
-    const kOrk = Math.max(1, Math.ceil(subs.length / settings.maxPerORK));
+    // P2P subscribers: direct cable OLT → subscriber (no ORK, no splitter)
+    for (const sub of p2pSubs) {
+      cables.push(makeCable('ОК-4', olt.id, sub.id, [
+        [olt.lat, olt.lon], [sub.lat, sub.lon],
+      ]));
+    }
+
+    // Cluster GPON subscribers into ORKs
+    const kOrk = Math.max(1, Math.ceil(clusterSubs.length / settings.maxPerORK));
     const { clusters: orkClusters } = kmeans(
-      subs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id })),
+      clusterSubs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id })),
       kOrk
     );
 
@@ -54,24 +66,27 @@ export function buildNetwork(
       if (cluster.length === 0) continue;
       const orkCenter = centroid(cluster);
       const orkId = `Бокс-${districtName.slice(0, 4).replace(/\s/g, '')}-${i + 1}`;
-      const splitter: '1:4' | '1:8' | '1:16' =
-        cluster.length <= 4 ? '1:4' : cluster.length <= 8 ? '1:8' : '1:16';
 
       // Find original subscribers for this cluster
       const orkSubs: Subscriber[] = cluster
-        .map((p) => subs.find((s) => s.id === p.id))
+        .map((p) => clusterSubs.find((s) => s.id === p.id))
         .filter(Boolean) as Subscriber[];
 
       const updatedOrkSubs = orkSubs.map((s) => ({ ...s, orkId }));
       updatedSubs.push(...updatedOrkSubs);
 
       const orkSubCount = updatedOrkSubs.length;
+      // Cameras always use 1:8 splitter; mixed clusters use normal logic
+      const hasMostlyCameras = updatedOrkSubs.filter((s) => s.objectType === 'камера').length > orkSubCount / 2;
+      const effectiveSplitter: '1:4' | '1:8' | '1:16' = hasMostlyCameras
+        ? '1:8'
+        : cluster.length <= 4 ? '1:4' : cluster.length <= 8 ? '1:8' : '1:16';
       orks.push({
         id: orkId,
         lat: orkCenter.lat,
         lon: orkCenter.lon,
         district: districtName,
-        splitter,
+        splitter: effectiveSplitter,
         tbId: '',
         subscribers: updatedOrkSubs,
         cableType: selectCableType(orkSubCount),
@@ -133,10 +148,10 @@ export function buildNetwork(
           [tb.lat, tb.lon], [ork.lat, ork.lon]
         ]));
 
-        // Cables: ORK → each subscriber (ОК-4, 2 fibers needed for 1 sub)
+        // Cables: ORK → each subscriber (ОК-4 drop)
         for (const sub of ork.subscribers) {
-          cables.push(makeCable('ОК-4', ork.id, sub.id, [
-            [ork.lat, ork.lon], [sub.lat, sub.lon]
+          cables.push(makeCableForSub('ОК-4', ork.id, sub, [
+            [ork.lat, ork.lon], [sub.lat, sub.lon],
           ]));
         }
       }
@@ -148,7 +163,7 @@ export function buildNetwork(
       name: districtName,
       color,
       olt,
-      subscribers: updatedSubs,
+      subscribers: [...updatedSubs, ...p2pSubs],
     });
   }
 
@@ -174,4 +189,15 @@ function makeCable(
     lengthM,
     routedByOSRM: false,
   };
+}
+
+function makeCableForSub(
+  type: Cable['type'],
+  fromId: string,
+  sub: Subscriber,
+  coords: [number, number][]
+): Cable {
+  const base = makeCable(type, fromId, sub.id, coords);
+  const objFibers = OBJECT_FIBERS[sub.objectType ?? 'абонент'];
+  return { ...base, fibers: objFibers.working + objFibers.spare };
 }

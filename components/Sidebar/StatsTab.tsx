@@ -1,5 +1,5 @@
 'use client';
-import { District, Cable, ValidationIssue } from '@/types/network';
+import { District, Cable, ValidationIssue, OBJECT_TYPE_LABELS, ObjectType } from '@/types/network';
 
 interface Props {
   districts: District[];
@@ -17,8 +17,18 @@ export default function StatsTab({ districts, cables, issues }: Props) {
     );
   }
 
-  const totalSubs = districts.reduce((s, d) => s + d.subscribers.length, 0);
+  const allSubs = districts.flatMap((d) => d.subscribers);
+  const totalSubs = allSubs.length;
   const totalCableM = cables.reduce((s, c) => s + c.lengthM, 0);
+
+  // Object-type and connection-type breakdowns
+  const byObjType = allSubs.reduce((m, s) => {
+    const t = s.objectType ?? 'абонент';
+    m[t] = (m[t] || 0) + 1;
+    return m;
+  }, {} as Record<ObjectType, number>);
+  const gponCount = allSubs.filter((s) => s.connectionType !== 'p2p').length;
+  const p2pCount  = allSubs.filter((s) => s.connectionType === 'p2p').length;
 
   const cableByType = cables.reduce((m, c) => {
     m[c.type] = (m[c.type] || 0) + c.lengthM;
@@ -78,6 +88,49 @@ export default function StatsTab({ districts, cables, issues }: Props) {
           <div className="text-[10px] text-[#64748b]">км кабеля</div>
         </div>
       </div>
+
+      {/* Connection type */}
+      <section>
+        <h3 className="text-[10px] uppercase tracking-widest text-[#64748b] mb-2">Тип подключения</h3>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="bg-[#0a0e1a] border border-[#34d399]/30 rounded-lg p-2 text-center">
+            <div className="text-lg font-mono font-bold text-[#34d399]">{gponCount}</div>
+            <div className="text-[10px] text-[#64748b]">GPON</div>
+          </div>
+          <div className="bg-[#0a0e1a] border border-[#38bdf8]/30 rounded-lg p-2 text-center">
+            <div className="text-lg font-mono font-bold text-[#38bdf8]">{p2pCount}</div>
+            <div className="text-[10px] text-[#64748b]">P2P (прямое)</div>
+          </div>
+        </div>
+      </section>
+
+      {/* Object type breakdown */}
+      {Object.keys(byObjType).length > 0 && (
+        <section>
+          <h3 className="text-[10px] uppercase tracking-widest text-[#64748b] mb-2">По типу объекта</h3>
+          <div className="space-y-1">
+            {(Object.entries(byObjType) as [ObjectType, number][]).map(([type, count]) => {
+              const colors: Record<ObjectType, string> = {
+                абонент: '#38bdf8', камера: '#22d3ee', база: '#f97316', офис: '#a78bfa',
+              };
+              const icons: Record<ObjectType, string> = {
+                абонент: '🏠', камера: '📷', база: '📡', офис: '🏢',
+              };
+              const pct = totalSubs ? (count / totalSubs) * 100 : 0;
+              return (
+                <div key={type} className="flex items-center gap-2">
+                  <span className="text-xs w-4">{icons[type]}</span>
+                  <span className="text-[10px] text-[#94a3b8] flex-1">{OBJECT_TYPE_LABELS[type]}</span>
+                  <span className="text-[10px] font-mono text-[#e2e8f0]">{count}</span>
+                  <div className="w-16 h-1.5 bg-[#1e3a5f] rounded-full overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${pct}%`, background: colors[type] }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {/* Cable breakdown */}
       <section>

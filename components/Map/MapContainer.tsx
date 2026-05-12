@@ -337,23 +337,67 @@ export default function LeafletMap(props: Props) {
             }
             if (layers.subscribers && zoom >= 13) {
               for (const sub of ork.subscribers) {
-                const c = L.circleMarker([sub.lat, sub.lon], {
-                  radius: 4, fillColor: district.color, fillOpacity: 0.8,
-                  color: district.color, weight: 1,
-                });
-                c.bindPopup(`<b>${sub.desc}</b><br/>ОРК: ${ork.id}<br/>Волокна: ${sub.fibers.working}+${sub.fibers.spare}${propsRef.current.editMode ? '<br/><button onclick="window.__deleteSub__(\'' + sub.id + '\')" style="margin-top:6px;padding:2px 8px;background:#f87171;color:#fff;border:none;border-radius:3px;font-size:10px;cursor:pointer">Удалить</button>' : ''}`);
-                c.on('contextmenu', (e: any) => {
+                const objType = sub.objectType ?? 'абонент';
+                const isPtp = sub.connectionType === 'p2p';
+                const objColor = objType === 'камера' ? '#22d3ee'
+                  : objType === 'база' ? '#f97316'
+                  : objType === 'офис' ? '#a78bfa'
+                  : district.color;
+                const objIcon = objType === 'камера' ? '📷'
+                  : objType === 'база' ? '📡'
+                  : objType === 'офис' ? '🏢'
+                  : null;
+                let marker: any;
+                if (objIcon) {
+                  const divIcon = L.divIcon({
+                    html: `<div style="font-size:13px;line-height:1;${isPtp ? 'opacity:0.7' : ''}" title="${sub.desc}">${objIcon}</div>`,
+                    className: '', iconSize: [16, 16], iconAnchor: [8, 8],
+                  });
+                  marker = L.marker([sub.lat, sub.lon], { icon: divIcon });
+                } else {
+                  const c = L.circleMarker([sub.lat, sub.lon], {
+                    radius: 4, fillColor: objColor, fillOpacity: 0.85,
+                    color: isPtp ? '#fff' : objColor, weight: isPtp ? 1.5 : 1,
+                    dashArray: isPtp ? '3,2' : undefined,
+                  });
+                  marker = c;
+                }
+                marker.bindPopup(`<b>${sub.desc}</b><br/>`
+                  + `Тип: ${objType}${isPtp ? ' <span style="color:#38bdf8">(P2P)</span>' : ' <span style="color:#34d399">(GPON)</span>'}<br/>`
+                  + `ОРК: ${ork.id}<br/>Волокна: ${sub.fibers.working}+${sub.fibers.spare}`
+                  + (propsRef.current.editMode ? `<br/><button onclick="window.__deleteSub__('${sub.id}')" style="margin-top:6px;padding:2px 8px;background:#f87171;color:#fff;border:none;border-radius:3px;font-size:10px;cursor:pointer">Удалить</button>` : ''));
+                marker.on('contextmenu', (e: any) => {
                   e.originalEvent.preventDefault();
-                  if (propsRef.current.editMode && confirm(`Удалить абонента «${sub.desc}»?`)) {
+                  if (propsRef.current.editMode && confirm(`Удалить «${sub.desc}»?`)) {
                     propsRef.current.deleteSubscriber?.(sub.id);
                   }
                 });
-                group.addLayer(c);
+                group.addLayer(marker);
               }
             }
           }
         }
       }
+      // Render P2P subscribers (not in any ORK — direct from OLT)
+      if (layers.subscribers && zoom >= 13) {
+        for (const district of districts) {
+          for (const sub of district.subscribers) {
+            if (sub.connectionType !== 'p2p') continue;
+            const objType = sub.objectType ?? 'абонент';
+            const objIcon = objType === 'камера' ? '📷' : objType === 'база' ? '📡' : objType === 'офис' ? '🏢' : null;
+            const divIcon = L.divIcon({
+              html: objIcon
+                ? `<div style="font-size:13px;opacity:0.75" title="${sub.desc}">${objIcon}</div>`
+                : `<div style="width:8px;height:8px;background:#fff;border:2px dashed #38bdf8;border-radius:50%" title="${sub.desc}"></div>`,
+              className: '', iconSize: [16, 16], iconAnchor: [8, 8],
+            });
+            const m = L.marker([sub.lat, sub.lon], { icon: divIcon });
+            m.bindPopup(`<b>${sub.desc}</b><br/>Тип: ${objType} <span style="color:#38bdf8">(P2P — прямое волокно)</span><br/>Волокна: ${sub.fibers.working}+${sub.fibers.spare}`);
+            group.addLayer(m);
+          }
+        }
+      }
+
       // Render splice closure (муфта) markers at cable branch points
       if (layers.cables && splitPoints.length > 0 && zoom >= 12) {
         for (const [lat, lon] of splitPoints) {

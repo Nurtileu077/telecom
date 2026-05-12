@@ -1,4 +1,4 @@
-import { District, Cable, Materials, ProjectSettings, ValidationIssue, CABLE_SIZES, CableType } from '@/types/network';
+import { District, Cable, Materials, ProjectSettings, ValidationIssue, CABLE_SIZES, CableType, ObjectType } from '@/types/network';
 import { haversineM } from './KMeans';
 
 export function calculateMaterials(
@@ -28,7 +28,16 @@ export function calculateMaterials(
   let orkCount = 0;
   let subCount = 0;
 
+  const byObjectType: Record<ObjectType, number> = { абонент: 0, камера: 0, база: 0, офис: 0 };
+  let gponCount = 0;
+  let p2pCount = 0;
+
   for (const d of districts) {
+    for (const sub of d.subscribers) {
+      const objType = sub.objectType ?? 'абонент';
+      byObjectType[objType] = (byObjectType[objType] || 0) + 1;
+      if (sub.connectionType === 'p2p') p2pCount++; else gponCount++;
+    }
     for (const tb of d.olt.transitBoxes) {
       tbCount++;
       for (const ork of tb.orks) {
@@ -80,6 +89,8 @@ export function calculateMaterials(
       clamps,
       cable_reserve_m: Math.round(cable_reserve_m),
     },
+    byObjectType,
+    byConnectionType: { gpon: gponCount, p2p: p2pCount },
   };
 }
 

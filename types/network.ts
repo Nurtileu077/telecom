@@ -1,3 +1,21 @@
+export type ObjectType = 'абонент' | 'камера' | 'база' | 'офис';
+export type ConnectionType = 'gpon' | 'p2p';
+
+export const OBJECT_TYPE_LABELS: Record<ObjectType, string> = {
+  абонент: 'Абонент',
+  камера:  'Камера',
+  база:    'Базовая станция',
+  офис:    'Офис/объект',
+};
+
+// Default fiber counts per object type (working + spare)
+export const OBJECT_FIBERS: Record<ObjectType, { working: number; spare: number }> = {
+  абонент: { working: 2, spare: 1 },
+  камера:  { working: 2, spare: 0 },
+  база:    { working: 4, spare: 2 },
+  офис:    { working: 2, spare: 1 },
+};
+
 export interface Subscriber {
   id: string;
   lat: number;
@@ -6,6 +24,8 @@ export interface Subscriber {
   district: string;
   orkId?: string;
   fibers: { working: number; spare: number };
+  objectType?: ObjectType;      // defaults to 'абонент'
+  connectionType?: ConnectionType; // defaults to 'gpon'
 }
 
 export interface ORK {
@@ -155,6 +175,9 @@ export interface Materials {
     clamps: number;
     cable_reserve_m: number;
   };
+  // Breakdown by object type and connection type
+  byObjectType: Record<ObjectType, number>;
+  byConnectionType: { gpon: number; p2p: number };
 }
 
 export interface ValidationIssue {
