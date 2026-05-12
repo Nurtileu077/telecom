@@ -38,6 +38,7 @@ export default function LayersTab({ districts, layers, toggleLayer }: Props) {
         <div className="space-y-0.5">
           <Toggle on={layers.olt} onChange={() => toggleLayer('olt')} label="📡 OLT — узлы связи" />
           <Toggle on={layers.tb} onChange={() => toggleLayer('tb')} label="🔷 Муфта (транзит.)" />
+          <Toggle on={layers.streetMufta} onChange={() => toggleLayer('streetMufta')} label="◆ Муфта (отвод, МС)" />
           <Toggle on={layers.ork} onChange={() => toggleLayer('ork')} label="📦 Бокс (распред.)" />
           <Toggle on={layers.subscribers} onChange={() => toggleLayer('subscribers')} label="🏠 Абоненты" />
           <Toggle on={layers.cables} onChange={() => toggleLayer('cables')} label="〰 Кабели (все)" />
@@ -101,6 +102,7 @@ export default function LayersTab({ districts, layers, toggleLayer }: Props) {
           {[
             { label: 'OLT', color: '#f59e0b', shape: 'square' },
             { label: 'Транзитная муфта', color: '#38bdf8', shape: 'square' },
+            { label: 'Муфта отводная (МС)', color: '#a78bfa', shape: 'square' },
             { label: 'ОРК шкаф', color: '#f59e0b', shape: 'circle' },
             { label: 'Абонент', color: '#34d399', shape: 'circle' },
           ].map((item) => (

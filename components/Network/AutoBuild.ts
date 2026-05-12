@@ -1,6 +1,6 @@
 import {
   Subscriber, ORK, TransitBox, OLT, Cable, District, ProjectSettings, DISTRICT_COLORS,
-  CABLE_FIBERS, selectCableType,
+  CABLE_FIBERS, selectCableType, StreetMufta,
 } from '@/types/network';
 import { kmeans, centroid, haversineM } from './KMeans';
 
@@ -137,13 +137,9 @@ export function buildNetwork(
         ]));
       }
 
-      // Отводы ОРК → абонент (ОК-4)
+      // Отводы: при ≥2 абонентах — цепочка с соединительными муфтами между соседями по углу от ОРК
       for (const ork of updatedTBOrks) {
-        for (const sub of ork.subscribers) {
-          cables.push(makeCable('ОК-4', ork.id, sub.id, [
-            [ork.lat, ork.lon], [sub.lat, sub.lon],
-          ]));
-        }
+        buildOrkSubscriberDrops(ork, cables, makeCable);
       }
     }
 
@@ -158,6 +154,64 @@ export function buildNetwork(
   }
 
   return { districts, cables };
+}
+
+function midpointLL(a: { lat: number; lon: number }, b: { lat: number; lon: number }) {
+  return { lat: (a.lat + b.lat) / 2, lon: (a.lon + b.lon) / 2 };
+}
+
+/** Порядок абонентов вдоль «улицы»: по азимуту от ОРК. */
+function sortSubscribersByAngleFromOrk(ork: { lat: number; lon: number }, subs: Subscriber[]): Subscriber[] {
+  return [...subs].sort((a, b) => {
+    const ang = (s: Subscriber) => Math.atan2(s.lon - ork.lon, s.lat - ork.lat);
+    return ang(a) - ang(b);
+  });
+}
+
+/**
+ * Один абонент — прямой дроп. Несколько — цепочка ОРК→B₀→…→Bₙ₋₁ с дропами Bᵢ→sᵢ,
+ * B₀ между ОРК и s₀, Bᵢ между sᵢ₋₁ и sᵢ (соединительные муфты «между абонентами»).
+ */
+function buildOrkSubscriberDrops(
+  ork: ORK,
+  cables: Cable[],
+  mk: typeof makeCable,
+) {
+  const subs = ork.subscribers;
+  if (subs.length === 0) {
+    ork.streetMuftas = [];
+    return;
+  }
+  if (subs.length === 1) {
+    const sub = subs[0];
+    ork.streetMuftas = [];
+    cables.push(mk('ОК-4', ork.id, sub.id, [[ork.lat, ork.lon], [sub.lat, sub.lon]]));
+    return;
+  }
+
+  const ordered = sortSubscribersByAngleFromOrk(ork, subs);
+  const n = ordered.length;
+  const Branches: StreetMufta[] = [];
+  const bid = (k: number) => `МС-${ork.id}-${k}`;
+  Branches.push({ id: bid(0), ...midpointLL(ork, ordered[0]) });
+  for (let k = 1; k < n; k++) {
+    Branches.push({ id: bid(k), ...midpointLL(ordered[k - 1], ordered[k]) });
+  }
+  ork.streetMuftas = Branches;
+
+  const B = Branches;
+  cables.push(mk(selectCableType(n), ork.id, B[0].id, [[ork.lat, ork.lon], [B[0].lat, B[0].lon]]));
+  for (let k = 0; k < n - 1; k++) {
+    const downstream = n - k - 1;
+    cables.push(mk(selectCableType(downstream), B[k].id, B[k + 1].id, [
+      [B[k].lat, B[k].lon], [B[k + 1].lat, B[k + 1].lon],
+    ]));
+  }
+  for (let k = 0; k < n; k++) {
+    cables.push(mk('ОК-4', B[k].id, ordered[k].id, [
+      [B[k].lat, B[k].lon], [ordered[k].lat, ordered[k].lon],
+    ]));
+  }
 }
 
 // ---------------------------------------------------------------------------

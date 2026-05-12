@@ -58,8 +58,17 @@ export function calculateMaterials(
     }
   }
 
+  let streetMuftaCount = 0;
+  for (const d of districts) {
+    for (const tb of d.olt.transitBoxes) {
+      for (const ork of tb.orks) {
+        streetMuftaCount += ork.streetMuftas?.length ?? 0;
+      }
+    }
+  }
+
   const spliceJoints = Math.ceil(totalKm / 2);
-  const totalMufta = tbCount + spliceJoints + mergeExtraMufta;
+  const totalMufta = tbCount + spliceJoints + mergeExtraMufta + streetMuftaCount;
 
   const pigtailSCAPC = totalMufta * 12 + subCount;
   const kdzsGilzy = Math.ceil(totalKm * 4) + 200;

@@ -8,6 +8,13 @@ export interface Subscriber {
   fibers: { working: number; spare: number };
 }
 
+/** Соединительная муфта на отводной цепочке (между абонентами / у ОРК). */
+export interface StreetMufta {
+  id: string;
+  lat: number;
+  lon: number;
+}
+
 export interface ORK {
   id: string;
   lat: number;
@@ -18,6 +25,8 @@ export interface ORK {
   subscribers: Subscriber[];
   cableType: CableType;
   boxType: string;
+  /** Цепочка ОРК→абоненты: муфты на трасе (не транзитные МТОК). */
+  streetMuftas?: StreetMufta[];
 }
 
 export interface TransitBox {
@@ -179,6 +188,8 @@ export interface ValidationIssue {
 export interface LayerVisibility {
   olt: boolean;
   tb: boolean;
+  /** Соединительные муфты на отводах (между абонентами) */
+  streetMufta: boolean;
   ork: boolean;
   subscribers: boolean;
   cables: boolean;

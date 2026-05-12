@@ -371,6 +371,19 @@ export default function LeafletMap(props: Props) {
               }
               group.addLayer(m);
             }
+            if (layers.streetMufta && zoom >= 12) {
+              for (const sm of ork.streetMuftas ?? []) {
+                const icon = L.divIcon({
+                  html: `<div style="width:22px;height:18px;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;font-family:monospace;background:#1a2744;border:2px solid #a78bfa;border-radius:2px;color:#e9d5ff;box-shadow:0 1px 4px rgba(0,0,0,0.45)">МС</div>`,
+                  className: '', iconSize: [22, 18], iconAnchor: [11, 9],
+                });
+                const m = L.marker([sm.lat, sm.lon], { icon });
+                m.bindPopup(
+                  `<b>${sm.id}</b><br/>Соединительная муфта (отвод)<br/>ОРК: ${ork.id}<br/>Район: ${district.name}`,
+                );
+                group.addLayer(m);
+              }
+            }
             if (layers.subscribers && zoom >= 13) {
               for (const sub of ork.subscribers) {
                 const c = L.circleMarker([sub.lat, sub.lon], {

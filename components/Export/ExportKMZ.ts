@@ -16,6 +16,7 @@ const CABLE_STYLES: Record<string, { color: string; width: number; label: string
 const SPECS = {
   olt: `Тип: OLT (Optical Line Terminal)\nМодель: ZTE C300/C320 или Huawei MA5800\nПорты: 8×GPON\nМощность TX: +3 дБм\nВолокон: 64–128 або. на порт`,
   tb:  `Тип: Транзитная муфта МТОК-96А\nВолокон: 96\nСплиттер L1: 1:4 или 1:8 (PLC)\nПигтейл: SC/APC`,
+  stMufta: `Тип: Соединительная муфта на отводе (МС)\nУзел сварки / ответвления по трасе к абонентам\nНе путать с транзитной МТОК на магистрали`,
   ork: `Тип: ОРК (оптический распределительный кабинет)\nВолокон: 8–16\nСплиттер L2: 1:8 или 1:16 (PLC)\nПодключение: SC/APC адаптер`,
   sub: `Тип: ONT (Optical Network Terminal)\nМодель: ZTE F601/F609 или HUAWEI HG8310M\nРазъём: SC/APC`,
 };
@@ -80,6 +81,12 @@ export async function exportKMZ(districts: District[], cables: Cable[]): Promise
   </IconStyle>
   <LabelStyle><scale>0</scale></LabelStyle>
 </Style>
+<Style id="st-mufta">
+  <IconStyle><color>ffb794f6</color><scale>0.85</scale>
+    <Icon><href>http://maps.google.com/mapfiles/kml/shapes/square.png</href></Icon>
+  </IconStyle>
+  <LabelStyle><color>ffb794f6</color><scale>0.55</scale></LabelStyle>
+</Style>
 ${Object.entries(CABLE_STYLES).map(([t, s]) =>
   `<Style id="cable-${t}"><LineStyle><color>${s.color}</color><width>${s.width}</width></LineStyle></Style>`,
 ).join('\n')}
@@ -97,6 +104,13 @@ ${styles}
   const totalSubs = districts.reduce((s, d) => s + d.subscribers.length, 0);
   const totalOrks = districts.reduce((s, d) => s + d.olt.transitBoxes.reduce((t, tb) => t + tb.orks.length, 0), 0);
   const totalTbs  = districts.reduce((s, d) => s + d.olt.transitBoxes.length, 0);
+  const totalStreetM = districts.reduce(
+    (s, d) => s + d.olt.transitBoxes.reduce(
+      (t, tb) => t + tb.orks.reduce((u, o) => u + (o.streetMuftas?.length ?? 0), 0),
+      0,
+    ),
+    0,
+  );
   const totalCableM = cables.reduce((s, c) => s + c.lengthM, 0);
   const routedCount = cables.filter((c) => c.routedByOSRM).length;
 
@@ -106,6 +120,7 @@ ${styles}
 Абонентов: ${totalSubs}<br/>
 OLT: ${districts.length}<br/>
 Транзитных муфт МТОК-96А: ${totalTbs}<br/>
+Муфт отводных (МС): ${totalStreetM}<br/>
 ОРК шкафов: ${totalOrks}<br/>
 Кабелей всего: ${cables.length} сегм. / ${fmtLen(totalCableM)}<br/>
 Проложено по дороге: ${routedCount} из ${cables.length} сегм.<br/>
@@ -160,6 +175,27 @@ ${html(SPECS.tb)}`;
 <br/>
 ${html(SPECS.ork)}`;
         kml += pt(ork.id, desc, ork.lat, ork.lon, 'ork');
+      }
+    }
+    kml += `</Folder>\n`;
+  }
+  kml += `</Folder>\n`;
+
+  // ---- Street splice muftas (МС) ----
+  kml += `<Folder><name>◆ Муфты отводные МС (${totalStreetM} шт.)</name>\n`;
+  for (const d of districts) {
+    kml += `<Folder><name>${esc(d.name)}</name>\n`;
+    for (const tb of d.olt.transitBoxes) {
+      for (const ork of tb.orks) {
+        for (const sm of ork.streetMuftas ?? []) {
+          const desc = `<b>${esc(sm.id)}</b><br/>
+Район: ${esc(d.name)}<br/>
+ОРК: ${esc(ork.id)}<br/>
+Транзитная муфта: ${esc(tb.id)}<br/>
+<br/>
+${html(SPECS.stMufta)}`;
+          kml += pt(sm.id, desc, sm.lat, sm.lon, 'st-mufta');
+        }
       }
     }
     kml += `</Folder>\n`;
