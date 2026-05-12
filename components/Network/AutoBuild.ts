@@ -126,27 +126,22 @@ export function buildNetwork(
         [olt.lat, olt.lon], [tb.lat, tb.lon]
       ]));
 
-      // Цепочка TB → ОРК₁ → ОРК₂ → … (вместо звезды TB→каждый ОРК): один проход по улицам,
-      // без нескольких параллельных OSRM-маршрутов на один и тот же участок.
-      const orderedOrks = orderOrksChainFromTb(tb.lat, tb.lon, updatedTBOrks);
-      for (let ci = 0; ci < orderedOrks.length; ci++) {
-        const downstreamSubs = orderedOrks.slice(ci).reduce((s, o) => s + o.subscribers.length, 0);
-        const segmentType = selectCableType(downstreamSubs);
-        const fromId = ci === 0 ? tbId : orderedOrks[ci - 1].id;
-        const fromLat = ci === 0 ? tb.lat : orderedOrks[ci - 1].lat;
-        const fromLon = ci === 0 ? tb.lon : orderedOrks[ci - 1].lon;
-        const to = orderedOrks[ci];
-        cables.push(makeCable(segmentType, fromId, to.id, [
-          [fromLat, fromLon],
-          [to.lat, to.lon],
+      // MST (Prim): каждый ОРК подключается к ближайшему уже подключённому узлу
+      // (муфте или другому ОРК). Нет петель, нет задвоений на одной улице.
+      const mstEdges = buildOrkMST(tbId, tb.lat, tb.lon, updatedTBOrks);
+      for (const edge of mstEdges) {
+        const segType = selectCableType(edge.downstreamSubs);
+        cables.push(makeCable(segType, edge.fromId, edge.toId, [
+          [edge.fromLat, edge.fromLon],
+          [edge.toOrk.lat, edge.toOrk.lon],
         ]));
       }
 
-      // Отводы ОРК → абонент
+      // Отводы ОРК → абонент (ОК-4)
       for (const ork of updatedTBOrks) {
         for (const sub of ork.subscribers) {
           cables.push(makeCable('ОК-4', ork.id, sub.id, [
-            [ork.lat, ork.lon], [sub.lat, sub.lon]
+            [ork.lat, ork.lon], [sub.lat, sub.lon],
           ]));
         }
       }
@@ -165,29 +160,87 @@ export function buildNetwork(
   return { districts, cables };
 }
 
-/** Ближайший-сосед от муфты: цепочка по трассе без N полных параллельных линий «TB→ОРК». */
-function orderOrksChainFromTb(tbLat: number, tbLon: number, orks: ORK[]): ORK[] {
-  if (orks.length <= 1) return [...orks];
-  const remaining = [...orks];
-  const ordered: ORK[] = [];
-  let curLat = tbLat;
-  let curLon = tbLon;
-  while (remaining.length > 0) {
-    let bestI = 0;
-    let bestD = Infinity;
-    for (let i = 0; i < remaining.length; i++) {
-      const d = haversineM(curLat, curLon, remaining[i].lat, remaining[i].lon);
-      if (d < bestD) {
-        bestD = d;
-        bestI = i;
+// ---------------------------------------------------------------------------
+// MST — алгоритм Прима для топологии TB→ОРК
+// ---------------------------------------------------------------------------
+
+type MSTEdge = {
+  fromId: string; fromLat: number; fromLon: number;
+  toId: string;   toOrk: ORK;
+  downstreamSubs: number;
+};
+
+/**
+ * Минимальное остовное дерево (Prim) для набора ОРК с корнем в муфте.
+ * Каждый ОРК подключается к ближайшему уже подключённому узлу —
+ * узлы на противоположных сторонах дороги не тянут кабель «через весь квартал».
+ * После построения дерева вычисляем нагрузку «вниз по дереву»
+ * для правильного выбора сечения кабеля на каждом звене.
+ */
+function buildOrkMST(
+  tbId: string, tbLat: number, tbLon: number,
+  orks: ORK[],
+): MSTEdge[] {
+  if (orks.length === 0) return [];
+
+  type Node = { id: string; lat: number; lon: number };
+
+  const inTree: Node[] = [{ id: tbId, lat: tbLat, lon: tbLon }];
+  const notInTree: Node[] = orks.map((o) => ({ id: o.id, lat: o.lat, lon: o.lon }));
+  const parentOf = new Map<string, Node>(); // orkId → parent node
+  const orkById = new Map(orks.map((o) => [o.id, o]));
+
+  while (notInTree.length > 0) {
+    let bestDist = Infinity;
+    let bestFromNode: Node | null = null;
+    let bestCandIdx = -1;
+
+    for (let ci = 0; ci < notInTree.length; ci++) {
+      const cand = notInTree[ci];
+      for (const tn of inTree) {
+        const d = haversineM(tn.lat, tn.lon, cand.lat, cand.lon);
+        if (d < bestDist) { bestDist = d; bestFromNode = tn; bestCandIdx = ci; }
       }
     }
-    const next = remaining.splice(bestI, 1)[0];
-    ordered.push(next);
-    curLat = next.lat;
-    curLon = next.lon;
+    if (bestCandIdx < 0 || !bestFromNode) break;
+
+    const next = notInTree.splice(bestCandIdx, 1)[0];
+    parentOf.set(next.id, bestFromNode);
+    inTree.push(next);
   }
-  return ordered;
+
+  // Дерево детей: parentId → [childId, …]
+  const children = new Map<string, string[]>();
+  for (const [child, par] of parentOf) {
+    const list = children.get(par.id) ?? [];
+    list.push(child);
+    children.set(par.id, list);
+  }
+
+  // Рекурсивный подсчёт абонентов «вниз» по поддереву
+  function subtreeSubs(nodeId: string): number {
+    const ork = orkById.get(nodeId);
+    const own = ork ? ork.subscribers.length : 0;
+    return own + (children.get(nodeId) ?? []).reduce((s, kid) => s + subtreeSubs(kid), 0);
+  }
+
+  // Собираем рёбра
+  const edges: MSTEdge[] = [];
+  const nodeById = new Map(inTree.map((n) => [n.id, n]));
+
+  for (const [childId, parentNode] of parentOf) {
+    const ork = orkById.get(childId)!;
+    edges.push({
+      fromId: parentNode.id,
+      fromLat: parentNode.lat,
+      fromLon: parentNode.lon,
+      toId: childId,
+      toOrk: ork,
+      downstreamSubs: subtreeSubs(childId),
+    });
+  }
+
+  return edges;
 }
 
 function makeCable(
