@@ -59,7 +59,7 @@ export default function ToolsTab({
             onChange={(e) => setSettings((s) => ({ ...s, consolidateParallelTrunksForMaterials: e.target.checked }))}
           />
           <span className="text-[11px] text-[#94a3b8] leading-snug">
-            Объединять параллельные магистрали в смете (один участок — max длина, сумма волокон → один тип). ОК-4 не объединяем. Карта без изменений.
+            Объединять параллельные магистрали в смете и на карте (один участок). ОК-4 не объединяем.
           </span>
         </label>
         <div className="flex items-center gap-2">
@@ -76,6 +76,34 @@ export default function ToolsTab({
             }}
             className="w-14 bg-[#0a0e1a] border border-[#1e3a5f] rounded px-1 py-0.5 text-[10px] text-[#e2e8f0]"
           />
+        </div>
+        <div className="mt-3 space-y-1">
+          <span className="text-[9px] text-[#64748b] uppercase tracking-wide">Отводы к абонентам</span>
+          <label className="flex items-start gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="dropMode"
+              className="mt-0.5"
+              checked={settings.subscriberDropMode === 'star'}
+              onChange={() => setSettings((s) => ({ ...s, subscriberDropMode: 'star' }))}
+            />
+            <span className="text-[11px] text-[#94a3b8] leading-snug">
+              Звезда от ОРК (как в эталонном KMZ: только ОРК→дом, без муфт на отводе)
+            </span>
+          </label>
+          <label className="flex items-start gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="dropMode"
+              className="mt-0.5"
+              checked={settings.subscriberDropMode === 'chain'}
+              onChange={() => setSettings((s) => ({ ...s, subscriberDropMode: 'chain' }))}
+            />
+            <span className="text-[11px] text-[#94a3b8] leading-snug">
+              Цепочка с муфтами МС между соседними абонентами по углу от ОРК
+            </span>
+          </label>
+          <p className="text-[9px] text-[#64748b]">Смена режима — после «Импорт» / «Пересборка».</p>
         </div>
       </section>
 

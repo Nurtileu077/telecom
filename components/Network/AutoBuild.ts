@@ -139,7 +139,7 @@ export function buildNetwork(
 
       // Отводы: при ≥2 абонентах — цепочка с соединительными муфтами между соседями по углу от ОРК
       for (const ork of updatedTBOrks) {
-        buildOrkSubscriberDrops(ork, cables, makeCable);
+        buildOrkSubscriberDrops(ork, cables, makeCable, settings.subscriberDropMode);
       }
     }
 
@@ -176,16 +176,18 @@ function buildOrkSubscriberDrops(
   ork: ORK,
   cables: Cable[],
   mk: typeof makeCable,
+  mode: 'star' | 'chain',
 ) {
   const subs = ork.subscribers;
   if (subs.length === 0) {
     ork.streetMuftas = [];
     return;
   }
-  if (subs.length === 1) {
-    const sub = subs[0];
+  if (mode === 'star' || subs.length === 1) {
     ork.streetMuftas = [];
-    cables.push(mk('ОК-4', ork.id, sub.id, [[ork.lat, ork.lon], [sub.lat, sub.lon]]));
+    for (const sub of subs) {
+      cables.push(mk('ОК-4', ork.id, sub.id, [[ork.lat, ork.lon], [sub.lat, sub.lon]]));
+    }
     return;
   }
 

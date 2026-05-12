@@ -147,6 +147,8 @@ export interface ProjectSettings {
   consolidateParallelTrunksForMaterials: boolean;
   /** Порог «одинаковых концов» трасс для объединения, м */
   parallelMergeRadiusM: number;
+  /** Как рисовать/строить отводы: звезда ОРК→абонент (как в эталонном KMZ v3) или цепочка с МС между соседями по углу */
+  subscriberDropMode: 'star' | 'chain';
 }
 
 export interface Materials {
@@ -212,6 +214,7 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
   osrmDelay: 100,
   consolidateParallelTrunksForMaterials: true,
   parallelMergeRadiusM: 18,
+  subscriberDropMode: 'star',
 };
 
 export interface PriceCatalog {
