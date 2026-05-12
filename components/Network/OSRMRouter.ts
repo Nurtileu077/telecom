@@ -55,6 +55,7 @@ function calcLength(coords: [number, number][]): number {
   return len;
 }
 
+/** @param routeDrops если false — отводы ОК-4 (ОРК→абонент) остаются прямыми, маршрутизируются только магистрали */
 export async function routeCables(
   cables: Cable[],
   delay: number,

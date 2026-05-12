@@ -93,7 +93,7 @@ export function useNetwork() {
         finalCables = await routeCables(
           newCables,
           s.osrmDelay,
-          false,
+          true,
           (done, total, current) => setOsrmProgress({ done, total, current }),
           controller.signal,
         );
@@ -165,7 +165,7 @@ export function useNetwork() {
       const routed = await routeCables(
         cables,
         200,
-        false,
+        true,
         (done, total, current) => setOsrmProgress({ done, total, current }),
         controller.signal,
       );

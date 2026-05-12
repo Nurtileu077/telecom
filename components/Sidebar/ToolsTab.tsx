@@ -40,7 +40,7 @@ export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, o
           {osrmStatus === 'routing' ? '⏳ Маршрутизация...' : '🛣 Проложить по дорогам (OSRM)'}
         </button>
         <p className="text-[9px] text-[#64748b] mt-1">
-          Перестраивает все кабели по дорогам через router.project-osrm.org. Занимает 1–2 мин.
+          Все сегменты, включая отводы ОК-4 к абонентам, через router.project-osrm.org. При большом числе точек может занять несколько минут.
         </p>
       </section>
 
