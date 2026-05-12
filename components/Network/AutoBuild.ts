@@ -1,8 +1,17 @@
 import {
   Subscriber, ORK, TransitBox, OLT, Cable, District, ProjectSettings, DISTRICT_COLORS,
-  CABLE_FIBERS, selectCableType, OBJECT_FIBERS,
+  CABLE_FIBERS, CABLE_SIZES, selectCableType, OBJECT_FIBERS, CableType,
 } from '@/types/network';
 import { kmeans, centroid, haversineM } from './KMeans';
+
+// Select cable type in P2P mode: based on actual total fibers needed by downstream objects
+function selectCableByFibers(subs: Subscriber[]): CableType {
+  const total = subs.reduce((sum, s) => {
+    const obj = OBJECT_FIBERS[s.objectType ?? 'абонент'];
+    return sum + obj.working + obj.spare;
+  }, 0);
+  return CABLE_SIZES.find((t) => CABLE_FIBERS[t] >= total) ?? 'ОК-96';
+}
 
 let cableIdCounter = 0;
 function newCableId() { return `cable-${++cableIdCounter}`; }
@@ -27,14 +36,18 @@ export function buildNetwork(
     const color = DISTRICT_COLORS[colorIdx % DISTRICT_COLORS.length];
     colorIdx++;
 
-    // Separate P2P subscribers — they get direct cables and don't join GPON clustering
-    const p2pSubs = subs.filter((s) => s.connectionType === 'p2p');
-    const gponSubs = subs.filter((s) => s.connectionType !== 'p2p');
-    const clusterSubs = gponSubs.length > 0 ? gponSubs : subs;
+    const isP2P = settings.networkType === 'p2p';
+
+    // In P2P mode all objects cluster into Боксы with dedicated fibers (no splitters)
+    // In GPON mode: separate P2P subscribers, route them directly
+    const p2pSubs = !isP2P ? subs.filter((s) => s.connectionType === 'p2p') : [];
+    const gponSubs = !isP2P ? subs.filter((s) => s.connectionType !== 'p2p') : [];
+    const clusterSubs = isP2P ? subs : (gponSubs.length > 0 ? gponSubs : subs);
 
     const oltPos = centroid(clusterSubs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id })));
+    const nodePrefix = isP2P ? 'УС' : 'OLT';
     const olt: OLT = {
-      id: `OLT-${districtName.slice(0, 8).replace(/\s/g, '')}`,
+      id: `${nodePrefix}-${districtName.slice(0, 8).replace(/\s/g, '')}`,
       lat: oltPos.lat,
       lon: oltPos.lon,
       district: districtName,
@@ -120,8 +133,8 @@ export function buildNetwork(
         if (idx >= 0) orks[idx] = o;
       }
 
-      const tbSubCount = updatedTBOrks.reduce((s, o) => s + o.subscribers.length, 0);
-      const tbCableType = selectCableType(tbSubCount);
+      const tbAllSubs = updatedTBOrks.flatMap((o) => o.subscribers);
+      const tbCableType = isP2P ? selectCableByFibers(tbAllSubs) : selectCableType(tbAllSubs.length);
 
       const tb: TransitBox = {
         id: tbId,
@@ -143,14 +156,18 @@ export function buildNetwork(
 
       // Cables: TB → each ORK
       for (const ork of updatedTBOrks) {
-        const orkCableType = selectCableType(ork.subscribers.length);
+        const orkCableType = isP2P
+          ? selectCableByFibers(ork.subscribers)
+          : selectCableType(ork.subscribers.length);
         cables.push(makeCable(orkCableType, tbId, ork.id, [
           [tb.lat, tb.lon], [ork.lat, ork.lon]
         ]));
 
-        // Cables: ORK → each subscriber (ОК-4 drop)
+        // Cables: ORK/Бокс → each subscriber
+        // P2P: ОК-8 aerial drop; GPON: ОК-4 indoor drop
+        const dropType = isP2P ? 'ОК-8' : 'ОК-4';
         for (const sub of ork.subscribers) {
-          cables.push(makeCableForSub('ОК-4', ork.id, sub, [
+          cables.push(makeCableForSub(dropType, ork.id, sub, [
             [ork.lat, ork.lon], [sub.lat, sub.lon],
           ]));
         }

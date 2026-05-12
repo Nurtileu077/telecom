@@ -3,6 +3,7 @@ import { useState } from 'react';
 import {
   District, Cable, Materials, LayerVisibility, ValidationIssue,
   MapAnnotation, AnnotationType, Project, ImportRecord, PriceCatalog,
+  ProjectSettings,
 } from '@/types/network';
 import LayersTab from './LayersTab';
 import MaterialsTab from './MaterialsTab';
@@ -45,6 +46,7 @@ interface Props {
   importProjectJSON: (file: File) => Promise<void>;
   importHistory: ImportRecord[];
 
+  settings: ProjectSettings;
   prices: PriceCatalog;
   setPrices: (p: PriceCatalog) => void;
   heatmapEnabled: boolean;
@@ -65,7 +67,7 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'stats',     label: 'Стат.',    icon: '📊' },
   { id: 'tools',     label: 'Инстр.',   icon: '🧰' },
   { id: 'schema',    label: 'Схема',    icon: '🌳' },
-  { id: 'groups',    label: 'ОРК',      icon: '👥' },
+  { id: 'groups',    label: 'Боксы',    icon: '👥' },
   { id: 'projects',  label: 'Проекты',  icon: '💾' },
 ];
 
@@ -120,10 +122,10 @@ export default function Sidebar(props: Props) {
           />
         )}
         {activeTab === 'materials' && (
-          <MaterialsTab materials={props.materials} districts={props.districts} cables={props.cables} />
+          <MaterialsTab materials={props.materials} districts={props.districts} cables={props.cables} settings={props.settings} />
         )}
         {activeTab === 'stats' && (
-          <StatsTab districts={props.districts} cables={props.cables} issues={props.validationIssues} />
+          <StatsTab districts={props.districts} cables={props.cables} issues={props.validationIssues} settings={props.settings} />
         )}
         {activeTab === 'schema' && (
           <SchemaTab districts={props.districts} flyTo={props.flyTo} />

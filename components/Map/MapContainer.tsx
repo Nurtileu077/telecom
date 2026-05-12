@@ -10,6 +10,7 @@ interface Props {
   districts: District[];
   cables: Cable[];
   splitPoints?: [number, number][];
+  networkType?: 'gpon' | 'p2p';
   layers: LayerVisibility;
   flyToRef?: React.MutableRefObject<((lat: number, lon: number, zoom?: number) => void) | null>;
   mapElRef?: React.MutableRefObject<HTMLElement | null>;
@@ -261,7 +262,11 @@ export default function LeafletMap(props: Props) {
     if (!map || !group) return;
     import('leaflet').then((L) => {
       group.clearLayers();
-      const { districts, cables, splitPoints = [], layers } = propsRef.current;
+      const { districts, cables, splitPoints = [], layers, networkType = 'p2p' } = propsRef.current;
+      const isP2P = networkType === 'p2p';
+      const nodeLabel = isP2P ? 'УС' : 'OLT';
+      const tbLabel   = isP2P ? 'Муфта' : 'TB';
+      const orkLabel  = isP2P ? 'Бокс' : 'ОРК';
       const zoom = map.getZoom();
 
       if (layers.cables) {
@@ -287,12 +292,12 @@ export default function LeafletMap(props: Props) {
         const { olt } = district;
         if (layers.olt) {
           const icon = L.divIcon({
-            html: `<div style="width:40px;height:22px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;font-family:monospace;background:linear-gradient(135deg,#f59e0b,#fbbf24);border:2px solid #f59e0b;border-radius:4px;color:#0a0e1a;box-shadow:0 2px 8px rgba(0,0,0,0.5)">OLT</div>`,
+            html: `<div style="width:40px;height:22px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;font-family:monospace;background:linear-gradient(135deg,#f59e0b,#fbbf24);border:2px solid #f59e0b;border-radius:4px;color:#0a0e1a;box-shadow:0 2px 8px rgba(0,0,0,0.5)">${nodeLabel}</div>`,
             className: '', iconSize: [40, 22], iconAnchor: [20, 11],
           });
           const draggable = !!propsRef.current.editMode;
           const m = L.marker([olt.lat, olt.lon], { icon, draggable });
-          m.bindPopup(`<b>${olt.id}</b><br/>${olt.model}<br/>Район: ${district.name}<br/>Ёмкость: ${olt.capacity}<br/>TB: ${olt.transitBoxes.length}`);
+          m.bindPopup(`<b>${olt.id}</b><br/>Район: ${district.name}<br/>${tbLabel}: ${olt.transitBoxes.length}`);
           if (draggable) {
             m.on('dragend', (e: any) => {
               const ll = e.target.getLatLng();
@@ -304,12 +309,12 @@ export default function LeafletMap(props: Props) {
         for (const tb of olt.transitBoxes) {
           if (layers.tb) {
             const icon = L.divIcon({
-              html: `<div style="width:30px;height:18px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;font-family:monospace;background:#1a2744;border:2px solid #38bdf8;border-radius:3px;color:#38bdf8;box-shadow:0 1px 4px rgba(0,0,0,0.4)">TB</div>`,
-              className: '', iconSize: [30, 18], iconAnchor: [15, 9],
+              html: `<div style="width:44px;height:18px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;font-family:monospace;background:#1a2744;border:2px solid #38bdf8;border-radius:3px;color:#38bdf8;box-shadow:0 1px 4px rgba(0,0,0,0.4)">${tbLabel}</div>`,
+              className: '', iconSize: [44, 18], iconAnchor: [22, 9],
             });
             const draggable = !!propsRef.current.editMode;
             const m = L.marker([tb.lat, tb.lon], { icon, draggable });
-            m.bindPopup(`<b>${tb.id}</b><br/>OLT: ${olt.id}<br/>ОРК: ${tb.orks.length}<br/>Муфта: ${tb.muftaType}${draggable ? '<br/><i style="color:#64748b;font-size:10px">Перетащи для перемещения</i>' : ''}`);
+            m.bindPopup(`<b>${tb.id}</b><br/>${nodeLabel}: ${olt.id}<br/>${orkLabel}: ${tb.orks.length}${draggable ? '<br/><i style="color:#64748b;font-size:10px">Перетащи для перемещения</i>' : ''}`);
             if (draggable) {
               m.on('dragend', (e: any) => {
                 const ll = e.target.getLatLng();
@@ -321,12 +326,15 @@ export default function LeafletMap(props: Props) {
           for (const ork of tb.orks) {
             if (layers.ork) {
               const icon = L.divIcon({
-                html: `<div style="width:32px;height:18px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;font-family:monospace;background:#1a2744;border:2px solid #f59e0b;border-radius:3px;color:#f59e0b;box-shadow:0 1px 4px rgba(0,0,0,0.4)">ОРК</div>`,
-                className: '', iconSize: [32, 18], iconAnchor: [16, 9],
+                html: `<div style="width:36px;height:18px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;font-family:monospace;background:#1a2744;border:2px solid #f59e0b;border-radius:3px;color:#f59e0b;box-shadow:0 1px 4px rgba(0,0,0,0.4)">${orkLabel}</div>`,
+                className: '', iconSize: [36, 18], iconAnchor: [18, 9],
               });
               const draggable = !!propsRef.current.editMode;
               const m = L.marker([ork.lat, ork.lon], { icon, draggable });
-              m.bindPopup(`<b>${ork.id}</b><br/>Сплиттер: ${ork.splitter}<br/>Або.: ${ork.subscribers.length}<br/>Муфта: ${tb.id}${draggable ? '<br/><i style="color:#64748b;font-size:10px">Перетащи для перемещения</i>' : ''}`);
+              const orkInfo = isP2P
+                ? `<b>${ork.id}</b><br/>Объектов: ${ork.subscribers.length}<br/>${tbLabel}: ${tb.id}`
+                : `<b>${ork.id}</b><br/>Сплиттер: ${ork.splitter}<br/>Або.: ${ork.subscribers.length}<br/>${tbLabel}: ${tb.id}`;
+              m.bindPopup(`${orkInfo}${draggable ? '<br/><i style="color:#64748b;font-size:10px">Перетащи для перемещения</i>' : ''}`);
               if (draggable) {
                 m.on('dragend', (e: any) => {
                   const ll = e.target.getLatLng();
@@ -363,8 +371,8 @@ export default function LeafletMap(props: Props) {
                   marker = c;
                 }
                 marker.bindPopup(`<b>${sub.desc}</b><br/>`
-                  + `Тип: ${objType}${isPtp ? ' <span style="color:#38bdf8">(P2P)</span>' : ' <span style="color:#34d399">(GPON)</span>'}<br/>`
-                  + `ОРК: ${ork.id}<br/>Волокна: ${sub.fibers.working}+${sub.fibers.spare}`
+                  + `Тип: ${objType}${isPtp || isP2P ? ' <span style="color:#38bdf8">(P2P)</span>' : ' <span style="color:#34d399">(GPON)</span>'}<br/>`
+                  + `${orkLabel}: ${ork.id}<br/>Волокна: ${sub.fibers.working}+${sub.fibers.spare}`
                   + (propsRef.current.editMode ? `<br/><button onclick="window.__deleteSub__('${sub.id}')" style="margin-top:6px;padding:2px 8px;background:#f87171;color:#fff;border:none;border-radius:3px;font-size:10px;cursor:pointer">Удалить</button>` : ''));
                 marker.on('contextmenu', (e: any) => {
                   e.originalEvent.preventDefault();

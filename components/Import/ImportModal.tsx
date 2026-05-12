@@ -197,12 +197,22 @@ export default function ImportModal({ onClose, onBuild, currentSettings, hasExis
               <div className="flex items-center gap-4 mb-2">
                 <div>
                   <div className="text-xl font-mono font-bold text-[#38bdf8]">{subscribers.length}</div>
-                  <div className="text-[10px] text-[#64748b]">абонентов</div>
+                  <div className="text-[10px] text-[#64748b]">объектов</div>
                 </div>
                 <div>
                   <div className="text-xl font-mono font-bold text-[#34d399]">{Object.keys(byDistrict).length}</div>
                   <div className="text-[10px] text-[#64748b]">районов</div>
                 </div>
+                {subscribers.some((s) => s.objectType) && (
+                  <div className="text-[10px] text-[#64748b] flex flex-col gap-0.5">
+                    {(['камера', 'абонент', 'база', 'офис'] as const).map((t) => {
+                      const n = subscribers.filter((s) => s.objectType === t).length;
+                      if (!n) return null;
+                      const icons: Record<string, string> = { камера: '📷', абонент: '🏠', база: '📡', офис: '🏢' };
+                      return <span key={t}>{icons[t]} {n} {t}</span>;
+                    })}
+                  </div>
+                )}
               </div>
               <div className="space-y-1 max-h-32 overflow-y-auto">
                 {Object.entries(byDistrict).map(([name, count]) => (
@@ -218,6 +228,25 @@ export default function ImportModal({ onClose, onBuild, currentSettings, hasExis
           {subscribers && (
             <div className="space-y-2">
               <h3 className="text-[10px] text-[#64748b] uppercase tracking-wider">Настройки построения</h3>
+
+              {/* Network type toggle */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setSettings((s) => ({ ...s, networkType: 'p2p' }))}
+                  className={`p-2 rounded-md text-xs transition-all ${settings.networkType === 'p2p' ? 'bg-[#38bdf8]/15 border border-[#38bdf8]/50 text-[#38bdf8]' : 'border border-[#1e3a5f] text-[#94a3b8]'}`}
+                >
+                  ⚡ P2P
+                  <div className="text-[9px] text-[#64748b] mt-0.5">Прямое волокно</div>
+                </button>
+                <button
+                  onClick={() => setSettings((s) => ({ ...s, networkType: 'gpon' }))}
+                  className={`p-2 rounded-md text-xs transition-all ${settings.networkType === 'gpon' ? 'bg-[#34d399]/15 border border-[#34d399]/50 text-[#34d399]' : 'border border-[#1e3a5f] text-[#94a3b8]'}`}
+                >
+                  🌿 GPON
+                  <div className="text-[9px] text-[#64748b] mt-0.5">Пассивная сеть</div>
+                </button>
+              </div>
+
               <div className="grid grid-cols-2 gap-2">
                 <label className="block">
                   <span className="text-[10px] text-[#64748b] block mb-1">Макс. або. на ОРК</span>

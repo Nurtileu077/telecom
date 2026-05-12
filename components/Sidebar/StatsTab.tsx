@@ -1,13 +1,14 @@
 'use client';
-import { District, Cable, ValidationIssue, OBJECT_TYPE_LABELS, ObjectType } from '@/types/network';
+import { District, Cable, ValidationIssue, OBJECT_TYPE_LABELS, ObjectType, ProjectSettings } from '@/types/network';
 
 interface Props {
   districts: District[];
   cables: Cable[];
   issues: ValidationIssue[];
+  settings: ProjectSettings;
 }
 
-export default function StatsTab({ districts, cables, issues }: Props) {
+export default function StatsTab({ districts, cables, issues, settings }: Props) {
   if (districts.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-center p-6">
@@ -17,18 +18,20 @@ export default function StatsTab({ districts, cables, issues }: Props) {
     );
   }
 
+  const isP2P = settings.networkType === 'p2p';
+
   const allSubs = districts.flatMap((d) => d.subscribers);
   const totalSubs = allSubs.length;
   const totalCableM = cables.reduce((s, c) => s + c.lengthM, 0);
 
-  // Object-type and connection-type breakdowns
   const byObjType = allSubs.reduce((m, s) => {
     const t = s.objectType ?? 'абонент';
     m[t] = (m[t] || 0) + 1;
     return m;
   }, {} as Record<ObjectType, number>);
-  const gponCount = allSubs.filter((s) => s.connectionType !== 'p2p').length;
-  const p2pCount  = allSubs.filter((s) => s.connectionType === 'p2p').length;
+
+  const gponCount = allSubs.filter((s) => s.connectionType !== 'p2p' && !isP2P).length;
+  const p2pCount  = isP2P ? totalSubs : allSubs.filter((s) => s.connectionType === 'p2p').length;
 
   const cableByType = cables.reduce((m, c) => {
     m[c.type] = (m[c.type] || 0) + c.lengthM;
@@ -42,46 +45,51 @@ export default function StatsTab({ districts, cables, issues }: Props) {
       tbs++;
       orks += tb.orks.length;
     }
-    const dCables = cables.filter((c) => {
-      // Crude: check if any endpoint matches this district's IDs
-      const allIds = [d.olt.id, ...d.olt.transitBoxes.map((t) => t.id),
-                      ...d.olt.transitBoxes.flatMap((t) => t.orks.map((o) => o.id)),
-                      ...d.subscribers.map((s) => s.id)];
-      return allIds.includes(c.fromId) || allIds.includes(c.toId);
-    });
-    const cableM = dCables.reduce((s, c) => s + c.lengthM, 0);
+    const allIds = new Set([
+      d.olt.id,
+      ...d.olt.transitBoxes.map((t) => t.id),
+      ...d.olt.transitBoxes.flatMap((t) => t.orks.map((o) => o.id)),
+      ...d.subscribers.map((s) => s.id),
+    ]);
+    const cableM = cables.filter((c) => allIds.has(c.fromId) || allIds.has(c.toId))
+      .reduce((s, c) => s + c.lengthM, 0);
     return { district: d, tbs, orks, cableM };
   });
 
-  // ORK load distribution
-  const orkLoads: number[] = [];
+  // Box load distribution
+  const boxLoads: number[] = [];
   for (const d of districts) {
     for (const tb of d.olt.transitBoxes) {
       for (const ork of tb.orks) {
         const max = ork.splitter === '1:4' ? 4 : ork.splitter === '1:8' ? 8 : 16;
-        orkLoads.push(ork.subscribers.length / max);
+        boxLoads.push(ork.subscribers.length / max);
       }
     }
   }
-  const avgLoad = orkLoads.length ? orkLoads.reduce((a, b) => a + b, 0) / orkLoads.length : 0;
-  const overload = orkLoads.filter((l) => l > 1).length;
-  const underload = orkLoads.filter((l) => l < 0.5).length;
+  const avgLoad = boxLoads.length ? boxLoads.reduce((a, b) => a + b, 0) / boxLoads.length : 0;
+  const overload = boxLoads.filter((l) => l > 1).length;
+  const underload = boxLoads.filter((l) => l < 0.5).length;
+
+  const nodeLabel = isP2P ? 'УС' : 'OLT';
+  const boxLabel  = isP2P ? 'Бокс' : 'ОРК';
+  const tbLabel   = isP2P ? 'Муфта' : 'TB';
+  const objLabel  = isP2P ? 'объ.' : 'або.';
 
   return (
     <div className="overflow-y-auto h-full p-3 space-y-4">
-      {/* Big stats */}
+      {/* Summary tiles */}
       <div className="grid grid-cols-2 gap-2">
         <div className="bg-[#0a0e1a] border border-[#1e3a5f] rounded-lg p-2 text-center">
           <div className="text-xl font-mono font-bold text-[#38bdf8]">{totalSubs}</div>
-          <div className="text-[10px] text-[#64748b]">всего або.</div>
+          <div className="text-[10px] text-[#64748b]">всего {objLabel}</div>
         </div>
         <div className="bg-[#0a0e1a] border border-[#1e3a5f] rounded-lg p-2 text-center">
           <div className="text-xl font-mono font-bold text-[#34d399]">{districts.length}</div>
           <div className="text-[10px] text-[#64748b]">район(ов)</div>
         </div>
         <div className="bg-[#0a0e1a] border border-[#1e3a5f] rounded-lg p-2 text-center">
-          <div className="text-xl font-mono font-bold text-[#f59e0b]">{orkLoads.length}</div>
-          <div className="text-[10px] text-[#64748b]">ОРК шкафов</div>
+          <div className="text-xl font-mono font-bold text-[#f59e0b]">{boxLoads.length}</div>
+          <div className="text-[10px] text-[#64748b]">{boxLabel}</div>
         </div>
         <div className="bg-[#0a0e1a] border border-[#1e3a5f] rounded-lg p-2 text-center">
           <div className="text-xl font-mono font-bold text-[#a78bfa]">{(totalCableM / 1000).toFixed(1)}</div>
@@ -89,20 +97,22 @@ export default function StatsTab({ districts, cables, issues }: Props) {
         </div>
       </div>
 
-      {/* Connection type */}
-      <section>
-        <h3 className="text-[10px] uppercase tracking-widest text-[#64748b] mb-2">Тип подключения</h3>
-        <div className="grid grid-cols-2 gap-2">
-          <div className="bg-[#0a0e1a] border border-[#34d399]/30 rounded-lg p-2 text-center">
-            <div className="text-lg font-mono font-bold text-[#34d399]">{gponCount}</div>
-            <div className="text-[10px] text-[#64748b]">GPON</div>
+      {/* Connection type (only show in mixed or GPON mode) */}
+      {(!isP2P || p2pCount > 0 || gponCount > 0) && (
+        <section>
+          <h3 className="text-[10px] uppercase tracking-widest text-[#64748b] mb-2">Тип подключения</h3>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-[#0a0e1a] border border-[#34d399]/30 rounded-lg p-2 text-center">
+              <div className="text-lg font-mono font-bold text-[#34d399]">{gponCount}</div>
+              <div className="text-[10px] text-[#64748b]">GPON</div>
+            </div>
+            <div className="bg-[#0a0e1a] border border-[#38bdf8]/30 rounded-lg p-2 text-center">
+              <div className="text-lg font-mono font-bold text-[#38bdf8]">{p2pCount}</div>
+              <div className="text-[10px] text-[#64748b]">P2P (прямое)</div>
+            </div>
           </div>
-          <div className="bg-[#0a0e1a] border border-[#38bdf8]/30 rounded-lg p-2 text-center">
-            <div className="text-lg font-mono font-bold text-[#38bdf8]">{p2pCount}</div>
-            <div className="text-[10px] text-[#64748b]">P2P (прямое)</div>
-          </div>
-        </div>
-      </section>
+        </section>
+      )}
 
       {/* Object type breakdown */}
       {Object.keys(byObjType).length > 0 && (
@@ -139,7 +149,8 @@ export default function StatsTab({ districts, cables, issues }: Props) {
           {Object.entries(cableByType).map(([type, m]) => {
             const pct = totalCableM ? (m / totalCableM) * 100 : 0;
             const colors: Record<string, string> = {
-              'ОКБ-10': '#00d4fc', 'ОКСНН-8': '#ec8a00', 'ОКСНН-4': '#3a92fb', 'ОКА-2': '#99d499',
+              'ОК-4': '#99d499', 'ОК-8': '#4ade80', 'ОК-12': '#3a92fb', 'ОК-16': '#60a5fa',
+              'ОК-24': '#f59e0b', 'ОК-32': '#fbbf24', 'ОК-48': '#ec8a00', 'ОК-96': '#f87171',
             };
             return (
               <div key={type}>
@@ -148,7 +159,7 @@ export default function StatsTab({ districts, cables, issues }: Props) {
                   <span className="font-mono text-[#e2e8f0]">{(m / 1000).toFixed(2)} км ({pct.toFixed(0)}%)</span>
                 </div>
                 <div className="h-1.5 bg-[#1e3a5f] rounded-full overflow-hidden">
-                  <div className="h-full rounded-full" style={{ width: `${pct}%`, background: colors[type] }} />
+                  <div className="h-full rounded-full" style={{ width: `${pct}%`, background: colors[type] || '#888' }} />
                 </div>
               </div>
             );
@@ -156,9 +167,9 @@ export default function StatsTab({ districts, cables, issues }: Props) {
         </div>
       </section>
 
-      {/* Loading */}
+      {/* Box / ORK load */}
       <section>
-        <h3 className="text-[10px] uppercase tracking-widest text-[#64748b] mb-2">Загрузка ОРК</h3>
+        <h3 className="text-[10px] uppercase tracking-widest text-[#64748b] mb-2">Загрузка {boxLabel}ов</h3>
         <div className="grid grid-cols-3 gap-2 text-center text-[10px]">
           <div className="bg-[#0a0e1a] border border-[#34d399]/30 rounded p-1.5">
             <div className="font-mono text-[#34d399] font-bold">{(avgLoad * 100).toFixed(0)}%</div>
@@ -186,9 +197,9 @@ export default function StatsTab({ districts, cables, issues }: Props) {
                 <span className="text-xs text-[#e2e8f0] font-medium flex-1 truncate">{district.name}</span>
               </div>
               <div className="grid grid-cols-4 gap-1 text-[9px] font-mono">
-                <div><div className="text-[#38bdf8]">{district.subscribers.length}</div><div className="text-[#64748b]">або</div></div>
-                <div><div className="text-[#a78bfa]">{tbs}</div><div className="text-[#64748b]">TB</div></div>
-                <div><div className="text-[#f59e0b]">{orks}</div><div className="text-[#64748b]">ОРК</div></div>
+                <div><div className="text-[#38bdf8]">{district.subscribers.length}</div><div className="text-[#64748b]">{objLabel}</div></div>
+                <div><div className="text-[#a78bfa]">{tbs}</div><div className="text-[#64748b]">{tbLabel}</div></div>
+                <div><div className="text-[#f59e0b]">{orks}</div><div className="text-[#64748b]">{boxLabel}</div></div>
                 <div><div className="text-[#34d399]">{(cableM / 1000).toFixed(1)}</div><div className="text-[#64748b]">км</div></div>
               </div>
             </div>

@@ -7,8 +7,8 @@ export function calculateMaterials(
   settings: ProjectSettings
 ): Materials {
   const reserve = settings.cableReserve;
+  const isP2P = settings.networkType === 'p2p';
 
-  // Build cables object dynamically
   const cablesByType = {} as Record<CableType, number>;
   for (const t of CABLE_SIZES) cablesByType[t] = 0;
   for (const c of cables) {
@@ -18,8 +18,6 @@ export function calculateMaterials(
   }
   const totalM = Object.values(cablesByType).reduce((a, b) => a + b, 0);
   const totalKm = totalM / 1000;
-
-  const oltUnits = districts.length;
 
   let splitter_1x4_L2 = 0;
   let splitter_1x8_L2 = 0;
@@ -36,15 +34,17 @@ export function calculateMaterials(
     for (const sub of d.subscribers) {
       const objType = sub.objectType ?? 'абонент';
       byObjectType[objType] = (byObjectType[objType] || 0) + 1;
-      if (sub.connectionType === 'p2p') p2pCount++; else gponCount++;
+      if (sub.connectionType === 'p2p' || isP2P) p2pCount++; else gponCount++;
     }
     for (const tb of d.olt.transitBoxes) {
       tbCount++;
       for (const ork of tb.orks) {
         orkCount++;
-        if (ork.splitter === '1:4') splitter_1x4_L2++;
-        else if (ork.splitter === '1:8') splitter_1x8_L2++;
-        else splitter_1x16_L2++;
+        if (!isP2P) {
+          if (ork.splitter === '1:4') splitter_1x4_L2++;
+          else if (ork.splitter === '1:8') splitter_1x8_L2++;
+          else splitter_1x16_L2++;
+        }
         subCount += ork.subscribers.length;
       }
     }
@@ -55,12 +55,15 @@ export function calculateMaterials(
 
   const pigtailSCAPC = totalMufta * 12 + subCount;
   const kdzsGilzy = Math.ceil(totalKm * 4) + 200;
-  // Use distribution cables (ОК-8 and above) for clamp estimation
   const aerialM = (cablesByType['ОК-8'] || 0) + (cablesByType['ОК-12'] || 0) +
     (cablesByType['ОК-16'] || 0) + (cablesByType['ОК-24'] || 0) +
     (cablesByType['ОК-32'] || 0) + (cablesByType['ОК-48'] || 0) + (cablesByType['ОК-96'] || 0);
   const clamps = Math.ceil(aerialM / 50);
   const cable_reserve_m = totalM - (totalM / reserve);
+
+  // P2P: count terminal devices by object type
+  const cameraCount = byObjectType['камера'] || 0;
+  const abonentCount = (byObjectType['абонент'] || 0) + (byObjectType['офис'] || 0) + (byObjectType['база'] || 0);
 
   return {
     cables: {
@@ -75,14 +78,16 @@ export function calculateMaterials(
       total: Math.round(totalM),
     },
     equipment: {
-      oltUnits,
-      splitter_1x4_L1: oltUnits,
-      splitter_1x4_L2,
-      splitter_1x8_L2,
-      splitter_1x16_L2,
+      oltUnits: isP2P ? 0 : districts.length,
+      usCount: isP2P ? districts.length : 0,
+      splitter_1x4_L1: isP2P ? 0 : districts.length,
+      splitter_1x4_L2: isP2P ? 0 : splitter_1x4_L2,
+      splitter_1x8_L2: isP2P ? 0 : splitter_1x8_L2,
+      splitter_1x16_L2: isP2P ? 0 : splitter_1x16_L2,
       muftaMTOK96A: totalMufta,
       boksCount: orkCount,
-      ontZTE_F601: subCount,
+      ontZTE_F601: isP2P ? cameraCount : subCount,
+      cpeCount: isP2P ? abonentCount : 0,
       pigtailSCAPC,
       patchcord: subCount,
       kdzsGilzy,
@@ -110,24 +115,23 @@ export function validateNetwork(districts: District[], cables: Cable[]): Validat
         }
       }
 
-      // OLT → TB distance
       const oltTBDist = haversineM(d.olt.lat, d.olt.lon, tb.lat, tb.lon);
       if (oltTBDist > 10000) {
         issues.push({
           type: 'warning',
-          message: `${tb.id}: расстояние от OLT ${Math.round(oltTBDist / 100) / 10} км > 10 км`,
+          message: `${tb.id}: расстояние от УС ${Math.round(oltTBDist / 100) / 10} км > 10 км`,
           entityId: tb.id,
         });
       }
     }
   }
 
-  // Drop cables > 300m
-  const dropCables = cables.filter((c) => c.type === 'ОК-4' && c.lengthM > 300);
-  for (const c of dropCables.slice(0, 10)) {
+  // Long drop cables (warn on ОК-8 last-mile > 500m in P2P)
+  const longDrops = cables.filter((c) => (c.type === 'ОК-4' || c.type === 'ОК-8') && c.lengthM > 500);
+  for (const c of longDrops.slice(0, 10)) {
     issues.push({
       type: 'warning',
-      message: `Дроп ${c.id}: длина ${Math.round(c.lengthM)} м > 300 м (потери сигнала)`,
+      message: `Дроп ${c.id}: длина ${Math.round(c.lengthM)} м > 500 м`,
       entityId: c.id,
     });
   }

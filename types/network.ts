@@ -146,6 +146,7 @@ export interface ProjectSettings {
   cableReserve: number;
   useOSRM: boolean;
   osrmDelay: number;
+  networkType: 'gpon' | 'p2p';
 }
 
 export interface Materials {
@@ -162,6 +163,7 @@ export interface Materials {
   };
   equipment: {
     oltUnits: number;
+    usCount: number;
     splitter_1x4_L1: number;
     splitter_1x4_L2: number;
     splitter_1x8_L2: number;
@@ -169,6 +171,7 @@ export interface Materials {
     muftaMTOK96A: number;
     boksCount: number;
     ontZTE_F601: number;
+    cpeCount: number;
     pigtailSCAPC: number;
     patchcord: number;
     kdzsGilzy: number;
@@ -210,6 +213,7 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
   cableReserve: 1.10,
   useOSRM: true,
   osrmDelay: 100,
+  networkType: 'p2p',
 };
 
 export interface PriceCatalog {
