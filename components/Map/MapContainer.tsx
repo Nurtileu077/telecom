@@ -267,7 +267,8 @@ export default function LeafletMap(props: Props) {
         for (const cable of cables) {
           const layerKey = CABLE_LAYER_KEY[cable.type];
           if (!layers[layerKey]) continue;
-          if (cable.type === 'ОК-4' && zoom < 14) continue;
+          // Абонентские отводы — ОК-4; показываем с тем же zoom, что и точки абонентов (≥13)
+          if (cable.type === 'ОК-4' && zoom < 13) continue;
 
           const poly = L.polyline(cable.coords, {
             color: CABLE_COLORS[cable.type] || '#888',
