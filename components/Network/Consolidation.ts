@@ -103,18 +103,34 @@ export function consolidateCables(
       s.subs.add(subId);
     };
 
+    // Фактическая позиция узла в графе дорог после OSRM-снэппинга.
+    // OLT/ТМ/ОРК/абонент часто стоят не на дороге, OSRM сдвигает старт/конец
+    // к ближайшему road-node. Эта снэпленная точка и есть узел графа —
+    // именно она должна использоваться для BFS и для распознавания терминалов.
+    const effectivePos = new Map<string, [number, number]>();
+
     // Для каждого абонента склеиваем полный путь OLT→TB→ORK→sub и
     // регистрируем его прохождение по каждому сегменту.
     let hasAnyPath = false;
     for (const tb of olt.transitBoxes) {
       const oltTb = cableByEndpoint.get(`${olt.id}::${tb.id}`);
       if (!oltTb) continue;
+      if (oltTb.coords.length >= 2) {
+        if (!effectivePos.has(olt.id)) effectivePos.set(olt.id, oltTb.coords[0]);
+        effectivePos.set(tb.id, oltTb.coords[oltTb.coords.length - 1]);
+      }
       for (const ork of tb.orks) {
         const tbOrk = cableByEndpoint.get(`${tb.id}::${ork.id}`);
         if (!tbOrk) continue;
+        if (tbOrk.coords.length >= 2) {
+          effectivePos.set(ork.id, tbOrk.coords[tbOrk.coords.length - 1]);
+        }
         for (const sub of ork.subscribers) {
           const orkSub = cableByEndpoint.get(`${ork.id}::${sub.id}`);
           if (!orkSub) continue;
+          if (orkSub.coords.length >= 2) {
+            effectivePos.set(sub.id, orkSub.coords[orkSub.coords.length - 1]);
+          }
           usedCableIds.add(oltTb.id);
           usedCableIds.add(tbOrk.id);
           usedCableIds.add(orkSub.id);
@@ -132,9 +148,11 @@ export function consolidateCables(
     }
     if (!hasAnyPath) continue;
 
-    // Гарантируем, что узел OLT существует в графе.
-    const oltKey = quantize(olt.lat, olt.lon);
-    nodeCoord.set(oltKey, [olt.lat, olt.lon]);
+    // OLT-узел в графе — это снэпленная позиция (начало OLT→TB кабеля).
+    // Иначе BFS стартует в пустой клетке и ничего не находит.
+    const oltCoord = effectivePos.get(olt.id) ?? [olt.lat, olt.lon];
+    const oltKey = quantize(oltCoord[0], oltCoord[1]);
+    nodeCoord.set(oltKey, oltCoord);
 
     // === Шаг 2. Adjacency: для каждого узла — список сегментов. ===
     const adj = new Map<string, string[]>();
@@ -149,15 +167,19 @@ export function consolidateCables(
     const usedSeg = new Set<string>();
 
     // Для каждого узла храним: какой ID представляет эту точку (OLT/joint/ORK-id/sub-id).
+    // Используем СНЭПЛЕННЫЕ позиции (фактический узел графа дорог), а не
+    // исходные координаты сущности — иначе BFS не распознает терминал.
     const nodeId = new Map<string, string>();
     nodeId.set(oltKey, olt.id);
-    // Узлы, где находятся боксы/муфты/абоненты — фиксируем их id.
     for (const tb of olt.transitBoxes) {
-      nodeId.set(quantize(tb.lat, tb.lon), tb.id);
+      const tbCoord = effectivePos.get(tb.id) ?? [tb.lat, tb.lon];
+      nodeId.set(quantize(tbCoord[0], tbCoord[1]), tb.id);
       for (const ork of tb.orks) {
-        nodeId.set(quantize(ork.lat, ork.lon), ork.id);
+        const orkCoord = effectivePos.get(ork.id) ?? [ork.lat, ork.lon];
+        nodeId.set(quantize(orkCoord[0], orkCoord[1]), ork.id);
         for (const sub of ork.subscribers) {
-          nodeId.set(quantize(sub.lat, sub.lon), sub.id);
+          const subCoord = effectivePos.get(sub.id) ?? [sub.lat, sub.lon];
+          nodeId.set(quantize(subCoord[0], subCoord[1]), sub.id);
         }
       }
     }
@@ -324,8 +346,16 @@ export function consolidateCables(
 
   // Кабели, которые НЕ были покрыты глобальной консолидацией (например, если
   // нет соответствующего OLT→TB→ORK→sub звена), оставляем как есть.
+  let passthrough = 0;
   for (const c of cables) {
-    if (!usedCableIds.has(c.id)) outCables.push(c);
+    if (!usedCableIds.has(c.id)) { outCables.push(c); passthrough++; }
+  }
+
+  if (typeof console !== 'undefined') {
+    console.log(
+      `[Consolidation] in=${cables.length} → out=${outCables.length} ` +
+      `(consolidated=${cableSeq}, joints=${outJoints.length}, passthrough=${passthrough})`,
+    );
   }
 
   return { cables: outCables, joints: outJoints };
