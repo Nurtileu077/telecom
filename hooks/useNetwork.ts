@@ -332,6 +332,74 @@ export function useNetwork() {
     })));
   }, []);
 
+  // Delete ORK: remove from its parent TB, remove its cables (TB→ORK + ORK→sub),
+  // also remove its subscribers from the district.
+  const deleteORK = useCallback((orkId: string) => {
+    let removedSubIds = new Set<string>();
+    setDistricts((prev) => prev.map((d) => ({
+      ...d,
+      subscribers: d.subscribers.filter((s) => {
+        // find if this sub belonged to the deleted ORK
+        const ork = d.olt.transitBoxes.flatMap((tb) => tb.orks).find((o) => o.id === orkId);
+        if (ork && ork.subscribers.some((x) => x.id === s.id)) { removedSubIds.add(s.id); return false; }
+        return true;
+      }),
+      olt: {
+        ...d.olt,
+        transitBoxes: d.olt.transitBoxes.map((tb) => ({
+          ...tb,
+          orks: tb.orks.filter((o) => o.id !== orkId),
+        })),
+      },
+    })));
+    setCables((prev) => prev.filter((c) => c.fromId !== orkId && c.toId !== orkId));
+    setAllSubscribers((prev) => prev.filter((s) => !removedSubIds.has(s.id)));
+  }, []);
+
+  // Delete TB: remove all its ORKs (cascade), remove its cables (OLT→TB + TB→ORK),
+  // and clean up subscribers/cables for the cascaded ORKs.
+  const deleteTB = useCallback((tbId: string) => {
+    const tb = districts
+      .flatMap((d) => d.olt.transitBoxes)
+      .find((x) => x.id === tbId);
+    if (!tb) return;
+    const orkIds = new Set(tb.orks.map((o) => o.id));
+    const subIds = new Set(tb.orks.flatMap((o) => o.subscribers.map((s) => s.id)));
+    setDistricts((prev) => prev.map((d) => ({
+      ...d,
+      subscribers: d.subscribers.filter((s) => !subIds.has(s.id)),
+      olt: {
+        ...d.olt,
+        transitBoxes: d.olt.transitBoxes.filter((x) => x.id !== tbId),
+      },
+    })));
+    setCables((prev) => prev.filter((c) =>
+      c.fromId !== tbId && c.toId !== tbId &&
+      !orkIds.has(c.fromId) && !orkIds.has(c.toId),
+    ));
+    setAllSubscribers((prev) => prev.filter((s) => !subIds.has(s.id)));
+  }, [districts]);
+
+  // Delete OLT: remove the entire district (everything downstream).
+  const deleteOLT = useCallback((oltId: string) => {
+    const district = districts.find((d) => d.olt.id === oltId);
+    if (!district) return;
+    const tbIds = new Set(district.olt.transitBoxes.map((tb) => tb.id));
+    const orkIds = new Set(district.olt.transitBoxes.flatMap((tb) => tb.orks.map((o) => o.id)));
+    const subIds = new Set(district.subscribers.map((s) => s.id));
+    setDistricts((prev) => prev.filter((d) => d.olt.id !== oltId));
+    setCables((prev) => prev.filter((c) =>
+      c.fromId !== oltId && c.toId !== oltId &&
+      !tbIds.has(c.fromId) && !tbIds.has(c.toId) &&
+      !orkIds.has(c.fromId) && !orkIds.has(c.toId),
+    ));
+    setAllSubscribers((prev) => prev.filter((s) => !subIds.has(s.id)));
+  }, [districts]);
+
+  const deleteCable = useCallback((cableId: string) => {
+    setCables((prev) => prev.filter((c) => c.id !== cableId));
+  }, []);
+
   const updateORK = useCallback((id: string, patch: Partial<Omit<ORK, 'id' | 'lat' | 'lon' | 'subscribers'>>) => {
     setDistricts((prev) => prev.map((d) => ({
       ...d,
@@ -594,5 +662,6 @@ export function useNetwork() {
     importNetworkReplace, mergeNetworkDistricts,
     updateOLT, updateTB, updateORK,
     updateCable, rerouteSingleCable,
+    deleteOLT, deleteTB, deleteORK, deleteCable,
   };
 }

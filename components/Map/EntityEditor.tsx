@@ -17,6 +17,9 @@ interface Props {
   onUpdateOLT: (id: string, patch: Partial<Omit<OLT, 'id' | 'lat' | 'lon' | 'transitBoxes'>>) => void;
   onUpdateTB:  (id: string, patch: Partial<Omit<TransitBox, 'id' | 'lat' | 'lon' | 'orks'>>) => void;
   onUpdateORK: (id: string, patch: Partial<Omit<ORK, 'id' | 'lat' | 'lon' | 'subscribers'>>) => void;
+  onDeleteOLT: (id: string) => void;
+  onDeleteTB:  (id: string) => void;
+  onDeleteORK: (id: string) => void;
 }
 
 const SPLITTERS: SplitterRatio[] = ['1:2', '1:4', '1:8', '1:16', '1:32', '1:64'];
@@ -176,7 +179,11 @@ function ORKEditor({ ork, onSave }: { ork: ORK; onSave: (patch: Partial<Omit<ORK
 }
 
 // ── Main panel ────────────────────────────────────────────────────────────────
-export default function EntityEditor({ selection, districts, onClose, onUpdateOLT, onUpdateTB, onUpdateORK }: Props) {
+export default function EntityEditor({
+  selection, districts, onClose,
+  onUpdateOLT, onUpdateTB, onUpdateORK,
+  onDeleteOLT, onDeleteTB, onDeleteORK,
+}: Props) {
   if (!selection) return null;
 
   const kindLabel: Record<string, string> = { olt: 'OLT', tb: 'Муфта (TB)', ork: 'ОРК' };
@@ -184,22 +191,35 @@ export default function EntityEditor({ selection, districts, onClose, onUpdateOL
 
   let title = '';
   let content: React.ReactNode = null;
+  let onDelete: (() => void) | null = null;
+  let deleteWarn = '';
 
   if (selection.kind === 'olt') {
     const olt = findOLT(districts, selection.id);
     if (!olt) return null;
     title = olt.id;
     content = <OLTEditor olt={olt} onSave={(patch) => { onUpdateOLT(olt.id, patch); onClose(); }} />;
+    const tbCount = olt.transitBoxes.length;
+    const orkCount = olt.transitBoxes.reduce((s, tb) => s + tb.orks.length, 0);
+    const subCount = olt.transitBoxes.reduce((s, tb) => s + tb.orks.reduce((ss, o) => ss + o.subscribers.length, 0), 0);
+    deleteWarn = `Удалит весь район: ${tbCount} муфт, ${orkCount} ОРК, ${subCount} абонентов`;
+    onDelete = () => { onDeleteOLT(olt.id); onClose(); };
   } else if (selection.kind === 'tb') {
     const tb = findTB(districts, selection.id);
     if (!tb) return null;
     title = tb.id;
     content = <TBEditor tb={tb} onSave={(patch) => { onUpdateTB(tb.id, patch); onClose(); }} />;
+    const orkCount = tb.orks.length;
+    const subCount = tb.orks.reduce((s, o) => s + o.subscribers.length, 0);
+    deleteWarn = `Удалит ${orkCount} ОРК и ${subCount} абонентов`;
+    onDelete = () => { onDeleteTB(tb.id); onClose(); };
   } else {
     const ork = findORK(districts, selection.id);
     if (!ork) return null;
     title = ork.id;
     content = <ORKEditor ork={ork} onSave={(patch) => { onUpdateORK(ork.id, patch); onClose(); }} />;
+    deleteWarn = `Удалит ОРК и ${ork.subscribers.length} абонентов`;
+    onDelete = () => { onDeleteORK(ork.id); onClose(); };
   }
 
   return (
@@ -222,6 +242,18 @@ export default function EntityEditor({ selection, districts, onClose, onUpdateOL
       <div className="p-3">
         {content}
       </div>
+
+      {/* Delete footer */}
+      {onDelete && (
+        <div className="px-3 pb-3 pt-1 border-t border-[#1e3a5f] mt-1">
+          <button
+            onClick={() => { if (confirm(`${deleteWarn}. Продолжить?`)) onDelete!(); }}
+            className="w-full py-1.5 text-[11px] text-[#f87171] hover:bg-[#f87171]/10 border border-[#f87171]/30 rounded transition-colors"
+          >
+            🗑 Удалить
+          </button>
+        </div>
+      )}
     </div>
   );
 }

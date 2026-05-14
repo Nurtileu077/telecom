@@ -316,6 +316,10 @@ export default function LeafletMap(props: Props) {
           const m = L.marker([olt.lat, olt.lon], { icon, draggable });
           m.bindPopup(`<b>${olt.id}</b><br/>${olt.model}<br/>Район: ${district.name}<br/>Ёмкость: ${olt.capacity}<br/>TB: ${olt.transitBoxes.length}`);
           m.on('click', () => { propsRef.current.onEntityClick?.('olt', olt.id); });
+          m.on('contextmenu', (e: any) => {
+            e.originalEvent.preventDefault();
+            propsRef.current.onEntityClick?.('olt', olt.id);
+          });
           if (draggable) {
             m.on('dragend', (e: any) => {
               const ll = e.target.getLatLng();
@@ -334,6 +338,10 @@ export default function LeafletMap(props: Props) {
             const m = L.marker([tb.lat, tb.lon], { icon, draggable });
             m.bindPopup(`<b>${tb.id}</b><br/>OLT: ${olt.id}<br/>ОРК: ${tb.orks.length}<br/>Муфта: ${tb.muftaType}${draggable ? '<br/><i style="color:#64748b;font-size:10px">Перетащи для перемещения</i>' : ''}`);
             m.on('click', () => { propsRef.current.onEntityClick?.('tb', tb.id); });
+            m.on('contextmenu', (e: any) => {
+              e.originalEvent.preventDefault();
+              propsRef.current.onEntityClick?.('tb', tb.id);
+            });
             if (draggable) {
               m.on('dragend', (e: any) => {
                 const ll = e.target.getLatLng();
@@ -352,6 +360,10 @@ export default function LeafletMap(props: Props) {
               const m = L.marker([ork.lat, ork.lon], { icon, draggable });
               m.bindPopup(`<b>${ork.id}</b><br/>Сплиттер: ${ork.splitter}<br/>Або.: ${ork.subscribers.length}<br/>Муфта: ${tb.id}${draggable ? '<br/><i style="color:#64748b;font-size:10px">Перетащи для перемещения</i>' : ''}`);
               m.on('click', () => { propsRef.current.onEntityClick?.('ork', ork.id); });
+              m.on('contextmenu', (e: any) => {
+                e.originalEvent.preventDefault();
+                propsRef.current.onEntityClick?.('ork', ork.id);
+              });
               if (draggable) {
                 m.on('dragend', (e: any) => {
                   const ll = e.target.getLatLng();

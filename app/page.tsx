@@ -262,6 +262,9 @@ export default function HomePage() {
             onUpdateOLT={net.updateOLT}
             onUpdateTB={net.updateTB}
             onUpdateORK={net.updateORK}
+            onDeleteOLT={net.deleteOLT}
+            onDeleteTB={net.deleteTB}
+            onDeleteORK={net.deleteORK}
           />
 
           <CableEditor
@@ -270,6 +273,7 @@ export default function HomePage() {
             onUpdateType={(id, type) => net.updateCable(id, { type })}
             onRerouteOSRM={(id) => net.rerouteSingleCable(id)}
             onToggleWaypoints={(id) => setEditingCableId(id)}
+            onDelete={net.deleteCable}
             waypointEditing={editingCableId === selectedCableId && !!editingCableId}
             rerouteStatus={net.status}
           />

@@ -8,6 +8,7 @@ interface Props {
   onUpdateType: (id: string, type: Cable['type']) => void;
   onRerouteOSRM: (id: string) => void;
   onToggleWaypoints: (id: string | null) => void;
+  onDelete: (id: string) => void;
   waypointEditing: boolean;
   rerouteStatus: 'idle' | 'routing' | 'done' | string;
 }
@@ -19,7 +20,7 @@ function Dot({ type }: { type: string }) {
 }
 
 export default function CableEditor({
-  cable, onClose, onUpdateType, onRerouteOSRM, onToggleWaypoints, waypointEditing, rerouteStatus,
+  cable, onClose, onUpdateType, onRerouteOSRM, onToggleWaypoints, onDelete, waypointEditing, rerouteStatus,
 }: Props) {
   const [type, setType] = useState<Cable['type']>(cable?.type ?? 'ОК-4');
   const [dirty, setDirty] = useState(false);
@@ -120,6 +121,13 @@ export default function CableEditor({
             ✓ Маршрутизирован через OSRM
           </div>
         )}
+
+        <button
+          onClick={() => { if (confirm('Удалить этот кабель?')) { onDelete(cable.id); onClose(); } }}
+          className="w-full py-1.5 text-[11px] text-[#f87171] hover:bg-[#f87171]/10 border border-[#f87171]/30 rounded transition-colors"
+        >
+          🗑 Удалить кабель
+        </button>
       </div>
     </div>
   );
