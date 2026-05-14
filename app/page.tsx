@@ -42,6 +42,14 @@ export default function HomePage() {
   const [editingCableId, setEditingCableId] = useState<string | null>(null);
   const [placing, setPlacing] = useState<'olt' | 'tb' | 'ork' | null>(null);
   const [cableDraw, setCableDraw] = useState<{ stage: 'from' | 'to'; fromId?: string } | null>(null);
+  const [budgetColoring, setBudgetColoring] = useState(false);
+
+  const budgetMap = useRef<Map<string, 'ok' | 'warn' | 'fail'>>(new Map());
+  useEffect(() => {
+    const m = new Map<string, 'ok' | 'warn' | 'fail'>();
+    for (const b of net.powerBudgets) m.set(b.subId, b.status);
+    budgetMap.current = m;
+  }, [net.powerBudgets]);
   const flyToRef = useRef<((lat: number, lon: number, zoom?: number) => void) | null>(null);
   const mapElRef = useRef<HTMLElement | null>(null);
 
@@ -317,6 +325,10 @@ export default function HomePage() {
           onPrintMap={onPrintMap}
           onRerouteOSRM={net.rerouteWithOSRM}
           osrmStatus={net.status}
+          powerBudgets={net.powerBudgets}
+          powerBudgetStats={net.powerBudgetStats}
+          budgetColoring={budgetColoring}
+          setBudgetColoring={setBudgetColoring}
         />
 
         <main className="flex-1 relative overflow-hidden isolate">
@@ -358,6 +370,8 @@ export default function HomePage() {
             measureMode={measureMode}
             setMeasureMode={setMeasureMode}
             heatmapEnabled={heatmapEnabled}
+            budgetMap={budgetMap.current}
+            budgetColoring={budgetColoring}
           />
 
           <EntityEditor

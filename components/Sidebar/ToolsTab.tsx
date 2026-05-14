@@ -21,9 +21,11 @@ interface Props {
   onRerouteOSRM: () => void;
   osrmStatus: 'idle' | 'routing' | 'done' | 'error' | string;
   hasCables: boolean;
+  budgetColoring: boolean;
+  onToggleBudgetColoring: () => void;
 }
 
-export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onRerouteOSRM, osrmStatus, hasCables }: Props) {
+export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onRerouteOSRM, osrmStatus, hasCables, budgetColoring, onToggleBudgetColoring }: Props) {
   const [inputs, setInputs] = useState<OpticalBudgetInputs>(DEFAULT_INPUTS);
   const result = useMemo(() => calculateOpticalBudget(inputs), [inputs]);
 
@@ -55,8 +57,14 @@ export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, o
             🔥 Heatmap
           </button>
           <button
+            onClick={onToggleBudgetColoring}
+            className={`py-1.5 px-2 text-[10px] rounded border transition-colors ${budgetColoring ? 'bg-[#34d399]/15 border-[#34d399] text-[#34d399]' : 'border-[#1e3a5f] text-[#94a3b8] hover:text-[#e2e8f0]'}`}
+          >
+            📉 Бюджет dB
+          </button>
+          <button
             onClick={onPrintMap}
-            className="py-1.5 px-2 text-[10px] rounded border border-[#1e3a5f] text-[#94a3b8] hover:text-[#e2e8f0] transition-colors"
+            className="py-1.5 px-2 text-[10px] rounded border border-[#1e3a5f] text-[#94a3b8] hover:text-[#e2e8f0] transition-colors col-span-2"
           >
             🖨 Печать карты
           </button>

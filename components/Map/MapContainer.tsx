@@ -30,6 +30,10 @@ interface Props {
   onCableClick?: (id: string) => void;
   editingCableId?: string | null;
   onUpdateCableCoords?: (id: string, coords: [number, number][]) => void;
+
+  // Power-budget colouring of subscribers
+  budgetMap?: Map<string, 'ok' | 'warn' | 'fail'>;
+  budgetColoring?: boolean;
   // Measure
   measureMode: boolean;
   setMeasureMode: (v: boolean) => void;
@@ -374,10 +378,19 @@ export default function LeafletMap(props: Props) {
               group.addLayer(m);
             }
             if (layers.subscribers && zoom >= 13) {
+              const budgetMap = propsRef.current.budgetMap;
+              const colorByBudget = propsRef.current.budgetColoring;
               for (const sub of ork.subscribers) {
+                let fillColor = district.color;
+                if (colorByBudget && budgetMap) {
+                  const s = budgetMap.get(sub.id);
+                  if (s === 'ok')   fillColor = '#34d399';
+                  if (s === 'warn') fillColor = '#f59e0b';
+                  if (s === 'fail') fillColor = '#f87171';
+                }
                 const c = L.circleMarker([sub.lat, sub.lon], {
-                  radius: 4, fillColor: district.color, fillOpacity: 0.8,
-                  color: district.color, weight: 1,
+                  radius: 4, fillColor, fillOpacity: 0.85,
+                  color: fillColor, weight: 1,
                 });
                 c.bindPopup(`<b>${sub.desc}</b><br/>ОРК: ${ork.id}<br/>Волокна: ${sub.fibers.working}+${sub.fibers.spare}${propsRef.current.editMode ? '<br/><button onclick="window.__deleteSub__(\'' + sub.id + '\')" style="margin-top:6px;padding:2px 8px;background:#f87171;color:#fff;border:none;border-radius:3px;font-size:10px;cursor:pointer">Удалить</button>' : ''}`);
                 c.on('contextmenu', (e: any) => {
@@ -545,7 +558,7 @@ export default function LeafletMap(props: Props) {
   }
 
   // Re-render whenever data changes
-  useEffect(() => { renderData(); }, [props.districts, props.cables, props.joints, props.layers, props.editMode, props.editingCableId]);
+  useEffect(() => { renderData(); }, [props.districts, props.cables, props.joints, props.layers, props.editMode, props.editingCableId, props.budgetColoring, props.budgetMap]);
 
   // Waypoint editing: show draggable handles for the selected cable
   useEffect(() => {

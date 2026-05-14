@@ -1,5 +1,5 @@
 'use client';
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   District, Cable, Subscriber, ProjectSettings, Materials, LayerVisibility,
   DEFAULT_SETTINGS, Project, MapAnnotation, ImportRecord, ValidationIssue,
@@ -10,6 +10,7 @@ import { calculateMaterials, validateNetwork } from '@/components/Network/Materi
 import { routeCables } from '@/components/Network/OSRMRouter';
 import { consolidateCables } from '@/components/Network/Consolidation';
 import { haversineM } from '@/components/Network/KMeans';
+import { calculateSubscriberBudgets, budgetStats } from '@/components/Network/PowerBudget';
 import { dbListProjects, dbSaveProject, dbDeleteProject, dbLoadProject, supabase } from '@/lib/supabase';
 
 export type BuildStatus = 'idle' | 'importing' | 'clustering' | 'routing' | 'calculating' | 'done' | 'error';
@@ -854,6 +855,10 @@ export function useNetwork() {
     0,
   );
 
+  // Optical power budget (per-subscriber dB loss + status)
+  const powerBudgets = useMemo(() => calculateSubscriberBudgets(districts, cables), [districts, cables]);
+  const powerBudgetStats = useMemo(() => budgetStats(powerBudgets), [powerBudgets]);
+
   return {
     projectId, projectName, setProjectName,
     districts, cables, joints, annotations, materials, settings, setSettings,
@@ -870,6 +875,7 @@ export function useNetwork() {
     saveProject, loadProject, deleteProject, listProjects, newProject,
     exportProjectJSON, importProjectJSON,
     totalSubscribers, totalCableKm, totalOrks,
+    powerBudgets, powerBudgetStats,
     importNetworkReplace, mergeNetworkDistricts,
     updateOLT, updateTB, updateORK,
     updateCable, rerouteSingleCable,

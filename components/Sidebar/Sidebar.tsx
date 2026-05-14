@@ -13,6 +13,8 @@ import StatsTab from './StatsTab';
 import ProjectsTab from './ProjectsTab';
 import CostTab from './CostTab';
 import ToolsTab from './ToolsTab';
+import BudgetTab from './BudgetTab';
+import type { SubBudget, BudgetStats } from '@/components/Network/PowerBudget';
 
 interface Props {
   districts: District[];
@@ -53,14 +55,20 @@ interface Props {
   onPrintMap: () => void;
   onRerouteOSRM: () => void;
   osrmStatus: string;
+
+  powerBudgets: SubBudget[];
+  powerBudgetStats: BudgetStats;
+  budgetColoring: boolean;
+  setBudgetColoring: (v: boolean) => void;
 }
 
-type Tab = 'layers' | 'materials' | 'schema' | 'groups' | 'notes' | 'stats' | 'projects' | 'cost' | 'tools';
+type Tab = 'layers' | 'materials' | 'schema' | 'groups' | 'notes' | 'stats' | 'projects' | 'cost' | 'tools' | 'budget';
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'layers',    label: 'Слои',     icon: '🗂' },
   { id: 'notes',     label: 'Замет.',   icon: '📝' },
   { id: 'materials', label: 'Матер.',   icon: '📦' },
+  { id: 'budget',    label: 'Бюдж.',    icon: '📉' },
   { id: 'cost',      label: 'Цена',     icon: '💰' },
   { id: 'stats',     label: 'Стат.',    icon: '📊' },
   { id: 'tools',     label: 'Инстр.',   icon: '🧰' },
@@ -122,6 +130,14 @@ export default function Sidebar(props: Props) {
         {activeTab === 'materials' && (
           <MaterialsTab materials={props.materials} districts={props.districts} cables={props.cables} />
         )}
+        {activeTab === 'budget' && (
+          <BudgetTab
+            budgets={props.powerBudgets}
+            stats={props.powerBudgetStats}
+            districts={props.districts}
+            flyTo={props.flyTo}
+          />
+        )}
         {activeTab === 'stats' && (
           <StatsTab districts={props.districts} cables={props.cables} issues={props.validationIssues} />
         )}
@@ -143,6 +159,8 @@ export default function Sidebar(props: Props) {
             onRerouteOSRM={props.onRerouteOSRM}
             osrmStatus={props.osrmStatus}
             hasCables={props.cables.length > 0}
+            budgetColoring={props.budgetColoring}
+            onToggleBudgetColoring={() => props.setBudgetColoring(!props.budgetColoring)}
           />
         )}
         {activeTab === 'projects' && (
