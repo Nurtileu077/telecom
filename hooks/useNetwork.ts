@@ -255,28 +255,147 @@ export function useNetwork() {
     if (abortRef.current) abortRef.current.abort();
   }, []);
 
-  // Manually trigger consolidation on current cables (useful after manual edits).
-  const reconsolidate = useCallback(() => {
-    if (cables.length === 0) return;
-    const { cables: consolidated, joints: newJoints } = consolidateCables(cables, districts);
+  // Manually trigger consolidation: regenerate the raw cable tree from the
+  // current district structure (preserving any existing routed coords for
+  // direct entity-to-entity pairs), then consolidate. This works even after
+  // previous consolidation (where trunk cables go through joint IDs).
+  const reconsolidate = useCallback(async () => {
+    if (districts.length === 0) return;
+
+    // Snapshot OSRM coords for cables whose endpoints are direct entities
+    // (skip consolidated trunk cables whose endpoints are joint IDs).
+    const existingCoords = new Map<string, [number, number][]>();
+    for (const c of cables) {
+      const fIsJoint = c.fromId.startsWith('J-');
+      const tIsJoint = c.toId.startsWith('J-');
+      if (fIsJoint || tIsJoint) continue;
+      existingCoords.set(`${c.fromId}::${c.toId}`, c.coords);
+      existingCoords.set(`${c.toId}::${c.fromId}`, [...c.coords].reverse());
+    }
+
+    const pathLen = (cs: [number, number][]) => {
+      let l = 0;
+      for (let i = 1; i < cs.length; i++) l += haversineM(cs[i - 1][0], cs[i - 1][1], cs[i][0], cs[i][1]);
+      return l;
+    };
+
+    // Regenerate raw cables from the district tree, reusing OSRM coords where
+    // available, falling back to straight line.
+    let nextSeq = 0;
+    const nextId = () => `cable-r-${++nextSeq}`;
+    const raw: Cable[] = [];
+    for (const d of districts) {
+      const olt = d.olt;
+      for (const tb of olt.transitBoxes) {
+        const k1 = `${olt.id}::${tb.id}`;
+        const c1 = existingCoords.get(k1) ?? [[olt.lat, olt.lon] as [number, number], [tb.lat, tb.lon] as [number, number]];
+        raw.push({
+          id: nextId(), type: tb.inCable, fibers: CABLE_FIBERS[tb.inCable],
+          fromId: olt.id, toId: tb.id, coords: c1,
+          lengthM: pathLen(c1), routedByOSRM: existingCoords.has(k1),
+        });
+        for (const ork of tb.orks) {
+          const k2 = `${tb.id}::${ork.id}`;
+          const c2 = existingCoords.get(k2) ?? [[tb.lat, tb.lon] as [number, number], [ork.lat, ork.lon] as [number, number]];
+          raw.push({
+            id: nextId(), type: ork.cableType, fibers: CABLE_FIBERS[ork.cableType],
+            fromId: tb.id, toId: ork.id, coords: c2,
+            lengthM: pathLen(c2), routedByOSRM: existingCoords.has(k2),
+          });
+          for (const sub of ork.subscribers) {
+            const k3 = `${ork.id}::${sub.id}`;
+            const c3 = existingCoords.get(k3) ?? [[ork.lat, ork.lon] as [number, number], [sub.lat, sub.lon] as [number, number]];
+            raw.push({
+              id: nextId(), type: 'ОК-4', fibers: CABLE_FIBERS['ОК-4'],
+              fromId: ork.id, toId: sub.id, coords: c3,
+              lengthM: pathLen(c3), routedByOSRM: existingCoords.has(k3),
+            });
+          }
+        }
+      }
+    }
+
+    // OSRM-route any cables that lost their routing (trunk OLT→TB after
+    // previous consolidation typically falls into this category).
+    let routed = raw;
+    const needRouting = raw.filter((c) => !c.routedByOSRM);
+    if (settings.useOSRM && needRouting.length > 0) {
+      setStatus('routing');
+      if (abortRef.current) abortRef.current.abort();
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+      try {
+        const reRouted = await routeCables(
+          needRouting, settings.osrmDelay, true,
+          (d, t, c) => setOsrmProgress({ done: d, total: t, current: c }),
+          ctrl.signal,
+        );
+        const map = new Map(reRouted.map((c) => [c.id, c]));
+        routed = raw.map((c) => map.get(c.id) ?? c);
+      } catch { /* abort */ }
+    }
+
+    // Consolidate
+    const { cables: consolidated, joints: newJoints } = consolidateCables(routed, districts);
     setCables(consolidated);
     setJoints(newJoints);
-    const mats = calculateMaterials(districts, consolidated, settings, newJoints.length);
-    setMaterials(mats);
-  }, [cables, districts, settings]);
+    setMaterials(calculateMaterials(districts, consolidated, settings, newJoints.length));
+    setStatus('done');
+  }, [districts, cables, settings]);
 
   // Re-route existing cables with OSRM (without re-clustering)
   const rerouteWithOSRM = useCallback(async () => {
-    if (cables.length === 0) return;
+    if (districts.length === 0) return;
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
     abortRef.current = controller;
     try {
       setStatus('routing');
+
+      // Regenerate raw cable tree from districts — like reconsolidate, but
+      // always re-routes everything. We can't route the current cables
+      // directly because after consolidation many of them go through joint IDs.
+      const pathLen = (cs: [number, number][]) => {
+        let l = 0;
+        for (let i = 1; i < cs.length; i++) l += haversineM(cs[i - 1][0], cs[i - 1][1], cs[i][0], cs[i][1]);
+        return l;
+      };
+      let seq = 0;
+      const nextId = () => `cable-r-${++seq}`;
+      const raw: Cable[] = [];
+      for (const d of districts) {
+        const olt = d.olt;
+        for (const tb of olt.transitBoxes) {
+          raw.push({
+            id: nextId(), type: tb.inCable, fibers: CABLE_FIBERS[tb.inCable],
+            fromId: olt.id, toId: tb.id,
+            coords: [[olt.lat, olt.lon], [tb.lat, tb.lon]],
+            lengthM: pathLen([[olt.lat, olt.lon], [tb.lat, tb.lon]]),
+            routedByOSRM: false,
+          });
+          for (const ork of tb.orks) {
+            raw.push({
+              id: nextId(), type: ork.cableType, fibers: CABLE_FIBERS[ork.cableType],
+              fromId: tb.id, toId: ork.id,
+              coords: [[tb.lat, tb.lon], [ork.lat, ork.lon]],
+              lengthM: pathLen([[tb.lat, tb.lon], [ork.lat, ork.lon]]),
+              routedByOSRM: false,
+            });
+            for (const sub of ork.subscribers) {
+              raw.push({
+                id: nextId(), type: 'ОК-4', fibers: CABLE_FIBERS['ОК-4'],
+                fromId: ork.id, toId: sub.id,
+                coords: [[ork.lat, ork.lon], [sub.lat, sub.lon]],
+                lengthM: pathLen([[ork.lat, ork.lon], [sub.lat, sub.lon]]),
+                routedByOSRM: false,
+              });
+            }
+          }
+        }
+      }
+
       const routed = await routeCables(
-        cables,
-        200,
-        true,
+        raw, 200, true,
         (done, total, current) => setOsrmProgress({ done, total, current }),
         controller.signal,
       );
@@ -294,7 +413,7 @@ export function useNetwork() {
         console.error(err);
       }
     }
-  }, [cables, districts, settings]);
+  }, [districts, settings]);
 
   // Annotation operations
   const addAnnotation = useCallback((a: Omit<MapAnnotation, 'id' | 'createdAt' | 'updatedAt'>) => {
