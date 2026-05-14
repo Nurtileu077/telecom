@@ -103,13 +103,15 @@ export function consolidateCables(
       fromKey: string;
       toKey: string;
       coords: [[number, number], [number, number]];
-      subs: Set<string>;       // уникальные абоненты, проходящие через сегмент
+      orks: Set<string>;       // ОРК, питаемые через этот сегмент
       lengthM: number;
     };
     const segments = new Map<string, Segment>();
     const nodeCoord = new Map<string, [number, number]>();
+    // Кол-во абонентов в каждом ОРК — для подсчёта жильности магистрали.
+    const orkSubCount = new Map<string, number>();
 
-    const addSeg = (a: [number, number], b: [number, number], subId: string) => {
+    const addSeg = (a: [number, number], b: [number, number], orkId: string) => {
       const aK = quantize(a[0], a[1]);
       const bK = quantize(b[0], b[1]);
       if (aK === bK) return;
@@ -123,22 +125,23 @@ export function consolidateCables(
           fromKey: aK,
           toKey: bK,
           coords: [a, b],
-          subs: new Set(),
+          orks: new Set(),
           lengthM: haversineM(a[0], a[1], b[0], b[1]),
         };
         segments.set(key, s);
       }
-      s.subs.add(subId);
+      s.orks.add(orkId);
     };
 
     // Фактическая позиция узла в графе дорог после OSRM-снэппинга.
-    // OLT/ТМ/ОРК/абонент часто стоят не на дороге, OSRM сдвигает старт/конец
+    // OLT/ТМ/ОРК часто стоят не на дороге, OSRM сдвигает старт/конец
     // к ближайшему road-node. Эта снэпленная точка и есть узел графа —
     // именно она должна использоваться для BFS и для распознавания терминалов.
     const effectivePos = new Map<string, [number, number]>();
 
-    // Для каждого абонента склеиваем полный путь OLT→TB→ORK→sub и
-    // регистрируем его прохождение по каждому сегменту.
+    // Консолидируем только МАГИСТРАЛЬ: OLT→TB→ORK. Дропы ORK→sub оставляем
+    // как индивидуальные кабели (passthrough) — иначе в каждой точке выхода
+    // абонента появляется муфта, и трасса покрывается сотнями узлов.
     let hasAnyPath = false;
     for (const tb of olt.transitBoxes) {
       const oltTb = cableByEndpoint.get(`${olt.id}::${tb.id}`);
@@ -153,27 +156,18 @@ export function consolidateCables(
         if (tbOrk.coords.length >= 2) {
           effectivePos.set(ork.id, tbOrk.coords[tbOrk.coords.length - 1]);
         }
-        for (const sub of ork.subscribers) {
-          const orkSub = cableByEndpoint.get(`${ork.id}::${sub.id}`);
-          if (!orkSub) continue;
-          if (orkSub.coords.length >= 2) {
-            effectivePos.set(sub.id, orkSub.coords[orkSub.coords.length - 1]);
-          }
-          usedCableIds.add(oltTb.id);
-          usedCableIds.add(tbOrk.id);
-          usedCableIds.add(orkSub.id);
-          const path: [number, number][] = [
-            ...oltTb.coords,
-            ...tbOrk.coords.slice(1),
-            ...orkSub.coords.slice(1),
-          ];
-          // Densify so two parallel OSRM paths reliably hit the same grid cells.
-          const dense = densifyPath(path, DENSIFY_STEP_M);
-          for (let i = 1; i < dense.length; i++) {
-            addSeg(dense[i - 1], dense[i], sub.id);
-          }
-          hasAnyPath = true;
+        usedCableIds.add(oltTb.id);
+        usedCableIds.add(tbOrk.id);
+        orkSubCount.set(ork.id, ork.subscribers.length);
+        const path: [number, number][] = [
+          ...oltTb.coords,
+          ...tbOrk.coords.slice(1),
+        ];
+        const dense = densifyPath(path, DENSIFY_STEP_M);
+        for (let i = 1; i < dense.length; i++) {
+          addSeg(dense[i - 1], dense[i], ork.id);
         }
+        hasAnyPath = true;
       }
     }
     if (!hasAnyPath) continue;
@@ -196,9 +190,10 @@ export function consolidateCables(
     // === Шаг 3. Обход от OLT и эмиссия кабелей ===
     const usedSeg = new Set<string>();
 
-    // Для каждого узла храним: какой ID представляет эту точку (OLT/joint/ORK-id/sub-id).
+    // Для каждого узла храним: какой ID представляет эту точку (OLT/joint/ORK-id).
     // Используем СНЭПЛЕННЫЕ позиции (фактический узел графа дорог), а не
     // исходные координаты сущности — иначе BFS не распознает терминал.
+    // Абоненты НЕ являются терминалами магистрали — их дропы остаются passthrough.
     const nodeId = new Map<string, string>();
     nodeId.set(oltKey, olt.id);
     for (const tb of olt.transitBoxes) {
@@ -207,17 +202,15 @@ export function consolidateCables(
       for (const ork of tb.orks) {
         const orkCoord = effectivePos.get(ork.id) ?? [ork.lat, ork.lon];
         nodeId.set(quantize(orkCoord[0], orkCoord[1]), ork.id);
-        for (const sub of ork.subscribers) {
-          const subCoord = effectivePos.get(sub.id) ?? [sub.lat, sub.lon];
-          nodeId.set(quantize(subCoord[0], subCoord[1]), sub.id);
-        }
       }
     }
 
-    // Размер кабеля = по числу уникальных абонентов через сегмент × 2 жилы +
-    // запас по округлению до ближайшего ОК-X.
-    const segCableType = (s: Segment): CableType =>
-      pickCableType(Math.max(2, s.subs.size * 2));
+    // Суммарное число абонентов через набор ОРК — для расчёта жильности.
+    const subsFromOrks = (orks: Set<string>): number => {
+      let n = 0;
+      for (const o of orks) n += orkSubCount.get(o) || 1;
+      return n;
+    };
 
     // Получить «соседа» (другой конец сегмента, не равный nodeKey).
     const otherEnd = (s: Segment, nodeKey: string): string =>
@@ -261,12 +254,12 @@ export function consolidateCables(
       const segKeys = (adj.get(nodeKey) || []).filter((k) => !usedSeg.has(k));
       if (segKeys.length === 0) continue;
 
-      // Группируем по subscriber-set: сегменты с одним и тем же набором
-      // абонентов формируют одну цепочку (магистраль).
+      // Группируем по ORK-set: сегменты, питающие один и тот же набор
+      // ОРК, формируют одну цепочку (магистраль).
       const groups = new Map<string, string[]>();
       for (const k of segKeys) {
         const s = segments.get(k)!;
-        const groupKey = [...s.subs].sort().join(',');
+        const groupKey = [...s.orks].sort().join(',');
         if (!groups.has(groupKey)) groups.set(groupKey, []);
         groups.get(groupKey)!.push(k);
       }
@@ -309,20 +302,20 @@ export function consolidateCables(
           let curNode = nodeKey;
           let curSeg = segments.get(startSegKey)!;
           const runCoords: [number, number][] = [nodeCoord.get(curNode)!];
-          let runSubsRef = curSeg.subs;
+          let runOrksRef = curSeg.orks;
           while (true) {
             usedSeg.add(curSeg.key);
             const next = otherEnd(curSeg, curNode);
             runCoords.push(otherCoord(curSeg, curNode));
-            // Условия остановки: соседний узел — это OLT/ORK/sub/TB; или там
-            // есть развилка; или меняется subs-set.
+            // Условия остановки: соседний узел — это OLT/TB/ORK; или там
+            // есть развилка; или меняется ORK-set.
             const isTerminalNode = nodeId.has(next);
             const nextAdjFree = (adj.get(next) || []).filter((k) => !usedSeg.has(k));
-            // Сегменты с тем же subs-set, исходящие из next.
+            // Сегменты с тем же ORK-set, исходящие из next.
             const continuingSegs = nextAdjFree.filter((k) => {
               const ss = segments.get(k)!;
-              if (ss.subs.size !== runSubsRef.size) return false;
-              for (const x of ss.subs) if (!runSubsRef.has(x)) return false;
+              if (ss.orks.size !== runOrksRef.size) return false;
+              for (const x of ss.orks) if (!runOrksRef.has(x)) return false;
               return true;
             });
             const otherSegs = nextAdjFree.filter((k) => !continuingSegs.includes(k));
@@ -362,7 +355,7 @@ export function consolidateCables(
                 branchCount: nextAdjFree.length,
               });
             }
-            emitCable(runCoords, runSubsRef.size, branchOrigin, toId, true);
+            emitCable(runCoords, subsFromOrks(runOrksRef), branchOrigin, toId, true);
             // Записываем id для next, чтобы следующая итерация знала его.
             if (!nodeId.has(next)) nodeId.set(next, toId);
             // Запускаем продолжение обхода от next.
