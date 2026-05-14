@@ -264,8 +264,11 @@ export function useNetwork() {
 
     // Snapshot OSRM coords for cables whose endpoints are direct entities
     // (skip consolidated trunk cables whose endpoints are joint IDs).
+    // Only trust coords from cables that are actually routed by OSRM —
+    // straight-line cables (routedByOSRM=false) should be re-routed below.
     const existingCoords = new Map<string, [number, number][]>();
     for (const c of cables) {
+      if (!c.routedByOSRM) continue;
       const fIsJoint = c.fromId.startsWith('J-');
       const tIsJoint = c.toId.startsWith('J-');
       if (fIsJoint || tIsJoint) continue;

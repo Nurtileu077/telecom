@@ -61,7 +61,8 @@ export const CABLE_FIBERS: Record<CableType, number> = {
 };
 export function selectCableType(subs: number, sparePerSub = 1): CableType {
   const needed = subs * (1 + sparePerSub);
-  return CABLE_SIZES.find((t) => CABLE_FIBERS[t] >= needed) ?? 'ОК-96';
+  // ОК-96 не используем в проекте, ОК-48 — максимальная жильность.
+  return CABLE_SIZES.find((t) => t !== 'ОК-96' && CABLE_FIBERS[t] >= needed) ?? 'ОК-48';
 }
 
 export interface Cable {
