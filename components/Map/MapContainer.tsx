@@ -22,6 +22,7 @@ interface Props {
   deleteAnnotation: (id: string) => void;
   // Edit mode
   editMode: boolean;
+  placingMode?: boolean;
   onMapClick?: (lat: number, lon: number) => void;
   moveEntity?: (kind: 'tb' | 'ork' | 'olt', id: string, lat: number, lon: number) => void;
   deleteSubscriber?: (id: string) => void;
@@ -150,8 +151,8 @@ export default function LeafletMap(props: Props) {
           return;
         }
 
-        // Edit mode: add subscriber
-        if (p.editMode && p.onMapClick) {
+        // Edit mode: add subscriber. Placement mode: place OLT/TB/ORK
+        if ((p.editMode || p.placingMode) && p.onMapClick) {
           p.onMapClick(lat, lon);
           return;
         }
@@ -249,12 +250,12 @@ export default function LeafletMap(props: Props) {
   // Cursor based on mode
   useEffect(() => {
     if (!containerRef.current) return;
-    if (props.activeTool || props.editMode || props.measureMode) {
+    if (props.activeTool || props.editMode || props.measureMode || props.placingMode) {
       containerRef.current.style.cursor = 'crosshair';
     } else {
       containerRef.current.style.cursor = '';
     }
-  }, [props.activeTool, props.editMode, props.measureMode]);
+  }, [props.activeTool, props.editMode, props.measureMode, props.placingMode]);
 
   function renderData() {
     const map = mapRef.current;

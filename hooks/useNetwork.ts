@@ -3,12 +3,13 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import {
   District, Cable, Subscriber, ProjectSettings, Materials, LayerVisibility,
   DEFAULT_SETTINGS, Project, MapAnnotation, ImportRecord, ValidationIssue,
-  PriceCatalog, DEFAULT_PRICES, InlineJoint, OLT, TransitBox, ORK, CABLE_FIBERS,
+  PriceCatalog, DEFAULT_PRICES, InlineJoint, OLT, TransitBox, ORK, CABLE_FIBERS, DISTRICT_COLORS,
 } from '@/types/network';
 import { buildNetwork } from '@/components/Network/AutoBuild';
 import { calculateMaterials, validateNetwork } from '@/components/Network/MaterialCalc';
 import { routeCables } from '@/components/Network/OSRMRouter';
 import { consolidateCables } from '@/components/Network/Consolidation';
+import { haversineM } from '@/components/Network/KMeans';
 import { dbListProjects, dbSaveProject, dbDeleteProject, dbLoadProject, supabase } from '@/lib/supabase';
 
 export type BuildStatus = 'idle' | 'importing' | 'clustering' | 'routing' | 'calculating' | 'done' | 'error';
@@ -400,6 +401,103 @@ export function useNetwork() {
     setCables((prev) => prev.filter((c) => c.id !== cableId));
   }, []);
 
+  // Manual placement of entities ----------------------------------------------
+
+  const addOLTAt = useCallback((lat: number, lon: number, districtName: string) => {
+    const cleanName = districtName.trim() || 'Новый район';
+    const id = `OLT-${cleanName.slice(0, 8).replace(/\s/g, '')}-${Math.random().toString(36).slice(2, 5)}`;
+    setDistricts((prev) => {
+      const used = new Set(prev.map((d) => d.color));
+      const color = DISTRICT_COLORS.find((c) => !used.has(c)) ?? DISTRICT_COLORS[prev.length % DISTRICT_COLORS.length];
+      return [...prev, {
+        name: cleanName, color,
+        olt: { id, lat, lon, district: cleanName, model: 'Huawei MA5800-X7', capacity: 64, transitBoxes: [], l1Splitter: '1:4' },
+        subscribers: [],
+      }];
+    });
+  }, []);
+
+  const addTBAt = useCallback((lat: number, lon: number, oltId?: string) => {
+    // Auto-pick nearest OLT if not specified
+    let chosen: { d: typeof districts[number]; olt: OLT } | null = null;
+    if (oltId) {
+      const d = districts.find((x) => x.olt.id === oltId);
+      if (d) chosen = { d, olt: d.olt };
+    } else {
+      let bestD = Infinity;
+      for (const d of districts) {
+        const dist = haversineM(lat, lon, d.olt.lat, d.olt.lon);
+        if (dist < bestD) { bestD = dist; chosen = { d, olt: d.olt }; }
+      }
+    }
+    if (!chosen) return;
+    const tbId = `Муфта-${chosen.d.name.slice(0, 4).replace(/\s/g, '')}-${chosen.olt.transitBoxes.length + 1}`;
+    const newTB: TransitBox = {
+      id: tbId, lat, lon, district: chosen.d.name,
+      oltId: chosen.olt.id, orks: [],
+      inCable: 'ОК-12', outCable: 'ОК-4', muftaType: 'МТОК-96А',
+    };
+    setDistricts((prev) => prev.map((d) =>
+      d.olt.id === chosen!.olt.id
+        ? { ...d, olt: { ...d.olt, transitBoxes: [...d.olt.transitBoxes, newTB] } }
+        : d,
+    ));
+    // Auto-create OLT→TB straight-line cable
+    const cable: Cable = {
+      id: `cable-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      type: 'ОК-12', fibers: CABLE_FIBERS['ОК-12'],
+      fromId: chosen.olt.id, toId: tbId,
+      coords: [[chosen.olt.lat, chosen.olt.lon], [lat, lon]],
+      lengthM: haversineM(chosen.olt.lat, chosen.olt.lon, lat, lon),
+      routedByOSRM: false,
+    };
+    setCables((prev) => [...prev, cable]);
+  }, [districts]);
+
+  const addORKAt = useCallback((lat: number, lon: number, tbId?: string) => {
+    // Auto-pick nearest TB
+    let chosenTB: { tb: TransitBox; districtName: string } | null = null;
+    if (tbId) {
+      for (const d of districts) {
+        const tb = d.olt.transitBoxes.find((x) => x.id === tbId);
+        if (tb) { chosenTB = { tb, districtName: d.name }; break; }
+      }
+    } else {
+      let bestD = Infinity;
+      for (const d of districts) {
+        for (const tb of d.olt.transitBoxes) {
+          const dist = haversineM(lat, lon, tb.lat, tb.lon);
+          if (dist < bestD) { bestD = dist; chosenTB = { tb, districtName: d.name }; }
+        }
+      }
+    }
+    if (!chosenTB) return;
+    const orkId = `Бокс-${chosenTB.districtName.slice(0, 4).replace(/\s/g, '')}-${chosenTB.tb.orks.length + 1}-${Math.random().toString(36).slice(2, 4)}`;
+    const newORK: ORK = {
+      id: orkId, lat, lon, district: chosenTB.districtName,
+      splitter: '1:8', tbId: chosenTB.tb.id,
+      subscribers: [], cableType: 'ОК-4', boxType: 'Бокс-16',
+    };
+    setDistricts((prev) => prev.map((d) => ({
+      ...d,
+      olt: {
+        ...d.olt,
+        transitBoxes: d.olt.transitBoxes.map((tb) =>
+          tb.id === chosenTB!.tb.id ? { ...tb, orks: [...tb.orks, newORK] } : tb,
+        ),
+      },
+    })));
+    const cable: Cable = {
+      id: `cable-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      type: 'ОК-4', fibers: CABLE_FIBERS['ОК-4'],
+      fromId: chosenTB.tb.id, toId: orkId,
+      coords: [[chosenTB.tb.lat, chosenTB.tb.lon], [lat, lon]],
+      lengthM: haversineM(chosenTB.tb.lat, chosenTB.tb.lon, lat, lon),
+      routedByOSRM: false,
+    };
+    setCables((prev) => [...prev, cable]);
+  }, [districts]);
+
   const updateORK = useCallback((id: string, patch: Partial<Omit<ORK, 'id' | 'lat' | 'lon' | 'subscribers'>>) => {
     setDistricts((prev) => prev.map((d) => ({
       ...d,
@@ -663,5 +761,6 @@ export function useNetwork() {
     updateOLT, updateTB, updateORK,
     updateCable, rerouteSingleCable,
     deleteOLT, deleteTB, deleteORK, deleteCable,
+    addOLTAt, addTBAt, addORKAt,
   };
 }

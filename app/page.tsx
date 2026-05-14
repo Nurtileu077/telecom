@@ -40,6 +40,7 @@ export default function HomePage() {
   const [entitySelection, setEntitySelection] = useState<EntitySelection | null>(null);
   const [selectedCableId, setSelectedCableId] = useState<string | null>(null);
   const [editingCableId, setEditingCableId] = useState<string | null>(null);
+  const [placing, setPlacing] = useState<'olt' | 'tb' | 'ork' | null>(null);
   const flyToRef = useRef<((lat: number, lon: number, zoom?: number) => void) | null>(null);
   const mapElRef = useRef<HTMLElement | null>(null);
 
@@ -71,11 +72,31 @@ export default function HomePage() {
   }, [net]);
 
   const handleMapClickAddSub = useCallback((lat: number, lon: number) => {
+    // Placement mode takes priority over add-subscriber
+    if (placing === 'olt') {
+      const name = window.prompt('Название района для нового OLT:', 'Новый район');
+      if (name === null) { setPlacing(null); return; }
+      net.addOLTAt(lat, lon, name);
+      setPlacing(null);
+      return;
+    }
+    if (placing === 'tb') {
+      if (net.districts.length === 0) { alert('Сначала создай OLT'); setPlacing(null); return; }
+      net.addTBAt(lat, lon);
+      setPlacing(null);
+      return;
+    }
+    if (placing === 'ork') {
+      const hasTB = net.districts.some((d) => d.olt.transitBoxes.length > 0);
+      if (!hasTB) { alert('Сначала создай Муфту (TB)'); setPlacing(null); return; }
+      net.addORKAt(lat, lon);
+      setPlacing(null);
+      return;
+    }
     setShowAddSub({ lat, lon });
-    // Pre-fill district from last one used
     const existing = Array.from(new Set(net.districts.map((d) => d.name)));
     if (existing.length === 1) setNewSubDistrict(existing[0]);
-  }, [net.districts]);
+  }, [net, placing]);
 
   const submitNewSubscriber = useCallback(async () => {
     if (!showAddSub) return;
@@ -104,6 +125,9 @@ export default function HomePage() {
           setShowImport(false);
           setShowHelp(false);
           setShowAddSub(null);
+          setPlacing(null);
+          setEntitySelection(null);
+          setSelectedCableId(null);
         }
       }
     };
@@ -164,6 +188,29 @@ export default function HomePage() {
           >
             ?
           </button>
+          <div className="flex items-center gap-0.5 border border-[#1e3a5f] rounded-lg px-0.5 py-0.5">
+            <button
+              onClick={() => setPlacing(placing === 'olt' ? null : 'olt')}
+              className={`px-2 py-0.5 text-[11px] rounded transition-colors ${placing === 'olt' ? 'bg-[#f59e0b]/20 text-[#f59e0b]' : 'text-[#94a3b8] hover:text-[#e2e8f0]'}`}
+              title="Поставить OLT по клику"
+            >
+              +OLT
+            </button>
+            <button
+              onClick={() => setPlacing(placing === 'tb' ? null : 'tb')}
+              className={`px-2 py-0.5 text-[11px] rounded transition-colors ${placing === 'tb' ? 'bg-[#38bdf8]/20 text-[#38bdf8]' : 'text-[#94a3b8] hover:text-[#e2e8f0]'}`}
+              title="Поставить Муфту (TB) — подключится к ближайшему OLT"
+            >
+              +Муфта
+            </button>
+            <button
+              onClick={() => setPlacing(placing === 'ork' ? null : 'ork')}
+              className={`px-2 py-0.5 text-[11px] rounded transition-colors ${placing === 'ork' ? 'bg-[#f59e0b]/20 text-[#f59e0b]' : 'text-[#94a3b8] hover:text-[#e2e8f0]'}`}
+              title="Поставить ОРК — подключится к ближайшей Муфте"
+            >
+              +ОРК
+            </button>
+          </div>
           <button
             onClick={() => setShowProjects(true)}
             className="px-2 py-1 text-xs border border-[#1e3a5f] rounded-lg text-[#94a3b8] hover:text-[#e2e8f0] hover:border-[#38bdf8]/40 transition-colors"
@@ -243,6 +290,7 @@ export default function HomePage() {
             addAnnotation={net.addAnnotation}
             deleteAnnotation={net.deleteAnnotation}
             editMode={net.editMode}
+            placingMode={!!placing}
             onMapClick={handleMapClickAddSub}
             moveEntity={net.moveEntity}
             deleteSubscriber={net.deleteSubscriber}
@@ -277,6 +325,13 @@ export default function HomePage() {
             waypointEditing={editingCableId === selectedCableId && !!editingCableId}
             rerouteStatus={net.status}
           />
+
+          {placing && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#a78bfa]/50 rounded-lg px-3 py-1.5 text-xs text-[#a78bfa] shadow-2xl flex items-center gap-2 animate-fade-in">
+              <span>🎯 Клик по карте — поставить {placing === 'olt' ? 'OLT' : placing === 'tb' ? 'Муфту' : 'ОРК'}</span>
+              <button onClick={() => setPlacing(null)} className="text-[#94a3b8] hover:text-white border border-[#a78bfa]/30 rounded px-1.5 py-0.5 text-[10px]">Esc</button>
+            </div>
+          )}
 
           {net.status === 'routing' && (
             <div className="absolute inset-0 flex items-end justify-center pb-8 z-[500] pointer-events-none">
