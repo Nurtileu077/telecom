@@ -9,6 +9,7 @@ import type { DrawingTool } from '@/components/Sidebar/NotesTab';
 import GeocodeSearch from '@/components/Geocoding/GeocodeSearch';
 import { exportPDF } from '@/components/Export/ExportPDF';
 import { calculateCost } from '@/components/Network/CostCalc';
+import ProjectListModal from '@/components/Projects/ProjectListModal';
 
 const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
   ssr: false,
@@ -26,6 +27,7 @@ export default function HomePage() {
   const net = useNetwork();
   const [showImport, setShowImport] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [showProjects, setShowProjects] = useState(false);
   const [showAddSub, setShowAddSub] = useState<{ lat: number; lon: number } | null>(null);
   const [newSubDistrict, setNewSubDistrict] = useState('');
   const [newSubDesc, setNewSubDesc] = useState('');
@@ -147,6 +149,13 @@ export default function HomePage() {
             title="Справка (?)"
           >
             ?
+          </button>
+          <button
+            onClick={() => setShowProjects(true)}
+            className="px-2 py-1 text-xs border border-[#1e3a5f] rounded-lg text-[#94a3b8] hover:text-[#e2e8f0] hover:border-[#38bdf8]/40 transition-colors"
+            title="Список проектов"
+          >
+            {net.dbEnabled ? '☁' : '🗂'} Проекты
           </button>
           <button
             onClick={() => net.saveProject()}
@@ -284,6 +293,18 @@ export default function HomePage() {
           onBuild={handleBuild}
           currentSettings={net.settings}
           hasExistingData={net.totalSubscribers > 0}
+        />
+      )}
+
+      {showProjects && (
+        <ProjectListModal
+          onClose={() => setShowProjects(false)}
+          onLoad={(p) => { net.loadProject(p); }}
+          onNew={() => { net.newProject(); setShowProjects(false); }}
+          listProjects={net.listProjects}
+          deleteProject={net.deleteProject}
+          currentProjectId={net.projectId}
+          dbEnabled={net.dbEnabled}
         />
       )}
 

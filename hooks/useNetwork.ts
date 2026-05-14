@@ -9,6 +9,7 @@ import { buildNetwork } from '@/components/Network/AutoBuild';
 import { calculateMaterials, validateNetwork } from '@/components/Network/MaterialCalc';
 import { routeCables } from '@/components/Network/OSRMRouter';
 import { consolidateCables } from '@/components/Network/Consolidation';
+import { dbListProjects, dbSaveProject, dbDeleteProject, dbLoadProject, supabase } from '@/lib/supabase';
 
 export type BuildStatus = 'idle' | 'importing' | 'clustering' | 'routing' | 'calculating' | 'done' | 'error';
 
@@ -61,19 +62,31 @@ export function useNetwork() {
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
   const [editMode, setEditMode] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [dbEnabled, setDbEnabled] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
 
+  // Check if Supabase is configured
+  useEffect(() => {
+    setDbEnabled(!!supabase);
+  }, []);
+
   // Auto-load last project on mount
   useEffect(() => {
-    try {
-      const lastId = localStorage.getItem(CURRENT_KEY);
-      if (lastId) {
+    (async () => {
+      try {
+        const lastId = localStorage.getItem(CURRENT_KEY);
+        if (!lastId) return;
+        // Try Supabase first, fall back to localStorage
+        if (supabase) {
+          const p = await dbLoadProject(lastId);
+          if (p) { loadProjectInternal(p); return; }
+        }
         const projects = loadProjects();
         const p = projects.find((x) => x.id === lastId);
         if (p) loadProjectInternal(p);
-      }
-    } catch {}
+      } catch {}
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -278,7 +291,7 @@ export function useNetwork() {
     if (allSubscribers.length > 0) await runBuild(allSubscribers);
   }, [allSubscribers, runBuild]);
 
-  // Projects
+  // Projects — localStorage helpers (always kept as offline fallback)
   function loadProjects(): Project[] {
     try {
       const data = localStorage.getItem(STORAGE_KEY);
@@ -286,9 +299,29 @@ export function useNetwork() {
     } catch { return []; }
   }
 
-  const listProjects = useCallback((): Project[] => loadProjects(), []);
+  function saveToLocalStorage(project: Project) {
+    const projects = loadProjects();
+    const idx = projects.findIndex((p) => p.id === project.id);
+    if (idx >= 0) {
+      projects[idx] = { ...projects[idx], ...project, createdAt: projects[idx].createdAt };
+    } else {
+      projects.unshift(project);
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(projects.slice(0, 50)));
+    localStorage.setItem(CURRENT_KEY, project.id);
+  }
 
-  const saveProject = useCallback(() => {
+  const listProjects = useCallback(async (): Promise<Project[]> => {
+    if (supabase) {
+      try {
+        const rows = await dbListProjects();
+        return rows.map((r) => r.data);
+      } catch {}
+    }
+    return loadProjects();
+  }, []);
+
+  const saveProject = useCallback(async () => {
     const project: Project = {
       id: projectId,
       name: projectName,
@@ -296,15 +329,16 @@ export function useNetwork() {
       updatedAt: new Date().toISOString(),
       districts, cables, joints, annotations, importHistory, settings,
     };
-    const projects = loadProjects();
-    const idx = projects.findIndex((p) => p.id === projectId);
-    if (idx >= 0) {
-      projects[idx] = { ...projects[idx], ...project, createdAt: projects[idx].createdAt };
-    } else {
-      projects.unshift(project);
+    // Always save to localStorage as offline backup
+    saveToLocalStorage(project);
+    // Save to Supabase if available
+    if (supabase) {
+      try {
+        await dbSaveProject(project);
+      } catch (e) {
+        console.warn('[DB] save failed, using localStorage only', e);
+      }
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(projects.slice(0, 50)));
-    localStorage.setItem(CURRENT_KEY, projectId);
     setLastSavedAt(new Date().toISOString());
     return project;
   }, [projectId, projectName, districts, cables, joints, annotations, importHistory, settings]);
@@ -318,7 +352,6 @@ export function useNetwork() {
     setAnnotations(p.annotations || []);
     setImportHistory(p.importHistory || []);
     setSettings({ ...DEFAULT_SETTINGS, ...p.settings });
-    // Reconstruct allSubscribers from districts
     const subs = (p.districts || []).flatMap((d) => d.subscribers);
     setAllSubscribers(subs);
     if (p.districts?.length) {
@@ -331,13 +364,24 @@ export function useNetwork() {
     }
   }
 
-  const loadProject = useCallback((p: Project) => {
+  const loadProject = useCallback(async (p: Project) => {
+    // If we have Supabase, load the freshest copy from DB
+    if (supabase) {
+      try {
+        const fresh = await dbLoadProject(p.id);
+        if (fresh) { loadProjectInternal(fresh); localStorage.setItem(CURRENT_KEY, p.id); return; }
+      } catch {}
+    }
     loadProjectInternal(p);
+    localStorage.setItem(CURRENT_KEY, p.id);
   }, []);
 
-  const deleteProject = useCallback((id: string) => {
+  const deleteProject = useCallback(async (id: string) => {
     const projects = loadProjects().filter((p) => p.id !== id);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
+    if (supabase) {
+      try { await dbDeleteProject(id); } catch {}
+    }
   }, []);
 
   const newProject = useCallback(() => {
@@ -381,7 +425,7 @@ export function useNetwork() {
   useEffect(() => {
     if (!autoSaveEnabled) return;
     if (districts.length === 0 && annotations.length === 0) return;
-    const t = setInterval(() => saveProject(), AUTOSAVE_INTERVAL_MS);
+    const t = setInterval(() => { saveProject(); }, AUTOSAVE_INTERVAL_MS);
     return () => clearInterval(t);
   }, [autoSaveEnabled, districts.length, annotations.length, saveProject]);
 
@@ -405,7 +449,7 @@ export function useNetwork() {
     status, osrmProgress, stopOSRM, rerouteWithOSRM,
     validationIssues,
     editMode, setEditMode,
-    autoSaveEnabled, setAutoSaveEnabled, lastSavedAt,
+    autoSaveEnabled, setAutoSaveEnabled, lastSavedAt, dbEnabled,
     buildFromSubscribers, appendSubscribers,
     addAnnotation, updateAnnotation, deleteAnnotation,
     addSubscriberAt, deleteSubscriber, moveEntity, rebuildFromCurrent,

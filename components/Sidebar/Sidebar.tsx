@@ -36,11 +36,11 @@ interface Props {
   lastSavedAt: string | null;
   autoSaveEnabled: boolean;
   setAutoSaveEnabled: (v: boolean) => void;
-  saveProject: () => void;
-  loadProject: (p: Project) => void;
-  deleteProject: (id: string) => void;
+  saveProject: () => Promise<Project> | void;
+  loadProject: (p: Project) => Promise<void> | void;
+  deleteProject: (id: string) => Promise<void> | void;
   newProject: () => void;
-  listProjects: () => Project[];
+  listProjects: () => Promise<Project[]> | Project[];
   exportProjectJSON: () => void;
   importProjectJSON: (file: File) => Promise<void>;
   importHistory: ImportRecord[];
