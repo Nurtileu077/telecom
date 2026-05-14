@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   District, Cable, LayerVisibility, MapAnnotation, AnnotationType,
   ANNOTATION_PRESETS, InlineJoint, CABLE_COLORS as CABLE_COLORS_MAP,
+  SUBSCRIBER_TYPE_LABELS,
 } from '@/types/network';
 import type { DrawingTool } from '@/components/Sidebar/NotesTab';
 
@@ -26,6 +27,7 @@ interface Props {
   onMapClick?: (lat: number, lon: number) => void;
   moveEntity?: (kind: 'tb' | 'ork' | 'olt', id: string, lat: number, lon: number) => void;
   deleteSubscriber?: (id: string) => void;
+  updateSubscriberType?: (id: string, type: import('@/types/network').SubscriberType | undefined) => void;
   onEntityClick?: (kind: 'olt' | 'tb' | 'ork', id: string) => void;
   onCableClick?: (id: string) => void;
   editingCableId?: string | null;
@@ -377,22 +379,37 @@ export default function LeafletMap(props: Props) {
               }
               group.addLayer(m);
             }
-            if (layers.subscribers && zoom >= 13) {
+            if (layers.subscribers) {
               const budgetMap = propsRef.current.budgetMap;
               const colorByBudget = propsRef.current.budgetColoring;
+              const subRadius = zoom >= 14 ? 4 : zoom >= 11 ? 3 : zoom >= 9 ? 2 : 1.5;
               for (const sub of ork.subscribers) {
-                let fillColor = district.color;
+                const typeInfo = sub.subscriberType ? SUBSCRIBER_TYPE_LABELS[sub.subscriberType] : null;
+                let fillColor = typeInfo ? typeInfo.color : district.color;
                 if (colorByBudget && budgetMap) {
                   const s = budgetMap.get(sub.id);
                   if (s === 'ok')   fillColor = '#34d399';
                   if (s === 'warn') fillColor = '#f59e0b';
                   if (s === 'fail') fillColor = '#f87171';
                 }
-                const c = L.circleMarker([sub.lat, sub.lon], {
-                  radius: 4, fillColor, fillOpacity: 0.85,
-                  color: fillColor, weight: 1,
-                });
-                c.bindPopup(`<b>${sub.desc}</b><br/>ОРК: ${ork.id}<br/>Волокна: ${sub.fibers.working}+${sub.fibers.spare}${propsRef.current.editMode ? '<br/><button onclick="window.__deleteSub__(\'' + sub.id + '\')" style="margin-top:6px;padding:2px 8px;background:#f87171;color:#fff;border:none;border-radius:3px;font-size:10px;cursor:pointer">Удалить</button>' : ''}`);
+                let marker: any;
+                if (sub.subscriberType === 'sergek' && zoom >= 12) {
+                  const icon = L.divIcon({
+                    html: `<div style="width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:12px;background:${fillColor}33;border:1.5px solid ${fillColor};border-radius:3px;box-shadow:0 1px 4px rgba(0,0,0,0.5)">📷</div>`,
+                    className: '', iconSize: [18, 18], iconAnchor: [9, 9],
+                  });
+                  marker = L.marker([sub.lat, sub.lon], { icon });
+                } else {
+                  marker = L.circleMarker([sub.lat, sub.lon], {
+                    radius: subRadius, fillColor, fillOpacity: 0.85,
+                    color: fillColor, weight: 1,
+                  });
+                }
+                const c = marker;
+                const typeLabel = typeInfo ? ` <span style="color:${typeInfo.color}">${typeInfo.icon} ${typeInfo.label}</span>` : '';
+                const typeSelector = propsRef.current.editMode ? `<br/><select onchange="window.__setSubType__('${sub.id}',this.value)" style="margin-top:4px;font-size:10px;background:#0d1b2a;color:#e2e8f0;border:1px solid #1e3a5f;border-radius:3px;padding:1px 4px;width:100%"><option value="" ${!sub.subscriberType ? 'selected' : ''}>— тип —</option><option value="gpon" ${sub.subscriberType==='gpon'?'selected':''}>📡 GPON</option><option value="p2p" ${sub.subscriberType==='p2p'?'selected':''}>🔗 P2P</option><option value="sergek" ${sub.subscriberType==='sergek'?'selected':''}>📷 Сергек</option><option value="home" ${sub.subscriberType==='home'?'selected':''}>🏠 Дом. интернет</option><option value="shop" ${sub.subscriberType==='shop'?'selected':''}>🏪 Магазин/ТЦ</option><option value="other" ${sub.subscriberType==='other'?'selected':''}>📌 Прочее</option></select>` : '';
+                const delBtn = propsRef.current.editMode ? `<br/><button onclick="window.__deleteSub__('${sub.id}')" style="margin-top:4px;padding:2px 8px;background:#f87171;color:#fff;border:none;border-radius:3px;font-size:10px;cursor:pointer;width:100%">Удалить</button>` : '';
+                c.bindPopup(`<b>${sub.desc}</b>${typeLabel}<br/>ОРК: ${ork.id}<br/>Волокна: ${sub.fibers.working}+${sub.fibers.spare}${typeSelector}${delBtn}`);
                 c.on('contextmenu', (e: any) => {
                   e.originalEvent.preventDefault();
                   if (propsRef.current.editMode && confirm(`Удалить абонента «${sub.desc}»?`)) {
@@ -629,10 +646,15 @@ export default function LeafletMap(props: Props) {
     })();
   }, [props.heatmapEnabled, props.districts]);
 
-  // Expose delete subscriber to window for popup buttons
+  // Expose subscriber actions to window for popup buttons
   useEffect(() => {
     (window as any).__deleteSub__ = (id: string) => propsRef.current.deleteSubscriber?.(id);
-    return () => { delete (window as any).__deleteSub__; };
+    (window as any).__setSubType__ = (id: string, type: string) =>
+      propsRef.current.updateSubscriberType?.(id, type as any || undefined);
+    return () => {
+      delete (window as any).__deleteSub__;
+      delete (window as any).__setSubType__;
+    };
   }, []);
 
   return (

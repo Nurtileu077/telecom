@@ -1,4 +1,4 @@
-import { Subscriber } from '@/types/network';
+import { Subscriber, SubscriberType } from '@/types/network';
 
 let idCounter = 0;
 function newId() { return `sub-csv-${++idCounter}`; }
@@ -44,6 +44,14 @@ export function parseTabular(text: string, defaultDistrict = 'Импорт'): Su
     const lon = parseFloat(row[1].replace(',', '.'));
     const desc = (row[2] || '').trim();
     const district = (row[3] || '').trim() || defaultDistrict;
+    const typeRaw = (row[4] || '').trim().toLowerCase();
+    const subscriberType: SubscriberType | undefined =
+      typeRaw === 'sergek' || typeRaw === 'сергек' || typeRaw === 'камера' ? 'sergek' :
+      typeRaw === 'p2p' ? 'p2p' :
+      typeRaw === 'gpon' ? 'gpon' :
+      typeRaw === 'home' || typeRaw === 'дом' || typeRaw === 'домашний' ? 'home' :
+      typeRaw === 'shop' || typeRaw === 'магазин' || typeRaw === 'тц' ? 'shop' :
+      typeRaw ? 'other' : undefined;
 
     if (isNaN(lat) || isNaN(lon)) continue;
     if (lat < 35 || lat > 60 || lon < 45 || lon > 90) continue;
@@ -53,6 +61,7 @@ export function parseTabular(text: string, defaultDistrict = 'Импорт'): Su
       lat, lon,
       desc: desc || `Або. ${subs.length + 1}`,
       district,
+      subscriberType,
       fibers: { working: 2, spare: 1 },
     });
   }

@@ -344,6 +344,7 @@ export default function HomePage() {
           materials={net.materials}
           layers={net.layers}
           toggleLayer={net.toggleLayer}
+          patchLayers={net.patchLayers}
           validationIssues={net.validationIssues}
           flyTo={flyToRef.current}
           annotations={net.annotations}
@@ -406,6 +407,7 @@ export default function HomePage() {
             onMapClick={handleMapClickAddSub}
             moveEntity={handleMoveEntity}
             deleteSubscriber={net.deleteSubscriber}
+            updateSubscriberType={net.updateSubscriberType}
             onEntityClick={(kind, id) => {
               // Cable-drawing flow takes priority
               if (cableDraw) {

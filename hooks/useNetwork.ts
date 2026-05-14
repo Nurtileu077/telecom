@@ -286,13 +286,14 @@ export function useNetwork() {
     // available, falling back to straight line.
     let nextSeq = 0;
     const nextId = () => `cable-r-${++nextSeq}`;
-    const raw: Cable[] = [];
+    const trunks: Cable[] = [];  // OLT→TB and TB→ORK (routed along roads)
+    const drops: Cable[] = [];   // ORK→subscriber (always straight lines)
     for (const d of districts) {
       const olt = d.olt;
       for (const tb of olt.transitBoxes) {
         const k1 = `${olt.id}::${tb.id}`;
         const c1 = existingCoords.get(k1) ?? [[olt.lat, olt.lon] as [number, number], [tb.lat, tb.lon] as [number, number]];
-        raw.push({
+        trunks.push({
           id: nextId(), type: tb.inCable, fibers: CABLE_FIBERS[tb.inCable],
           fromId: olt.id, toId: tb.id, coords: c1,
           lengthM: pathLen(c1), routedByOSRM: existingCoords.has(k1),
@@ -300,31 +301,31 @@ export function useNetwork() {
         for (const ork of tb.orks) {
           const k2 = `${tb.id}::${ork.id}`;
           const c2 = existingCoords.get(k2) ?? [[tb.lat, tb.lon] as [number, number], [ork.lat, ork.lon] as [number, number]];
-          raw.push({
+          trunks.push({
             id: nextId(), type: ork.cableType, fibers: CABLE_FIBERS[ork.cableType],
             fromId: tb.id, toId: ork.id, coords: c2,
             lengthM: pathLen(c2), routedByOSRM: existingCoords.has(k2),
           });
           for (const sub of ork.subscribers) {
-            const k3 = `${ork.id}::${sub.id}`;
-            const c3 = existingCoords.get(k3) ?? [[ork.lat, ork.lon] as [number, number], [sub.lat, sub.lon] as [number, number]];
-            raw.push({
+            // Drops are always straight lines — never OSRM-routed so they
+            // don't shadow trunk cables running along the same road.
+            const c3: [number, number][] = [[ork.lat, ork.lon], [sub.lat, sub.lon]];
+            drops.push({
               id: nextId(), type: 'ОК-4', fibers: CABLE_FIBERS['ОК-4'],
               fromId: ork.id, toId: sub.id, coords: c3,
-              lengthM: pathLen(c3), routedByOSRM: existingCoords.has(k3),
+              lengthM: pathLen(c3), routedByOSRM: false,
             });
           }
         }
       }
     }
 
-    // OSRM-route any cables that lost their routing (trunk OLT→TB after
-    // previous consolidation typically falls into this category).
+    // OSRM-route trunk cables that need it.
     // Also force re-routing when any existing cable was previously OSRM-routed
-    // so that trunk cables that were split through joints get re-routed.
+    // so that trunk cables split through joint IDs get fresh road-following paths.
     const hadOSRMRouting = cables.some((c) => c.routedByOSRM);
-    let routed = raw;
-    const needRouting = raw.filter((c) => !c.routedByOSRM);
+    let routedTrunks = trunks;
+    const needRouting = trunks.filter((c) => !c.routedByOSRM);
     if ((settings.useOSRM || hadOSRMRouting) && needRouting.length > 0) {
       setStatus('routing');
       if (abortRef.current) abortRef.current.abort();
@@ -337,12 +338,12 @@ export function useNetwork() {
           ctrl.signal,
         );
         const map = new Map(reRouted.map((c) => [c.id, c]));
-        routed = raw.map((c) => map.get(c.id) ?? c);
+        routedTrunks = trunks.map((c) => map.get(c.id) ?? c);
       } catch { /* abort */ }
     }
 
-    // Consolidate
-    const { cables: consolidated, joints: newJoints } = consolidateCables(routed, districts);
+    // Consolidate trunks then append straight drops
+    const { cables: consolidated, joints: newJoints } = consolidateCables([...routedTrunks, ...drops], districts);
     setCables(consolidated);
     setJoints(newJoints);
     setMaterials(calculateMaterials(districts, consolidated, settings, newJoints.length));
@@ -368,11 +369,12 @@ export function useNetwork() {
       };
       let seq = 0;
       const nextId = () => `cable-r-${++seq}`;
-      const raw: Cable[] = [];
+      const trunks: Cable[] = [];
+      const drops: Cable[] = [];
       for (const d of districts) {
         const olt = d.olt;
         for (const tb of olt.transitBoxes) {
-          raw.push({
+          trunks.push({
             id: nextId(), type: tb.inCable, fibers: CABLE_FIBERS[tb.inCable],
             fromId: olt.id, toId: tb.id,
             coords: [[olt.lat, olt.lon], [tb.lat, tb.lon]],
@@ -380,7 +382,7 @@ export function useNetwork() {
             routedByOSRM: false,
           });
           for (const ork of tb.orks) {
-            raw.push({
+            trunks.push({
               id: nextId(), type: ork.cableType, fibers: CABLE_FIBERS[ork.cableType],
               fromId: tb.id, toId: ork.id,
               coords: [[tb.lat, tb.lon], [ork.lat, ork.lon]],
@@ -388,7 +390,8 @@ export function useNetwork() {
               routedByOSRM: false,
             });
             for (const sub of ork.subscribers) {
-              raw.push({
+              // Drops always straight — skip OSRM to avoid road-parallel lines
+              drops.push({
                 id: nextId(), type: 'ОК-4', fibers: CABLE_FIBERS['ОК-4'],
                 fromId: ork.id, toId: sub.id,
                 coords: [[ork.lat, ork.lon], [sub.lat, sub.lon]],
@@ -400,13 +403,13 @@ export function useNetwork() {
         }
       }
 
-      const routed = await routeCables(
-        raw, 200, true,
+      const routedTrunks = await routeCables(
+        trunks, 200, true,
         (done, total, current) => setOsrmProgress({ done, total, current }),
         controller.signal,
       );
       if (!controller.signal.aborted) {
-        const { cables: consolidated, joints: newJoints } = consolidateCables(routed, districts);
+        const { cables: consolidated, joints: newJoints } = consolidateCables([...routedTrunks, ...drops], districts);
         setCables(consolidated);
         setJoints(newJoints);
         const mats = calculateMaterials(districts, consolidated, settings, newJoints.length);
@@ -460,6 +463,23 @@ export function useNetwork() {
     setAllSubscribers(merged);
     await runBuild(merged);
   }, [allSubscribers, runBuild]);
+
+  const updateSubscriberType = useCallback((subId: string, type: import('@/types/network').SubscriberType | undefined) => {
+    setAllSubscribers((prev) => prev.map((s) => s.id === subId ? { ...s, subscriberType: type } : s));
+    setDistricts((prev) => prev.map((d) => ({
+      ...d,
+      olt: {
+        ...d.olt,
+        transitBoxes: d.olt.transitBoxes.map((tb) => ({
+          ...tb,
+          orks: tb.orks.map((ork) => ({
+            ...ork,
+            subscribers: ork.subscribers.map((s) => s.id === subId ? { ...s, subscriberType: type } : s),
+          })),
+        })),
+      },
+    })));
+  }, []);
 
   // Move a TB or ORK (manual edit): update coords and rebuild cables only (no re-cluster)
   const moveEntity = useCallback((kind: 'tb' | 'ork' | 'olt', id: string, lat: number, lon: number) => {
@@ -1072,6 +1092,10 @@ export function useNetwork() {
     setLayers((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
 
+  const patchLayers = useCallback((patch: Partial<LayerVisibility>) => {
+    setLayers((prev) => ({ ...prev, ...patch }));
+  }, []);
+
   const totalSubscribers = districts.reduce((s, d) => s + d.subscribers.length, 0);
   const totalCableKm = Math.round(cables.reduce((s, c) => s + c.lengthM, 0) / 100) / 10;
   const totalOrks = districts.reduce(
@@ -1088,14 +1112,14 @@ export function useNetwork() {
     districts, cables, joints, annotations, materials, settings, setSettings,
     prices, setPrices: setPricesAndStore,
     importHistory, allSubscribers,
-    layers, toggleLayer,
+    layers, toggleLayer, patchLayers,
     status, osrmProgress, stopOSRM, rerouteWithOSRM,
     validationIssues,
     editMode, setEditMode,
     autoSaveEnabled, setAutoSaveEnabled, lastSavedAt, dbEnabled,
     buildFromSubscribers, appendSubscribers,
     addAnnotation, updateAnnotation, deleteAnnotation,
-    addSubscriberAt, deleteSubscriber, moveEntity, rebuildFromCurrent,
+    addSubscriberAt, deleteSubscriber, updateSubscriberType, moveEntity, rebuildFromCurrent,
     saveProject, loadProject, deleteProject, listProjects, newProject,
     exportProjectJSON, importProjectJSON,
     totalSubscribers, totalCableKm, totalOrks,

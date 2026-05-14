@@ -23,6 +23,7 @@ interface Props {
   materials: Materials | null;
   layers: LayerVisibility;
   toggleLayer: (key: keyof LayerVisibility) => void;
+  patchLayers?: (patch: Partial<LayerVisibility>) => void;
   validationIssues: ValidationIssue[];
   flyTo: ((lat: number, lon: number, zoom?: number) => void) | null;
 
@@ -122,7 +123,7 @@ export default function Sidebar(props: Props) {
 
       <div className="flex-1 overflow-hidden">
         {activeTab === 'layers' && (
-          <LayersTab districts={props.districts} layers={props.layers} toggleLayer={props.toggleLayer} />
+          <LayersTab districts={props.districts} layers={props.layers} toggleLayer={props.toggleLayer} setLayers={props.patchLayers} />
         )}
         {activeTab === 'notes' && (
           <NotesTab

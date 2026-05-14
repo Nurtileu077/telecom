@@ -1,3 +1,14 @@
+export type SubscriberType = 'gpon' | 'p2p' | 'sergek' | 'home' | 'shop' | 'other';
+
+export const SUBSCRIBER_TYPE_LABELS: Record<SubscriberType, { label: string; icon: string; color: string }> = {
+  gpon:   { label: 'GPON',         icon: '📡', color: '#38bdf8' },
+  p2p:    { label: 'P2P',          icon: '🔗', color: '#a78bfa' },
+  sergek: { label: 'Сергек',       icon: '📷', color: '#f59e0b' },
+  home:   { label: 'Дом. интернет',icon: '🏠', color: '#34d399' },
+  shop:   { label: 'Магазин / ТЦ', icon: '🏪', color: '#fb923c' },
+  other:  { label: 'Прочее',       icon: '📌', color: '#94a3b8' },
+};
+
 export interface Subscriber {
   id: string;
   lat: number;
@@ -5,6 +16,7 @@ export interface Subscriber {
   desc: string;
   district: string;
   orkId?: string;
+  subscriberType?: SubscriberType;
   fibers: { working: number; spare: number };
 }
 
