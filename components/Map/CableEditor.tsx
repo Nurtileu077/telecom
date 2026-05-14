@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { Cable, CABLE_SIZES, CABLE_COLORS } from '@/types/network';
+import { TIA_598_COLORS, tubeCount, fibersPerTube } from '@/components/Network/FiberColors';
 
 interface Props {
   cable: Cable | null;
@@ -115,6 +116,24 @@ export default function CableEditor({
         >
           {waypointEditing ? '✓ Редактирование точек активно — тяни маркеры' : '✎ Редактировать точки маршрута'}
         </button>
+
+        {/* Fiber color map (TIA-598) */}
+        <div className="border-t border-[#1e3a5f] pt-2">
+          <div className="text-[10px] text-[#64748b] mb-1.5">Волокна (TIA-598): {tubeCount(cable.fibers)} модуль × {fibersPerTube(cable.fibers)} вол.</div>
+          <div className="grid grid-cols-12 gap-0.5">
+            {Array.from({ length: cable.fibers }).map((_, i) => {
+              const c = TIA_598_COLORS[i % 12];
+              return (
+                <div
+                  key={i}
+                  className="aspect-square rounded-sm border border-[#1e3a5f]/40"
+                  title={`#${i + 1} — ${c.name}`}
+                  style={{ background: c.hex }}
+                />
+              );
+            })}
+          </div>
+        </div>
 
         {cable.routedByOSRM && (
           <div className="text-[10px] text-[#475569] text-center">

@@ -21,6 +21,7 @@ interface Props {
   onDeleteTB:  (id: string) => void;
   onDeleteORK: (id: string) => void;
   onReassignORK: (orkId: string, newTbId: string) => void;
+  onOpenSplicePlan: (tbId: string) => void;
 }
 
 const SPLITTERS: SplitterRatio[] = ['1:2', '1:4', '1:8', '1:16', '1:32', '1:64'];
@@ -219,7 +220,7 @@ export default function EntityEditor({
   selection, districts, onClose,
   onUpdateOLT, onUpdateTB, onUpdateORK,
   onDeleteOLT, onDeleteTB, onDeleteORK,
-  onReassignORK,
+  onReassignORK, onOpenSplicePlan,
 }: Props) {
   if (!selection) return null;
 
@@ -245,7 +246,17 @@ export default function EntityEditor({
     const tb = findTB(districts, selection.id);
     if (!tb) return null;
     title = tb.id;
-    content = <TBEditor tb={tb} onSave={(patch) => { onUpdateTB(tb.id, patch); onClose(); }} />;
+    content = (
+      <div className="space-y-2">
+        <TBEditor tb={tb} onSave={(patch) => { onUpdateTB(tb.id, patch); onClose(); }} />
+        <button
+          onClick={() => onOpenSplicePlan(tb.id)}
+          className="w-full py-1.5 border border-[#38bdf8]/30 text-[#38bdf8] hover:bg-[#38bdf8]/10 text-[11px] rounded transition-colors"
+        >
+          🔗 Открыть сплайс-план
+        </button>
+      </div>
+    );
     const orkCount = tb.orks.length;
     const subCount = tb.orks.reduce((s, o) => s + o.subscribers.length, 0);
     deleteWarn = `Удалит ${orkCount} ОРК и ${subCount} абонентов`;

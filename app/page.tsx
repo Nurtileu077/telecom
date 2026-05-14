@@ -12,6 +12,7 @@ import { calculateCost } from '@/components/Network/CostCalc';
 import ProjectListModal from '@/components/Projects/ProjectListModal';
 import EntityEditor, { EntitySelection } from '@/components/Map/EntityEditor';
 import CableEditor from '@/components/Map/CableEditor';
+import SplicePlan from '@/components/Map/SplicePlan';
 
 const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
   ssr: false,
@@ -43,6 +44,7 @@ export default function HomePage() {
   const [placing, setPlacing] = useState<'olt' | 'tb' | 'ork' | null>(null);
   const [cableDraw, setCableDraw] = useState<{ stage: 'from' | 'to'; fromId?: string } | null>(null);
   const [budgetColoring, setBudgetColoring] = useState(false);
+  const [splicePlanTbId, setSplicePlanTbId] = useState<string | null>(null);
 
   const budgetMap = useRef<Map<string, 'ok' | 'warn' | 'fail'>>(new Map());
   useEffect(() => {
@@ -385,6 +387,14 @@ export default function HomePage() {
             onDeleteTB={net.deleteTB}
             onDeleteORK={net.deleteORK}
             onReassignORK={net.reassignORK}
+            onOpenSplicePlan={(tbId) => { setSplicePlanTbId(tbId); setEntitySelection(null); }}
+          />
+
+          <SplicePlan
+            tbId={splicePlanTbId}
+            districts={net.districts}
+            cables={net.cables}
+            onClose={() => setSplicePlanTbId(null)}
           />
 
           <CableEditor
