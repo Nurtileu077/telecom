@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
-import { Project } from '@/types/network';
+import { Project, ProjectSnapshot, ProjectStatus, PROJECT_STATUS_LABELS } from '@/types/network';
+import SnapshotsPanel from './SnapshotsPanel';
 
 interface Props {
   projectId: string;
@@ -16,12 +17,21 @@ interface Props {
   exportProjectJSON: () => void;
   importProjectJSON: (file: File) => Promise<void>;
   importHistory: import('@/types/network').ImportRecord[];
+
+  projectStatus: ProjectStatus;
+  setProjectStatus: (s: ProjectStatus) => void;
+  snapshots: ProjectSnapshot[];
+  takeSnapshot: (name: string) => ProjectSnapshot;
+  restoreSnapshot: (id: string) => void;
+  deleteSnapshot: (id: string) => void;
 }
 
 export default function ProjectsTab({
   projectId, projectName, lastSavedAt, autoSaveEnabled, setAutoSaveEnabled,
   saveProject, loadProject, deleteProject, newProject, listProjects,
   exportProjectJSON, importProjectJSON, importHistory,
+  projectStatus, setProjectStatus,
+  snapshots, takeSnapshot, restoreSnapshot, deleteSnapshot,
 }: Props) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [refreshTick, setRefreshTick] = useState(0);
@@ -77,6 +87,37 @@ export default function ProjectsTab({
                    if (f) importProjectJSON(f).then(refresh).catch((err) => alert('Ошибка: ' + err.message));
                  }} />
         </div>
+
+        {/* Project status */}
+        <div className="mt-3 border-t border-[#1e3a5f]/60 pt-3">
+          <div className="text-[10px] text-[#64748b] uppercase tracking-widest mb-1.5">Статус</div>
+          <div className="grid grid-cols-5 gap-0.5">
+            {(Object.keys(PROJECT_STATUS_LABELS) as ProjectStatus[]).map((s) => {
+              const m = PROJECT_STATUS_LABELS[s];
+              const active = projectStatus === s;
+              return (
+                <button
+                  key={s}
+                  onClick={() => setProjectStatus(s)}
+                  title={m.label}
+                  className={`flex flex-col items-center py-1 rounded text-[9px] transition-all border ${active ? 'border-current' : 'border-transparent hover:border-[#1e3a5f]'}`}
+                  style={active ? { color: m.color, background: `${m.color}15` } : { color: '#475569' }}
+                >
+                  <span className="text-sm leading-none">{m.icon}</span>
+                  <span className="mt-0.5 leading-tight text-center px-0.5">{m.label.split(' ')[0]}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Snapshots */}
+        <SnapshotsPanel
+          snapshots={snapshots}
+          takeSnapshot={takeSnapshot}
+          restoreSnapshot={restoreSnapshot}
+          deleteSnapshot={deleteSnapshot}
+        />
       </div>
 
       {/* Import history */}

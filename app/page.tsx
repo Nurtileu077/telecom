@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNetwork } from '@/hooks/useNetwork';
 import Sidebar from '@/components/Sidebar/Sidebar';
 import ImportModal, { ImportMode, NetworkImportMode } from '@/components/Import/ImportModal';
-import { Subscriber, ProjectSettings, AnnotationType, Project } from '@/types/network';
+import { Subscriber, ProjectSettings, AnnotationType, Project, ProjectStatus, PROJECT_STATUS_LABELS } from '@/types/network';
 import type { DrawingTool } from '@/components/Sidebar/NotesTab';
 import GeocodeSearch from '@/components/Geocoding/GeocodeSearch';
 import { exportPDF } from '@/components/Export/ExportPDF';
@@ -204,6 +204,23 @@ export default function HomePage() {
             onChange={(e) => net.setProjectName(e.target.value)}
             className="bg-transparent text-sm text-[#e2e8f0] border-none outline-none w-44 focus:text-[#38bdf8] transition-colors"
           />
+          <select
+            value={net.projectStatus}
+            onChange={(e) => net.setProjectStatus(e.target.value as ProjectStatus)}
+            className="bg-transparent text-[10px] font-medium border rounded px-1.5 py-0.5 cursor-pointer focus:outline-none"
+            style={{
+              color: PROJECT_STATUS_LABELS[net.projectStatus].color,
+              borderColor: `${PROJECT_STATUS_LABELS[net.projectStatus].color}55`,
+              background: `${PROJECT_STATUS_LABELS[net.projectStatus].color}10`,
+            }}
+            title="Статус проекта"
+          >
+            {(Object.keys(PROJECT_STATUS_LABELS) as ProjectStatus[]).map((s) => (
+              <option key={s} value={s} className="bg-[#0d1b2a] text-[#e2e8f0]">
+                {PROJECT_STATUS_LABELS[s].icon} {PROJECT_STATUS_LABELS[s].label}
+              </option>
+            ))}
+          </select>
         </div>
 
         <GeocodeSearch flyTo={flyToRef.current} />
@@ -362,6 +379,12 @@ export default function HomePage() {
           powerBudgetStats={net.powerBudgetStats}
           budgetColoring={budgetColoring}
           setBudgetColoring={setBudgetColoring}
+          projectStatus={net.projectStatus}
+          setProjectStatus={net.setProjectStatus}
+          snapshots={net.snapshots}
+          takeSnapshot={net.takeSnapshot}
+          restoreSnapshot={net.restoreSnapshot}
+          deleteSnapshot={net.deleteSnapshot}
         />
 
         <main className="flex-1 relative overflow-hidden isolate">

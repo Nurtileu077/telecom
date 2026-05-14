@@ -15,6 +15,7 @@ import CostTab from './CostTab';
 import ToolsTab from './ToolsTab';
 import BudgetTab from './BudgetTab';
 import type { SubBudget, BudgetStats } from '@/components/Network/PowerBudget';
+import type { ProjectSnapshot, ProjectStatus } from '@/types/network';
 
 interface Props {
   districts: District[];
@@ -61,6 +62,13 @@ interface Props {
   powerBudgetStats: BudgetStats;
   budgetColoring: boolean;
   setBudgetColoring: (v: boolean) => void;
+
+  projectStatus: ProjectStatus;
+  setProjectStatus: (s: ProjectStatus) => void;
+  snapshots: ProjectSnapshot[];
+  takeSnapshot: (name: string) => ProjectSnapshot;
+  restoreSnapshot: (id: string) => void;
+  deleteSnapshot: (id: string) => void;
 }
 
 type Tab = 'layers' | 'materials' | 'schema' | 'groups' | 'notes' | 'stats' | 'projects' | 'cost' | 'tools' | 'budget';
@@ -180,6 +188,12 @@ export default function Sidebar(props: Props) {
             exportProjectJSON={props.exportProjectJSON}
             importProjectJSON={props.importProjectJSON}
             importHistory={props.importHistory}
+            projectStatus={props.projectStatus}
+            setProjectStatus={props.setProjectStatus}
+            snapshots={props.snapshots}
+            takeSnapshot={props.takeSnapshot}
+            restoreSnapshot={props.restoreSnapshot}
+            deleteSnapshot={props.deleteSnapshot}
           />
         )}
       </div>
