@@ -182,6 +182,38 @@ export interface ValidationIssue {
   entityType?: 'ork' | 'cable' | 'olt' | 'subscriber';
 }
 
+export type Currency = 'KZT' | 'USD' | 'RUB' | 'EUR' | 'CNY';
+
+export interface CatalogItem {
+  id: string;
+  category: 'cable' | 'mufta' | 'box' | 'splitter' | 'olt' | 'ont' | 'patchcord' | 'pigtail' | 'pole' | 'other';
+  article: string;
+  name: string;
+  unit: 'м' | 'км' | 'шт' | 'компл';
+  price: number;
+  currency: Currency;
+  vendor: string;
+  link?: string;
+  notes?: string;
+}
+
+export const CATEGORY_LABELS: Record<CatalogItem['category'], string> = {
+  cable: 'Кабель',
+  mufta: 'Муфта',
+  box: 'Бокс / ОРК',
+  splitter: 'Сплиттер',
+  olt: 'OLT',
+  ont: 'ONT / ONU',
+  patchcord: 'Патчкорд',
+  pigtail: 'Пигтейл',
+  pole: 'Опора / Кронштейн',
+  other: 'Прочее',
+};
+
+export const CURRENCY_SYMBOLS: Record<Currency, string> = {
+  KZT: '₸', USD: '$', RUB: '₽', EUR: '€', CNY: '¥',
+};
+
 export interface LayerVisibility {
   olt: boolean;
   tb: boolean;

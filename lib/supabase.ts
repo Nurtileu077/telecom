@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import type { Project } from '@/types/network';
+import type { Project, CatalogItem } from '@/types/network';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
@@ -52,4 +52,36 @@ export async function dbLoadProject(id: string): Promise<Project | null> {
     .single();
   if (error) return null;
   return (data as { data: Project }).data;
+}
+
+// ── Equipment catalog ─────────────────────────────────────────────────────────
+export async function dbListCatalog(): Promise<CatalogItem[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from('gpon_catalog')
+    .select('*')
+    .order('category', { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map((r: any) => ({
+    id: r.id, category: r.category, article: r.article, name: r.name,
+    unit: r.unit, price: Number(r.price), currency: r.currency,
+    vendor: r.vendor, link: r.link, notes: r.notes,
+  }));
+}
+
+export async function dbUpsertCatalog(item: CatalogItem): Promise<void> {
+  if (!supabase) return;
+  const { error } = await supabase.from('gpon_catalog').upsert({
+    id: item.id, category: item.category, article: item.article, name: item.name,
+    unit: item.unit, price: item.price, currency: item.currency,
+    vendor: item.vendor, link: item.link ?? '', notes: item.notes ?? '',
+    updated_at: new Date().toISOString(),
+  });
+  if (error) throw error;
+}
+
+export async function dbDeleteCatalog(id: string): Promise<void> {
+  if (!supabase) return;
+  const { error } = await supabase.from('gpon_catalog').delete().eq('id', id);
+  if (error) throw error;
 }

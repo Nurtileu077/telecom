@@ -10,6 +10,7 @@ import GeocodeSearch from '@/components/Geocoding/GeocodeSearch';
 import { exportPDF } from '@/components/Export/ExportPDF';
 import { calculateCost } from '@/components/Network/CostCalc';
 import ProjectListModal from '@/components/Projects/ProjectListModal';
+import CatalogModal from '@/components/Catalog/CatalogModal';
 import EntityEditor, { EntitySelection } from '@/components/Map/EntityEditor';
 import CableEditor from '@/components/Map/CableEditor';
 import SplicePlan from '@/components/Map/SplicePlan';
@@ -31,6 +32,7 @@ export default function HomePage() {
   const [showImport, setShowImport] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showProjects, setShowProjects] = useState(false);
+  const [showCatalog, setShowCatalog] = useState(false);
   const [showAddSub, setShowAddSub] = useState<{ lat: number; lon: number } | null>(null);
   const [newSubDistrict, setNewSubDistrict] = useState('');
   const [newSubDesc, setNewSubDesc] = useState('');
@@ -266,6 +268,14 @@ export default function HomePage() {
             </button>
           </div>
           <button
+            onClick={() => setShowCatalog(true)}
+            disabled={!net.dbEnabled}
+            className="px-2 py-1 text-xs border border-[#1e3a5f] rounded-lg text-[#94a3b8] hover:text-[#e2e8f0] hover:border-[#38bdf8]/40 transition-colors disabled:opacity-30"
+            title="Каталог оборудования"
+          >
+            📦 Каталог
+          </button>
+          <button
             onClick={() => setShowProjects(true)}
             className="px-2 py-1 text-xs border border-[#1e3a5f] rounded-lg text-[#94a3b8] hover:text-[#e2e8f0] hover:border-[#38bdf8]/40 transition-colors"
             title="Список проектов"
@@ -485,6 +495,8 @@ export default function HomePage() {
           hasExistingData={net.totalSubscribers > 0}
         />
       )}
+
+      {showCatalog && <CatalogModal onClose={() => setShowCatalog(false)} />}
 
       {showProjects && (
         <ProjectListModal
