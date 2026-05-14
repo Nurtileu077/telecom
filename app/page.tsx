@@ -3,8 +3,8 @@ import dynamic from 'next/dynamic';
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNetwork } from '@/hooks/useNetwork';
 import Sidebar from '@/components/Sidebar/Sidebar';
-import ImportModal, { ImportMode } from '@/components/Import/ImportModal';
-import { Subscriber, ProjectSettings, AnnotationType } from '@/types/network';
+import ImportModal, { ImportMode, NetworkImportMode } from '@/components/Import/ImportModal';
+import { Subscriber, ProjectSettings, AnnotationType, Project } from '@/types/network';
 import type { DrawingTool } from '@/components/Sidebar/NotesTab';
 import GeocodeSearch from '@/components/Geocoding/GeocodeSearch';
 import { exportPDF } from '@/components/Export/ExportPDF';
@@ -53,6 +53,15 @@ export default function HomePage() {
       await net.appendSubscribers(subs, source);
     } else {
       await net.buildFromSubscribers(subs, source);
+    }
+  }, [net]);
+
+  const handleImportNetwork = useCallback(async (project: Project, mode: NetworkImportMode) => {
+    setShowImport(false);
+    if (mode === 'replace') {
+      net.importNetworkReplace(project);
+    } else {
+      await net.mergeNetworkDistricts(project);
     }
   }, [net]);
 
@@ -291,6 +300,7 @@ export default function HomePage() {
         <ImportModal
           onClose={() => setShowImport(false)}
           onBuild={handleBuild}
+          onImportNetwork={handleImportNetwork}
           currentSettings={net.settings}
           hasExistingData={net.totalSubscribers > 0}
         />

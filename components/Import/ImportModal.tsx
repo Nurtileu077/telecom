@@ -1,15 +1,17 @@
 'use client';
 import { useState, useRef, useCallback } from 'react';
-import { Subscriber, ProjectSettings } from '@/types/network';
+import { Subscriber, ProjectSettings, Project } from '@/types/network';
 import { importExcel } from './ExcelImporter';
 import { importKmz } from './KmzImporter';
 import { importCsv, parseTabular } from './CsvImporter';
 
 export type ImportMode = 'replace' | 'append';
+export type NetworkImportMode = 'replace' | 'merge';
 
 interface Props {
   onClose: () => void;
   onBuild: (subscribers: Subscriber[], settings: ProjectSettings, source: string, mode: ImportMode) => void;
+  onImportNetwork: (project: Project, mode: NetworkImportMode) => void;
   currentSettings: ProjectSettings;
   hasExistingData: boolean;
 }
@@ -27,7 +29,7 @@ const TEST_SUBSCRIBERS: Subscriber[] = [
   { id: 't10', lat: 40.790642, lon: 68.317131, desc: 'Жетісай қ., Ескендиров/Мұсабаев қиылысы', district: 'Жетысай', fibers: { working: 2, spare: 1 } },
 ];
 
-export default function ImportModal({ onClose, onBuild, currentSettings, hasExistingData }: Props) {
+export default function ImportModal({ onClose, onBuild, onImportNetwork, currentSettings, hasExistingData }: Props) {
   const [subscribers, setSubscribers] = useState<Subscriber[] | null>(null);
   const [fileName, setFileName] = useState<string>('');
   const [settings, setSettings] = useState<ProjectSettings>(currentSettings);
@@ -35,10 +37,18 @@ export default function ImportModal({ onClose, onBuild, currentSettings, hasExis
   const [dragging, setDragging] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [tab, setTab] = useState<'file' | 'paste'>('file');
+  const [tab, setTab] = useState<'file' | 'paste' | 'network'>('file');
   const [pasteText, setPasteText] = useState('');
   const [pasteDistrict, setPasteDistrict] = useState('Импорт');
   const fileRef = useRef<HTMLInputElement>(null);
+  const netFileRef = useRef<HTMLInputElement>(null);
+
+  // Network JSON import state
+  const [netProject, setNetProject] = useState<Project | null>(null);
+  const [netFileName, setNetFileName] = useState('');
+  const [netError, setNetError] = useState('');
+  const [netMode, setNetMode] = useState<NetworkImportMode>(hasExistingData ? 'merge' : 'replace');
+  const [netDragging, setNetDragging] = useState(false);
 
   const parsePaste = useCallback(() => {
     setError('');
@@ -82,6 +92,20 @@ export default function ImportModal({ onClose, onBuild, currentSettings, hasExis
     if (file) handleFile(file);
   }, [handleFile]);
 
+  const handleNetFile = useCallback(async (file: File) => {
+    setNetError('');
+    if (!file.name.endsWith('.json')) { setNetError('Нужен файл .json (экспорт проекта)'); return; }
+    try {
+      const text = await file.text();
+      const p = JSON.parse(text) as Project;
+      if (!p.districts || !Array.isArray(p.districts)) throw new Error('Не похоже на экспорт проекта GPON');
+      setNetProject(p);
+      setNetFileName(file.name);
+    } catch (e: any) {
+      setNetError(e.message ?? 'Ошибка разбора JSON');
+    }
+  }, []);
+
   const byDistrict = subscribers
     ? subscribers.reduce((m, s) => {
         m[s.district] = (m[s.district] || 0) + 1;
@@ -121,11 +145,12 @@ export default function ImportModal({ onClose, onBuild, currentSettings, hasExis
             </div>
           )}
 
-          {/* File vs Paste tabs */}
-          {!subscribers && (
+          {/* File vs Paste vs Network tabs */}
+          {!subscribers && !netProject && (
             <div className="flex gap-1 bg-[#0a0e1a] p-1 rounded-lg">
               <button onClick={() => setTab('file')} className={`flex-1 py-1.5 text-xs rounded ${tab === 'file' ? 'bg-[#38bdf8]/15 text-[#38bdf8]' : 'text-[#64748b]'}`}>📂 Файл</button>
               <button onClick={() => setTab('paste')} className={`flex-1 py-1.5 text-xs rounded ${tab === 'paste' ? 'bg-[#38bdf8]/15 text-[#38bdf8]' : 'text-[#64748b]'}`}>📋 Вставка</button>
+              <button onClick={() => setTab('network')} className={`flex-1 py-1.5 text-xs rounded ${tab === 'network' ? 'bg-[#a78bfa]/15 text-[#a78bfa]' : 'text-[#64748b]'}`}>🗺 Сеть</button>
             </div>
           )}
 
@@ -151,7 +176,106 @@ export default function ImportModal({ onClose, onBuild, currentSettings, hasExis
             </div>
           )}
 
-          {!subscribers && tab === 'file' && (
+          {/* Network JSON tab */}
+          {!netProject && tab === 'network' && (
+            <div className="space-y-3">
+              <p className="text-[11px] text-[#94a3b8]">
+                Загрузите <b className="text-[#e2e8f0]">экспорт проекта .json</b> — готовую схему OLT → Муфта → ОРК → абоненты.<br/>
+                Кластеризация не происходит — сеть загружается как есть.
+              </p>
+
+              {/* Mode */}
+              {hasExistingData && (
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setNetMode('merge')}
+                    className={`p-2 rounded-md text-xs transition-all ${netMode === 'merge' ? 'bg-[#a78bfa]/15 border border-[#a78bfa]/50 text-[#a78bfa]' : 'border border-[#1e3a5f] text-[#94a3b8]'}`}
+                  >
+                    ➕ Добавить районы
+                    <div className="text-[9px] text-[#64748b] mt-0.5">Новые добавятся, существующие — не тронуты</div>
+                  </button>
+                  <button
+                    onClick={() => setNetMode('replace')}
+                    className={`p-2 rounded-md text-xs transition-all ${netMode === 'replace' ? 'bg-[#f87171]/15 border border-[#f87171]/50 text-[#f87171]' : 'border border-[#1e3a5f] text-[#94a3b8]'}`}
+                  >
+                    ♻️ Заменить проект
+                    <div className="text-[9px] text-[#64748b] mt-0.5">Текущий проект будет заменён</div>
+                  </button>
+                </div>
+              )}
+
+              <div
+                className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer ${netDragging ? 'border-[#a78bfa] bg-[#a78bfa]/5' : 'border-[#1e3a5f] hover:border-[#a78bfa]/50'}`}
+                onDragOver={(e) => { e.preventDefault(); setNetDragging(true); }}
+                onDragLeave={() => setNetDragging(false)}
+                onDrop={(e) => { e.preventDefault(); setNetDragging(false); const f = e.dataTransfer.files[0]; if (f) handleNetFile(f); }}
+                onClick={() => netFileRef.current?.click()}
+              >
+                <input ref={netFileRef} type="file" accept=".json" className="hidden"
+                       onChange={(e) => { const f = e.target.files?.[0]; if (f) handleNetFile(f); }} />
+                <div className="text-3xl mb-2">🗺</div>
+                <p className="text-sm text-[#e2e8f0] mb-1">Перетащите или нажмите</p>
+                <p className="text-xs text-[#64748b]">Файл .json (экспорт проекта)</p>
+                {netError && <p className="mt-2 text-xs text-[#f87171]">⚠️ {netError}</p>}
+              </div>
+            </div>
+          )}
+
+          {/* Network project loaded summary */}
+          {netProject && (
+            <div className="space-y-3">
+              <div className="bg-[#0a0e1a] border border-[#a78bfa]/30 rounded-lg p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xs font-semibold text-[#e2e8f0] truncate">🗺 {netProject.name || netFileName}</h3>
+                  <button onClick={() => { setNetProject(null); setNetFileName(''); setNetError(''); }} className="text-[10px] text-[#64748b] hover:text-[#38bdf8] ml-2">Сменить</button>
+                </div>
+                <div className="grid grid-cols-3 gap-2 mb-3">
+                  <div className="text-center">
+                    <div className="text-lg font-mono font-bold text-[#a78bfa]">{netProject.districts.length}</div>
+                    <div className="text-[10px] text-[#64748b]">районов</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-lg font-mono font-bold text-[#38bdf8]">{netProject.districts.reduce((s, d) => s + d.subscribers.length, 0)}</div>
+                    <div className="text-[10px] text-[#64748b]">абонентов</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-lg font-mono font-bold text-[#34d399]">{(netProject.cables ?? []).length}</div>
+                    <div className="text-[10px] text-[#64748b]">кабелей</div>
+                  </div>
+                </div>
+                <div className="space-y-1 max-h-28 overflow-y-auto">
+                  {netProject.districts.map((d) => (
+                    <div key={d.name} className="flex items-center justify-between text-[11px]">
+                      <span className="text-[#94a3b8]">{d.name}</span>
+                      <span className="text-[#64748b] font-mono">{d.subscribers.length} або. · {d.olt.transitBoxes.length} муфт</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Mode selector (only when there is existing data) */}
+              {hasExistingData && (
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setNetMode('merge')}
+                    className={`p-2 rounded-md text-xs transition-all ${netMode === 'merge' ? 'bg-[#a78bfa]/15 border border-[#a78bfa]/50 text-[#a78bfa]' : 'border border-[#1e3a5f] text-[#94a3b8]'}`}
+                  >
+                    ➕ Добавить районы
+                    <div className="text-[9px] text-[#64748b] mt-0.5">Новые добавятся, общие — пересобрать</div>
+                  </button>
+                  <button
+                    onClick={() => setNetMode('replace')}
+                    className={`p-2 rounded-md text-xs transition-all ${netMode === 'replace' ? 'bg-[#f87171]/15 border border-[#f87171]/50 text-[#f87171]' : 'border border-[#1e3a5f] text-[#94a3b8]'}`}
+                  >
+                    ♻️ Заменить проект
+                    <div className="text-[9px] text-[#64748b] mt-0.5">Текущий проект будет заменён</div>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {!subscribers && !netProject && tab === 'file' && (
             <div
               className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer ${dragging ? 'border-[#38bdf8] bg-[#38bdf8]/5' : 'border-[#1e3a5f] hover:border-[#38bdf8]/50'}`}
               onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
@@ -269,13 +393,22 @@ export default function ImportModal({ onClose, onBuild, currentSettings, hasExis
           <button onClick={onClose} className="flex-1 py-2 px-4 border border-[#1e3a5f] rounded-lg text-xs text-[#94a3b8] hover:text-[#e2e8f0] transition-colors">
             Отмена
           </button>
-          <button
-            onClick={() => { if (subscribers) onBuild(subscribers, settings, fileName, mode); }}
-            disabled={!subscribers}
-            className="flex-1 py-2 px-4 bg-[#38bdf8] hover:bg-[#7dd3fc] disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-xs font-semibold text-[#0a0e1a] transition-colors"
-          >
-            {mode === 'append' ? '➕ Добавить и построить' : '🚀 Построить сеть'}
-          </button>
+          {netProject ? (
+            <button
+              onClick={() => { onImportNetwork(netProject, netMode); onClose(); }}
+              className="flex-1 py-2 px-4 bg-[#a78bfa] hover:bg-[#c4b5fd] rounded-lg text-xs font-semibold text-[#0a0e1a] transition-colors"
+            >
+              {netMode === 'merge' ? '➕ Добавить районы' : '♻️ Заменить проект'}
+            </button>
+          ) : (
+            <button
+              onClick={() => { if (subscribers) onBuild(subscribers, settings, fileName, mode); }}
+              disabled={!subscribers}
+              className="flex-1 py-2 px-4 bg-[#38bdf8] hover:bg-[#7dd3fc] disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-xs font-semibold text-[#0a0e1a] transition-colors"
+            >
+              {mode === 'append' ? '➕ Добавить и построить' : '🚀 Построить сеть'}
+            </button>
+          )}
         </div>
       </div>
     </div>

@@ -291,6 +291,81 @@ export function useNetwork() {
     if (allSubscribers.length > 0) await runBuild(allSubscribers);
   }, [allSubscribers, runBuild]);
 
+  // Import a full Project as-is (no re-clustering) — used for "existing network" import
+  const importNetworkReplace = useCallback((incoming: Project) => {
+    loadProjectInternal(incoming);
+  }, []);
+
+  // Merge incoming districts into current project without re-clustering.
+  // Districts with the same name are merged at the subscriber level (rebuilds that district only).
+  // Brand-new districts are added verbatim with their cables.
+  const mergeNetworkDistricts = useCallback(async (incoming: Project) => {
+    const existingNames = new Set(districts.map((d) => d.name));
+    const brandNew = incoming.districts.filter((d) => !existingNames.has(d.name));
+    const overlap = incoming.districts.filter((d) => existingNames.has(d.name));
+
+    if (brandNew.length === 0 && overlap.length === 0) return;
+
+    // Brand-new districts: add verbatim (keep exact OLT/TB/ORK/cable structure)
+    const nextDistricts = [...districts, ...brandNew];
+
+    // Add their cables (dedup by id)
+    const existingCableIds = new Set(cables.map((c) => c.id));
+    const incomingCables = incoming.cables ?? [];
+    const brandNewIds = new Set(brandNew.map((d) => d.name));
+    const newCables = incomingCables.filter((c) => {
+      // Keep cables that belong to brand-new districts (fromId starts with OLT/Бокс/Муфта of new districts)
+      if (existingCableIds.has(c.id)) return false;
+      return true;
+    });
+
+    const nextCables = [...cables, ...newCables];
+    const nextJoints = [...joints, ...(incoming.joints ?? [])];
+
+    // Subscribers from overlapping districts get merged and rebuilt
+    if (overlap.length > 0) {
+      const incomingSubs = overlap.flatMap((d) => d.subscribers);
+      // Avoid coordinate duplicates
+      const seen = new Set(allSubscribers.map((s) => `${s.lat.toFixed(6)},${s.lon.toFixed(6)}`));
+      const filtered = incomingSubs.filter((s) => !seen.has(`${s.lat.toFixed(6)},${s.lon.toFixed(6)}`));
+      if (filtered.length > 0) {
+        const mergedSubs = [...allSubscribers, ...filtered];
+        setAllSubscribers(mergedSubs);
+        // Full rebuild since subscriber set changed
+        const record: ImportRecord = {
+          id: newId('imp'),
+          source: `Merge: ${incoming.name}`,
+          districts: overlap.map((d) => d.name),
+          count: filtered.length,
+          importedAt: new Date().toISOString(),
+        };
+        setImportHistory((prev) => [...prev, record]);
+        await runBuild(mergedSubs);
+        return;
+      }
+    }
+
+    // No overlapping subs to rebuild — just update state
+    const allSubs = nextDistricts.flatMap((d) => d.subscribers);
+    setAllSubscribers(allSubs);
+    setDistricts(nextDistricts);
+    setCables(nextCables);
+    setJoints(nextJoints);
+    const mats = calculateMaterials(nextDistricts, nextCables, settings, nextJoints.length);
+    setMaterials(mats);
+    setValidationIssues(validateNetwork(nextDistricts, nextCables));
+    setStatus('done');
+
+    const record: ImportRecord = {
+      id: newId('imp'),
+      source: `Network: ${incoming.name}`,
+      districts: brandNew.map((d) => d.name),
+      count: brandNew.reduce((s, d) => s + d.subscribers.length, 0),
+      importedAt: new Date().toISOString(),
+    };
+    setImportHistory((prev) => [...prev, record]);
+  }, [districts, cables, joints, allSubscribers, settings, runBuild]);
+
   // Projects — localStorage helpers (always kept as offline fallback)
   function loadProjects(): Project[] {
     try {
@@ -456,5 +531,6 @@ export function useNetwork() {
     saveProject, loadProject, deleteProject, listProjects, newProject,
     exportProjectJSON, importProjectJSON,
     totalSubscribers, totalCableKm, totalOrks,
+    importNetworkReplace, mergeNetworkDistricts,
   };
 }
