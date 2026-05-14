@@ -20,6 +20,7 @@ interface Props {
   onDeleteOLT: (id: string) => void;
   onDeleteTB:  (id: string) => void;
   onDeleteORK: (id: string) => void;
+  onReassignORK: (orkId: string, newTbId: string) => void;
 }
 
 const SPLITTERS: SplitterRatio[] = ['1:2', '1:4', '1:8', '1:16', '1:32', '1:64'];
@@ -145,12 +146,23 @@ function TBEditor({ tb, onSave }: { tb: TransitBox; onSave: (patch: Partial<Omit
 }
 
 // ── ORK editor ────────────────────────────────────────────────────────────────
-function ORKEditor({ ork, onSave }: { ork: ORK; onSave: (patch: Partial<Omit<ORK, 'id' | 'lat' | 'lon' | 'subscribers'>>) => void }) {
+function ORKEditor({
+  ork, districts, onSave, onReassign,
+}: {
+  ork: ORK;
+  districts: District[];
+  onSave: (patch: Partial<Omit<ORK, 'id' | 'lat' | 'lon' | 'subscribers'>>) => void;
+  onReassign: (newTbId: string) => void;
+}) {
   const [splitter, setSplitter] = useState(ork.splitter);
   const [boxType, setBoxType] = useState(ork.boxType);
   const [cableType, setCableType] = useState(ork.cableType);
+  const [reassignOpen, setReassignOpen] = useState(false);
 
   useEffect(() => { setSplitter(ork.splitter); setBoxType(ork.boxType); setCableType(ork.cableType); }, [ork]);
+
+  // List of all TBs in the same district (so we don't break district topology)
+  const districtTBs = districts.find((d) => d.name === ork.district)?.olt.transitBoxes ?? [];
 
   return (
     <div className="space-y-2.5">
@@ -167,13 +179,37 @@ function ORKEditor({ ork, onSave }: { ork: ORK; onSave: (patch: Partial<Omit<ORK
       <Row label="Кабель TB→ОРК">
         <Sel value={cableType} options={CABLE_SIZES} onChange={(v) => setCableType(v as typeof cableType)} />
       </Row>
-      <div className="text-[10px] text-[#475569]">Абонентов: {ork.subscribers.length}</div>
+      <div className="text-[10px] text-[#475569]">Родительская Муфта: <span className="text-[#94a3b8]">{ork.tbId}</span> · Абонентов: {ork.subscribers.length}</div>
       <button
         onClick={() => onSave({ splitter, boxType: boxType as BoxType, cableType })}
         className="w-full py-1.5 bg-[#f59e0b]/15 hover:bg-[#f59e0b]/25 text-[#f59e0b] text-xs rounded transition-colors"
       >
         Сохранить
       </button>
+
+      {districtTBs.length > 1 && (
+        <div className="border-t border-[#1e3a5f] pt-2">
+          <button
+            onClick={() => setReassignOpen((v) => !v)}
+            className="w-full py-1.5 text-[11px] text-[#a78bfa] border border-[#a78bfa]/30 hover:bg-[#a78bfa]/10 rounded transition-colors"
+          >
+            ↔ Перенести в другую Муфту
+          </button>
+          {reassignOpen && (
+            <select
+              autoFocus
+              defaultValue=""
+              onChange={(e) => { if (e.target.value) onReassign(e.target.value); }}
+              className="mt-1.5 w-full bg-[#0a0e1a] border border-[#1e3a5f] rounded px-2 py-1 text-xs text-[#e2e8f0] focus:outline-none focus:border-[#a78bfa]"
+            >
+              <option value="" disabled>— выбери Муфту —</option>
+              {districtTBs.filter((tb) => tb.id !== ork.tbId).map((tb) => (
+                <option key={tb.id} value={tb.id}>{tb.id} · ОРК: {tb.orks.length}</option>
+              ))}
+            </select>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -183,6 +219,7 @@ export default function EntityEditor({
   selection, districts, onClose,
   onUpdateOLT, onUpdateTB, onUpdateORK,
   onDeleteOLT, onDeleteTB, onDeleteORK,
+  onReassignORK,
 }: Props) {
   if (!selection) return null;
 
@@ -217,7 +254,12 @@ export default function EntityEditor({
     const ork = findORK(districts, selection.id);
     if (!ork) return null;
     title = ork.id;
-    content = <ORKEditor ork={ork} onSave={(patch) => { onUpdateORK(ork.id, patch); onClose(); }} />;
+    content = <ORKEditor
+      ork={ork}
+      districts={districts}
+      onSave={(patch) => { onUpdateORK(ork.id, patch); onClose(); }}
+      onReassign={(newTbId) => { onReassignORK(ork.id, newTbId); onClose(); }}
+    />;
     deleteWarn = `Удалит ОРК и ${ork.subscribers.length} абонентов`;
     onDelete = () => { onDeleteORK(ork.id); onClose(); };
   }

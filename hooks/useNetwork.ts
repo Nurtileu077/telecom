@@ -417,6 +417,88 @@ export function useNetwork() {
     return null;
   }, [districts]);
 
+  // Reassign ORK to a different TB. Updates parent reference + replaces TB→ORK cable.
+  const reassignORK = useCallback((orkId: string, newTbId: string) => {
+    let orkData: ORK | null = null;
+    let oldTbId: string | null = null;
+    let newTbCoords: [number, number] | null = null;
+    for (const d of districts) {
+      for (const tb of d.olt.transitBoxes) {
+        if (tb.id === newTbId) newTbCoords = [tb.lat, tb.lon];
+        const found = tb.orks.find((o) => o.id === orkId);
+        if (found) { orkData = found; oldTbId = tb.id; }
+      }
+    }
+    if (!orkData || !oldTbId || !newTbCoords || oldTbId === newTbId) return;
+    setDistricts((prev) => prev.map((d) => ({
+      ...d,
+      olt: {
+        ...d.olt,
+        transitBoxes: d.olt.transitBoxes.map((tb) => {
+          if (tb.id === oldTbId) return { ...tb, orks: tb.orks.filter((o) => o.id !== orkId) };
+          if (tb.id === newTbId) return { ...tb, orks: [...tb.orks, { ...orkData!, tbId: newTbId }] };
+          return tb;
+        }),
+      },
+    })));
+    setCables((prev) => {
+      const filtered = prev.filter((c) => !(c.fromId === oldTbId && c.toId === orkId));
+      const cable: Cable = {
+        id: `cable-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        type: 'ОК-4', fibers: CABLE_FIBERS['ОК-4'],
+        fromId: newTbId, toId: orkId,
+        coords: [newTbCoords!, [orkData!.lat, orkData!.lon]],
+        lengthM: haversineM(newTbCoords![0], newTbCoords![1], orkData!.lat, orkData!.lon),
+        routedByOSRM: false,
+      };
+      return [...filtered, cable];
+    });
+  }, [districts]);
+
+  // Reassign subscriber to a different ORK. Updates orkId + replaces ORK→sub drop cable.
+  const reassignSubscriber = useCallback((subId: string, newOrkId: string) => {
+    let subData: Subscriber | null = null;
+    let oldOrkId: string | null = null;
+    let newOrkCoords: [number, number] | null = null;
+    for (const d of districts) {
+      for (const tb of d.olt.transitBoxes) {
+        for (const ork of tb.orks) {
+          if (ork.id === newOrkId) newOrkCoords = [ork.lat, ork.lon];
+          const found = ork.subscribers.find((s) => s.id === subId);
+          if (found) { subData = found; oldOrkId = ork.id; }
+        }
+      }
+    }
+    if (!subData || !oldOrkId || !newOrkCoords || oldOrkId === newOrkId) return;
+    setDistricts((prev) => prev.map((d) => ({
+      ...d,
+      subscribers: d.subscribers.map((s) => s.id === subId ? { ...s, orkId: newOrkId } : s),
+      olt: {
+        ...d.olt,
+        transitBoxes: d.olt.transitBoxes.map((tb) => ({
+          ...tb,
+          orks: tb.orks.map((ork) => {
+            if (ork.id === oldOrkId) return { ...ork, subscribers: ork.subscribers.filter((s) => s.id !== subId) };
+            if (ork.id === newOrkId) return { ...ork, subscribers: [...ork.subscribers, { ...subData!, orkId: newOrkId }] };
+            return ork;
+          }),
+        })),
+      },
+    })));
+    setCables((prev) => {
+      const filtered = prev.filter((c) => !(c.fromId === oldOrkId && c.toId === subId));
+      const cable: Cable = {
+        id: `cable-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        type: 'ОК-4', fibers: CABLE_FIBERS['ОК-4'],
+        fromId: newOrkId, toId: subId,
+        coords: [newOrkCoords!, [subData!.lat, subData!.lon]],
+        lengthM: haversineM(newOrkCoords![0], newOrkCoords![1], subData!.lat, subData!.lon),
+        routedByOSRM: false,
+      };
+      return [...filtered, cable];
+    });
+  }, [districts]);
+
   const addCableBetween = useCallback((fromId: string, toId: string, type: Cable['type'] = 'ОК-12') => {
     const from = findEntityCoords(fromId);
     const to = findEntityCoords(toId);
@@ -793,5 +875,6 @@ export function useNetwork() {
     updateCable, rerouteSingleCable,
     deleteOLT, deleteTB, deleteORK, deleteCable,
     addOLTAt, addTBAt, addORKAt, addCableBetween,
+    reassignORK, reassignSubscriber,
   };
 }

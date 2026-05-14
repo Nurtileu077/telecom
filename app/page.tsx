@@ -63,6 +63,41 @@ export default function HomePage() {
     }
   }, [net]);
 
+  // Drag-drop reassignment: when an ORK is dropped near a different TB (≤80m), reassign it.
+  // For subscribers: if dropped near another ORK (≤120m), reassign.
+  const SNAP_TB_M = 80;
+  const SNAP_ORK_M = 120;
+  const handleMoveEntity = useCallback((kind: 'tb' | 'ork' | 'olt', id: string, lat: number, lon: number) => {
+    // Compute haversine inline
+    const dist = (a: [number, number], b: [number, number]) => {
+      const R = 6371000;
+      const dLat = ((b[0] - a[0]) * Math.PI) / 180;
+      const dLon = ((b[1] - a[1]) * Math.PI) / 180;
+      const x = Math.sin(dLat / 2) ** 2 + Math.cos((a[0] * Math.PI) / 180) * Math.cos((b[0] * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+      return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+    };
+
+    if (kind === 'ork') {
+      // Find current TB parent of this ORK
+      let currentTbId: string | null = null;
+      let bestTbId: string | null = null;
+      let bestTbDist = Infinity;
+      for (const d of net.districts) {
+        for (const tb of d.olt.transitBoxes) {
+          if (tb.orks.some((o) => o.id === id)) currentTbId = tb.id;
+          const dd = dist([lat, lon], [tb.lat, tb.lon]);
+          if (dd < bestTbDist) { bestTbDist = dd; bestTbId = tb.id; }
+        }
+      }
+      if (bestTbId && currentTbId && bestTbId !== currentTbId && bestTbDist <= SNAP_TB_M) {
+        net.moveEntity('ork', id, lat, lon);
+        net.reassignORK(id, bestTbId);
+        return;
+      }
+    }
+    net.moveEntity(kind, id, lat, lon);
+  }, [net]);
+
   const handleImportNetwork = useCallback(async (project: Project, mode: NetworkImportMode) => {
     setShowImport(false);
     if (mode === 'replace') {
@@ -301,7 +336,7 @@ export default function HomePage() {
             editMode={net.editMode}
             placingMode={!!placing}
             onMapClick={handleMapClickAddSub}
-            moveEntity={net.moveEntity}
+            moveEntity={handleMoveEntity}
             deleteSubscriber={net.deleteSubscriber}
             onEntityClick={(kind, id) => {
               // Cable-drawing flow takes priority
@@ -335,6 +370,7 @@ export default function HomePage() {
             onDeleteOLT={net.deleteOLT}
             onDeleteTB={net.deleteTB}
             onDeleteORK={net.deleteORK}
+            onReassignORK={net.reassignORK}
           />
 
           <CableEditor
