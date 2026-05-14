@@ -51,6 +51,10 @@ export interface OLT {
 export type CableType = 'ОК-4' | 'ОК-8' | 'ОК-12' | 'ОК-16' | 'ОК-24' | 'ОК-32' | 'ОК-48' | 'ОК-96';
 
 export const CABLE_SIZES: CableType[] = ['ОК-4', 'ОК-8', 'ОК-12', 'ОК-16', 'ОК-24', 'ОК-32', 'ОК-48', 'ОК-96'];
+export const CABLE_COLORS: Record<CableType, string> = {
+  'ОК-4': '#99d499', 'ОК-8': '#4ade80', 'ОК-12': '#3a92fb', 'ОК-16': '#60a5fa',
+  'ОК-24': '#f59e0b', 'ОК-32': '#fbbf24', 'ОК-48': '#ec8a00', 'ОК-96': '#f87171',
+};
 export const CABLE_FIBERS: Record<CableType, number> = {
   'ОК-4': 4, 'ОК-8': 8, 'ОК-12': 12, 'ОК-16': 16,
   'ОК-24': 24, 'ОК-32': 32, 'ОК-48': 48, 'ОК-96': 96,

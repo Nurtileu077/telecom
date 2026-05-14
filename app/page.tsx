@@ -11,6 +11,7 @@ import { exportPDF } from '@/components/Export/ExportPDF';
 import { calculateCost } from '@/components/Network/CostCalc';
 import ProjectListModal from '@/components/Projects/ProjectListModal';
 import EntityEditor, { EntitySelection } from '@/components/Map/EntityEditor';
+import CableEditor from '@/components/Map/CableEditor';
 
 const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
   ssr: false,
@@ -37,6 +38,8 @@ export default function HomePage() {
   const [measureMode, setMeasureMode] = useState(false);
   const [heatmapEnabled, setHeatmapEnabled] = useState(false);
   const [entitySelection, setEntitySelection] = useState<EntitySelection | null>(null);
+  const [selectedCableId, setSelectedCableId] = useState<string | null>(null);
+  const [editingCableId, setEditingCableId] = useState<string | null>(null);
   const flyToRef = useRef<((lat: number, lon: number, zoom?: number) => void) | null>(null);
   const mapElRef = useRef<HTMLElement | null>(null);
 
@@ -243,7 +246,10 @@ export default function HomePage() {
             onMapClick={handleMapClickAddSub}
             moveEntity={net.moveEntity}
             deleteSubscriber={net.deleteSubscriber}
-            onEntityClick={(kind, id) => setEntitySelection({ kind, id } as EntitySelection)}
+            onEntityClick={(kind, id) => { setEntitySelection({ kind, id } as EntitySelection); setSelectedCableId(null); }}
+            onCableClick={(id) => { setSelectedCableId(id); setEntitySelection(null); }}
+            editingCableId={editingCableId}
+            onUpdateCableCoords={(id, coords) => net.updateCable(id, { coords })}
             measureMode={measureMode}
             setMeasureMode={setMeasureMode}
             heatmapEnabled={heatmapEnabled}
@@ -256,6 +262,16 @@ export default function HomePage() {
             onUpdateOLT={net.updateOLT}
             onUpdateTB={net.updateTB}
             onUpdateORK={net.updateORK}
+          />
+
+          <CableEditor
+            cable={selectedCableId ? (net.cables.find((c) => c.id === selectedCableId) ?? null) : null}
+            onClose={() => { setSelectedCableId(null); setEditingCableId(null); }}
+            onUpdateType={(id, type) => net.updateCable(id, { type })}
+            onRerouteOSRM={(id) => net.rerouteSingleCable(id)}
+            onToggleWaypoints={(id) => setEditingCableId(id)}
+            waypointEditing={editingCableId === selectedCableId && !!editingCableId}
+            rerouteStatus={net.status}
           />
 
           {net.status === 'routing' && (

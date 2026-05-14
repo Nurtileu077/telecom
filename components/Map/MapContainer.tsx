@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   District, Cable, LayerVisibility, MapAnnotation, AnnotationType,
-  ANNOTATION_PRESETS, InlineJoint,
+  ANNOTATION_PRESETS, InlineJoint, CABLE_COLORS as CABLE_COLORS_MAP,
 } from '@/types/network';
 import type { DrawingTool } from '@/components/Sidebar/NotesTab';
 
@@ -26,6 +26,9 @@ interface Props {
   moveEntity?: (kind: 'tb' | 'ork' | 'olt', id: string, lat: number, lon: number) => void;
   deleteSubscriber?: (id: string) => void;
   onEntityClick?: (kind: 'olt' | 'tb' | 'ork', id: string) => void;
+  onCableClick?: (id: string) => void;
+  editingCableId?: string | null;
+  onUpdateCableCoords?: (id: string, coords: [number, number][]) => void;
   // Measure
   measureMode: boolean;
   setMeasureMode: (v: boolean) => void;
@@ -33,12 +36,7 @@ interface Props {
   heatmapEnabled: boolean;
 }
 
-const CABLE_COLORS: Record<string, string> = {
-  'ОК-4':  '#99d499', 'ОК-8':  '#4ade80',
-  'ОК-12': '#3a92fb', 'ОК-16': '#60a5fa',
-  'ОК-24': '#f59e0b', 'ОК-32': '#fbbf24',
-  'ОК-48': '#ec8a00', 'ОК-96': '#f87171',
-};
+const CABLE_COLORS: Record<string, string> = CABLE_COLORS_MAP as Record<string, string>;
 const CABLE_WEIGHTS: Record<string, number> = {
   'ОК-4':  1.5, 'ОК-8':  2,
   'ОК-12': 2.5, 'ОК-16': 3,
@@ -85,6 +83,7 @@ export default function LeafletMap(props: Props) {
   const heatLayerRef = useRef<any>(null);
   const drawStateRef = useRef<{ coords: [number, number][]; tempLayer?: any }>({ coords: [] });
   const measureStateRef = useRef<{ coords: [number, number][]; layer?: any; total: number }>({ coords: [], total: 0 });
+  const waypointGroupRef = useRef<any>(null);
 
   const [baseMap, setBaseMap] = useState<BaseMap>('dark');
 
@@ -116,6 +115,7 @@ export default function LeafletMap(props: Props) {
       annoGroupRef.current = L.layerGroup().addTo(map);
       drawGroupRef.current = L.layerGroup().addTo(map);
       measureGroupRef.current = L.layerGroup().addTo(map);
+      waypointGroupRef.current = L.layerGroup().addTo(map);
       mapRef.current = map;
 
       // Force Leaflet to recalculate container size after layout settles
@@ -271,15 +271,20 @@ export default function LeafletMap(props: Props) {
           if (!layers[layerKey]) continue;
           if (cable.type === 'ОК-4' && zoom < 14) continue;
 
+          const isEditing = propsRef.current.editingCableId === cable.id;
           const poly = L.polyline(cable.coords, {
-            color: CABLE_COLORS[cable.type] || '#888',
-            weight: CABLE_WEIGHTS[cable.type] || 2,
+            color: isEditing ? '#c4b5fd' : (CABLE_COLORS[cable.type] || '#888'),
+            weight: isEditing ? (CABLE_WEIGHTS[cable.type] || 2) + 2 : (CABLE_WEIGHTS[cable.type] || 2),
             opacity: cable.type === 'ОК-4' ? 0.6 : 0.85,
           });
           poly.bindTooltip(
             `<b>${cable.type}</b><br/>${cable.fromId} → ${cable.toId}<br/>Длина: ${Math.round(cable.lengthM)} м`,
             { sticky: true, className: 'text-xs' },
           );
+          poly.on('click', (e: any) => {
+            e.originalEvent?.stopPropagation?.();
+            propsRef.current.onCableClick?.(cable.id);
+          });
           group.addLayer(poly);
         }
       }
@@ -527,7 +532,49 @@ export default function LeafletMap(props: Props) {
   }
 
   // Re-render whenever data changes
-  useEffect(() => { renderData(); }, [props.districts, props.cables, props.joints, props.layers, props.editMode]);
+  useEffect(() => { renderData(); }, [props.districts, props.cables, props.joints, props.layers, props.editMode, props.editingCableId]);
+
+  // Waypoint editing: show draggable handles for the selected cable
+  useEffect(() => {
+    const group = waypointGroupRef.current;
+    if (!group) return;
+    group.clearLayers();
+    const { editingCableId, cables, onUpdateCableCoords } = propsRef.current;
+    if (!editingCableId || !onUpdateCableCoords) return;
+    const cable = cables.find((c) => c.id === editingCableId);
+    if (!cable) return;
+    import('leaflet').then((L) => {
+      const coords: [number, number][] = cable.coords.map((c) => [c[0], c[1]]);
+      const icon = L.divIcon({
+        html: '<div style="width:10px;height:10px;background:#a78bfa;border:2px solid #fff;border-radius:50%;cursor:grab"></div>',
+        className: '', iconSize: [10, 10], iconAnchor: [5, 5],
+      });
+      const markers: any[] = coords.map((coord, idx) => {
+        const m = L.marker(coord, { icon, draggable: true });
+        m.on('dragend', () => {
+          const ll = m.getLatLng();
+          coords[idx] = [ll.lat, ll.lng];
+          const newCoords: [number, number][] = coords.map((c) => [c[0], c[1]]);
+          // recalc length
+          let len = 0;
+          const R = 6371000;
+          for (let i = 1; i < newCoords.length; i++) {
+            const [la, lo] = newCoords[i - 1];
+            const [lb, lob] = newCoords[i];
+            const dLat = ((lb - la) * Math.PI) / 180;
+            const dLon = ((lob - lo) * Math.PI) / 180;
+            const a = Math.sin(dLat / 2) ** 2 + Math.cos((la * Math.PI) / 180) * Math.cos((lb * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+            len += R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+          }
+          propsRef.current.onUpdateCableCoords?.(editingCableId, newCoords);
+          // update marker position in coords array for subsequent drags
+          markers[idx].setLatLng([ll.lat, ll.lng]);
+        });
+        group.addLayer(m);
+        return m;
+      });
+    });
+  }, [props.editingCableId, props.cables]);
   useEffect(() => { renderAnnotations(); }, [props.annotations]);
 
   // Heatmap

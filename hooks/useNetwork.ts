@@ -3,7 +3,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import {
   District, Cable, Subscriber, ProjectSettings, Materials, LayerVisibility,
   DEFAULT_SETTINGS, Project, MapAnnotation, ImportRecord, ValidationIssue,
-  PriceCatalog, DEFAULT_PRICES, InlineJoint, OLT, TransitBox, ORK,
+  PriceCatalog, DEFAULT_PRICES, InlineJoint, OLT, TransitBox, ORK, CABLE_FIBERS,
 } from '@/types/network';
 import { buildNetwork } from '@/components/Network/AutoBuild';
 import { calculateMaterials, validateNetwork } from '@/components/Network/MaterialCalc';
@@ -287,6 +287,33 @@ export function useNetwork() {
     }));
   }, []);
 
+  const updateCable = useCallback((id: string, patch: Partial<Pick<Cable, 'type' | 'coords' | 'lengthM'>>) => {
+    setCables((prev) => prev.map((c) => {
+      if (c.id !== id) return c;
+      const updated = { ...c, ...patch };
+      if (patch.type) updated.fibers = CABLE_FIBERS[patch.type];
+      return updated;
+    }));
+  }, []);
+
+  const rerouteSingleCable = useCallback(async (id: string) => {
+    const cable = cables.find((c) => c.id === id);
+    if (!cable) return;
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    try {
+      setStatus('routing');
+      const routed = await routeCables([cable], 0, true, () => {}, controller.signal);
+      if (!controller.signal.aborted && routed[0]) {
+        setCables((prev) => prev.map((c) => c.id === id ? routed[0] : c));
+        setStatus('done');
+      }
+    } catch {
+      if (!controller.signal.aborted) setStatus('done');
+    }
+  }, [cables]);
+
   const updateOLT = useCallback((id: string, patch: Partial<Omit<OLT, 'id' | 'lat' | 'lon' | 'transitBoxes'>>) => {
     setDistricts((prev) => prev.map((d) =>
       d.olt.id === id ? { ...d, olt: { ...d.olt, ...patch } } : d,
@@ -566,5 +593,6 @@ export function useNetwork() {
     totalSubscribers, totalCableKm, totalOrks,
     importNetworkReplace, mergeNetworkDistricts,
     updateOLT, updateTB, updateORK,
+    updateCable, rerouteSingleCable,
   };
 }
