@@ -401,6 +401,37 @@ export function useNetwork() {
     setCables((prev) => prev.filter((c) => c.id !== cableId));
   }, []);
 
+  // Find entity coords by id (OLT/TB/ORK/sub).
+  const findEntityCoords = useCallback((id: string): [number, number] | null => {
+    for (const d of districts) {
+      if (d.olt.id === id) return [d.olt.lat, d.olt.lon];
+      for (const tb of d.olt.transitBoxes) {
+        if (tb.id === id) return [tb.lat, tb.lon];
+        for (const ork of tb.orks) {
+          if (ork.id === id) return [ork.lat, ork.lon];
+          const sub = ork.subscribers.find((s) => s.id === id);
+          if (sub) return [sub.lat, sub.lon];
+        }
+      }
+    }
+    return null;
+  }, [districts]);
+
+  const addCableBetween = useCallback((fromId: string, toId: string, type: Cable['type'] = 'ОК-12') => {
+    const from = findEntityCoords(fromId);
+    const to = findEntityCoords(toId);
+    if (!from || !to) return;
+    const cable: Cable = {
+      id: `cable-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      type, fibers: CABLE_FIBERS[type],
+      fromId, toId,
+      coords: [from, to],
+      lengthM: haversineM(from[0], from[1], to[0], to[1]),
+      routedByOSRM: false,
+    };
+    setCables((prev) => [...prev, cable]);
+  }, [findEntityCoords]);
+
   // Manual placement of entities ----------------------------------------------
 
   const addOLTAt = useCallback((lat: number, lon: number, districtName: string) => {
@@ -761,6 +792,6 @@ export function useNetwork() {
     updateOLT, updateTB, updateORK,
     updateCable, rerouteSingleCable,
     deleteOLT, deleteTB, deleteORK, deleteCable,
-    addOLTAt, addTBAt, addORKAt,
+    addOLTAt, addTBAt, addORKAt, addCableBetween,
   };
 }

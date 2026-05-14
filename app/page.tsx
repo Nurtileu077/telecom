@@ -41,6 +41,7 @@ export default function HomePage() {
   const [selectedCableId, setSelectedCableId] = useState<string | null>(null);
   const [editingCableId, setEditingCableId] = useState<string | null>(null);
   const [placing, setPlacing] = useState<'olt' | 'tb' | 'ork' | null>(null);
+  const [cableDraw, setCableDraw] = useState<{ stage: 'from' | 'to'; fromId?: string } | null>(null);
   const flyToRef = useRef<((lat: number, lon: number, zoom?: number) => void) | null>(null);
   const mapElRef = useRef<HTMLElement | null>(null);
 
@@ -126,6 +127,7 @@ export default function HomePage() {
           setShowHelp(false);
           setShowAddSub(null);
           setPlacing(null);
+          setCableDraw(null);
           setEntitySelection(null);
           setSelectedCableId(null);
         }
@@ -209,6 +211,13 @@ export default function HomePage() {
               title="Поставить ОРК — подключится к ближайшей Муфте"
             >
               +ОРК
+            </button>
+            <button
+              onClick={() => { setCableDraw(cableDraw ? null : { stage: 'from' }); setPlacing(null); }}
+              className={`px-2 py-0.5 text-[11px] rounded transition-colors ${cableDraw ? 'bg-[#34d399]/20 text-[#34d399]' : 'text-[#94a3b8] hover:text-[#e2e8f0]'}`}
+              title="Нарисовать кабель: клик по первой точке, потом по второй"
+            >
+              +Кабель
             </button>
           </div>
           <button
@@ -294,7 +303,20 @@ export default function HomePage() {
             onMapClick={handleMapClickAddSub}
             moveEntity={net.moveEntity}
             deleteSubscriber={net.deleteSubscriber}
-            onEntityClick={(kind, id) => { setEntitySelection({ kind, id } as EntitySelection); setSelectedCableId(null); }}
+            onEntityClick={(kind, id) => {
+              // Cable-drawing flow takes priority
+              if (cableDraw) {
+                if (cableDraw.stage === 'from') {
+                  setCableDraw({ stage: 'to', fromId: id });
+                } else if (cableDraw.stage === 'to' && cableDraw.fromId) {
+                  if (cableDraw.fromId !== id) net.addCableBetween(cableDraw.fromId, id);
+                  setCableDraw(null);
+                }
+                return;
+              }
+              setEntitySelection({ kind, id } as EntitySelection);
+              setSelectedCableId(null);
+            }}
             onCableClick={(id) => { setSelectedCableId(id); setEntitySelection(null); }}
             editingCableId={editingCableId}
             onUpdateCableCoords={(id, coords) => net.updateCable(id, { coords })}
@@ -330,6 +352,17 @@ export default function HomePage() {
             <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#a78bfa]/50 rounded-lg px-3 py-1.5 text-xs text-[#a78bfa] shadow-2xl flex items-center gap-2 animate-fade-in">
               <span>🎯 Клик по карте — поставить {placing === 'olt' ? 'OLT' : placing === 'tb' ? 'Муфту' : 'ОРК'}</span>
               <button onClick={() => setPlacing(null)} className="text-[#94a3b8] hover:text-white border border-[#a78bfa]/30 rounded px-1.5 py-0.5 text-[10px]">Esc</button>
+            </div>
+          )}
+
+          {cableDraw && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#34d399]/50 rounded-lg px-3 py-1.5 text-xs text-[#34d399] shadow-2xl flex items-center gap-2 animate-fade-in">
+              <span>
+                〰 {cableDraw.stage === 'from'
+                    ? 'Клик на первой точке (OLT/Муфта/ОРК)'
+                    : 'Клик на второй точке — кабель будет создан'}
+              </span>
+              <button onClick={() => setCableDraw(null)} className="text-[#94a3b8] hover:text-white border border-[#34d399]/30 rounded px-1.5 py-0.5 text-[10px]">Esc</button>
             </div>
           )}
 
