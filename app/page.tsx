@@ -458,6 +458,7 @@ export default function HomePage() {
             onRerouteOSRM={(id) => net.rerouteSingleCable(id)}
             onToggleWaypoints={(id) => setEditingCableId(id)}
             onDelete={net.deleteCable}
+            onMergeAtJunction={net.reconsolidate}
             waypointEditing={editingCableId === selectedCableId && !!editingCableId}
             rerouteStatus={net.status}
           />

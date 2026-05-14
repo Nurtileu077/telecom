@@ -12,11 +12,13 @@ export interface InlineJoint {
 }
 
 // Шаг квантования координат: точки ближе ≈25 м считаются одним узлом графа.
-// 25м выбран потому, что OSRM-маршруты для разных кабелей на одной дороге
-// могут отличаться промежуточными вершинами на 5-15м (разные сегменты OSM).
-// При меньшем шаге две почти-одинаковые трассы попадают в разные клетки
-// и не объединяются — отсюда «параллельные кабели по одной дороге».
+// Квантование используется ТОЛЬКО для ключей графа — сами координаты кабеля
+// при эмиссии остаются исходными (OSRM), чтобы не было «лесенки» на прямых дорогах.
 const GRID_M = 25;
+// Шаг плотности: перед построением графа вставляем промежуточные вершины,
+// чтобы два почти-одинаковых OSRM-маршрута гарантированно прошли через
+// одни и те же клетки сетки и объединились в один кабель.
+const DENSIFY_STEP_M = 8;
 
 function quantize(lat: number, lon: number): string {
   const fLat = 1 / (GRID_M / 111320);
@@ -24,33 +26,25 @@ function quantize(lat: number, lon: number): string {
   return `${Math.round(lat * fLat)}_${Math.round(lon * fLon)}`;
 }
 
-// Снэп координаты к центру сетки. Используем для приведения всех
-// кабельных вершин к общему набору узлов перед консолидацией.
-function snapCoord(lat: number, lon: number): [number, number] {
-  const fLat = 1 / (GRID_M / 111320);
-  const fLon = 1 / (GRID_M / 81400);
-  return [Math.round(lat * fLat) / fLat, Math.round(lon * fLon) / fLon];
-}
-
-// Снэпает все координаты кабеля к сетке (кроме первой и последней —
-// они остаются точными, чтобы кабель начинался/заканчивался у entity).
-function snapCablePath(coords: [number, number][]): [number, number][] {
+// Уплотняет ломаную: между парами вершин длиннее DENSIFY_STEP_M * 1.5
+// вставляет дополнительные точки шагом ≈DENSIFY_STEP_M. Это гарантирует,
+// что параллельные кабели на одной дороге попадают в одни клетки сетки.
+function densifyPath(coords: [number, number][], stepM: number): [number, number][] {
   if (coords.length < 2) return coords;
   const out: [number, number][] = [coords[0]];
-  let lastKey = quantize(coords[0][0], coords[0][1]);
-  for (let i = 1; i < coords.length - 1; i++) {
-    const [la, lo] = coords[i];
-    const snapped = snapCoord(la, lo);
-    const k = quantize(snapped[0], snapped[1]);
-    if (k !== lastKey) {
-      out.push(snapped);
-      lastKey = k;
+  for (let i = 1; i < coords.length; i++) {
+    const [a0, a1] = coords[i - 1];
+    const [b0, b1] = coords[i];
+    const segLen = haversineM(a0, a1, b0, b1);
+    if (segLen > stepM * 1.5) {
+      const n = Math.ceil(segLen / stepM);
+      for (let j = 1; j < n; j++) {
+        const t = j / n;
+        out.push([a0 + (b0 - a0) * t, a1 + (b1 - a1) * t]);
+      }
     }
+    out.push([b0, b1]);
   }
-  const last = coords[coords.length - 1];
-  const lastK = quantize(last[0], last[1]);
-  if (lastK !== lastKey) out.push(last);
-  else out[out.length - 1] = last;
   return out;
 }
 
@@ -84,16 +78,11 @@ export function consolidateCables(
     return { cables, joints: [] };
   }
 
-  // Снэпаем промежуточные координаты всех кабелей к общему гриду, чтобы
-  // OSRM-маршруты по одной дороге сошлись к одинаковым узлам.
-  const snappedCables: Cable[] = cables.map((c) => ({
-    ...c,
-    coords: snapCablePath(c.coords),
-  }));
-
   // Карта кабелей по конечным точкам — для прохода вверх по иерархии.
+  // Используем исходные координаты (не снэпленные к сетке), чтобы при эмиссии
+  // линия шла по дороге, а не зигзагом по центрам клеток.
   const cableByEndpoint = new Map<string, Cable>();
-  for (const c of snappedCables) {
+  for (const c of cables) {
     cableByEndpoint.set(`${c.fromId}::${c.toId}`, c);
   }
 
@@ -178,8 +167,10 @@ export function consolidateCables(
             ...tbOrk.coords.slice(1),
             ...orkSub.coords.slice(1),
           ];
-          for (let i = 1; i < path.length; i++) {
-            addSeg(path[i - 1], path[i], sub.id);
+          // Densify so two parallel OSRM paths reliably hit the same grid cells.
+          const dense = densifyPath(path, DENSIFY_STEP_M);
+          for (let i = 1; i < dense.length; i++) {
+            addSeg(dense[i - 1], dense[i], sub.id);
           }
           hasAnyPath = true;
         }
@@ -384,9 +375,9 @@ export function consolidateCables(
   }
 
   // Кабели, которые НЕ были покрыты глобальной консолидацией (например, если
-  // нет соответствующего OLT→TB→ORK→sub звена), оставляем как есть (со снэпом).
+  // нет соответствующего OLT→TB→ORK→sub звена), оставляем как есть.
   let passthrough = 0;
-  for (const c of snappedCables) {
+  for (const c of cables) {
     if (!usedCableIds.has(c.id)) { outCables.push(c); passthrough++; }
   }
 

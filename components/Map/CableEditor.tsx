@@ -10,6 +10,7 @@ interface Props {
   onRerouteOSRM: (id: string) => void;
   onToggleWaypoints: (id: string | null) => void;
   onDelete: (id: string) => void;
+  onMergeAtJunction: () => void;
   waypointEditing: boolean;
   rerouteStatus: 'idle' | 'routing' | 'done' | string;
 }
@@ -21,7 +22,7 @@ function Dot({ type }: { type: string }) {
 }
 
 export default function CableEditor({
-  cable, onClose, onUpdateType, onRerouteOSRM, onToggleWaypoints, onDelete, waypointEditing, rerouteStatus,
+  cable, onClose, onUpdateType, onRerouteOSRM, onToggleWaypoints, onDelete, onMergeAtJunction, waypointEditing, rerouteStatus,
 }: Props) {
   const [type, setType] = useState<Cable['type']>(cable?.type ?? 'ОК-4');
   const [dirty, setDirty] = useState(false);
@@ -104,6 +105,16 @@ export default function CableEditor({
               : '🛣 Маршрут OSRM'}
           </button>
         </div>
+
+        {/* Merge at junction */}
+        <button
+          onClick={() => { onMergeAtJunction(); onClose(); }}
+          disabled={isRouting}
+          className="w-full py-1.5 bg-[#a78bfa]/15 hover:bg-[#a78bfa]/25 disabled:opacity-30 text-[#a78bfa] text-xs rounded transition-colors flex items-center justify-center gap-1"
+          title="Найти параллельные кабели на этой дороге и поставить общую муфту в точке расхождения"
+        >
+          🔗 Объединить в развилке
+        </button>
 
         {/* Waypoint edit toggle */}
         <button
