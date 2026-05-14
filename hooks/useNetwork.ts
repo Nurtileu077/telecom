@@ -317,9 +317,12 @@ export function useNetwork() {
 
     // OSRM-route any cables that lost their routing (trunk OLT→TB after
     // previous consolidation typically falls into this category).
+    // Also force re-routing when any existing cable was previously OSRM-routed
+    // so that trunk cables that were split through joints get re-routed.
+    const hadOSRMRouting = cables.some((c) => c.routedByOSRM);
     let routed = raw;
     const needRouting = raw.filter((c) => !c.routedByOSRM);
-    if (settings.useOSRM && needRouting.length > 0) {
+    if ((settings.useOSRM || hadOSRMRouting) && needRouting.length > 0) {
       setStatus('routing');
       if (abortRef.current) abortRef.current.abort();
       const ctrl = new AbortController();
