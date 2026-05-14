@@ -54,6 +54,7 @@ interface Props {
   onExportPDF: () => void;
   onPrintMap: () => void;
   onRerouteOSRM: () => void;
+  onReconsolidate: () => void;
   osrmStatus: string;
 
   powerBudgets: SubBudget[];
@@ -157,6 +158,7 @@ export default function Sidebar(props: Props) {
             onExportPDF={props.onExportPDF}
             onPrintMap={props.onPrintMap}
             onRerouteOSRM={props.onRerouteOSRM}
+            onReconsolidate={props.onReconsolidate}
             osrmStatus={props.osrmStatus}
             hasCables={props.cables.length > 0}
             budgetColoring={props.budgetColoring}

@@ -90,9 +90,32 @@ export interface InlineJoint {
   branchCount: number;
 }
 
+export type ProjectStatus = 'draft' | 'review' | 'approved' | 'construction' | 'operating';
+
+export const PROJECT_STATUS_LABELS: Record<ProjectStatus, { label: string; color: string; icon: string }> = {
+  draft:         { label: 'Дизайн',          color: '#94a3b8', icon: '📝' },
+  review:        { label: 'На согласовании', color: '#fbbf24', icon: '👁' },
+  approved:      { label: 'Утверждён',       color: '#34d399', icon: '✅' },
+  construction:  { label: 'Строительство',   color: '#f59e0b', icon: '🔨' },
+  operating:     { label: 'В эксплуатации',  color: '#38bdf8', icon: '📡' },
+};
+
+export interface ProjectSnapshot {
+  id: string;
+  name: string;
+  takenAt: string;
+  snapshot: {
+    districts: District[];
+    cables: Cable[];
+    joints?: InlineJoint[];
+    annotations: MapAnnotation[];
+  };
+}
+
 export interface Project {
   id: string;
   name: string;
+  status?: ProjectStatus;
   createdAt: string;
   updatedAt: string;
   districts: District[];
@@ -101,6 +124,7 @@ export interface Project {
   annotations: MapAnnotation[];
   importHistory: ImportRecord[];
   settings: ProjectSettings;
+  snapshots?: ProjectSnapshot[];
 }
 
 export interface ImportRecord {

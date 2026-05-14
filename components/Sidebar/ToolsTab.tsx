@@ -19,13 +19,14 @@ interface Props {
   onExportPDF: () => void;
   onPrintMap: () => void;
   onRerouteOSRM: () => void;
+  onReconsolidate: () => void;
   osrmStatus: 'idle' | 'routing' | 'done' | 'error' | string;
   hasCables: boolean;
   budgetColoring: boolean;
   onToggleBudgetColoring: () => void;
 }
 
-export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onRerouteOSRM, osrmStatus, hasCables, budgetColoring, onToggleBudgetColoring }: Props) {
+export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onRerouteOSRM, onReconsolidate, osrmStatus, hasCables, budgetColoring, onToggleBudgetColoring }: Props) {
   const [inputs, setInputs] = useState<OpticalBudgetInputs>(DEFAULT_INPUTS);
   const result = useMemo(() => calculateOpticalBudget(inputs), [inputs]);
 
@@ -43,6 +44,17 @@ export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, o
         </button>
         <p className="text-[9px] text-[#64748b] mt-1">
           Перестраивает все кабели по дорогам через router.project-osrm.org. Занимает 1–2 мин.
+        </p>
+        <button
+          onClick={onReconsolidate}
+          disabled={!hasCables}
+          className="mt-2 w-full py-2 px-3 text-xs font-semibold rounded-lg border transition-all disabled:opacity-40 bg-[#a78bfa]/10 border-[#a78bfa]/50 text-[#a78bfa] hover:bg-[#a78bfa]/20"
+        >
+          🔁 Объединить кабели на общих дорогах
+        </button>
+        <p className="text-[9px] text-[#64748b] mt-1">
+          Снэп вершин к сетке 25м, объединение параллельных кабелей, муфты в развилках.
+          Используй после ручных правок.
         </p>
       </section>
 

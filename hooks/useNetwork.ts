@@ -4,6 +4,7 @@ import {
   District, Cable, Subscriber, ProjectSettings, Materials, LayerVisibility,
   DEFAULT_SETTINGS, Project, MapAnnotation, ImportRecord, ValidationIssue,
   PriceCatalog, DEFAULT_PRICES, InlineJoint, OLT, TransitBox, ORK, CABLE_FIBERS, DISTRICT_COLORS,
+  ProjectStatus, ProjectSnapshot,
 } from '@/types/network';
 import { buildNetwork } from '@/components/Network/AutoBuild';
 import { calculateMaterials, validateNetwork } from '@/components/Network/MaterialCalc';
@@ -65,12 +66,91 @@ export function useNetwork() {
   const [editMode, setEditMode] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [dbEnabled, setDbEnabled] = useState(false);
+  const [status_, setProjectStatus] = useState<ProjectStatus>('draft');
+  const [snapshots, setSnapshots] = useState<ProjectSnapshot[]>([]);
+
+  // Undo/Redo: serialized history of (districts, cables, joints) snapshots
+  type HistEntry = { districts: District[]; cables: Cable[]; joints: InlineJoint[] };
+  const historyRef = useRef<HistEntry[]>([]);
+  const historyCursor = useRef<number>(-1);
+  const skipNextSnapshot = useRef(false);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+  const HISTORY_MAX = 40;
 
   const abortRef = useRef<AbortController | null>(null);
 
   // Check if Supabase is configured
   useEffect(() => {
     setDbEnabled(!!supabase);
+  }, []);
+
+  // History: push current state to stack on every change to districts/cables/joints
+  useEffect(() => {
+    if (skipNextSnapshot.current) { skipNextSnapshot.current = false; return; }
+    const entry: HistEntry = { districts, cables, joints };
+    const cur = historyCursor.current;
+    // truncate future, push new
+    historyRef.current = historyRef.current.slice(0, cur + 1).concat([entry]);
+    if (historyRef.current.length > HISTORY_MAX) historyRef.current.shift();
+    historyCursor.current = historyRef.current.length - 1;
+    setCanUndo(historyCursor.current > 0);
+    setCanRedo(false);
+  }, [districts, cables, joints]);
+
+  const undo = useCallback(() => {
+    if (historyCursor.current <= 0) return;
+    historyCursor.current -= 1;
+    const prev = historyRef.current[historyCursor.current];
+    skipNextSnapshot.current = true;
+    setDistricts(prev.districts);
+    setCables(prev.cables);
+    setJoints(prev.joints);
+    setCanUndo(historyCursor.current > 0);
+    setCanRedo(historyCursor.current < historyRef.current.length - 1);
+  }, []);
+
+  const redo = useCallback(() => {
+    if (historyCursor.current >= historyRef.current.length - 1) return;
+    historyCursor.current += 1;
+    const next = historyRef.current[historyCursor.current];
+    skipNextSnapshot.current = true;
+    setDistricts(next.districts);
+    setCables(next.cables);
+    setJoints(next.joints);
+    setCanUndo(historyCursor.current > 0);
+    setCanRedo(historyCursor.current < historyRef.current.length - 1);
+  }, []);
+
+  // Named snapshots (persisted with the project)
+  const takeSnapshot = useCallback((name: string) => {
+    const snap: ProjectSnapshot = {
+      id: `snap-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      name: name.trim() || `Снимок ${new Date().toLocaleString('ru')}`,
+      takenAt: new Date().toISOString(),
+      snapshot: {
+        districts: JSON.parse(JSON.stringify(districts)),
+        cables: JSON.parse(JSON.stringify(cables)),
+        joints: JSON.parse(JSON.stringify(joints)),
+        annotations: JSON.parse(JSON.stringify(annotations)),
+      },
+    };
+    setSnapshots((prev) => [snap, ...prev].slice(0, 30));
+    return snap;
+  }, [districts, cables, joints, annotations]);
+
+  const restoreSnapshot = useCallback((id: string) => {
+    const snap = snapshots.find((s) => s.id === id);
+    if (!snap) return;
+    if (!confirm(`Восстановить «${snap.name}»? Текущее состояние пропадёт (но Undo доступен).`)) return;
+    setDistricts(snap.snapshot.districts);
+    setCables(snap.snapshot.cables);
+    setJoints(snap.snapshot.joints ?? []);
+    setAnnotations(snap.snapshot.annotations);
+  }, [snapshots]);
+
+  const deleteSnapshot = useCallback((id: string) => {
+    setSnapshots((prev) => prev.filter((s) => s.id !== id));
   }, []);
 
   // Auto-load last project on mount
@@ -174,6 +254,16 @@ export function useNetwork() {
   const stopOSRM = useCallback(() => {
     if (abortRef.current) abortRef.current.abort();
   }, []);
+
+  // Manually trigger consolidation on current cables (useful after manual edits).
+  const reconsolidate = useCallback(() => {
+    if (cables.length === 0) return;
+    const { cables: consolidated, joints: newJoints } = consolidateCables(cables, districts);
+    setCables(consolidated);
+    setJoints(newJoints);
+    const mats = calculateMaterials(districts, consolidated, settings, newJoints.length);
+    setMaterials(mats);
+  }, [cables, districts, settings]);
 
   // Re-route existing cables with OSRM (without re-clustering)
   const rerouteWithOSRM = useCallback(async () => {
@@ -740,9 +830,11 @@ export function useNetwork() {
     const project: Project = {
       id: projectId,
       name: projectName,
+      status: status_,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       districts, cables, joints, annotations, importHistory, settings,
+      snapshots,
     };
     // Always save to localStorage as offline backup
     saveToLocalStorage(project);
@@ -767,6 +859,8 @@ export function useNetwork() {
     setAnnotations(p.annotations || []);
     setImportHistory(p.importHistory || []);
     setSettings({ ...DEFAULT_SETTINGS, ...p.settings });
+    setProjectStatus(p.status ?? 'draft');
+    setSnapshots(p.snapshots ?? []);
     const subs = (p.districts || []).flatMap((d) => d.subscribers);
     setAllSubscribers(subs);
     if (p.districts?.length) {
@@ -802,6 +896,8 @@ export function useNetwork() {
   const newProject = useCallback(() => {
     setProjectId(newId('proj'));
     setProjectName('Новый проект');
+    setProjectStatus('draft');
+    setSnapshots([]);
     setDistricts([]);
     setCables([]);
     setJoints([]);
@@ -811,6 +907,9 @@ export function useNetwork() {
     setMaterials(null);
     setValidationIssues([]);
     setStatus('idle');
+    historyRef.current = [];
+    historyCursor.current = -1;
+    setCanUndo(false); setCanRedo(false);
     localStorage.removeItem(CURRENT_KEY);
   }, []);
 
@@ -882,5 +981,9 @@ export function useNetwork() {
     deleteOLT, deleteTB, deleteORK, deleteCable,
     addOLTAt, addTBAt, addORKAt, addCableBetween,
     reassignORK, reassignSubscriber,
+    undo, redo, canUndo, canRedo,
+    takeSnapshot, restoreSnapshot, deleteSnapshot, snapshots,
+    projectStatus: status_, setProjectStatus,
+    reconsolidate,
   };
 }

@@ -165,6 +165,8 @@ export default function HomePage() {
         if (e.key === 's') { e.preventDefault(); net.saveProject(); }
         if (e.key === 'i') { e.preventDefault(); setShowImport(true); }
         if (e.key === 'n') { e.preventDefault(); if (confirm('Новый проект? Несохранённые данные пропадут.')) net.newProject(); }
+        if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); net.undo(); }
+        if ((e.key === 'z' && e.shiftKey) || e.key === 'y') { e.preventDefault(); net.redo(); }
       } else {
         if (e.key === '?' || (e.shiftKey && e.key === '/')) { setShowHelp(true); }
         if (e.key === 'e') net.setEditMode(!net.editMode);
@@ -237,6 +239,24 @@ export default function HomePage() {
           >
             ?
           </button>
+          <div className="flex items-center gap-0.5 border border-[#1e3a5f] rounded-lg px-0.5 py-0.5">
+            <button
+              onClick={() => net.undo()}
+              disabled={!net.canUndo}
+              className="px-2 py-0.5 text-[11px] rounded text-[#94a3b8] hover:text-[#e2e8f0] disabled:opacity-30"
+              title="Отмена (Ctrl+Z)"
+            >
+              ↶
+            </button>
+            <button
+              onClick={() => net.redo()}
+              disabled={!net.canRedo}
+              className="px-2 py-0.5 text-[11px] rounded text-[#94a3b8] hover:text-[#e2e8f0] disabled:opacity-30"
+              title="Повтор (Ctrl+Shift+Z)"
+            >
+              ↷
+            </button>
+          </div>
           <div className="flex items-center gap-0.5 border border-[#1e3a5f] rounded-lg px-0.5 py-0.5">
             <button
               onClick={() => setPlacing(placing === 'olt' ? null : 'olt')}
@@ -336,6 +356,7 @@ export default function HomePage() {
           onExportPDF={onExportPDF}
           onPrintMap={onPrintMap}
           onRerouteOSRM={net.rerouteWithOSRM}
+          onReconsolidate={net.reconsolidate}
           osrmStatus={net.status}
           powerBudgets={net.powerBudgets}
           powerBudgetStats={net.powerBudgetStats}

@@ -341,28 +341,8 @@ export default function ImportModal({ onClose, onBuild, onImportNetwork, current
 
           {subscribers && (
             <div className="space-y-2">
-              <h3 className="text-[10px] text-[#64748b] uppercase tracking-wider">Настройки построения</h3>
+              <h3 className="text-[10px] text-[#64748b] uppercase tracking-wider">Параметры построения</h3>
               <div className="grid grid-cols-2 gap-2">
-                <label className="block">
-                  <span className="text-[10px] text-[#64748b] block mb-1">Макс. або. на ОРК</span>
-                  <select value={settings.maxPerORK}
-                          onChange={(e) => setSettings((s) => ({ ...s, maxPerORK: +e.target.value }))}
-                          className="w-full bg-[#0a0e1a] border border-[#1e3a5f] rounded px-2 py-1 text-xs text-[#e2e8f0] focus:outline-none focus:border-[#38bdf8]">
-                    <option value={4}>4</option>
-                    <option value={8}>8</option>
-                    <option value={16}>16</option>
-                  </select>
-                </label>
-                <label className="block">
-                  <span className="text-[10px] text-[#64748b] block mb-1">Макс. ОРК на ТМ</span>
-                  <select value={settings.maxORKperTB}
-                          onChange={(e) => setSettings((s) => ({ ...s, maxORKperTB: +e.target.value }))}
-                          className="w-full bg-[#0a0e1a] border border-[#1e3a5f] rounded px-2 py-1 text-xs text-[#e2e8f0] focus:outline-none focus:border-[#38bdf8]">
-                    <option value={2}>2</option>
-                    <option value={4}>4</option>
-                    <option value={8}>8</option>
-                  </select>
-                </label>
                 <label className="block">
                   <span className="text-[10px] text-[#64748b] block mb-1">Запас кабеля</span>
                   <select value={settings.cableReserve}
@@ -384,6 +364,9 @@ export default function ImportModal({ onClose, onBuild, onImportNetwork, current
                     <span className="text-xs text-[#94a3b8]">{settings.useOSRM ? 'по дорогам' : 'прямые'}</span>
                   </div>
                 </label>
+              </div>
+              <div className="text-[10px] text-[#475569] bg-[#0a0e1a] border border-[#1e3a5f]/40 rounded px-2 py-1.5">
+                ⚙ Кластеризация ОРК/Муфт — авто (по плотности абонентов).
               </div>
             </div>
           )}
