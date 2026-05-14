@@ -3,7 +3,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import {
   District, Cable, Subscriber, ProjectSettings, Materials, LayerVisibility,
   DEFAULT_SETTINGS, Project, MapAnnotation, ImportRecord, ValidationIssue,
-  PriceCatalog, DEFAULT_PRICES, InlineJoint,
+  PriceCatalog, DEFAULT_PRICES, InlineJoint, OLT, TransitBox, ORK,
 } from '@/types/network';
 import { buildNetwork } from '@/components/Network/AutoBuild';
 import { calculateMaterials, validateNetwork } from '@/components/Network/MaterialCalc';
@@ -287,6 +287,39 @@ export function useNetwork() {
     }));
   }, []);
 
+  const updateOLT = useCallback((id: string, patch: Partial<Omit<OLT, 'id' | 'lat' | 'lon' | 'transitBoxes'>>) => {
+    setDistricts((prev) => prev.map((d) =>
+      d.olt.id === id ? { ...d, olt: { ...d.olt, ...patch } } : d,
+    ));
+  }, []);
+
+  const updateTB = useCallback((id: string, patch: Partial<Omit<TransitBox, 'id' | 'lat' | 'lon' | 'orks'>>) => {
+    setDistricts((prev) => prev.map((d) => ({
+      ...d,
+      olt: {
+        ...d.olt,
+        transitBoxes: d.olt.transitBoxes.map((tb) =>
+          tb.id === id ? { ...tb, ...patch } : tb,
+        ),
+      },
+    })));
+  }, []);
+
+  const updateORK = useCallback((id: string, patch: Partial<Omit<ORK, 'id' | 'lat' | 'lon' | 'subscribers'>>) => {
+    setDistricts((prev) => prev.map((d) => ({
+      ...d,
+      olt: {
+        ...d.olt,
+        transitBoxes: d.olt.transitBoxes.map((tb) => ({
+          ...tb,
+          orks: tb.orks.map((ork) =>
+            ork.id === id ? { ...ork, ...patch } : ork,
+          ),
+        })),
+      },
+    })));
+  }, []);
+
   const rebuildFromCurrent = useCallback(async () => {
     if (allSubscribers.length > 0) await runBuild(allSubscribers);
   }, [allSubscribers, runBuild]);
@@ -532,5 +565,6 @@ export function useNetwork() {
     exportProjectJSON, importProjectJSON,
     totalSubscribers, totalCableKm, totalOrks,
     importNetworkReplace, mergeNetworkDistricts,
+    updateOLT, updateTB, updateORK,
   };
 }

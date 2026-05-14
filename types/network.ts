@@ -13,12 +13,17 @@ export interface ORK {
   lat: number;
   lon: number;
   district: string;
-  splitter: '1:4' | '1:8' | '1:16';
+  splitter: SplitterRatio;
   tbId: string;
   subscribers: Subscriber[];
   cableType: CableType;
-  boxType: string;
+  boxType: BoxType;
 }
+
+export type MuftaType = 'МТОК-96А' | 'МТОК-48А' | 'МТОК-32А' | 'FOSC-400' | 'ОМС-3В' | string;
+export type SplitterRatio = '1:2' | '1:4' | '1:8' | '1:16' | '1:32' | '1:64';
+export type OLTModel = 'Huawei MA5800-X7' | 'Huawei MA5800-X2' | 'ZTE C610' | 'ZTE C320' | 'Eltex LTP-8X' | string;
+export type BoxType = 'Бокс-8' | 'Бокс-16' | 'ОРКСп-16' | 'ОРКСп-32' | 'WTC-BOX-16' | string;
 
 export interface TransitBox {
   id: string;
@@ -29,7 +34,7 @@ export interface TransitBox {
   orks: ORK[];
   inCable: CableType;
   outCable: CableType;
-  muftaType: 'МТОК-96А';
+  muftaType: MuftaType;
 }
 
 export interface OLT {
@@ -37,10 +42,10 @@ export interface OLT {
   lat: number;
   lon: number;
   district: string;
-  model: string;
+  model: OLTModel;
   capacity: number;
   transitBoxes: TransitBox[];
-  l1Splitter: '1:4';
+  l1Splitter: SplitterRatio;
 }
 
 export type CableType = 'ОК-4' | 'ОК-8' | 'ОК-12' | 'ОК-16' | 'ОК-24' | 'ОК-32' | 'ОК-48' | 'ОК-96';

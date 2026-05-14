@@ -10,6 +10,7 @@ import GeocodeSearch from '@/components/Geocoding/GeocodeSearch';
 import { exportPDF } from '@/components/Export/ExportPDF';
 import { calculateCost } from '@/components/Network/CostCalc';
 import ProjectListModal from '@/components/Projects/ProjectListModal';
+import EntityEditor, { EntitySelection } from '@/components/Map/EntityEditor';
 
 const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
   ssr: false,
@@ -35,6 +36,7 @@ export default function HomePage() {
   const [activeAnnotationType, setActiveAnnotationType] = useState<AnnotationType>('village');
   const [measureMode, setMeasureMode] = useState(false);
   const [heatmapEnabled, setHeatmapEnabled] = useState(false);
+  const [entitySelection, setEntitySelection] = useState<EntitySelection | null>(null);
   const flyToRef = useRef<((lat: number, lon: number, zoom?: number) => void) | null>(null);
   const mapElRef = useRef<HTMLElement | null>(null);
 
@@ -241,9 +243,19 @@ export default function HomePage() {
             onMapClick={handleMapClickAddSub}
             moveEntity={net.moveEntity}
             deleteSubscriber={net.deleteSubscriber}
+            onEntityClick={(kind, id) => setEntitySelection({ kind, id } as EntitySelection)}
             measureMode={measureMode}
             setMeasureMode={setMeasureMode}
             heatmapEnabled={heatmapEnabled}
+          />
+
+          <EntityEditor
+            selection={entitySelection}
+            districts={net.districts}
+            onClose={() => setEntitySelection(null)}
+            onUpdateOLT={net.updateOLT}
+            onUpdateTB={net.updateTB}
+            onUpdateORK={net.updateORK}
           />
 
           {net.status === 'routing' && (
