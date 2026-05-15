@@ -9,6 +9,7 @@ import {
 import { buildNetwork, OltLocationMap } from '@/components/Network/AutoBuild';
 import { calculateMaterials, validateNetwork } from '@/components/Network/MaterialCalc';
 import { routeCables, getRoute, snapBatch } from '@/components/Network/OSRMRouter';
+import { planRepair, buildDropCable, type RepairReport } from '@/components/Network/NetworkRepair';
 import { consolidateCables } from '@/components/Network/Consolidation';
 import { haversineM } from '@/components/Network/KMeans';
 import { calculateSubscriberBudgets, budgetStats } from '@/components/Network/PowerBudget';
@@ -1098,6 +1099,29 @@ export function useNetwork() {
     if (allSubscribers.length > 0) await runBuild(allSubscribers);
   }, [allSubscribers, runBuild]);
 
+  // Bulk repair pass.  Deletes phantom / cross-district cables and OSRM-
+  // routes drops for any subscriber that has no cable but a nearby ORK.
+  // Returns a structured report — the AI can read it back via the tool
+  // result and decide whether to do another pass.
+  const autoRepair = useCallback(async (): Promise<RepairReport> => {
+    const plan = planRepair(districts, cables);
+    // Apply deletions in one state update.
+    if (plan.toDelete.length > 0) {
+      const remove = new Set(plan.toDelete);
+      setCables((prev) => prev.filter((c) => !remove.has(c.id)));
+    }
+    // OSRM-route the new drops sequentially with a small delay to avoid
+    // hammering the public OSRM demo.
+    for (const item of plan.toConnect) {
+      const cable = await buildDropCable(item.sub, item.orkId, item.orkLat, item.orkLon, settings.useOSRM);
+      setCables((prev) => [...prev, cable]);
+      plan.report.addedCables.push({ fromId: cable.fromId, toId: cable.toId, lengthM: Math.round(cable.lengthM) });
+      // tiny breather between OSRM calls
+      if (settings.useOSRM) await new Promise((r) => setTimeout(r, 120));
+    }
+    return plan.report;
+  }, [districts, cables, settings.useOSRM]);
+
   // Import a full Project as-is (no re-clustering) — used for "existing network" import
   const importNetworkReplace = useCallback((incoming: Project) => {
     loadProjectInternal(incoming);
@@ -1347,7 +1371,7 @@ export function useNetwork() {
     autoSaveEnabled, setAutoSaveEnabled, lastSavedAt, dbEnabled,
     buildFromSubscribers, appendSubscribers,
     addAnnotation, updateAnnotation, deleteAnnotation,
-    addSubscriberAt, deleteSubscriber, moveEntity, rebuildFromCurrent,
+    addSubscriberAt, deleteSubscriber, moveEntity, rebuildFromCurrent, autoRepair,
     saveProject, loadProject, deleteProject, listProjects, newProject,
     exportProjectJSON, importProjectJSON,
     totalSubscribers, totalCableKm, totalOrks,

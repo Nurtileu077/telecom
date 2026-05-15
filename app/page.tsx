@@ -812,6 +812,7 @@ A3: ...`}
             deleteSubscriber: net.deleteSubscriber,
             deleteCable: net.deleteCable,
             rebuildFromCurrent: net.rebuildFromCurrent,
+            autoRepair: net.autoRepair,
           }}
           flyTo={flyToRef.current}
           onClose={() => setShowChat(false)}

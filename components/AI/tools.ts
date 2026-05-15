@@ -190,6 +190,12 @@ export const AI_TOOLS: ToolDef[] = [
       'Completely rebuild the network from the current subscriber list + OLT overrides. Use ONLY when the user explicitly asks for a fresh rebuild — manual cable edits / drag-drop reassignments will be lost.',
     input_schema: { type: 'object', properties: {} },
   },
+  {
+    name: 'auto_repair',
+    description:
+      'Run an automatic repair pass: (1) delete phantom cables (length over GPON cap for their type, cross-district short cables), (2) OSRM-route a drop cable for every subscriber that currently has no cable and has an ORK within 500 m. Returns a structured report of deletions / additions / orphans that need manual attention. Safe to call repeatedly.',
+    input_schema: { type: 'object', properties: {} },
+  },
 ];
 
 export type AITool =
@@ -209,4 +215,5 @@ export type AITool =
   | { name: 'get_validation_issues'; input: Record<string, never> }
   | { name: 'inspect_entity'; input: { id: string } }
   | { name: 'delete_cable'; input: { id: string } }
-  | { name: 'rebuild_network'; input: Record<string, never> };
+  | { name: 'rebuild_network'; input: Record<string, never> }
+  | { name: 'auto_repair'; input: Record<string, never> };

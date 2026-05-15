@@ -20,6 +20,12 @@ export interface NetForExecutor {
   deleteSubscriber: (id: string) => void;
   deleteCable: (id: string) => void;
   rebuildFromCurrent: () => Promise<void> | void;
+  autoRepair: () => Promise<{
+    deletedCables: Array<{ id: string; reason: string; fromId: string; toId: string; lengthM: number }>;
+    addedCables: Array<{ fromId: string; toId: string; lengthM: number }>;
+    orphansWithoutOrk: Array<{ id: string; lat: number; lon: number; district: string }>;
+    warnings: string[];
+  }>;
 }
 
 function haversineM(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -303,6 +309,21 @@ export async function executeTool(
       case 'rebuild_network': {
         await net.rebuildFromCurrent();
         return 'Пересобрал сеть из текущих абонентов + OLT-координат. Ручные правки кабелей могли быть утеряны — это ожидаемо.';
+      }
+      case 'auto_repair': {
+        const r = await net.autoRepair();
+        return JSON.stringify({
+          deletedCount: r.deletedCables.length,
+          addedCount: r.addedCables.length,
+          orphansLeft: r.orphansWithoutOrk.length,
+          warningCount: r.warnings.length,
+          // Trim verbose arrays so the model doesn't burn tokens on listing
+          // 400 deletions one by one.  Sample the first 10 of each.
+          deletedSample: r.deletedCables.slice(0, 10),
+          addedSample: r.addedCables.slice(0, 10),
+          orphansSample: r.orphansWithoutOrk.slice(0, 10),
+          warningsSample: r.warnings.slice(0, 10),
+        });
       }
       default:
         return `Неизвестный инструмент: ${(tool as { name: string }).name}`;
