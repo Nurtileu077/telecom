@@ -115,33 +115,94 @@ function computeCableLanes(cables: { id: string; coords: [number, number][] }[])
     }
     let lane = 0;
     while (taken.has(lane)) lane++;
-    if (lane > 6) lane = 6; // cap so we don't fly off the road on dense overlaps
+    if (lane > 4) lane = 4; // cap so we don't fly off the road on dense overlaps
     lanes.set(c.id, lane);
   }
   return lanes;
 }
 
 // Shift a polyline perpendicular to its local direction by `offsetM` metres.
-// Endpoints get the offset too, so cables visually start/end slightly off the
-// entity icon — but the underlying cable.coords still terminate at the entity.
+// At inner vertices we use the BISECTOR of the incoming and outgoing segments
+// (with miter compensation 1/sin(½θ)) so the offset stays a constant distance
+// on the same side of the road through corners.  The naive averaged-tangent
+// approach produced visible zigzag at intersections — offset flipped sides
+// or compressed at sharp turns.
 function offsetPolyline(coords: [number, number][], offsetM: number): [number, number][] {
   if (coords.length < 2 || offsetM === 0) return coords;
+
+  // Convert a (lat, lon) point to local metres relative to the first vertex.
+  const ref = coords[0];
+  const cosLat = Math.cos((ref[0] * Math.PI) / 180);
+  const toMx = (lon: number) => (lon - ref[1]) * 111320 * cosLat;
+  const toMy = (lat: number) => (lat - ref[0]) * 111320;
+
+  const xs = coords.map(([la, lo]) => toMx(lo));
+  const ys = coords.map(([la]) => toMy(la));
+
+  // Per-segment unit tangents
+  const tx: number[] = [];
+  const ty: number[] = [];
+  for (let i = 0; i < coords.length - 1; i++) {
+    const dx = xs[i + 1] - xs[i];
+    const dy = ys[i + 1] - ys[i];
+    const len = Math.hypot(dx, dy) || 1;
+    tx.push(dx / len);
+    ty.push(dy / len);
+  }
+
+  // Compute the offset point for each vertex.
   const out: [number, number][] = [];
+  // Cap miter on very sharp angles so we don't fly off to infinity.
+  const MAX_MITER = 4; // ~14° angle is the smallest before we cap
+
   for (let i = 0; i < coords.length; i++) {
-    const A = i > 0 ? coords[i - 1] : coords[i];
-    const B = i < coords.length - 1 ? coords[i + 1] : coords[i];
-    const lat = coords[i][0];
-    const cosLat = Math.cos((lat * Math.PI) / 180);
-    const dx = (B[1] - A[1]) * 111320 * cosLat; // east-west, metres
-    const dy = (B[0] - A[0]) * 111320;          // north-south, metres
-    const len = Math.hypot(dx, dy);
-    if (len < 1e-6) { out.push(coords[i]); continue; }
-    // Perpendicular (left-hand normal) in metres
-    const perpX = -dy / len;
-    const perpY = dx / len;
-    const dLon = (perpX * offsetM) / (111320 * cosLat);
-    const dLat = (perpY * offsetM) / 111320;
-    out.push([coords[i][0] + dLat, coords[i][1] + dLon]);
+    let nx: number;
+    let ny: number;
+
+    if (i === 0) {
+      nx = -ty[0];
+      ny = tx[0];
+    } else if (i === coords.length - 1) {
+      nx = -ty[i - 1];
+      ny = tx[i - 1];
+    } else {
+      const tInX = tx[i - 1];
+      const tInY = ty[i - 1];
+      const tOutX = tx[i];
+      const tOutY = ty[i];
+      // Bisector normal: rotate the average tangent by 90°.
+      // Equivalent to averaging the per-segment normals.
+      const inNx = -tInY;
+      const inNy = tInX;
+      const outNx = -tOutY;
+      const outNy = tOutX;
+      let bx = inNx + outNx;
+      let by = inNy + outNy;
+      const bLen = Math.hypot(bx, by);
+      if (bLen < 1e-6) {
+        // 180° reversal — degenerate. Use the incoming normal.
+        nx = inNx; ny = inNy;
+      } else {
+        bx /= bLen; by /= bLen;
+        // Miter factor = 1 / (n · t_out) — distance to keep constant offset.
+        // (n · t_out) = sin(half-angle between segments).
+        const dot = bx * tOutX + by * tOutY;
+        let miter = dot !== 0 ? 1 / Math.abs(dot) : MAX_MITER;
+        // But we want offset distance to be `offsetM`, not |offsetM|×miter — wait,
+        // we DO want miter so the parallel line is offsetM perpendicular to the
+        // ORIGINAL segments, not the bisector.  Capped to avoid spikes.
+        miter = Math.min(miter, MAX_MITER);
+        // Perpendicular to bisector at miter distance:
+        nx = -by * miter;
+        ny = bx * miter;
+      }
+    }
+
+    const x = xs[i] + nx * offsetM;
+    const y = ys[i] + ny * offsetM;
+    const lat = ref[0] + y / 111320;
+    const lon = ref[1] + x / (111320 * cosLat);
+    out.push([lat, lon]);
   }
   return out;
 }
@@ -364,8 +425,13 @@ export default function LeafletMap(props: Props) {
 
           const isEditing = propsRef.current.editingCableId === cable.id;
           const lane = lanes.get(cable.id) ?? 0;
-          // ~1.5 м между параллельными «полосами». Знакочередование вокруг центра.
-          const offsetM = lane === 0 ? 0 : ((lane % 2 === 1 ? 1 : -1) * Math.ceil(lane / 2)) * 1.5;
+          // 0.6 m между параллельными «полосами» — компактно, помещается в ширину
+          // полосы дороги.  Знакочередование вокруг центра, кап на 4 полосе.
+          // Дропы (ОК-4) — короткие, без offset, чтобы не вылетать с двора.
+          const skipOffset = cable.type === 'ОК-4' || cable.lengthM < 80;
+          const offsetM = skipOffset || lane === 0
+            ? 0
+            : ((lane % 2 === 1 ? 1 : -1) * Math.ceil(lane / 2)) * 0.6;
           const drawnCoords = offsetM === 0 ? cable.coords : offsetPolyline(cable.coords, offsetM);
 
           const poly = L.polyline(drawnCoords, {
