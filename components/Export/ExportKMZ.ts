@@ -55,28 +55,35 @@ export async function exportKMZ(districts: District[], cables: Cable[]): Promise
   const JSZip = (await import('jszip')).default;
 
   // ---- Styles ----
+  // Без явного <hotSpot> Google Earth ставит square.png и target.png по
+  // левому нижнему углу — маркер «съезжает» с точки. Указываем center=0.5
+  // для всех иконок, чтобы они стояли точно над координатой.
   const styles = `
 <Style id="olt">
   <IconStyle><color>ff14b8f5</color><scale>1.6</scale>
     <Icon><href>http://maps.google.com/mapfiles/kml/shapes/square.png</href></Icon>
+    <hotSpot x="0.5" y="0.5" xunits="fraction" yunits="fraction"/>
   </IconStyle>
   <LabelStyle><color>ff14b8f5</color><scale>0.9</scale></LabelStyle>
 </Style>
 <Style id="tb">
   <IconStyle><color>ff00c8ff</color><scale>1.2</scale>
     <Icon><href>http://maps.google.com/mapfiles/kml/shapes/square.png</href></Icon>
+    <hotSpot x="0.5" y="0.5" xunits="fraction" yunits="fraction"/>
   </IconStyle>
   <LabelStyle><color>ff00c8ff</color><scale>0.7</scale></LabelStyle>
 </Style>
 <Style id="ork">
   <IconStyle><color>ff008aec</color><scale>1.1</scale>
     <Icon><href>http://maps.google.com/mapfiles/kml/shapes/target.png</href></Icon>
+    <hotSpot x="0.5" y="0.5" xunits="fraction" yunits="fraction"/>
   </IconStyle>
   <LabelStyle><color>ff008aec</color><scale>0.65</scale></LabelStyle>
 </Style>
 <Style id="sub">
   <IconStyle><color>ff34d399</color><scale>0.55</scale>
     <Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon>
+    <hotSpot x="0.5" y="0.5" xunits="fraction" yunits="fraction"/>
   </IconStyle>
   <LabelStyle><scale>0</scale></LabelStyle>
 </Style>
