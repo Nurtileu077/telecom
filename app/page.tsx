@@ -14,6 +14,7 @@ import CatalogModal from '@/components/Catalog/CatalogModal';
 import EntityEditor, { EntitySelection } from '@/components/Map/EntityEditor';
 import CableEditor from '@/components/Map/CableEditor';
 import SplicePlan from '@/components/Map/SplicePlan';
+import ChatPanel from '@/components/AI/ChatPanel';
 
 const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
   ssr: false,
@@ -50,6 +51,7 @@ export default function HomePage() {
   const [contextMenu, setContextMenu] = useState<{ lat: number; lon: number; x: number; y: number } | null>(null);
   const [coordInput, setCoordInput] = useState<{ kind: 'sub' | 'olt' | 'tb' | 'ork' } | null>(null);
   const [coordText, setCoordText] = useState('');
+  const [showChat, setShowChat] = useState(false);
 
   const budgetMap = useRef<Map<string, 'ok' | 'warn' | 'fail'>>(new Map());
   useEffect(() => {
@@ -783,6 +785,34 @@ A3: ...`}
             </div>
           </div>
         </div>
+      )}
+
+      {/* AI assistant — floating button + side panel */}
+      {!showChat && (
+        <button
+          onClick={() => setShowChat(true)}
+          className="fixed right-4 bottom-4 z-[8999] w-12 h-12 rounded-full bg-[#38bdf8] hover:bg-[#7dd3fc] text-[#0a0e1a] text-xl font-bold shadow-2xl flex items-center justify-center transition-colors"
+          title="ИИ-ассистент"
+        >
+          🤖
+        </button>
+      )}
+      {showChat && (
+        <ChatPanel
+          net={{
+            districts: net.districts,
+            cables: net.cables,
+            addSubscriberAt: net.addSubscriberAt,
+            addOLTAt: net.addOLTAt,
+            addTBAt: net.addTBAt,
+            addORKAt: net.addORKAt,
+            addCableBetween: net.addCableBetween,
+            reconsolidate: net.reconsolidate,
+            deleteSubscriber: net.deleteSubscriber,
+          }}
+          flyTo={flyToRef.current}
+          onClose={() => setShowChat(false)}
+        />
       )}
     </div>
   );
