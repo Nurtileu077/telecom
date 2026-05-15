@@ -182,9 +182,12 @@ export interface ProjectSettings {
   useOSRM: boolean;
   osrmDelay: number;
   // Provider config: leave fields empty to use the public demo (rate-limited).
-  // Fill orsApiKey to use OpenRouteService (2k req/day free, more reliable).
-  // Fill customOsrmUrl to point at your self-hosted OSRM instance.
+  // Order of preference when multiple are set: customOsrmUrl → ghApiKey → orsApiKey → public.
+  // GraphHopper (graphhopper.com): 500/day free, no per-minute limit — best for one-off imports.
+  // OpenRouteService (openrouteservice.org): 2000/day but 40/min rate cap.
+  // Custom OSRM: self-hosted, unlimited (see docs/osrm-selfhost.md).
   orsApiKey?: string;
+  ghApiKey?: string;
   customOsrmUrl?: string;
 }
 

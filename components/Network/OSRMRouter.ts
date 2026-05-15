@@ -7,6 +7,7 @@ export type RoutingProvider = 'osrm-public' | 'ors' | 'custom';
 export interface RouterConfig {
   provider?: RoutingProvider;
   orsApiKey?: string;
+  ghApiKey?: string;       // GraphHopper key — preferred for one-off imports
   customOsrmUrl?: string;  // e.g. "https://my-osrm.example.com/route/v1/driving"
 }
 
@@ -16,6 +17,7 @@ const OSRM_MIRRORS = [
 ];
 
 const ORS_URL = 'https://api.openrouteservice.org/v2/directions/driving-car';
+const GH_URL  = 'https://graphhopper.com/api/1/route';
 
 export type ProgressCallback = (done: number, total: number, current: string) => void;
 
@@ -132,6 +134,42 @@ async function fetchOSRM(
   }
 }
 
+async function fetchGraphHopper(
+  apiKey: string,
+  lat1: number, lon1: number,
+  lat2: number, lon2: number,
+  signal: AbortSignal,
+  timeoutMs = 15000,
+): Promise<[number, number][]> {
+  // GraphHopper REST: GET /api/1/route?point=lat,lon&point=lat,lon&...
+  // points_encoded=false → plain JSON coordinates instead of polyline
+  const params = new URLSearchParams({
+    point: `${lat1},${lon1}`,
+    vehicle: 'car',
+    points_encoded: 'false',
+    type: 'json',
+    key: apiKey,
+  });
+  params.append('point', `${lat2},${lon2}`);
+  const url = `${GH_URL}?${params.toString()}`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  const onAbort = () => ctrl.abort();
+  signal.addEventListener('abort', onAbort, { once: true });
+  try {
+    const res = await fetch(url, { signal: ctrl.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const coords = data.paths?.[0]?.points?.coordinates;
+    if (!coords?.length) throw new Error('GH no-route');
+    // GraphHopper returns [lon, lat] like GeoJSON
+    return coords.map(([lon, lat]: [number, number]) => [lat, lon] as [number, number]);
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener('abort', onAbort);
+  }
+}
+
 async function fetchORS(
   apiKey: string,
   lat1: number, lon1: number,
@@ -203,13 +241,19 @@ async function routeOne(
     if (coords && coords.length > 2) { cacheSet(lat1, lon1, lat2, lon2, coords); return { coords }; }
   }
 
-  // 3. OpenRouteService — if API key supplied
+  // 3. GraphHopper — preferred for one-off imports (no per-minute limit, 500/day free)
+  if (cfg.ghApiKey) {
+    const coords = await tryFetch('graphhopper', () => fetchGraphHopper(cfg.ghApiKey!, lat1, lon1, lat2, lon2, signal));
+    if (coords && coords.length > 2) { cacheSet(lat1, lon1, lat2, lon2, coords); return { coords }; }
+  }
+
+  // 4. OpenRouteService — 40 req/min so used after GH if both configured
   if (cfg.orsApiKey) {
     const coords = await tryFetch('ors', () => fetchORS(cfg.orsApiKey!, lat1, lon1, lat2, lon2, signal));
     if (coords && coords.length > 2) { cacheSet(lat1, lon1, lat2, lon2, coords); return { coords }; }
   }
 
-  // 4. Public OSRM mirrors
+  // 5. Public OSRM mirrors
   for (const base of OSRM_MIRRORS) {
     const label = new URL(base).hostname;
     const coords = await tryFetch(label, () => fetchOSRM(base, lat1, lon1, lat2, lon2, signal));
@@ -252,6 +296,7 @@ function calcLength(coords: [number, number][]): number {
 // what makes a routing pass actually complete instead of half-failing.
 function safeDelayMs(cfg: RouterConfig): number {
   if (cfg.customOsrmUrl) return 50;       // self-hosted: no limits, 20 req/s
+  if (cfg.ghApiKey)      return 200;      // GraphHopper free: ~5 req/s, no per-min cap
   if (cfg.orsApiKey)     return 1600;     // ORS free: 40 req/min, headroom for jitter
   return 250;                              // public OSRM mirrors: ~4 req/s
 }
@@ -273,7 +318,7 @@ export async function routeCables(
   // We start at the safe rate for the configured provider and slow down further
   // on each 429. This is the single biggest fix for partial routing failures.
   let currentDelay = safeDelayMs(cfg);
-  console.log(`[OSRM] start: ${toRoute.length} cables, ${currentDelay}ms between requests, provider=${cfg.customOsrmUrl ? 'custom' : cfg.orsApiKey ? 'ors' : 'public'}`);
+  console.log(`[OSRM] start: ${toRoute.length} cables, ${currentDelay}ms between requests, provider=${cfg.customOsrmUrl ? 'custom' : cfg.ghApiKey ? 'graphhopper' : cfg.orsApiKey ? 'ors' : 'public'}`);
 
   const result = new Map<string, Cable>(cables.map((c) => [c.id, c]));
   let done = 0;

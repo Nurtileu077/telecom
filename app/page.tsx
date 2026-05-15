@@ -503,17 +503,28 @@ export default function HomePage() {
             </div>
           )}
 
-          {net.osrmError && net.status !== 'routing' && (
-            <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[600] bg-[#0d1b2a] border border-[#f87171]/60 rounded-lg px-4 py-3 shadow-2xl flex items-start gap-3 max-w-xl animate-fade-in">
-              <div className="text-[#f87171] text-lg leading-none">⚠️</div>
-              <div className="flex-1">
-                <div className="text-sm font-semibold text-[#f87171] mb-1">OSRM недоступен — кабели остаются прямыми</div>
-                <div className="text-[11px] text-[#94a3b8] mb-1">{net.osrmError}</div>
-                <div className="text-[10px] text-[#64748b]">Бесплатный сервер router.project-osrm.org часто ограничивает запросы с облачных IP (Vercel). Попробуйте позже или используйте свой OSRM-сервер.</div>
+          {net.osrmError && net.status !== 'routing' && (() => {
+            const activeProvider = net.settings.customOsrmUrl
+              ? 'свой OSRM-сервер'
+              : net.settings.ghApiKey
+              ? 'GraphHopper'
+              : net.settings.orsApiKey
+              ? 'OpenRouteService'
+              : 'public OSRM (router.project-osrm.org)';
+            return (
+              <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[600] bg-[#0d1b2a] border border-[#f87171]/60 rounded-lg px-4 py-3 shadow-2xl flex items-start gap-3 max-w-xl animate-fade-in">
+                <div className="text-[#f87171] text-lg leading-none">⚠️</div>
+                <div className="flex-1">
+                  <div className="text-sm font-semibold text-[#f87171] mb-1">Маршрутизация частично не удалась</div>
+                  <div className="text-[11px] text-[#94a3b8] mb-1">{net.osrmError}</div>
+                  <div className="text-[10px] text-[#64748b]">
+                    Активный провайдер: <b>{activeProvider}</b>. Нажми «🚀 Маршрутизировать всё до конца» в Инстр. — авто-повтор с паузами обычно дотягивает до 100%.
+                  </div>
+                </div>
+                <button onClick={net.dismissOsrmError} className="text-[#64748b] hover:text-white text-lg leading-none">×</button>
               </div>
-              <button onClick={net.dismissOsrmError} className="text-[#64748b] hover:text-white text-lg leading-none">×</button>
-            </div>
-          )}
+            );
+          })()}
 
           {net.status === 'routing' && (
             <div className="absolute inset-0 flex items-end justify-center pb-8 z-[500] pointer-events-none">

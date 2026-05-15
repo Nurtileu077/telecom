@@ -285,7 +285,7 @@ export function useNetwork() {
           true, // routeDrops — нужно для слияния дропов с магистралью по общим дорогам
           (done, total, current) => setOsrmProgress({ done, total, current }),
           controller.signal,
-          { orsApiKey: settings.orsApiKey, customOsrmUrl: settings.customOsrmUrl },
+          { orsApiKey: settings.orsApiKey, ghApiKey: settings.ghApiKey, customOsrmUrl: settings.customOsrmUrl },
         );
         const stats = (finalCables as any).__stats;
         if (stats && stats.failed > 0) {
@@ -425,7 +425,7 @@ export function useNetwork() {
           needRouting, settings.osrmDelay, true,
           (d, t, c) => setOsrmProgress({ done: d, total: t, current: c }),
           ctrl.signal,
-          { orsApiKey: settings.orsApiKey, customOsrmUrl: settings.customOsrmUrl },
+          { orsApiKey: settings.orsApiKey, ghApiKey: settings.ghApiKey, customOsrmUrl: settings.customOsrmUrl },
         );
         const stats = (reRouted as any).__stats;
         if (stats && stats.failed > 0) {
@@ -516,7 +516,7 @@ export function useNetwork() {
         trunks, 200, true,
         (done, total, current) => setOsrmProgress({ done, total, current }),
         controller.signal,
-        { orsApiKey: settings.orsApiKey, customOsrmUrl: settings.customOsrmUrl },
+        { orsApiKey: settings.orsApiKey, ghApiKey: settings.ghApiKey, customOsrmUrl: settings.customOsrmUrl },
       );
       const stats = (routedTrunks as any).__stats;
       if (stats && stats.failed > 0) {
@@ -558,7 +558,7 @@ export function useNetwork() {
         unrouted, settings.osrmDelay, true,
         (d, t, c) => setOsrmProgress({ done: d, total: t, current: c }),
         ctrl.signal,
-        { orsApiKey: settings.orsApiKey, customOsrmUrl: settings.customOsrmUrl },
+        { orsApiKey: settings.orsApiKey, ghApiKey: settings.ghApiKey, customOsrmUrl: settings.customOsrmUrl },
       );
       const stats = (reRouted as any).__stats;
       if (stats && stats.failed > 0) {
@@ -738,7 +738,7 @@ export function useNetwork() {
     abortRef.current = controller;
     try {
       setStatus('routing');
-      const routed = await routeCables([cable], 0, true, () => {}, controller.signal, { orsApiKey: settings.orsApiKey, customOsrmUrl: settings.customOsrmUrl });
+      const routed = await routeCables([cable], 0, true, () => {}, controller.signal, { orsApiKey: settings.orsApiKey, ghApiKey: settings.ghApiKey, customOsrmUrl: settings.customOsrmUrl });
       if (!controller.signal.aborted && routed[0]) {
         setCables((prev) => prev.map((c) => c.id === id ? routed[0] : c));
         setStatus('done');

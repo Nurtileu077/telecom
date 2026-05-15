@@ -108,7 +108,7 @@ export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, o
         >
           <span>⚙ Сервер маршрутизации</span>
           <span className="text-[9px] text-[#64748b]">
-            {settings.customOsrmUrl ? 'свой OSRM' : settings.orsApiKey ? 'ORS' : 'demo'}
+            {settings.customOsrmUrl ? 'свой OSRM' : settings.ghApiKey ? 'GraphHopper' : settings.orsApiKey ? 'ORS' : 'demo'}
             {' · '}кэш {cacheStats.size}
           </span>
         </button>
@@ -116,7 +116,20 @@ export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, o
         {showProviderConfig && (
           <div className="mt-2 p-2.5 border border-[#1e3a5f] rounded space-y-2 bg-[#0a0e1a]">
             <div>
-              <label className="text-[9px] text-[#64748b] block mb-1">OpenRouteService API key (2000/день бесплатно)</label>
+              <label className="text-[9px] text-[#34d399] block mb-1">⭐ GraphHopper API key (500/день, без per-min лимита)</label>
+              <input
+                type="password"
+                value={settings.ghApiKey || ''}
+                onChange={(e) => setSettings({ ghApiKey: e.target.value || undefined })}
+                placeholder="02c0e56f-cbc2-…"
+                className="w-full bg-[#0d1b2a] border border-[#34d399]/40 rounded px-2 py-1 text-[10px] text-[#e2e8f0] focus:outline-none focus:border-[#34d399] font-mono"
+              />
+              <p className="text-[8px] text-[#64748b] mt-0.5">
+                <a href="https://www.graphhopper.com/dashboard/" target="_blank" className="underline hover:text-[#38bdf8]">graphhopper.com/dashboard</a> — для одноразовых импортов лучший выбор
+              </p>
+            </div>
+            <div>
+              <label className="text-[9px] text-[#64748b] block mb-1">OpenRouteService API key (2000/день, 40/мин)</label>
               <input
                 type="password"
                 value={settings.orsApiKey || ''}
@@ -125,7 +138,7 @@ export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, o
                 className="w-full bg-[#0d1b2a] border border-[#1e3a5f] rounded px-2 py-1 text-[10px] text-[#e2e8f0] focus:outline-none focus:border-[#38bdf8] font-mono"
               />
               <p className="text-[8px] text-[#64748b] mt-0.5">
-                <a href="https://openrouteservice.org/dev/#/signup" target="_blank" className="underline hover:text-[#38bdf8]">openrouteservice.org/dev</a> — регистрация, бесплатно
+                <a href="https://openrouteservice.org/dev/#/signup" target="_blank" className="underline hover:text-[#38bdf8]">openrouteservice.org/dev</a> — резерв (используется если GH исчерпан)
               </p>
             </div>
             <div>
