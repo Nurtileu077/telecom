@@ -116,6 +116,17 @@ export function consolidateCables(
     // Кол-во абонентов в каждом ОРК — для подсчёта жильности магистрали.
     const orkSubCount = new Map<string, number>();
 
+    // Точные позиции сущностей (OLT/TB/ORK) — НЕ снэпленные. Используются
+    // при эмиссии кабеля, чтобы концы магистрали примыкали к маркеру объекта,
+    // а не висели в стороне (где OSRM привязал к дороге). Это устраняет
+    // визуальные «зазоры» между концом кабеля и муфтой/боксом.
+    const entityPos = new Map<string, [number, number]>();
+    entityPos.set(olt.id, [olt.lat, olt.lon]);
+    for (const tb of olt.transitBoxes) {
+      entityPos.set(tb.id, [tb.lat, tb.lon]);
+      for (const ork of tb.orks) entityPos.set(ork.id, [ork.lat, ork.lon]);
+    }
+
     const addSeg = (a: [number, number], b: [number, number], orkId: string) => {
       const aK = quantize(a[0], a[1]);
       const bK = quantize(b[0], b[1]);
@@ -236,6 +247,25 @@ export function consolidateCables(
       routed: boolean,
     ) => {
       if (coords.length < 2) return;
+      // Привязываем концы к маркеру сущности: OSRM-снэп может быть в 10–50м
+      // от реального положения OLT/TB/ОРК. Если оставить как есть, на карте
+      // будет видимый зазор между концом кабеля и маркером объекта (или
+      // началом дроп-кабеля). Добавляем короткий «хвост» к точной позиции.
+      const out: [number, number][] = [...coords];
+      const fromExact = entityPos.get(fromId);
+      if (fromExact) {
+        const [fa, fb] = out[0];
+        if (haversineM(fa, fb, fromExact[0], fromExact[1]) > 1) {
+          out.unshift(fromExact);
+        }
+      }
+      const toExact = entityPos.get(toId);
+      if (toExact) {
+        const [la, lb] = out[out.length - 1];
+        if (haversineM(la, lb, toExact[0], toExact[1]) > 1) {
+          out.push(toExact);
+        }
+      }
       const type = pickCableType(Math.max(2, subsCount * 2));
       outCables.push({
         id: nextCableId(),
@@ -243,8 +273,8 @@ export function consolidateCables(
         fibers: CABLE_FIBERS[type],
         fromId,
         toId,
-        coords,
-        lengthM: pathLength(coords),
+        coords: out,
+        lengthM: pathLength(out),
         routedByOSRM: routed,
       });
     };
