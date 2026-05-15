@@ -23,18 +23,57 @@ export function centroid(points: Point[]): { lat: number; lon: number } {
   return { lat, lon };
 }
 
+// Seeded RNG so subsequent builds with the same input produce the same
+// clustering.  Was Math.random() — adding 1 subscriber re-shuffled everything
+// and produced a totally different OLT/TB/ORK layout, which made cables look
+// like spaghetti after each minor edit.  mulberry32 is small, fast and good
+// enough for clustering tie-breaks.
+function mulberry32(seed: number) {
+  let s = seed >>> 0;
+  return function () {
+    s = (s + 0x6D2B79F5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function hashPoints(points: Point[]): number {
+  // FNV-1a over coords — independent of input order so [A,B] and [B,A]
+  // produce the same seed.  Order-independent is the right thing for kmeans:
+  // input order shouldn't change clustering results.
+  let h = 2166136261 >>> 0;
+  const sorted = [...points].sort((a, b) => (a.lat - b.lat) || (a.lon - b.lon));
+  for (const p of sorted) {
+    const lat = Math.round(p.lat * 1e6);
+    const lon = Math.round(p.lon * 1e6);
+    h = Math.imul(h ^ lat, 16777619);
+    h = Math.imul(h ^ lon, 16777619);
+  }
+  return h >>> 0;
+}
+
 export function kmeans(
   points: Point[],
   k: number,
-  iterations = 30
+  iterations = 30,
 ): { centers: { lat: number; lon: number }[]; clusters: Point[][] } {
   if (points.length === 0) return { centers: [], clusters: [] };
   k = Math.min(k, points.length);
   if (k <= 1) return { centers: [centroid(points)], clusters: [points] };
 
-  // Initialize centers with k-means++ style
+  const rand = mulberry32(hashPoints(points) + k);
+
+  // Initialize centers with k-means++ style — seeded so the same input
+  // always yields the same initial centers.
   const centers: { lat: number; lon: number }[] = [];
-  const shuffled = [...points].sort(() => Math.random() - 0.5);
+  // Deterministic "shuffle" via Fisher-Yates with seeded RNG.
+  const shuffled = [...points];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
   centers.push({ lat: shuffled[0].lat, lon: shuffled[0].lon });
 
   for (let i = 1; i < k; i++) {
@@ -43,11 +82,11 @@ export function kmeans(
       return minD * minD;
     });
     const total = dists.reduce((a, b) => a + b, 0);
-    let rand = Math.random() * total;
+    let r = rand() * total;
     let idx = 0;
     for (let j = 0; j < dists.length; j++) {
-      rand -= dists[j];
-      if (rand <= 0) { idx = j; break; }
+      r -= dists[j];
+      if (r <= 0) { idx = j; break; }
     }
     centers.push({ lat: shuffled[idx].lat, lon: shuffled[idx].lon });
   }

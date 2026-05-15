@@ -175,6 +175,63 @@ export function useNetwork() {
   // Persisted OLT coordinate overrides per district (user-supplied).
   const [oltOverrides, setOltOverrides] = useState<OltLocationMap>({});
 
+  // Walk the cable graph through joint nodes (J-*) to recover full
+  // entity-to-entity OSRM paths.  After a consolidation pass, trunks are
+  // stored as a chain of OLT→J-1→J-2→TB cables; without this reconstruction
+  // every subsequent reconsolidate would lose those routes and fall back
+  // to a straight line through buildings.
+  const buildExistingCoordsMap = useCallback((cs: Cable[]): Map<string, [number, number][]> => {
+    const out = new Map<string, [number, number][]>();
+    // Pass 1: direct entity-to-entity (no joint endpoints).
+    for (const c of cs) {
+      const fJ = c.fromId.startsWith('J-');
+      const tJ = c.toId.startsWith('J-');
+      if (!fJ && !tJ) {
+        out.set(`${c.fromId}::${c.toId}`, c.coords);
+        out.set(`${c.toId}::${c.fromId}`, [...c.coords].reverse());
+      }
+    }
+    // Pass 2: walk chains via joints.  Build undirected adjacency, then BFS
+    // from each non-joint node, recording the path each time we reach
+    // another non-joint node.  Only paths whose every link is OSRM-routed
+    // are stored, so we never piece together straight-line fragments and
+    // pretend they were routed.
+    type Edge = { to: string; coords: [number, number][]; routed: boolean };
+    const adj = new Map<string, Edge[]>();
+    for (const c of cs) {
+      if (!adj.has(c.fromId)) adj.set(c.fromId, []);
+      if (!adj.has(c.toId)) adj.set(c.toId, []);
+      adj.get(c.fromId)!.push({ to: c.toId, coords: c.coords, routed: c.routedByOSRM });
+      adj.get(c.toId)!.push({ to: c.fromId, coords: [...c.coords].reverse(), routed: c.routedByOSRM });
+    }
+    for (const start of adj.keys()) {
+      if (start.startsWith('J-')) continue;
+      type Frame = { node: string; path: [number, number][]; allRouted: boolean };
+      const queue: Frame[] = [{ node: start, path: [], allRouted: true }];
+      const visited = new Set<string>([start]);
+      while (queue.length > 0) {
+        const { node, path, allRouted } = queue.shift()!;
+        for (const e of adj.get(node) || []) {
+          if (visited.has(e.to)) continue;
+          visited.add(e.to);
+          const newPath = path.length === 0 ? e.coords : [...path, ...e.coords.slice(1)];
+          const newRouted = allRouted && e.routed;
+          if (!e.to.startsWith('J-')) {
+            const key = `${start}::${e.to}`;
+            if (newRouted && !out.has(key)) {
+              out.set(key, newPath);
+              out.set(`${e.to}::${start}`, [...newPath].reverse());
+            }
+            // don't continue past terminal nodes
+            continue;
+          }
+          queue.push({ node: e.to, path: newPath, allRouted: newRouted });
+        }
+      }
+    }
+    return out;
+  }, []);
+
   // Internal: build network from arbitrary subscriber set
   const runBuild = useCallback(async (subs: Subscriber[], replaceCables = true, oltLocationsArg?: OltLocationMap) => {
     if (abortRef.current) abortRef.current.abort();
@@ -332,16 +389,13 @@ export function useNetwork() {
   const reconsolidate = useCallback(async () => {
     if (districts.length === 0) return;
 
-    // Snapshot OSRM coords for cables whose endpoints are direct entities
-    // (skip consolidated trunk cables whose endpoints are joint IDs).
-    const existingCoords = new Map<string, [number, number][]>();
-    for (const c of cables) {
-      const fIsJoint = c.fromId.startsWith('J-');
-      const tIsJoint = c.toId.startsWith('J-');
-      if (fIsJoint || tIsJoint) continue;
-      existingCoords.set(`${c.fromId}::${c.toId}`, c.coords);
-      existingCoords.set(`${c.toId}::${c.fromId}`, [...c.coords].reverse());
-    }
+    // Reconstruct OSRM-routed paths between direct entity pairs, EVEN when
+    // the path currently passes through joint nodes from a previous
+    // consolidation (e.g. OLT → J-1 → J-2 → TB-5).  Without this, repeated
+    // reconsolidate calls would fall back to straight lines on every trunk,
+    // and the OSRM re-routing pass below either had to redo all of them
+    // (slow, partial failures) or leave them straight (spaghetti).
+    const existingCoords = buildExistingCoordsMap(cables);
 
     const pathLen = (cs: [number, number][]) => {
       let l = 0;
@@ -411,7 +465,7 @@ export function useNetwork() {
     setJoints(newJoints);
     setMaterials(calculateMaterials(districts, consolidated, settings, newJoints.length));
     setStatus('done');
-  }, [districts, cables, settings]);
+  }, [districts, cables, settings, buildExistingCoordsMap]);
 
   // Re-route existing cables with OSRM (without re-clustering)
   const rerouteWithOSRM = useCallback(async () => {
@@ -508,16 +562,96 @@ export function useNetwork() {
   }, []);
 
   // Manual subscriber actions
+  // Incremental — DO NOT trigger a full rebuild here.  A full rebuild
+  // re-runs kmeans/Voronoi which would shuffle ORK/TB assignments and
+  // re-route every cable, making the map flash through a "spaghetti"
+  // state for ~30 s with 600+ subs.  Instead: find the nearest existing
+  // ORK, attach the new sub to it, and add ONE drop cable.
   const addSubscriberAt = useCallback(async (lat: number, lon: number, district: string, desc: string) => {
+    // Find nearest existing ORK.  If the project has no ORKs yet, fall back
+    // to the legacy full-rebuild path so the user gets some structure.
+    let nearestOrk: { id: string; lat: number; lon: number; tbId: string; district: string } | null = null;
+    let bestDist = Infinity;
+    for (const d of districts) {
+      for (const tb of d.olt.transitBoxes) {
+        for (const ork of tb.orks) {
+          const dist = haversineM(lat, lon, ork.lat, ork.lon);
+          if (dist < bestDist) {
+            bestDist = dist;
+            nearestOrk = { id: ork.id, lat: ork.lat, lon: ork.lon, tbId: tb.id, district: d.name };
+          }
+        }
+      }
+    }
+
+    if (!nearestOrk) {
+      // No structure yet — first subscriber.  Use the original full-rebuild.
+      const sub: Subscriber = {
+        id: newId('sub'),
+        lat, lon, desc, district,
+        fibers: { working: 2, spare: 1 },
+      };
+      const merged = [...allSubscribers, sub];
+      setAllSubscribers(merged);
+      await runBuild(merged);
+      return;
+    }
+
     const sub: Subscriber = {
       id: newId('sub'),
-      lat, lon, desc, district,
+      lat, lon, desc,
+      district: nearestOrk.district,
+      orkId: nearestOrk.id,
       fibers: { working: 2, spare: 1 },
     };
-    const merged = [...allSubscribers, sub];
-    setAllSubscribers(merged);
-    await runBuild(merged);
-  }, [allSubscribers, runBuild]);
+
+    // Insert sub into the matching ORK + into the district subscribers list.
+    setDistricts((prev) => prev.map((d) => {
+      if (d.name !== nearestOrk!.district) return d;
+      return {
+        ...d,
+        subscribers: [...d.subscribers, sub],
+        olt: {
+          ...d.olt,
+          transitBoxes: d.olt.transitBoxes.map((tb) => {
+            if (tb.id !== nearestOrk!.tbId) return tb;
+            return {
+              ...tb,
+              orks: tb.orks.map((ork) =>
+                ork.id === nearestOrk!.id
+                  ? { ...ork, subscribers: [...ork.subscribers, sub] }
+                  : ork,
+              ),
+            };
+          }),
+        },
+      };
+    }));
+    setAllSubscribers((prev) => [...prev, sub]);
+
+    // OSRM-route the drop from ORK to the new sub.
+    let coords: [number, number][] = [[nearestOrk.lat, nearestOrk.lon], [lat, lon]];
+    let routed = false;
+    if (settings.useOSRM) {
+      try {
+        const r = await getRoute(nearestOrk.lat, nearestOrk.lon, lat, lon);
+        if (r && r.length > 2) { coords = r; routed = true; }
+      } catch { /* keep straight */ }
+    }
+    const cable: Cable = {
+      id: `cable-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      type: 'ОК-4',
+      fibers: CABLE_FIBERS['ОК-4'],
+      fromId: nearestOrk.id,
+      toId: sub.id,
+      coords,
+      lengthM: routed
+        ? coords.slice(1).reduce((acc, c, i) => acc + haversineM(coords[i][0], coords[i][1], c[0], c[1]), 0)
+        : haversineM(nearestOrk.lat, nearestOrk.lon, lat, lon),
+      routedByOSRM: routed,
+    };
+    setCables((prev) => [...prev, cable]);
+  }, [districts, allSubscribers, runBuild, settings.useOSRM]);
 
   const deleteSubscriber = useCallback(async (subId: string) => {
     const merged = allSubscribers.filter((s) => s.id !== subId);
