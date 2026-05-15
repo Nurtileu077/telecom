@@ -36,6 +36,88 @@ function newId(prefix = 'id') {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// Build a map of entity-pair → routed coords, preserving geometry across
+// multiple consolidations. After a "Объединить" pass, trunk cables (OLT→TB,
+// TB→ORK) may be split through joint IDs (J-N). To keep the user's routing
+// idempotent, we walk the joint graph here to reconstruct the full OSRM path
+// between each direct entity pair. Returns a bidirectional map keyed by
+// "fromId::toId". Only paths whose every segment was OSRM-routed are kept.
+function buildExistingCoordsMap(
+  cables: Cable[],
+  districts: District[],
+): Map<string, [number, number][]> {
+  const adj = new Map<string, Array<{ cable: Cable; reverse: boolean }>>();
+  for (const c of cables) {
+    if (!adj.has(c.fromId)) adj.set(c.fromId, []);
+    if (!adj.has(c.toId)) adj.set(c.toId, []);
+    adj.get(c.fromId)!.push({ cable: c, reverse: false });
+    adj.get(c.toId)!.push({ cable: c, reverse: true });
+  }
+  const reconstructPath = (fromId: string, toId: string): [number, number][] | null => {
+    type State = { node: string; coords: [number, number][]; allRouted: boolean };
+    const visited = new Set<string>([fromId]);
+    const queue: State[] = [{ node: fromId, coords: [], allRouted: true }];
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      if (cur.node === toId) {
+        return cur.allRouted && cur.coords.length >= 2 ? cur.coords : null;
+      }
+      // Only traverse through joints after the first hop — don't bounce
+      // through another terminal (e.g. another TB).
+      if (cur.node !== fromId && !cur.node.startsWith('J-')) continue;
+      for (const { cable, reverse } of adj.get(cur.node) || []) {
+        const next = reverse ? cable.fromId : cable.toId;
+        if (visited.has(next)) continue;
+        visited.add(next);
+        const segCoords = reverse ? [...cable.coords].reverse() : cable.coords;
+        const newCoords: [number, number][] = cur.coords.length === 0
+          ? [...segCoords]
+          : [...cur.coords, ...segCoords.slice(1)];
+        queue.push({
+          node: next,
+          coords: newCoords,
+          allRouted: cur.allRouted && cable.routedByOSRM,
+        });
+      }
+    }
+    return null;
+  };
+
+  const existingCoords = new Map<string, [number, number][]>();
+  // Direct (non-joint) OSRM-routed cables
+  for (const c of cables) {
+    if (!c.routedByOSRM) continue;
+    if (c.fromId.startsWith('J-') || c.toId.startsWith('J-')) continue;
+    existingCoords.set(`${c.fromId}::${c.toId}`, c.coords);
+    existingCoords.set(`${c.toId}::${c.fromId}`, [...c.coords].reverse());
+  }
+  // Trunks split through joints — walk the graph to reassemble
+  for (const d of districts) {
+    const olt = d.olt;
+    for (const tb of olt.transitBoxes) {
+      const k1 = `${olt.id}::${tb.id}`;
+      if (!existingCoords.has(k1)) {
+        const path = reconstructPath(olt.id, tb.id);
+        if (path) {
+          existingCoords.set(k1, path);
+          existingCoords.set(`${tb.id}::${olt.id}`, [...path].reverse());
+        }
+      }
+      for (const ork of tb.orks) {
+        const k2 = `${tb.id}::${ork.id}`;
+        if (!existingCoords.has(k2)) {
+          const path = reconstructPath(tb.id, ork.id);
+          if (path) {
+            existingCoords.set(k2, path);
+            existingCoords.set(`${ork.id}::${tb.id}`, [...path].reverse());
+          }
+        }
+      }
+    }
+  }
+  return existingCoords;
+}
+
 export function useNetwork() {
   const [projectId, setProjectId] = useState<string>(() => newId('proj'));
   const [projectName, setProjectName] = useState('Новый проект');
@@ -262,19 +344,8 @@ export function useNetwork() {
   const reconsolidate = useCallback(async () => {
     if (districts.length === 0) return;
 
-    // Snapshot OSRM coords for cables whose endpoints are direct entities
-    // (skip consolidated trunk cables whose endpoints are joint IDs).
-    // Only trust coords from cables that are actually routed by OSRM —
-    // straight-line cables (routedByOSRM=false) should be re-routed below.
-    const existingCoords = new Map<string, [number, number][]>();
-    for (const c of cables) {
-      if (!c.routedByOSRM) continue;
-      const fIsJoint = c.fromId.startsWith('J-');
-      const tIsJoint = c.toId.startsWith('J-');
-      if (fIsJoint || tIsJoint) continue;
-      existingCoords.set(`${c.fromId}::${c.toId}`, c.coords);
-      existingCoords.set(`${c.toId}::${c.fromId}`, [...c.coords].reverse());
-    }
+    const existingCoords = buildExistingCoordsMap(cables, districts);
+    console.log(`[reconsolidate] preserved ${existingCoords.size / 2} trunk paths from previous routing`);
 
     const pathLen = (cs: [number, number][]) => {
       let l = 0;
@@ -343,6 +414,8 @@ export function useNetwork() {
     }
 
     // Consolidate trunks then append straight drops
+    const routedCount = routedTrunks.filter((c) => c.routedByOSRM).length;
+    console.log(`[reconsolidate] before consolidate: trunks=${routedTrunks.length} (routed=${routedCount}) drops=${drops.length}`);
     const { cables: consolidated, joints: newJoints } = consolidateCables([...routedTrunks, ...drops], districts);
     setCables(consolidated);
     setJoints(newJoints);
@@ -367,6 +440,13 @@ export function useNetwork() {
         for (let i = 1; i < cs.length; i++) l += haversineM(cs[i - 1][0], cs[i - 1][1], cs[i][0], cs[i][1]);
         return l;
       };
+      // Preserve current OSRM geometry as fallback: if OSRM fails on a cable,
+      // it keeps its input coords. So we feed in previously-routed paths
+      // (reconstructed through joints) rather than fresh straight lines —
+      // making "Re-route OSRM" idempotent even when OSRM is rate-limited.
+      const existingCoords = buildExistingCoordsMap(cables, districts);
+      console.log(`[rerouteWithOSRM] using ${existingCoords.size / 2} preserved paths as fallback`);
+
       let seq = 0;
       const nextId = () => `cable-r-${++seq}`;
       const trunks: Cable[] = [];
@@ -374,20 +454,24 @@ export function useNetwork() {
       for (const d of districts) {
         const olt = d.olt;
         for (const tb of olt.transitBoxes) {
+          const k1 = `${olt.id}::${tb.id}`;
+          const c1 = existingCoords.get(k1) ?? [[olt.lat, olt.lon] as [number, number], [tb.lat, tb.lon] as [number, number]];
           trunks.push({
             id: nextId(), type: tb.inCable, fibers: CABLE_FIBERS[tb.inCable],
             fromId: olt.id, toId: tb.id,
-            coords: [[olt.lat, olt.lon], [tb.lat, tb.lon]],
-            lengthM: pathLen([[olt.lat, olt.lon], [tb.lat, tb.lon]]),
-            routedByOSRM: false,
+            coords: c1,
+            lengthM: pathLen(c1),
+            routedByOSRM: existingCoords.has(k1),
           });
           for (const ork of tb.orks) {
+            const k2 = `${tb.id}::${ork.id}`;
+            const c2 = existingCoords.get(k2) ?? [[tb.lat, tb.lon] as [number, number], [ork.lat, ork.lon] as [number, number]];
             trunks.push({
               id: nextId(), type: ork.cableType, fibers: CABLE_FIBERS[ork.cableType],
               fromId: tb.id, toId: ork.id,
-              coords: [[tb.lat, tb.lon], [ork.lat, ork.lon]],
-              lengthM: pathLen([[tb.lat, tb.lon], [ork.lat, ork.lon]]),
-              routedByOSRM: false,
+              coords: c2,
+              lengthM: pathLen(c2),
+              routedByOSRM: existingCoords.has(k2),
             });
             for (const sub of ork.subscribers) {
               // Drops always straight — skip OSRM to avoid road-parallel lines
