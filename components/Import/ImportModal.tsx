@@ -7,7 +7,8 @@ import { importCsv, parseTabular } from './CsvImporter';
 
 export type ImportMode = 'replace' | 'append';
 export type NetworkImportMode = 'replace' | 'merge';
-export type OltLocations = Record<string, { lat: number; lon: number }>;
+// One district may have multiple OLTs.  Subscribers will be split by nearest.
+export type OltLocations = Record<string, Array<{ lat: number; lon: number }>>;
 
 interface Props {
   onClose: () => void;
@@ -132,41 +133,59 @@ export default function ImportModal({ onClose, onBuild, onImportNetwork, current
       }, {} as Record<string, number>)
     : {};
 
-  // Apply a single bulk-paste textarea  "District: lat, lng"  →  per-district inputs.
+  // Apply a single bulk-paste textarea → per-district inputs.
+  // Format per line:
+  //   "District: lat, lng"   — append to that district
+  //   "lat, lng"             — append to the only district (if exactly one)
+  // Multiple lines for the same district build up an N-OLT list.
   const applyBulkOlts = useCallback(() => {
     setOltError('');
-    const next: Record<string, string> = {};
+    const additions: Record<string, string[]> = {};
     const lines = oltBulkText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     let bad = 0;
     for (const line of lines) {
-      // "District : lat, lng"  or  "lat, lng" (if only one district)
       const idx = line.indexOf(':');
       if (idx > 0) {
         const district = line.slice(0, idx).trim();
         const coords = line.slice(idx + 1).trim();
-        if (parseLatLngInput(coords)) next[district] = coords;
-        else bad++;
+        if (parseLatLngInput(coords)) {
+          (additions[district] ||= []).push(coords);
+        } else bad++;
       } else if (parseLatLngInput(line) && Object.keys(byDistrict).length === 1) {
-        next[Object.keys(byDistrict)[0]] = line;
+        (additions[Object.keys(byDistrict)[0]] ||= []).push(line);
       } else {
         bad++;
       }
     }
-    setOltInputs((prev) => ({ ...prev, ...next }));
+    setOltInputs((prev) => {
+      const next = { ...prev };
+      for (const [d, lines] of Object.entries(additions)) {
+        const existing = next[d]?.trim();
+        next[d] = existing ? `${existing}\n${lines.join('\n')}` : lines.join('\n');
+      }
+      return next;
+    });
     if (bad > 0) setOltError(`${bad} строк не распознано. Формат: «Район: lat, lng»`);
   }, [oltBulkText, byDistrict]);
 
+  // Each district's textarea may contain multiple lines = multiple OLTs.
+  // Returns a map district → array of valid {lat, lon}, dropping invalid lines.
   const parsedOlts: OltLocations = useMemo(() => {
     const out: OltLocations = {};
     for (const [d, txt] of Object.entries(oltInputs)) {
-      const p = parseLatLngInput(txt);
-      if (p) out[d] = p;
+      const list: { lat: number; lon: number }[] = [];
+      for (const ln of txt.split(/\r?\n/)) {
+        const p = parseLatLngInput(ln);
+        if (p) list.push(p);
+      }
+      if (list.length > 0) out[d] = list;
     }
     return out;
   }, [oltInputs]);
 
-  const oltOkCount = Object.keys(parsedOlts).length;
+  const oltOkCount = Object.values(parsedOlts).reduce((s, arr) => s + arr.length, 0);
   const districtCount = Object.keys(byDistrict).length;
+  const districtsWithOlt = Object.keys(parsedOlts).length;
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
@@ -397,49 +416,56 @@ export default function ImportModal({ onClose, onBuild, onImportNetwork, current
           {subscribers && (
             <div className="space-y-2 bg-[#0a0e1a] border border-[#38bdf8]/30 rounded-lg p-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-xs font-semibold text-[#38bdf8]">📡 OLT (узел связи)</h3>
-                <span className="text-[10px] text-[#64748b]">{oltOkCount}/{districtCount} районов</span>
+                <h3 className="text-xs font-semibold text-[#38bdf8]">📡 OLT (узлы связи)</h3>
+                <span className="text-[10px] text-[#64748b]">{oltOkCount} OLT в {districtsWithOlt}/{districtCount} р-нах</span>
               </div>
               <p className="text-[10px] text-[#64748b]">
-                Координаты OLT на район — кабели потянутся ОТ него.<br/>
-                Если оставить пустым — OLT встанет в центре района (как раньше).
+                Один район = <b>сколько угодно OLT</b>. Каждая строка — отдельный OLT.<br/>
+                Абоненты автоматически разойдутся по ближайшему OLT (Voronoi).<br/>
+                Пусто → один OLT в центре района (как раньше).
               </p>
 
               <details className="bg-[#0d1b2a] rounded border border-[#1e3a5f]/50">
                 <summary className="text-[10px] text-[#94a3b8] px-2 py-1.5 cursor-pointer hover:text-[#e2e8f0]">
-                  📋 Вставить блоком (несколько районов сразу)
+                  📋 Вставить блоком (добавится к полям)
                 </summary>
                 <div className="p-2 space-y-1.5">
                   <textarea
                     value={oltBulkText}
                     onChange={(e) => setOltBulkText(e.target.value)}
-                    rows={4}
+                    rows={6}
                     placeholder={districtCount === 1
-                      ? `Просто: 40.78, 68.32\nили:    ${Object.keys(byDistrict)[0]}: 40.78, 68.32`
-                      : `${Object.keys(byDistrict).slice(0, 2).map((d) => `${d}: 40.78, 68.32`).join('\n')}`}
+                      ? `Каждая строка — один OLT:\n43.32, 68.31\n43.31, 68.30\n43.29, 68.31\n…`
+                      : `Район: lat, lng (повторить для нескольких OLT в одном районе)\n${Object.keys(byDistrict)[0]}: 40.78, 68.32\n${Object.keys(byDistrict)[0]}: 40.79, 68.33`}
                     className="w-full bg-[#0a0e1a] border border-[#1e3a5f] rounded px-2 py-1.5 text-[10px] text-[#e2e8f0] font-mono focus:outline-none focus:border-[#38bdf8] resize-none"
                   />
                   <button onClick={applyBulkOlts} disabled={!oltBulkText.trim()} className="w-full py-1 bg-[#38bdf8]/15 hover:bg-[#38bdf8]/25 disabled:opacity-30 text-[#38bdf8] text-[10px] rounded transition-colors">
-                    ↧ Применить к полям
+                    ↧ Добавить к полям
                   </button>
                   {oltError && <p className="text-[10px] text-[#fbbf24]">⚠️ {oltError}</p>}
                 </div>
               </details>
 
-              <div className="space-y-1 max-h-40 overflow-y-auto">
+              <div className="space-y-1.5 max-h-56 overflow-y-auto">
                 {Object.keys(byDistrict).map((d) => {
                   const txt = oltInputs[d] || '';
-                  const ok = txt ? !!parseLatLngInput(txt) : null;
+                  const lines = txt.split(/\r?\n/);
+                  const validCount = lines.filter((l) => parseLatLngInput(l)).length;
+                  const nonEmptyCount = lines.filter((l) => l.trim().length > 0).length;
+                  const ok = nonEmptyCount > 0 ? (validCount === nonEmptyCount) : null;
                   return (
-                    <div key={d} className="flex items-center gap-2">
-                      <span className="text-[10px] text-[#94a3b8] w-20 truncate" title={d}>{d}</span>
-                      <input
+                    <div key={d} className="flex items-start gap-2">
+                      <span className="text-[10px] text-[#94a3b8] w-20 truncate pt-1" title={d}>{d}</span>
+                      <textarea
                         value={txt}
                         onChange={(e) => setOltInputs((p) => ({ ...p, [d]: e.target.value }))}
-                        placeholder="lat, lng (необяз.)"
-                        className={`flex-1 bg-[#0a0e1a] border rounded px-1.5 py-0.5 text-[10px] text-[#e2e8f0] font-mono focus:outline-none ${ok === false ? 'border-[#f87171] focus:border-[#f87171]' : ok ? 'border-[#34d399]/60 focus:border-[#34d399]' : 'border-[#1e3a5f] focus:border-[#38bdf8]'}`}
+                        placeholder={'lat, lng (по строке на OLT)\nнеобяз.'}
+                        rows={Math.max(2, Math.min(6, nonEmptyCount + 1))}
+                        className={`flex-1 bg-[#0a0e1a] border rounded px-1.5 py-1 text-[10px] text-[#e2e8f0] font-mono leading-snug resize-none focus:outline-none ${ok === false ? 'border-[#f87171] focus:border-[#f87171]' : ok ? 'border-[#34d399]/60 focus:border-[#34d399]' : 'border-[#1e3a5f] focus:border-[#38bdf8]'}`}
                       />
-                      <span className={`text-[10px] w-4 ${ok === false ? 'text-[#f87171]' : ok ? 'text-[#34d399]' : 'text-[#475569]'}`}>{ok === false ? '⚠' : ok ? '✓' : '•'}</span>
+                      <span className={`text-[10px] w-12 pt-1 font-mono ${ok === false ? 'text-[#f87171]' : ok ? 'text-[#34d399]' : 'text-[#475569]'}`} title="Распознанных OLT / введённых строк">
+                        {nonEmptyCount > 0 ? `${validCount}/${nonEmptyCount}` : '—'}
+                      </span>
                     </div>
                   );
                 })}

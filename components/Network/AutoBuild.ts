@@ -55,7 +55,142 @@ function pickTbAnchor(
   };
 }
 
-export type OltLocationMap = Record<string, { lat: number; lon: number }>;
+// One district can have many OLTs.  When the user supplies N coords for a
+// district, subscribers are partitioned by nearest OLT (Voronoi) and each
+// partition becomes its own sub-network ("Туркестан-1", "Туркестан-2"…).
+export type OltLocationMap = Record<string, Array<{ lat: number; lon: number }>>;
+
+// Build the network rooted at a single OLT for one (sub-)district.
+function buildSingleOlt(
+  districtName: string,
+  color: string,
+  subs: Subscriber[],
+  oltPos: { lat: number; lon: number },
+  oltSuffix: string,
+  settings: ProjectSettings,
+  cables: Cable[],
+): District {
+  const oltSlug = districtName.slice(0, 8).replace(/\s/g, '');
+  const olt: OLT = {
+    id: `OLT-${oltSlug}${oltSuffix}`,
+    lat: oltPos.lat,
+    lon: oltPos.lon,
+    district: districtName,
+    model: 'Huawei MA5800-X7',
+    capacity: 64,
+    transitBoxes: [],
+    l1Splitter: '1:4',
+  };
+
+  // Cluster subscribers into ORKs
+  const kOrk = Math.max(1, Math.ceil(subs.length / settings.maxPerORK));
+  const { clusters: orkClusters } = kmeans(
+    subs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id })),
+    kOrk,
+  );
+
+  const orks: ORK[] = [];
+  const updatedSubs: Subscriber[] = [];
+  const orkSlug = districtName.slice(0, 4).replace(/\s/g, '');
+
+  for (let i = 0; i < orkClusters.length; i++) {
+    const cluster = orkClusters[i];
+    if (cluster.length === 0) continue;
+    const orkSubsRaw: Subscriber[] = cluster
+      .map((p) => subs.find((s) => s.id === p.id))
+      .filter(Boolean) as Subscriber[];
+    const orkAnchor = pickOrkAnchor(orkSubsRaw);
+    const orkId = `Бокс-${orkSlug}${oltSuffix}-${i + 1}`;
+    const splitter: '1:4' | '1:8' | '1:16' =
+      cluster.length <= 4 ? '1:4' : cluster.length <= 8 ? '1:8' : '1:16';
+
+    const updatedOrkSubs = orkSubsRaw.map((s) => ({ ...s, orkId }));
+    updatedSubs.push(...updatedOrkSubs);
+
+    const orkSubCount = updatedOrkSubs.length;
+    orks.push({
+      id: orkId,
+      lat: orkAnchor.lat,
+      lon: orkAnchor.lon,
+      district: districtName,
+      splitter,
+      tbId: '',
+      subscribers: updatedOrkSubs,
+      cableType: 'ОК-4',
+      boxType: orkSubCount <= 4 ? 'Бокс-8' : orkSubCount <= 8 ? 'Бокс-16' : 'ОРКСп-16',
+    });
+  }
+
+  // Cluster ORKs into Transit Boxes
+  const kTB = Math.max(1, Math.ceil(orks.length / settings.maxORKperTB));
+  const { clusters: tbClusters } = kmeans(
+    orks.map((o) => ({ lat: o.lat, lon: o.lon, id: o.id })),
+    kTB,
+  );
+
+  const transitBoxes: TransitBox[] = [];
+
+  for (let i = 0; i < tbClusters.length; i++) {
+    const cluster = tbClusters[i];
+    if (cluster.length === 0) continue;
+    const tbId = `Муфта-${orkSlug}${oltSuffix}-${i + 1}`;
+
+    const tbOrks = cluster
+      .map((p) => orks.find((o) => o.id === p.id))
+      .filter(Boolean) as ORK[];
+
+    const updatedTBOrks = tbOrks.map((o) => ({ ...o, tbId }));
+    for (const o of updatedTBOrks) {
+      const idx = orks.findIndex((x) => x.id === o.id);
+      if (idx >= 0) orks[idx] = o;
+    }
+
+    const tbAnchor = pickTbAnchor(
+      updatedTBOrks.map((o) => ({ lat: o.lat, lon: o.lon })),
+      olt.lat, olt.lon,
+    );
+
+    const trunkType = trunkCableType(updatedTBOrks.length);
+    const tbToOrkType: CableType = 'ОК-4';
+
+    const tb: TransitBox = {
+      id: tbId,
+      lat: tbAnchor.lat,
+      lon: tbAnchor.lon,
+      district: districtName,
+      oltId: olt.id,
+      orks: updatedTBOrks,
+      inCable: trunkType,
+      outCable: tbToOrkType,
+      muftaType: 'МТОК-96А',
+    };
+    transitBoxes.push(tb);
+
+    cables.push(makeCable(trunkType, olt.id, tbId, [
+      [olt.lat, olt.lon], [tb.lat, tb.lon],
+    ]));
+
+    for (const ork of updatedTBOrks) {
+      cables.push(makeCable(tbToOrkType, tbId, ork.id, [
+        [tb.lat, tb.lon], [ork.lat, ork.lon],
+      ]));
+      for (const sub of ork.subscribers) {
+        cables.push(makeCable('ОК-4', ork.id, sub.id, [
+          [ork.lat, ork.lon], [sub.lat, sub.lon],
+        ]));
+      }
+    }
+  }
+
+  olt.transitBoxes = transitBoxes;
+
+  return {
+    name: districtName,
+    color,
+    olt,
+    subscribers: updatedSubs,
+  };
+}
 
 export function buildNetwork(
   subscribers: Subscriber[],
@@ -75,141 +210,48 @@ export function buildNetwork(
   let colorIdx = 0;
 
   for (const [districtName, subs] of byDistrict.entries()) {
-    const color = DISTRICT_COLORS[colorIdx % DISTRICT_COLORS.length];
+    const overrides = oltLocations[districtName] ?? [];
+    const baseColor = DISTRICT_COLORS[colorIdx % DISTRICT_COLORS.length];
     colorIdx++;
 
-    // OLT placement: user-specified coords override the auto-centroid.
-    const override = oltLocations[districtName];
-    const oltPos = override
-      ? { lat: override.lat, lon: override.lon }
-      : centroid(subs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id })));
-    const olt: OLT = {
-      id: `OLT-${districtName.slice(0, 8).replace(/\s/g, '')}`,
-      lat: oltPos.lat,
-      lon: oltPos.lon,
-      district: districtName,
-      model: 'Huawei MA5800-X7',
-      capacity: 64,
-      transitBoxes: [],
-      l1Splitter: '1:4',
-    };
-
-    // Cluster subscribers into ORKs
-    const kOrk = Math.max(1, Math.ceil(subs.length / settings.maxPerORK));
-    const { clusters: orkClusters } = kmeans(
-      subs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id })),
-      kOrk
-    );
-
-    const orks: ORK[] = [];
-    const updatedSubs: Subscriber[] = [];
-
-    for (let i = 0; i < orkClusters.length; i++) {
-      const cluster = orkClusters[i];
-      if (cluster.length === 0) continue;
-      const orkSubsRaw: Subscriber[] = cluster
-        .map((p) => subs.find((s) => s.id === p.id))
-        .filter(Boolean) as Subscriber[];
-      const orkAnchor = pickOrkAnchor(orkSubsRaw);
-      const orkId = `Бокс-${districtName.slice(0, 4).replace(/\s/g, '')}-${i + 1}`;
-      const splitter: '1:4' | '1:8' | '1:16' =
-        cluster.length <= 4 ? '1:4' : cluster.length <= 8 ? '1:8' : '1:16';
-
-      const updatedOrkSubs = orkSubsRaw.map((s) => ({ ...s, orkId }));
-      updatedSubs.push(...updatedOrkSubs);
-
-      const orkSubCount = updatedOrkSubs.length;
-      orks.push({
-        id: orkId,
-        lat: orkAnchor.lat,
-        lon: orkAnchor.lon,
-        district: districtName,
-        splitter,
-        tbId: '',
-        subscribers: updatedOrkSubs,
-        // В GPON: TB→ORK всегда ОК-4 (одно несущее волокно + резерв)
-        cableType: 'ОК-4',
-        boxType: orkSubCount <= 4 ? 'Бокс-8' : orkSubCount <= 8 ? 'Бокс-16' : 'ОРКСп-16',
-      });
+    if (overrides.length <= 1) {
+      // Single OLT (override or auto-centroid). Same as before.
+      const oltPos = overrides[0]
+        ?? centroid(subs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id })));
+      districts.push(buildSingleOlt(districtName, baseColor, subs, oltPos, '', settings, cables));
+      continue;
     }
 
-    // Cluster ORKs into Transit Boxes
-    const kTB = Math.max(1, Math.ceil(orks.length / settings.maxORKperTB));
-    const { clusters: tbClusters } = kmeans(
-      orks.map((o) => ({ lat: o.lat, lon: o.lon, id: o.id })),
-      kTB
-    );
-
-    const transitBoxes: TransitBox[] = [];
-
-    for (let i = 0; i < tbClusters.length; i++) {
-      const cluster = tbClusters[i];
-      if (cluster.length === 0) continue;
-      const tbId = `Муфта-${districtName.slice(0, 4).replace(/\s/g, '')}-${i + 1}`;
-
-      const tbOrks = cluster
-        .map((p) => orks.find((o) => o.id === p.id))
-        .filter(Boolean) as ORK[];
-
-      const updatedTBOrks = tbOrks.map((o) => ({ ...o, tbId }));
-      // Update orks array references
-      for (const o of updatedTBOrks) {
-        const idx = orks.findIndex((x) => x.id === o.id);
-        if (idx >= 0) orks[idx] = o;
+    // Multiple OLTs: assign each subscriber to the nearest OLT (Voronoi),
+    // then build each partition as its own sub-network. Sub-districts get a
+    // numeric suffix so IDs stay unique.
+    const groups: Subscriber[][] = overrides.map(() => []);
+    for (const s of subs) {
+      let best = 0;
+      let bestD = Infinity;
+      for (let i = 0; i < overrides.length; i++) {
+        const d = haversineM(s.lat, s.lon, overrides[i].lat, overrides[i].lon);
+        if (d < bestD) { bestD = d; best = i; }
       }
-
-      // Place TB smartly: along the OLT→cluster axis, near the closest ORK to OLT.
-      const tbAnchor = pickTbAnchor(
-        updatedTBOrks.map((o) => ({ lat: o.lat, lon: o.lon })),
-        olt.lat, olt.lon,
-      );
-
-      // Магистраль OLT→TB: считаем по количеству ОРК, а не абонентов
-      const trunkType = trunkCableType(updatedTBOrks.length);
-      // Распределение TB→ORK: всегда ОК-4
-      const tbToOrkType: CableType = 'ОК-4';
-
-      const tb: TransitBox = {
-        id: tbId,
-        lat: tbAnchor.lat,
-        lon: tbAnchor.lon,
-        district: districtName,
-        oltId: olt.id,
-        orks: updatedTBOrks,
-        inCable: trunkType,
-        outCable: tbToOrkType,
-        muftaType: 'МТОК-96А',
-      };
-      transitBoxes.push(tb);
-
-      // Cable: OLT → TB
-      cables.push(makeCable(trunkType, olt.id, tbId, [
-        [olt.lat, olt.lon], [tb.lat, tb.lon]
-      ]));
-
-      // Cables: TB → each ORK
-      for (const ork of updatedTBOrks) {
-        cables.push(makeCable(tbToOrkType, tbId, ork.id, [
-          [tb.lat, tb.lon], [ork.lat, ork.lon]
-        ]));
-
-        // Cables: ORK → each subscriber (drop, всегда ОК-4)
-        for (const sub of ork.subscribers) {
-          cables.push(makeCable('ОК-4', ork.id, sub.id, [
-            [ork.lat, ork.lon], [sub.lat, sub.lon]
-          ]));
-        }
-      }
+      groups[best].push(s);
     }
 
-    olt.transitBoxes = transitBoxes;
-
-    districts.push({
-      name: districtName,
-      color,
-      olt,
-      subscribers: updatedSubs,
-    });
+    for (let i = 0; i < overrides.length; i++) {
+      const groupSubs = groups[i];
+      if (groupSubs.length === 0) continue;
+      const subDistrictName = `${districtName}-${i + 1}`;
+      const subColor = DISTRICT_COLORS[(colorIdx + i) % DISTRICT_COLORS.length];
+      districts.push(buildSingleOlt(
+        subDistrictName,
+        subColor,
+        groupSubs,
+        overrides[i],
+        '',
+        settings,
+        cables,
+      ));
+    }
+    colorIdx += overrides.length - 1;
   }
 
   return { districts, cables };
