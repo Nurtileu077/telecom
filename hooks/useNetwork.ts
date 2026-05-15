@@ -143,6 +143,7 @@ export function useNetwork() {
   const [layers, setLayers] = useState<LayerVisibility>(DEFAULT_LAYERS);
   const [status, setStatus] = useState<BuildStatus>('idle');
   const [osrmProgress, setOsrmProgress] = useState<OSRMProgress>({ done: 0, total: 0, current: '' });
+  const [osrmError, setOsrmError] = useState<string | null>(null);
   const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([]);
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
   const [editMode, setEditMode] = useState(false);
@@ -275,6 +276,12 @@ export function useNetwork() {
           (done, total, current) => setOsrmProgress({ done, total, current }),
           controller.signal,
         );
+        const stats = (finalCables as any).__stats;
+        if (stats && stats.failed > 0) {
+          setOsrmError(`OSRM не сработал на ${stats.failed} из ${stats.total} кабелей. ${stats.lastError || ''}`);
+        } else {
+          setOsrmError(null);
+        }
       }
 
       // Глобальная консолидация: одна дорога — один кабель, размер по числу
@@ -408,6 +415,12 @@ export function useNetwork() {
           (d, t, c) => setOsrmProgress({ done: d, total: t, current: c }),
           ctrl.signal,
         );
+        const stats = (reRouted as any).__stats;
+        if (stats && stats.failed > 0) {
+          setOsrmError(`OSRM не сработал на ${stats.failed} из ${stats.total} кабелей. ${stats.lastError || ''}`);
+        } else if (stats && stats.routed > 0) {
+          setOsrmError(null);
+        }
         const map = new Map(reRouted.map((c) => [c.id, c]));
         routedTrunks = trunks.map((c) => map.get(c.id) ?? c);
       } catch { /* abort */ }
@@ -492,6 +505,12 @@ export function useNetwork() {
         (done, total, current) => setOsrmProgress({ done, total, current }),
         controller.signal,
       );
+      const stats = (routedTrunks as any).__stats;
+      if (stats && stats.failed > 0) {
+        setOsrmError(`OSRM не сработал на ${stats.failed} из ${stats.total} кабелей. ${stats.lastError || ''}`);
+      } else if (stats && stats.routed > 0) {
+        setOsrmError(null);
+      }
       if (!controller.signal.aborted) {
         const { cables: consolidated, joints: newJoints } = consolidateCables([...routedTrunks, ...drops], districts);
         setCables(consolidated);
@@ -1197,7 +1216,7 @@ export function useNetwork() {
     prices, setPrices: setPricesAndStore,
     importHistory, allSubscribers,
     layers, toggleLayer, patchLayers,
-    status, osrmProgress, stopOSRM, rerouteWithOSRM,
+    status, osrmProgress, osrmError, dismissOsrmError: () => setOsrmError(null), stopOSRM, rerouteWithOSRM,
     validationIssues,
     editMode, setEditMode,
     autoSaveEnabled, setAutoSaveEnabled, lastSavedAt, dbEnabled,
