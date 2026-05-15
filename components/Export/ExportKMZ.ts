@@ -28,22 +28,48 @@ function html(lines: string): string {
   return lines.split('\n').join('<br/>');
 }
 
+function isValidLatLng(lat: number, lon: number): boolean {
+  return (
+    typeof lat === 'number' && typeof lon === 'number' &&
+    !isNaN(lat) && !isNaN(lon) &&
+    lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180
+  );
+}
+
+function fmt(n: number): string {
+  // 6 decimal places ≈ 11 cm precision — more than enough, keeps KML small.
+  return n.toFixed(6);
+}
+
 function pt(name: string, desc: string, lat: number, lon: number, style: string): string {
+  if (!isValidLatLng(lat, lon)) return '';
   return `<Placemark>
   <name>${esc(name)}</name>
   <description><![CDATA[${desc}]]></description>
   <styleUrl>#${style}</styleUrl>
-  <Point><coordinates>${lon},${lat},0</coordinates></Point>
+  <Point><coordinates>${fmt(lon)},${fmt(lat)},0</coordinates></Point>
 </Placemark>\n`;
 }
 
 function line(name: string, coords: [number, number][], style: string, desc = ''): string {
-  const cs = coords.map(([lat, lon]) => `${lon},${lat},0`).join(' ');
+  // Filter NaN / out-of-range pairs; collapse adjacent duplicates so Google Maps
+  // doesn't reject the LineString as degenerate.
+  const clean: [number, number][] = [];
+  for (const c of coords) {
+    if (!c || c.length < 2) continue;
+    const [la, lo] = c;
+    if (!isValidLatLng(la, lo)) continue;
+    const prev = clean[clean.length - 1];
+    if (prev && Math.abs(prev[0] - la) < 1e-9 && Math.abs(prev[1] - lo) < 1e-9) continue;
+    clean.push([la, lo]);
+  }
+  if (clean.length < 2) return '';
+  const cs = clean.map(([lat, lon]) => `${fmt(lon)},${fmt(lat)},0`).join(' ');
   return `<Placemark>
   <name>${esc(name)}</name>
   <description><![CDATA[${desc}]]></description>
   <styleUrl>#${style}</styleUrl>
-  <LineString><tessellate>1</tessellate><coordinates>${cs}</coordinates></LineString>
+  <LineString><tessellate>1</tessellate><altitudeMode>clampToGround</altitudeMode><coordinates>${cs}</coordinates></LineString>
 </Placemark>\n`;
 }
 
@@ -55,28 +81,34 @@ export async function exportKMZ(districts: District[], cables: Cable[]): Promise
   const JSZip = (await import('jszip')).default;
 
   // ---- Styles ----
+  // hotSpot x=0.5 y=0.5 → центр-якорь иконки лежит точно на координатах,
+  // иначе Google Earth/Maps крепят png за левый-нижний угол и метки смещены.
   const styles = `
 <Style id="olt">
   <IconStyle><color>ff14b8f5</color><scale>1.6</scale>
     <Icon><href>http://maps.google.com/mapfiles/kml/shapes/square.png</href></Icon>
+    <hotSpot x="0.5" y="0.5" xunits="fraction" yunits="fraction"/>
   </IconStyle>
   <LabelStyle><color>ff14b8f5</color><scale>0.9</scale></LabelStyle>
 </Style>
 <Style id="tb">
   <IconStyle><color>ff00c8ff</color><scale>1.2</scale>
     <Icon><href>http://maps.google.com/mapfiles/kml/shapes/square.png</href></Icon>
+    <hotSpot x="0.5" y="0.5" xunits="fraction" yunits="fraction"/>
   </IconStyle>
   <LabelStyle><color>ff00c8ff</color><scale>0.7</scale></LabelStyle>
 </Style>
 <Style id="ork">
   <IconStyle><color>ff008aec</color><scale>1.1</scale>
     <Icon><href>http://maps.google.com/mapfiles/kml/shapes/target.png</href></Icon>
+    <hotSpot x="0.5" y="0.5" xunits="fraction" yunits="fraction"/>
   </IconStyle>
   <LabelStyle><color>ff008aec</color><scale>0.65</scale></LabelStyle>
 </Style>
 <Style id="sub">
   <IconStyle><color>ff34d399</color><scale>0.55</scale>
     <Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon>
+    <hotSpot x="0.5" y="0.5" xunits="fraction" yunits="fraction"/>
   </IconStyle>
   <LabelStyle><scale>0</scale></LabelStyle>
 </Style>
@@ -185,24 +217,67 @@ ${html(SPECS.sub)}`;
   }
   kml += `</Folder>\n`;
 
-  // ---- Cables by type ----
+  // ---- Cables — split by type then by district  ----
+  // Google My Maps imposes 2000 features per layer; each <Folder> at top level
+  // becomes one layer.  Per-type only would put e.g. 2000+ drops in one layer
+  // and silently truncate.  Per-(type×district) keeps every folder well below
+  // the limit and matches the entity-folder convention.
   const cableTypeOrder: Cable['type'][] = ['ОК-4', 'ОК-8', 'ОК-12', 'ОК-16', 'ОК-24', 'ОК-32', 'ОК-48', 'ОК-96'];
+
+  // Build district → entity-id  index so we can attribute cables.  An ORK belongs
+  // to district X if it shows up under X's OLT; subscriber too.  Cables that
+  // can't be attributed (joints span districts) fall into a "Без района" bucket.
+  const entityDistrict = new Map<string, string>();
+  for (const d of districts) {
+    entityDistrict.set(d.olt.id, d.name);
+    for (const tb of d.olt.transitBoxes) {
+      entityDistrict.set(tb.id, d.name);
+      for (const ork of tb.orks) {
+        entityDistrict.set(ork.id, d.name);
+        for (const sub of ork.subscribers) entityDistrict.set(sub.id, d.name);
+      }
+    }
+    for (const sub of d.subscribers) entityDistrict.set(sub.id, d.name);
+  }
+  const cableDistrict = (c: Cable): string =>
+    entityDistrict.get(c.fromId) ?? entityDistrict.get(c.toId) ?? 'Без района';
+
+  let skippedCables = 0;
   for (const type of cableTypeOrder) {
     const typeCables = cables.filter((c) => c.type === type);
     if (typeCables.length === 0) continue;
     const styleInfo = CABLE_STYLES[type];
     const totalTypeM = typeCables.reduce((s, c) => s + c.lengthM, 0);
+
+    // Group by district
+    const byDist = new Map<string, Cable[]>();
+    for (const c of typeCables) {
+      const dn = cableDistrict(c);
+      if (!byDist.has(dn)) byDist.set(dn, []);
+      byDist.get(dn)!.push(c);
+    }
+
     kml += `<Folder><name>${styleInfo.label} — ${typeCables.length} уч. / ${fmtLen(totalTypeM)}</name>\n`;
-    for (const cable of typeCables) {
-      const routed = cable.routedByOSRM ? '✅ по дороге (OSRM)' : '⚠️ прямая линия';
-      const desc = `<b>${esc(cable.fromId)} → ${esc(cable.toId)}</b><br/>
+    for (const [distName, distCables] of byDist.entries()) {
+      kml += `<Folder><name>${esc(distName)} (${distCables.length} уч.)</name>\n`;
+      for (const cable of distCables) {
+        const routed = cable.routedByOSRM ? '✅ по дороге (OSRM)' : '⚠️ прямая линия';
+        const desc = `<b>${esc(cable.fromId)} → ${esc(cable.toId)}</b><br/>
 Тип: ${esc(cable.type)}<br/>
 Длина: ${fmtLen(cable.lengthM)}<br/>
 Маршрут: ${routed}<br/>
 Точек: ${cable.coords.length}`;
-      kml += line(`${cable.fromId}→${cable.toId}`, cable.coords, `cable-${type}`, desc);
+        const placemark = line(`${cable.fromId}→${cable.toId}`, cable.coords, `cable-${type}`, desc);
+        if (!placemark) { skippedCables++; continue; }
+        kml += placemark;
+      }
+      kml += `</Folder>\n`;
     }
     kml += `</Folder>\n`;
+  }
+
+  if (skippedCables > 0) {
+    console.warn(`[KMZ] Пропущено ${skippedCables} кабелей с битыми координатами`);
   }
 
   kml += `</Document></kml>`;
