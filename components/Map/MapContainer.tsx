@@ -77,6 +77,75 @@ const BASEMAPS: Record<BaseMap, { url: string; attribution: string; subdomains?:
   },
 };
 
+// Quantize a coordinate to a ~10m grid cell — used for detecting which cables
+// share a road segment.  Mirrors the consolidation grid but coarser-than-screen
+// so adjacent OSRM nodes hash to the same bucket.
+function cellKey(lat: number, lon: number): string {
+  const F = 10000; // ≈11 m  at the equator, ≈8 m on KZ latitudes
+  return `${Math.round(lat * F)}_${Math.round(lon * F)}`;
+}
+
+// Assign each cable a "lane" index — 0 means draw on the road centreline, 1+
+// means draw with a perpendicular offset. Two cables sharing >50% of their
+// path segments get assigned different lanes so they stay visually distinct.
+function computeCableLanes(cables: { id: string; coords: [number, number][] }[]): Map<string, number> {
+  const segUsers = new Map<string, string[]>();
+  for (const c of cables) {
+    const cells = new Set<string>();
+    for (const [la, lo] of c.coords) cells.add(cellKey(la, lo));
+    for (const k of cells) {
+      if (!segUsers.has(k)) segUsers.set(k, []);
+      segUsers.get(k)!.push(c.id);
+    }
+  }
+  const lanes = new Map<string, number>();
+  // Sort cables by length descending so the longest gets lane 0 (visually
+  // "underneath", the trunk on the road centreline).
+  const sorted = [...cables].sort((a, b) => b.coords.length - a.coords.length);
+  for (const c of sorted) {
+    const taken = new Set<number>();
+    for (const [la, lo] of c.coords) {
+      const k = cellKey(la, lo);
+      const users = segUsers.get(k) || [];
+      for (const u of users) {
+        if (u === c.id) continue;
+        const ln = lanes.get(u);
+        if (ln !== undefined) taken.add(ln);
+      }
+    }
+    let lane = 0;
+    while (taken.has(lane)) lane++;
+    if (lane > 6) lane = 6; // cap so we don't fly off the road on dense overlaps
+    lanes.set(c.id, lane);
+  }
+  return lanes;
+}
+
+// Shift a polyline perpendicular to its local direction by `offsetM` metres.
+// Endpoints get the offset too, so cables visually start/end slightly off the
+// entity icon — but the underlying cable.coords still terminate at the entity.
+function offsetPolyline(coords: [number, number][], offsetM: number): [number, number][] {
+  if (coords.length < 2 || offsetM === 0) return coords;
+  const out: [number, number][] = [];
+  for (let i = 0; i < coords.length; i++) {
+    const A = i > 0 ? coords[i - 1] : coords[i];
+    const B = i < coords.length - 1 ? coords[i + 1] : coords[i];
+    const lat = coords[i][0];
+    const cosLat = Math.cos((lat * Math.PI) / 180);
+    const dx = (B[1] - A[1]) * 111320 * cosLat; // east-west, metres
+    const dy = (B[0] - A[0]) * 111320;          // north-south, metres
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) { out.push(coords[i]); continue; }
+    // Perpendicular (left-hand normal) in metres
+    const perpX = -dy / len;
+    const perpY = dx / len;
+    const dLon = (perpX * offsetM) / (111320 * cosLat);
+    const dLat = (perpY * offsetM) / 111320;
+    out.push([coords[i][0] + dLat, coords[i][1] + dLon]);
+  }
+  return out;
+}
+
 export default function LeafletMap(props: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
@@ -279,19 +348,33 @@ export default function LeafletMap(props: Props) {
       const zoom = map.getZoom();
 
       if (layers.cables) {
+        // ── Параллельные кабели на одной дороге ──
+        // Разные OLT, идущие по одной улице, архитектурно остаются отдельными
+        // кабелями (разные оптические сигналы). Чтобы они не накладывались
+        // визуально в один полилайн, считаем для каждого кабеля «полосу»
+        // (lane index) на основе общих сегментов с соседями и рендерим со
+        // сдвигом перпендикулярно направлению. На реальной карте это видно
+        // как несколько тонких линий рядом, а не одна толстая чёрная.
+        const lanes = computeCableLanes(cables);
+
         for (const cable of cables) {
           const layerKey = CABLE_LAYER_KEY[cable.type];
           if (!layers[layerKey]) continue;
           if (cable.type === 'ОК-4' && zoom < 14) continue;
 
           const isEditing = propsRef.current.editingCableId === cable.id;
-          const poly = L.polyline(cable.coords, {
+          const lane = lanes.get(cable.id) ?? 0;
+          // ~1.5 м между параллельными «полосами». Знакочередование вокруг центра.
+          const offsetM = lane === 0 ? 0 : ((lane % 2 === 1 ? 1 : -1) * Math.ceil(lane / 2)) * 1.5;
+          const drawnCoords = offsetM === 0 ? cable.coords : offsetPolyline(cable.coords, offsetM);
+
+          const poly = L.polyline(drawnCoords, {
             color: isEditing ? '#c4b5fd' : (CABLE_COLORS[cable.type] || '#888'),
             weight: isEditing ? (CABLE_WEIGHTS[cable.type] || 2) + 2 : (CABLE_WEIGHTS[cable.type] || 2),
             opacity: cable.type === 'ОК-4' ? 0.6 : 0.85,
           });
           poly.bindTooltip(
-            `<b>${cable.type}</b><br/>${cable.fromId} → ${cable.toId}<br/>Длина: ${Math.round(cable.lengthM)} м`,
+            `<b>${cable.type}</b><br/>${cable.fromId} → ${cable.toId}<br/>Длина: ${Math.round(cable.lengthM)} м${lane > 0 ? `<br/><i style=\"color:#94a3b8\">полоса ${lane}</i>` : ''}`,
             { sticky: true, className: 'text-xs' },
           );
           poly.on('click', (e: any) => {
