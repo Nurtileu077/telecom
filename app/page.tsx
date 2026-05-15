@@ -47,6 +47,9 @@ export default function HomePage() {
   const [cableDraw, setCableDraw] = useState<{ stage: 'from' | 'to'; fromId?: string } | null>(null);
   const [budgetColoring, setBudgetColoring] = useState(false);
   const [splicePlanTbId, setSplicePlanTbId] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ lat: number; lon: number; x: number; y: number } | null>(null);
+  const [coordInput, setCoordInput] = useState<{ kind: 'sub' | 'olt' | 'tb' | 'ork' } | null>(null);
+  const [coordText, setCoordText] = useState('');
 
   const budgetMap = useRef<Map<string, 'ok' | 'warn' | 'fail'>>(new Map());
   useEffect(() => {
@@ -145,6 +148,47 @@ export default function HomePage() {
     const existing = Array.from(new Set(net.districts.map((d) => d.name)));
     if (existing.length === 1) setNewSubDistrict(existing[0]);
   }, [net, placing]);
+
+  // Drop a point of the requested kind at (lat, lon) — used by the right-click
+  // context menu and by the manual-coordinate dialog.  Bypasses placing/edit mode.
+  const dropEntityAt = useCallback((kind: 'sub' | 'olt' | 'tb' | 'ork', lat: number, lon: number) => {
+    if (kind === 'olt') {
+      const name = window.prompt('Название района для нового OLT:', 'Новый район');
+      if (name === null) return;
+      net.addOLTAt(lat, lon, name);
+      return;
+    }
+    if (kind === 'tb') {
+      if (net.districts.length === 0) { alert('Сначала создай OLT'); return; }
+      net.addTBAt(lat, lon);
+      return;
+    }
+    if (kind === 'ork') {
+      const hasTB = net.districts.some((d) => d.olt.transitBoxes.length > 0);
+      if (!hasTB) { alert('Сначала создай Муфту (TB)'); return; }
+      net.addORKAt(lat, lon);
+      return;
+    }
+    // subscriber
+    setShowAddSub({ lat, lon });
+    const existing = Array.from(new Set(net.districts.map((d) => d.name)));
+    if (existing.length === 1) setNewSubDistrict(existing[0]);
+  }, [net]);
+
+  const submitCoordInput = useCallback(() => {
+    if (!coordInput) return;
+    const m = coordText.trim().match(/^\s*(-?\d+(?:[.,]\d+)?)\s*[,;\s]\s*(-?\d+(?:[.,]\d+)?)\s*$/);
+    if (!m) { alert('Формат: lat, lng (например: 40.78, 68.32)'); return; }
+    const lat = parseFloat(m[1].replace(',', '.'));
+    const lon = parseFloat(m[2].replace(',', '.'));
+    if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+      alert('Неверные координаты'); return;
+    }
+    const k = coordInput.kind;
+    setCoordInput(null);
+    setCoordText('');
+    dropEntityAt(k, lat, lon);
+  }, [coordInput, coordText, dropEntityAt]);
 
   const submitNewSubscriber = useCallback(async () => {
     if (!showAddSub) return;
@@ -404,6 +448,7 @@ export default function HomePage() {
             editMode={net.editMode}
             placingMode={!!placing}
             onMapClick={handleMapClickAddSub}
+            onMapContextMenu={(lat, lon, x, y) => setContextMenu({ lat, lon, x, y })}
             moveEntity={handleMoveEntity}
             deleteSubscriber={net.deleteSubscriber}
             onEntityClick={(kind, id) => {
@@ -552,6 +597,110 @@ export default function HomePage() {
           currentProjectId={net.projectId}
           dbEnabled={net.dbEnabled}
         />
+      )}
+
+      {/* Right-click context menu on map */}
+      {contextMenu && (
+        <>
+          <div
+            className="fixed inset-0 z-[9998]"
+            onClick={() => setContextMenu(null)}
+            onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }}
+          />
+          <div
+            className="fixed z-[9999] bg-[#0d1b2a] border border-[#1e3a5f] rounded-md shadow-2xl py-1 min-w-[220px] animate-fade-in text-[12px]"
+            style={{
+              left: Math.min(contextMenu.x, window.innerWidth - 240),
+              top: Math.min(contextMenu.y, window.innerHeight - 280),
+            }}
+          >
+            <div className="px-3 py-1.5 text-[10px] text-[#64748b] font-mono border-b border-[#1e3a5f]/50">
+              {contextMenu.lat.toFixed(6)}, {contextMenu.lon.toFixed(6)}
+            </div>
+            <button
+              onClick={() => { dropEntityAt('sub', contextMenu.lat, contextMenu.lon); setContextMenu(null); }}
+              className="w-full px-3 py-1.5 text-left hover:bg-[#34d399]/10 text-[#e2e8f0] flex items-center gap-2"
+            >
+              <span>🏠</span><span>Добавить абонента</span>
+            </button>
+            <button
+              onClick={() => { dropEntityAt('ork', contextMenu.lat, contextMenu.lon); setContextMenu(null); }}
+              className="w-full px-3 py-1.5 text-left hover:bg-[#38bdf8]/10 text-[#e2e8f0] flex items-center gap-2"
+            >
+              <span>📦</span><span>Поставить ОРК</span>
+            </button>
+            <button
+              onClick={() => { dropEntityAt('tb', contextMenu.lat, contextMenu.lon); setContextMenu(null); }}
+              className="w-full px-3 py-1.5 text-left hover:bg-[#38bdf8]/10 text-[#e2e8f0] flex items-center gap-2"
+            >
+              <span>🔷</span><span>Поставить Муфту (TB)</span>
+            </button>
+            <button
+              onClick={() => { dropEntityAt('olt', contextMenu.lat, contextMenu.lon); setContextMenu(null); }}
+              className="w-full px-3 py-1.5 text-left hover:bg-[#38bdf8]/10 text-[#e2e8f0] flex items-center gap-2"
+            >
+              <span>📡</span><span>Поставить OLT</span>
+            </button>
+            <div className="my-1 border-t border-[#1e3a5f]/50" />
+            <button
+              onClick={() => {
+                setCableDraw({ stage: 'from' });
+                setPlacing(null);
+                setContextMenu(null);
+              }}
+              className="w-full px-3 py-1.5 text-left hover:bg-[#a78bfa]/10 text-[#e2e8f0] flex items-center gap-2"
+            >
+              <span>🔗</span><span>Протянуть кабель А→Б…</span>
+            </button>
+            <button
+              onClick={() => { setCoordInput({ kind: 'sub' }); setContextMenu(null); }}
+              className="w-full px-3 py-1.5 text-left hover:bg-[#fbbf24]/10 text-[#e2e8f0] flex items-center gap-2"
+            >
+              <span>⌨</span><span>Ввести координаты вручную…</span>
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* Manual coordinate-entry dialog */}
+      {coordInput && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[#0d1b2a] border border-[#1e3a5f] rounded-xl shadow-2xl w-[360px] p-4">
+            <h2 className="text-sm font-semibold text-[#e2e8f0] mb-3">⌨ По координатам</h2>
+            <div className="space-y-2 mb-4">
+              <div className="grid grid-cols-4 gap-1">
+                {(['sub', 'ork', 'tb', 'olt'] as const).map((k) => (
+                  <button
+                    key={k}
+                    onClick={() => setCoordInput({ kind: k })}
+                    className={`py-1.5 text-[11px] rounded transition-colors ${coordInput.kind === k ? 'bg-[#38bdf8]/20 border border-[#38bdf8] text-[#38bdf8]' : 'border border-[#1e3a5f] text-[#94a3b8]'}`}
+                  >
+                    {k === 'sub' ? '🏠 Аб.' : k === 'ork' ? '📦 ОРК' : k === 'tb' ? '🔷 TB' : '📡 OLT'}
+                  </button>
+                ))}
+              </div>
+              <input
+                value={coordText}
+                onChange={(e) => setCoordText(e.target.value)}
+                placeholder="40.78, 68.32"
+                className="w-full bg-[#0a0e1a] border border-[#1e3a5f] rounded px-2 py-1.5 text-xs text-[#e2e8f0] font-mono focus:outline-none focus:border-[#38bdf8]"
+                autoFocus
+                onKeyDown={(e) => { if (e.key === 'Enter') submitCoordInput(); }}
+              />
+              <div className="text-[10px] text-[#64748b]">
+                Формат: <code className="text-[#94a3b8]">lat, lng</code> — десятичные градусы.
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => { setCoordInput(null); setCoordText(''); }} className="flex-1 py-1.5 border border-[#1e3a5f] rounded text-xs text-[#94a3b8]">
+                Отмена
+              </button>
+              <button onClick={submitCoordInput} className="flex-1 py-1.5 bg-[#38bdf8]/15 hover:bg-[#38bdf8]/25 text-[#38bdf8] rounded text-xs font-semibold">
+                Поставить точку
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Add subscriber dialog */}

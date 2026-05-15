@@ -24,6 +24,7 @@ interface Props {
   editMode: boolean;
   placingMode?: boolean;
   onMapClick?: (lat: number, lon: number) => void;
+  onMapContextMenu?: (lat: number, lon: number, screenX: number, screenY: number) => void;
   moveEntity?: (kind: 'tb' | 'ork' | 'olt', id: string, lat: number, lon: number) => void;
   deleteSubscriber?: (id: string) => void;
   onEntityClick?: (kind: 'olt' | 'tb' | 'ork', id: string) => void;
@@ -162,17 +163,24 @@ export default function LeafletMap(props: Props) {
         }
       });
 
-      // Right-click: finish polygon/line
+      // Right-click: finish polygon/line OR open context menu for "add here".
       map.on('contextmenu', (e: any) => {
         e.originalEvent.preventDefault();
         const p = propsRef.current;
         if (p.activeTool === 'polygon' || p.activeTool === 'line') {
           finishShape(L);
+          return;
         }
         if (p.measureMode) {
           // reset measure
           measureStateRef.current = { coords: [], total: 0 };
           measureGroupRef.current?.clearLayers();
+          return;
+        }
+        // Otherwise: hand off to host for a context menu (add point here, etc.)
+        if (p.onMapContextMenu) {
+          const oe = e.originalEvent as MouseEvent;
+          p.onMapContextMenu(e.latlng.lat, e.latlng.lng, oe.clientX, oe.clientY);
         }
       });
 

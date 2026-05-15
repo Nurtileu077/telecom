@@ -8,7 +8,7 @@ import {
 } from '@/types/network';
 import { buildNetwork, OltLocationMap } from '@/components/Network/AutoBuild';
 import { calculateMaterials, validateNetwork } from '@/components/Network/MaterialCalc';
-import { routeCables } from '@/components/Network/OSRMRouter';
+import { routeCables, getRoute } from '@/components/Network/OSRMRouter';
 import { consolidateCables } from '@/components/Network/Consolidation';
 import { haversineM } from '@/components/Network/KMeans';
 import { calculateSubscriberBudgets, budgetStats } from '@/components/Network/PowerBudget';
@@ -716,20 +716,74 @@ export function useNetwork() {
     });
   }, [districts]);
 
-  const addCableBetween = useCallback((fromId: string, toId: string, type: Cable['type'] = 'ОК-12') => {
+  // Classify an entity id → 'olt' | 'tb' | 'ork' | 'sub' | 'joint' (best-effort).
+  const findEntityKind = useCallback((id: string): 'olt' | 'tb' | 'ork' | 'sub' | 'joint' | null => {
+    for (const d of districts) {
+      if (d.olt.id === id) return 'olt';
+      for (const tb of d.olt.transitBoxes) {
+        if (tb.id === id) return 'tb';
+        for (const ork of tb.orks) {
+          if (ork.id === id) return 'ork';
+          if (ork.subscribers.some((s) => s.id === id)) return 'sub';
+        }
+      }
+    }
+    if ((joints ?? []).some((j) => j.id === id)) return 'joint';
+    return null;
+  }, [districts, joints]);
+
+  // Pick a sensible default cable type for an A→B link based on what's at each end.
+  // Drop (any endpoint = sub) → ОК-4. Magistral (OLT involved) → ОК-24. Else ОК-12.
+  const inferCableType = useCallback((fromId: string, toId: string): Cable['type'] => {
+    const a = findEntityKind(fromId);
+    const b = findEntityKind(toId);
+    if (a === 'sub' || b === 'sub') return 'ОК-4';
+    if (a === 'olt' || b === 'olt') return 'ОК-24';
+    return 'ОК-12';
+  }, [findEntityKind]);
+
+  // Add a cable between two entities. When settings.useOSRM is on, fetches a
+  // single OSRM route so the new cable follows real roads instead of cutting
+  // diagonally through buildings — matches the smart-routing the user sees
+  // when running the full build.
+  const addCableBetween = useCallback(async (fromId: string, toId: string, typeArg?: Cable['type']) => {
     const from = findEntityCoords(fromId);
     const to = findEntityCoords(toId);
     if (!from || !to) return;
+
+    const type = typeArg ?? inferCableType(fromId, toId);
+
+    let coords: [number, number][] = [from, to];
+    let routed = false;
+    if (settings.useOSRM) {
+      try {
+        const route = await getRoute(from[0], from[1], to[0], to[1]);
+        if (route && route.length > 2) {
+          coords = route;
+          routed = true;
+        }
+      } catch {
+        // fall back to straight line
+      }
+    }
+
     const cable: Cable = {
       id: `cable-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      type, fibers: CABLE_FIBERS[type],
-      fromId, toId,
-      coords: [from, to],
-      lengthM: haversineM(from[0], from[1], to[0], to[1]),
-      routedByOSRM: false,
+      type,
+      fibers: CABLE_FIBERS[type],
+      fromId,
+      toId,
+      coords,
+      lengthM: routed
+        ? coords.slice(1).reduce(
+            (acc, c, i) => acc + haversineM(coords[i][0], coords[i][1], c[0], c[1]),
+            0,
+          )
+        : haversineM(from[0], from[1], to[0], to[1]),
+      routedByOSRM: routed,
     };
     setCables((prev) => [...prev, cable]);
-  }, [findEntityCoords]);
+  }, [findEntityCoords, inferCableType, settings.useOSRM]);
 
   // Manual placement of entities ----------------------------------------------
 
