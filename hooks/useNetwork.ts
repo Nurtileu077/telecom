@@ -128,7 +128,17 @@ export function useNetwork() {
   const [importHistory, setImportHistory] = useState<ImportRecord[]>([]);
   const [allSubscribers, setAllSubscribers] = useState<Subscriber[]>([]);
   const [materials, setMaterials] = useState<Materials | null>(null);
-  const [settings, setSettings] = useState<ProjectSettings>(DEFAULT_SETTINGS);
+  const [settings, setSettingsRaw] = useState<ProjectSettings>(() => {
+    if (typeof window === 'undefined') return DEFAULT_SETTINGS;
+    try {
+      const saved = localStorage.getItem('gpon-settings');
+      return saved ? { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } : DEFAULT_SETTINGS;
+    } catch { return DEFAULT_SETTINGS; }
+  });
+  const setSettings = useCallback((s: ProjectSettings) => {
+    setSettingsRaw(s);
+    try { localStorage.setItem('gpon-settings', JSON.stringify(s)); } catch {/* quota */}
+  }, []);
   const [prices, setPrices] = useState<PriceCatalog>(() => {
     if (typeof window === 'undefined') return DEFAULT_PRICES;
     try {
@@ -275,6 +285,7 @@ export function useNetwork() {
           true, // routeDrops — нужно для слияния дропов с магистралью по общим дорогам
           (done, total, current) => setOsrmProgress({ done, total, current }),
           controller.signal,
+          { orsApiKey: settings.orsApiKey, customOsrmUrl: settings.customOsrmUrl },
         );
         const stats = (finalCables as any).__stats;
         if (stats && stats.failed > 0) {
@@ -414,6 +425,7 @@ export function useNetwork() {
           needRouting, settings.osrmDelay, true,
           (d, t, c) => setOsrmProgress({ done: d, total: t, current: c }),
           ctrl.signal,
+          { orsApiKey: settings.orsApiKey, customOsrmUrl: settings.customOsrmUrl },
         );
         const stats = (reRouted as any).__stats;
         if (stats && stats.failed > 0) {
@@ -504,6 +516,7 @@ export function useNetwork() {
         trunks, 200, true,
         (done, total, current) => setOsrmProgress({ done, total, current }),
         controller.signal,
+        { orsApiKey: settings.orsApiKey, customOsrmUrl: settings.customOsrmUrl },
       );
       const stats = (routedTrunks as any).__stats;
       if (stats && stats.failed > 0) {
@@ -526,6 +539,43 @@ export function useNetwork() {
       }
     }
   }, [districts, settings]);
+
+  // Retry only cables that haven't been OSRM-routed yet. Useful after a
+  // rate-limited pass — wait a minute, then click this instead of doing
+  // a full re-route (which would also touch already-good cables).
+  const retryFailedOSRM = useCallback(async () => {
+    const unrouted = cables.filter((c) => !c.routedByOSRM && !c.fromId.startsWith('J-') && !c.toId.startsWith('J-'));
+    if (unrouted.length === 0) {
+      setOsrmError(null);
+      return;
+    }
+    if (abortRef.current) abortRef.current.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    try {
+      setStatus('routing');
+      const reRouted = await routeCables(
+        unrouted, settings.osrmDelay, true,
+        (d, t, c) => setOsrmProgress({ done: d, total: t, current: c }),
+        ctrl.signal,
+        { orsApiKey: settings.orsApiKey, customOsrmUrl: settings.customOsrmUrl },
+      );
+      const stats = (reRouted as any).__stats;
+      if (stats && stats.failed > 0) {
+        setOsrmError(`Повтор: ${stats.failed} из ${stats.total} кабелей всё ещё не маршрутизированы. ${stats.lastError || ''}`);
+      } else if (stats && (stats.routed > 0 || stats.cached > 0)) {
+        setOsrmError(null);
+      }
+      const map = new Map(reRouted.map((c) => [c.id, c]));
+      setCables((prev) => prev.map((c) => map.get(c.id) ?? c));
+      setStatus('done');
+    } catch (err) {
+      if (!ctrl.signal.aborted) {
+        setStatus('error');
+        console.error(err);
+      }
+    }
+  }, [cables, settings]);
 
   // Annotation operations
   const addAnnotation = useCallback((a: Omit<MapAnnotation, 'id' | 'createdAt' | 'updatedAt'>) => {
@@ -644,7 +694,7 @@ export function useNetwork() {
     abortRef.current = controller;
     try {
       setStatus('routing');
-      const routed = await routeCables([cable], 0, true, () => {}, controller.signal);
+      const routed = await routeCables([cable], 0, true, () => {}, controller.signal, { orsApiKey: settings.orsApiKey, customOsrmUrl: settings.customOsrmUrl });
       if (!controller.signal.aborted && routed[0]) {
         setCables((prev) => prev.map((c) => c.id === id ? routed[0] : c));
         setStatus('done');
@@ -1216,7 +1266,7 @@ export function useNetwork() {
     prices, setPrices: setPricesAndStore,
     importHistory, allSubscribers,
     layers, toggleLayer, patchLayers,
-    status, osrmProgress, osrmError, dismissOsrmError: () => setOsrmError(null), stopOSRM, rerouteWithOSRM,
+    status, osrmProgress, osrmError, dismissOsrmError: () => setOsrmError(null), stopOSRM, rerouteWithOSRM, retryFailedOSRM,
     validationIssues,
     editMode, setEditMode,
     autoSaveEnabled, setAutoSaveEnabled, lastSavedAt, dbEnabled,

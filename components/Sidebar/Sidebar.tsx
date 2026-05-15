@@ -57,7 +57,11 @@ interface Props {
   onPrintMap: () => void;
   onRerouteOSRM: () => void;
   onReconsolidate: () => void;
+  onRetryFailedOSRM: () => void;
+  unroutedCount: number;
   osrmStatus: string;
+  settings: import('@/types/network').ProjectSettings;
+  setSettings: (patch: Partial<import('@/types/network').ProjectSettings>) => void;
 
   powerBudgets: SubBudget[];
   powerBudgetStats: BudgetStats;
@@ -168,10 +172,14 @@ export default function Sidebar(props: Props) {
             onPrintMap={props.onPrintMap}
             onRerouteOSRM={props.onRerouteOSRM}
             onReconsolidate={props.onReconsolidate}
+            onRetryFailedOSRM={props.onRetryFailedOSRM}
+            unroutedCount={props.unroutedCount}
             osrmStatus={props.osrmStatus}
             hasCables={props.cables.length > 0}
             budgetColoring={props.budgetColoring}
             onToggleBudgetColoring={() => props.setBudgetColoring(!props.budgetColoring)}
+            settings={props.settings}
+            setSettings={props.setSettings}
           />
         )}
         {activeTab === 'projects' && (

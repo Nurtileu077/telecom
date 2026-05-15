@@ -181,6 +181,11 @@ export interface ProjectSettings {
   cableReserve: number;
   useOSRM: boolean;
   osrmDelay: number;
+  // Provider config: leave fields empty to use the public demo (rate-limited).
+  // Fill orsApiKey to use OpenRouteService (2k req/day free, more reliable).
+  // Fill customOsrmUrl to point at your self-hosted OSRM instance.
+  orsApiKey?: string;
+  customOsrmUrl?: string;
 }
 
 export interface Materials {

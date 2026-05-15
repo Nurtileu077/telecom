@@ -1,7 +1,8 @@
 'use client';
 import { useState, useMemo } from 'react';
-import { OpticalBudgetInputs } from '@/types/network';
+import { OpticalBudgetInputs, ProjectSettings } from '@/types/network';
 import { calculateOpticalBudget } from '@/components/Network/OpticalBudget';
+import { clearOSRMCache, getOSRMCacheStats } from '@/components/Network/OSRMRouter';
 
 const DEFAULT_INPUTS: OpticalBudgetInputs = {
   txPowerDbm: 3,
@@ -20,13 +21,19 @@ interface Props {
   onPrintMap: () => void;
   onRerouteOSRM: () => void;
   onReconsolidate: () => void;
+  onRetryFailedOSRM: () => void;
+  unroutedCount: number;
   osrmStatus: 'idle' | 'routing' | 'done' | 'error' | string;
   hasCables: boolean;
   budgetColoring: boolean;
   onToggleBudgetColoring: () => void;
+  settings: ProjectSettings;
+  setSettings: (patch: Partial<ProjectSettings>) => void;
 }
 
-export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onRerouteOSRM, onReconsolidate, osrmStatus, hasCables, budgetColoring, onToggleBudgetColoring }: Props) {
+export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onRerouteOSRM, onReconsolidate, onRetryFailedOSRM, unroutedCount, osrmStatus, hasCables, budgetColoring, onToggleBudgetColoring, settings, setSettings }: Props) {
+  const [showProviderConfig, setShowProviderConfig] = useState(false);
+  const [cacheStats, setCacheStats] = useState(() => getOSRMCacheStats());
   const [inputs, setInputs] = useState<OpticalBudgetInputs>(DEFAULT_INPUTS);
   const result = useMemo(() => calculateOpticalBudget(inputs), [inputs]);
 
@@ -56,6 +63,73 @@ export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, o
           Снэп вершин к сетке 25м, объединение параллельных кабелей, муфты в развилках.
           Используй после ручных правок.
         </p>
+        {unroutedCount > 0 && (
+          <>
+            <button
+              onClick={onRetryFailedOSRM}
+              disabled={osrmStatus === 'routing'}
+              className="mt-2 w-full py-2 px-3 text-xs font-semibold rounded-lg border transition-all disabled:opacity-40 bg-[#f59e0b]/10 border-[#f59e0b]/50 text-[#f59e0b] hover:bg-[#f59e0b]/20"
+            >
+              ↻ Повторить упавшие ({unroutedCount})
+            </button>
+            <p className="text-[9px] text-[#64748b] mt-1">
+              Маршрутизирует только прямые кабели. Подожди 30–60 сек после рейт-лимита и нажми.
+            </p>
+          </>
+        )}
+
+        <button
+          onClick={() => { setShowProviderConfig(!showProviderConfig); setCacheStats(getOSRMCacheStats()); }}
+          className="mt-2 w-full py-1.5 px-3 text-[10px] rounded border border-[#1e3a5f] text-[#94a3b8] hover:text-[#e2e8f0] hover:border-[#38bdf8]/40 transition-all flex items-center justify-between"
+        >
+          <span>⚙ Сервер маршрутизации</span>
+          <span className="text-[9px] text-[#64748b]">
+            {settings.customOsrmUrl ? 'свой OSRM' : settings.orsApiKey ? 'ORS' : 'demo'}
+            {' · '}кэш {cacheStats.size}
+          </span>
+        </button>
+
+        {showProviderConfig && (
+          <div className="mt-2 p-2.5 border border-[#1e3a5f] rounded space-y-2 bg-[#0a0e1a]">
+            <div>
+              <label className="text-[9px] text-[#64748b] block mb-1">OpenRouteService API key (2000/день бесплатно)</label>
+              <input
+                type="password"
+                value={settings.orsApiKey || ''}
+                onChange={(e) => setSettings({ orsApiKey: e.target.value || undefined })}
+                placeholder="eyJvcmciOiI1Yj…"
+                className="w-full bg-[#0d1b2a] border border-[#1e3a5f] rounded px-2 py-1 text-[10px] text-[#e2e8f0] focus:outline-none focus:border-[#38bdf8] font-mono"
+              />
+              <p className="text-[8px] text-[#64748b] mt-0.5">
+                <a href="https://openrouteservice.org/dev/#/signup" target="_blank" className="underline hover:text-[#38bdf8]">openrouteservice.org/dev</a> — регистрация, бесплатно
+              </p>
+            </div>
+            <div>
+              <label className="text-[9px] text-[#64748b] block mb-1">Свой OSRM URL (если развернул сам)</label>
+              <input
+                type="text"
+                value={settings.customOsrmUrl || ''}
+                onChange={(e) => setSettings({ customOsrmUrl: e.target.value || undefined })}
+                placeholder="https://my-osrm.example.com/route/v1/driving"
+                className="w-full bg-[#0d1b2a] border border-[#1e3a5f] rounded px-2 py-1 text-[10px] text-[#e2e8f0] focus:outline-none focus:border-[#38bdf8] font-mono"
+              />
+              <p className="text-[8px] text-[#64748b] mt-0.5">
+                Инструкция: docs/osrm-selfhost.md в репозитории
+              </p>
+            </div>
+            <div className="flex items-center justify-between pt-1 border-t border-[#1e3a5f]">
+              <span className="text-[9px] text-[#94a3b8]">
+                Кэш: {cacheStats.size} маршрутов · {(cacheStats.bytes / 1024).toFixed(0)} KB
+              </span>
+              <button
+                onClick={() => { clearOSRMCache(); setCacheStats(getOSRMCacheStats()); }}
+                className="text-[9px] text-[#f87171] hover:text-[#fca5a5] border border-[#f87171]/30 rounded px-1.5 py-0.5"
+              >
+                Очистить кэш
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* Visualization tools */}

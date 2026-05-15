@@ -375,6 +375,10 @@ export default function HomePage() {
           onPrintMap={onPrintMap}
           onRerouteOSRM={net.rerouteWithOSRM}
           onReconsolidate={net.reconsolidate}
+          onRetryFailedOSRM={net.retryFailedOSRM}
+          unroutedCount={net.cables.filter((c) => !c.routedByOSRM && c.type !== 'ОК-4' && !c.fromId.startsWith('J-') && !c.toId.startsWith('J-')).length}
+          settings={net.settings}
+          setSettings={(patch) => net.setSettings({ ...net.settings, ...patch })}
           osrmStatus={net.status}
           powerBudgets={net.powerBudgets}
           powerBudgetStats={net.powerBudgetStats}
