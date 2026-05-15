@@ -18,6 +18,8 @@ export interface NetForExecutor {
   addCableBetween: (fromId: string, toId: string, type?: Cable['type']) => Promise<void> | void;
   reconsolidate: () => Promise<void> | void;
   deleteSubscriber: (id: string) => void;
+  deleteCable: (id: string) => void;
+  rebuildFromCurrent: () => Promise<void> | void;
 }
 
 function haversineM(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -290,6 +292,17 @@ export async function executeTool(
           }
         }
         return `Сущность "${id}" не найдена.`;
+      }
+      case 'delete_cable': {
+        const { id } = tool.input;
+        const c = net.cables.find((x) => x.id === id);
+        if (!c) return `Кабель "${id}" не найден.`;
+        net.deleteCable(id);
+        return `Удалил кабель ${id} (${c.type}, ${Math.round(c.lengthM)} м, ${c.fromId} → ${c.toId}).`;
+      }
+      case 'rebuild_network': {
+        await net.rebuildFromCurrent();
+        return 'Пересобрал сеть из текущих абонентов + OLT-координат. Ручные правки кабелей могли быть утеряны — это ожидаемо.';
       }
       default:
         return `Неизвестный инструмент: ${(tool as { name: string }).name}`;

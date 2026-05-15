@@ -61,9 +61,12 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // 1024 был слишком тесно для развёрнутого анализа — модель обрывала
+    // ответы посередине, пользователь видел много мелких сообщений-обрубков.
+    // 8192 даёт спокойный разворот плюс место под несколько tool_use блоков.
     const resp = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
+      max_tokens: 8192,
       system: systemParts.join('\n'),
       tools: AI_TOOLS as Anthropic.Messages.Tool[],
       messages,

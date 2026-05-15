@@ -60,6 +60,23 @@ function pickTbAnchor(
 // partition becomes its own sub-network ("Туркестан-1", "Туркестан-2"…).
 export type OltLocationMap = Record<string, Array<{ lat: number; lon: number }>>;
 
+// Sanitize a district name into an ID-safe slug.  Critical: must preserve
+// uniqueness across districts — sub-districts after Voronoi split are named
+// like "Sheet1-10", "Sheet1-11", "Sheet1-12" and the old slice(0, 8) collapsed
+// all three to "Sheet1-1", producing duplicate OLT/TB/ORK ids.  When the
+// consolidation engine looked up cables by "${olt.id}::${tb.id}", it matched
+// across districts and emitted phantom 10+ km cables through the entire city.
+//
+// Now we keep the full name (just strip whitespace and a small list of
+// punctuation that's awkward in ids).  Cyrillic stays — Russian district
+// names need it; the rest of the codebase already handles unicode ids.
+function slugForId(districtName: string): string {
+  return districtName
+    .trim()
+    .replace(/\s+/g, '_')
+    .replace(/[^\p{L}\p{N}_-]/gu, '');
+}
+
 // Build the network rooted at a single OLT for one (sub-)district.
 function buildSingleOlt(
   districtName: string,
@@ -70,9 +87,9 @@ function buildSingleOlt(
   settings: ProjectSettings,
   cables: Cable[],
 ): District {
-  const oltSlug = districtName.slice(0, 8).replace(/\s/g, '');
+  const slug = slugForId(districtName);
   const olt: OLT = {
-    id: `OLT-${oltSlug}${oltSuffix}`,
+    id: `OLT-${slug}${oltSuffix}`,
     lat: oltPos.lat,
     lon: oltPos.lon,
     district: districtName,
@@ -91,7 +108,6 @@ function buildSingleOlt(
 
   const orks: ORK[] = [];
   const updatedSubs: Subscriber[] = [];
-  const orkSlug = districtName.slice(0, 4).replace(/\s/g, '');
 
   for (let i = 0; i < orkClusters.length; i++) {
     const cluster = orkClusters[i];
@@ -100,7 +116,7 @@ function buildSingleOlt(
       .map((p) => subs.find((s) => s.id === p.id))
       .filter(Boolean) as Subscriber[];
     const orkAnchor = pickOrkAnchor(orkSubsRaw);
-    const orkId = `Бокс-${orkSlug}${oltSuffix}-${i + 1}`;
+    const orkId = `Бокс-${slug}${oltSuffix}-${i + 1}`;
     const splitter: '1:4' | '1:8' | '1:16' =
       cluster.length <= 4 ? '1:4' : cluster.length <= 8 ? '1:8' : '1:16';
 
@@ -133,7 +149,7 @@ function buildSingleOlt(
   for (let i = 0; i < tbClusters.length; i++) {
     const cluster = tbClusters[i];
     if (cluster.length === 0) continue;
-    const tbId = `Муфта-${orkSlug}${oltSuffix}-${i + 1}`;
+    const tbId = `Муфта-${slug}${oltSuffix}-${i + 1}`;
 
     const tbOrks = cluster
       .map((p) => orks.find((o) => o.id === p.id))

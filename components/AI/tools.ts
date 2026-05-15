@@ -174,6 +174,22 @@ export const AI_TOOLS: ToolDef[] = [
       required: ['id'],
     },
   },
+  {
+    name: 'delete_cable',
+    description:
+      'Delete a single cable by id.  Use this to remove phantom long cables / cables connecting different districts / loops that the user wants gone.  Does NOT touch endpoints.',
+    input_schema: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'rebuild_network',
+    description:
+      'Completely rebuild the network from the current subscriber list + OLT overrides. Use ONLY when the user explicitly asks for a fresh rebuild — manual cable edits / drag-drop reassignments will be lost.',
+    input_schema: { type: 'object', properties: {} },
+  },
 ];
 
 export type AITool =
@@ -191,4 +207,6 @@ export type AITool =
   | { name: 'cables_near'; input: { lat: number; lon: number; radius_m?: number; limit?: number } }
   | { name: 'routing_analysis'; input: Record<string, never> }
   | { name: 'get_validation_issues'; input: Record<string, never> }
-  | { name: 'inspect_entity'; input: { id: string } };
+  | { name: 'inspect_entity'; input: { id: string } }
+  | { name: 'delete_cable'; input: { id: string } }
+  | { name: 'rebuild_network'; input: Record<string, never> };
