@@ -55,9 +55,12 @@ function pickTbAnchor(
   };
 }
 
+export type OltLocationMap = Record<string, { lat: number; lon: number }>;
+
 export function buildNetwork(
   subscribers: Subscriber[],
-  settings: ProjectSettings
+  settings: ProjectSettings,
+  oltLocations: OltLocationMap = {},
 ): { districts: District[]; cables: Cable[] } {
   cableIdCounter = 0;
 
@@ -75,7 +78,11 @@ export function buildNetwork(
     const color = DISTRICT_COLORS[colorIdx % DISTRICT_COLORS.length];
     colorIdx++;
 
-    const oltPos = centroid(subs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id })));
+    // OLT placement: user-specified coords override the auto-centroid.
+    const override = oltLocations[districtName];
+    const oltPos = override
+      ? { lat: override.lat, lon: override.lon }
+      : centroid(subs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id })));
     const olt: OLT = {
       id: `OLT-${districtName.slice(0, 8).replace(/\s/g, '')}`,
       lat: oltPos.lat,

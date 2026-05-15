@@ -6,7 +6,7 @@ import {
   PriceCatalog, DEFAULT_PRICES, InlineJoint, OLT, TransitBox, ORK, CABLE_FIBERS, DISTRICT_COLORS,
   ProjectStatus, ProjectSnapshot,
 } from '@/types/network';
-import { buildNetwork } from '@/components/Network/AutoBuild';
+import { buildNetwork, OltLocationMap } from '@/components/Network/AutoBuild';
 import { calculateMaterials, validateNetwork } from '@/components/Network/MaterialCalc';
 import { routeCables } from '@/components/Network/OSRMRouter';
 import { consolidateCables } from '@/components/Network/Consolidation';
@@ -172,15 +172,20 @@ export function useNetwork() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Persisted OLT coordinate overrides per district (user-supplied).
+  const [oltOverrides, setOltOverrides] = useState<OltLocationMap>({});
+
   // Internal: build network from arbitrary subscriber set
-  const runBuild = useCallback(async (subs: Subscriber[], replaceCables = true) => {
+  const runBuild = useCallback(async (subs: Subscriber[], replaceCables = true, oltLocationsArg?: OltLocationMap) => {
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
     abortRef.current = controller;
 
+    const effectiveOlts: OltLocationMap = { ...oltOverrides, ...(oltLocationsArg ?? {}) };
+
     try {
       setStatus('clustering');
-      const { districts: newDistricts, cables: newCables } = buildNetwork(subs, settings);
+      const { districts: newDistricts, cables: newCables } = buildNetwork(subs, settings, effectiveOlts);
 
       setStatus('routing');
       let finalCables = newCables;
@@ -216,12 +221,13 @@ export function useNetwork() {
         console.error(err);
       }
     }
-  }, [settings]);
+  }, [settings, oltOverrides]);
 
   // Replace all subscribers — fresh build
-  const buildFromSubscribers = useCallback(async (newSubs: Subscriber[], source: string) => {
+  const buildFromSubscribers = useCallback(async (newSubs: Subscriber[], source: string, oltLocations?: OltLocationMap) => {
     const merged = [...newSubs];
     setAllSubscribers(merged);
+    if (oltLocations) setOltOverrides(oltLocations);
     const record: ImportRecord = {
       id: newId('imp'),
       source,
@@ -230,16 +236,17 @@ export function useNetwork() {
       importedAt: new Date().toISOString(),
     };
     setImportHistory([record]);
-    await runBuild(merged);
+    await runBuild(merged, true, oltLocations);
   }, [runBuild]);
 
   // Append new subscribers and rebuild combined network
-  const appendSubscribers = useCallback(async (newSubs: Subscriber[], source: string) => {
+  const appendSubscribers = useCallback(async (newSubs: Subscriber[], source: string, oltLocations?: OltLocationMap) => {
     // Avoid duplicate coordinates
     const seen = new Set(allSubscribers.map((s) => `${s.lat.toFixed(6)},${s.lon.toFixed(6)}`));
     const filtered = newSubs.filter((s) => !seen.has(`${s.lat.toFixed(6)},${s.lon.toFixed(6)}`));
     const merged = [...allSubscribers, ...filtered];
     setAllSubscribers(merged);
+    if (oltLocations) setOltOverrides((prev) => ({ ...prev, ...oltLocations }));
     const record: ImportRecord = {
       id: newId('imp'),
       source,
@@ -248,7 +255,7 @@ export function useNetwork() {
       importedAt: new Date().toISOString(),
     };
     setImportHistory((prev) => [...prev, record]);
-    await runBuild(merged);
+    await runBuild(merged, true, oltLocations);
   }, [allSubscribers, runBuild]);
 
   const stopOSRM = useCallback(() => {

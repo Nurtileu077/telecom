@@ -3,7 +3,7 @@ import dynamic from 'next/dynamic';
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNetwork } from '@/hooks/useNetwork';
 import Sidebar from '@/components/Sidebar/Sidebar';
-import ImportModal, { ImportMode, NetworkImportMode } from '@/components/Import/ImportModal';
+import ImportModal, { ImportMode, NetworkImportMode, OltLocations } from '@/components/Import/ImportModal';
 import { Subscriber, ProjectSettings, AnnotationType, Project, ProjectStatus, PROJECT_STATUS_LABELS } from '@/types/network';
 import type { DrawingTool } from '@/components/Sidebar/NotesTab';
 import GeocodeSearch from '@/components/Geocoding/GeocodeSearch';
@@ -65,13 +65,13 @@ export default function HomePage() {
 
   const onPrintMap = useCallback(() => window.print(), []);
 
-  const handleBuild = useCallback(async (subs: Subscriber[], s: ProjectSettings, source: string, mode: ImportMode) => {
+  const handleBuild = useCallback(async (subs: Subscriber[], s: ProjectSettings, source: string, mode: ImportMode, oltLocations?: OltLocations) => {
     net.setSettings(s);
     setShowImport(false);
     if (mode === 'append') {
-      await net.appendSubscribers(subs, source);
+      await net.appendSubscribers(subs, source, oltLocations);
     } else {
-      await net.buildFromSubscribers(subs, source);
+      await net.buildFromSubscribers(subs, source, oltLocations);
     }
   }, [net]);
 

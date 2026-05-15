@@ -59,9 +59,12 @@ export const CABLE_FIBERS: Record<CableType, number> = {
   'ОК-4': 4, 'ОК-8': 8, 'ОК-12': 12, 'ОК-16': 16,
   'ОК-24': 24, 'ОК-32': 32, 'ОК-48': 48, 'ОК-96': 96,
 };
+// Project requirement: do NOT use ОК-96. Trunks above 48 fibers fall back to ОК-48.
+export const MAX_CABLE_TYPE: CableType = 'ОК-48';
 export function selectCableType(subs: number, sparePerSub = 1): CableType {
   const needed = subs * (1 + sparePerSub);
-  return CABLE_SIZES.find((t) => CABLE_FIBERS[t] >= needed) ?? 'ОК-96';
+  const allowed = CABLE_SIZES.filter((t) => t !== 'ОК-96');
+  return allowed.find((t) => CABLE_FIBERS[t] >= needed) ?? MAX_CABLE_TYPE;
 }
 
 export interface Cable {

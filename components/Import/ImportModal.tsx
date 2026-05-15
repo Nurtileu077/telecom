@@ -1,5 +1,5 @@
 'use client';
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useMemo } from 'react';
 import { Subscriber, ProjectSettings, Project } from '@/types/network';
 import { importExcel } from './ExcelImporter';
 import { importKmz } from './KmzImporter';
@@ -7,13 +7,26 @@ import { importCsv, parseTabular } from './CsvImporter';
 
 export type ImportMode = 'replace' | 'append';
 export type NetworkImportMode = 'replace' | 'merge';
+export type OltLocations = Record<string, { lat: number; lon: number }>;
 
 interface Props {
   onClose: () => void;
-  onBuild: (subscribers: Subscriber[], settings: ProjectSettings, source: string, mode: ImportMode) => void;
+  onBuild: (subscribers: Subscriber[], settings: ProjectSettings, source: string, mode: ImportMode, oltLocations?: OltLocations) => void;
   onImportNetwork: (project: Project, mode: NetworkImportMode) => void;
   currentSettings: ProjectSettings;
   hasExistingData: boolean;
+}
+
+// Parse "lat, lng" / "lat lng" / "lat; lng" — returns null if invalid.
+function parseLatLngInput(s: string): { lat: number; lon: number } | null {
+  if (!s) return null;
+  const m = s.trim().match(/^\s*(-?\d+(?:[.,]\d+)?)\s*[,;\s]\s*(-?\d+(?:[.,]\d+)?)\s*$/);
+  if (!m) return null;
+  const lat = parseFloat(m[1].replace(',', '.'));
+  const lon = parseFloat(m[2].replace(',', '.'));
+  if (isNaN(lat) || isNaN(lon)) return null;
+  if (lat < 35 || lat > 60 || lon < 45 || lon > 90) return null;
+  return { lat, lon };
 }
 
 const TEST_SUBSCRIBERS: Subscriber[] = [
@@ -49,6 +62,12 @@ export default function ImportModal({ onClose, onBuild, onImportNetwork, current
   const [netError, setNetError] = useState('');
   const [netMode, setNetMode] = useState<NetworkImportMode>(hasExistingData ? 'merge' : 'replace');
   const [netDragging, setNetDragging] = useState(false);
+
+  // OLT (узел связи) coordinates per district — user-supplied. Keeps the raw
+  // text so the user can paste freely; we only parse on submit.
+  const [oltInputs, setOltInputs] = useState<Record<string, string>>({});
+  const [oltBulkText, setOltBulkText] = useState('');
+  const [oltError, setOltError] = useState('');
 
   const parsePaste = useCallback(() => {
     setError('');
@@ -112,6 +131,42 @@ export default function ImportModal({ onClose, onBuild, onImportNetwork, current
         return m;
       }, {} as Record<string, number>)
     : {};
+
+  // Apply a single bulk-paste textarea  "District: lat, lng"  →  per-district inputs.
+  const applyBulkOlts = useCallback(() => {
+    setOltError('');
+    const next: Record<string, string> = {};
+    const lines = oltBulkText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    let bad = 0;
+    for (const line of lines) {
+      // "District : lat, lng"  or  "lat, lng" (if only one district)
+      const idx = line.indexOf(':');
+      if (idx > 0) {
+        const district = line.slice(0, idx).trim();
+        const coords = line.slice(idx + 1).trim();
+        if (parseLatLngInput(coords)) next[district] = coords;
+        else bad++;
+      } else if (parseLatLngInput(line) && Object.keys(byDistrict).length === 1) {
+        next[Object.keys(byDistrict)[0]] = line;
+      } else {
+        bad++;
+      }
+    }
+    setOltInputs((prev) => ({ ...prev, ...next }));
+    if (bad > 0) setOltError(`${bad} строк не распознано. Формат: «Район: lat, lng»`);
+  }, [oltBulkText, byDistrict]);
+
+  const parsedOlts: OltLocations = useMemo(() => {
+    const out: OltLocations = {};
+    for (const [d, txt] of Object.entries(oltInputs)) {
+      const p = parseLatLngInput(txt);
+      if (p) out[d] = p;
+    }
+    return out;
+  }, [oltInputs]);
+
+  const oltOkCount = Object.keys(parsedOlts).length;
+  const districtCount = Object.keys(byDistrict).length;
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
@@ -340,6 +395,59 @@ export default function ImportModal({ onClose, onBuild, onImportNetwork, current
           )}
 
           {subscribers && (
+            <div className="space-y-2 bg-[#0a0e1a] border border-[#38bdf8]/30 rounded-lg p-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-semibold text-[#38bdf8]">📡 OLT (узел связи)</h3>
+                <span className="text-[10px] text-[#64748b]">{oltOkCount}/{districtCount} районов</span>
+              </div>
+              <p className="text-[10px] text-[#64748b]">
+                Координаты OLT на район — кабели потянутся ОТ него.<br/>
+                Если оставить пустым — OLT встанет в центре района (как раньше).
+              </p>
+
+              <details className="bg-[#0d1b2a] rounded border border-[#1e3a5f]/50">
+                <summary className="text-[10px] text-[#94a3b8] px-2 py-1.5 cursor-pointer hover:text-[#e2e8f0]">
+                  📋 Вставить блоком (несколько районов сразу)
+                </summary>
+                <div className="p-2 space-y-1.5">
+                  <textarea
+                    value={oltBulkText}
+                    onChange={(e) => setOltBulkText(e.target.value)}
+                    rows={4}
+                    placeholder={districtCount === 1
+                      ? `Просто: 40.78, 68.32\nили:    ${Object.keys(byDistrict)[0]}: 40.78, 68.32`
+                      : `${Object.keys(byDistrict).slice(0, 2).map((d) => `${d}: 40.78, 68.32`).join('\n')}`}
+                    className="w-full bg-[#0a0e1a] border border-[#1e3a5f] rounded px-2 py-1.5 text-[10px] text-[#e2e8f0] font-mono focus:outline-none focus:border-[#38bdf8] resize-none"
+                  />
+                  <button onClick={applyBulkOlts} disabled={!oltBulkText.trim()} className="w-full py-1 bg-[#38bdf8]/15 hover:bg-[#38bdf8]/25 disabled:opacity-30 text-[#38bdf8] text-[10px] rounded transition-colors">
+                    ↧ Применить к полям
+                  </button>
+                  {oltError && <p className="text-[10px] text-[#fbbf24]">⚠️ {oltError}</p>}
+                </div>
+              </details>
+
+              <div className="space-y-1 max-h-40 overflow-y-auto">
+                {Object.keys(byDistrict).map((d) => {
+                  const txt = oltInputs[d] || '';
+                  const ok = txt ? !!parseLatLngInput(txt) : null;
+                  return (
+                    <div key={d} className="flex items-center gap-2">
+                      <span className="text-[10px] text-[#94a3b8] w-20 truncate" title={d}>{d}</span>
+                      <input
+                        value={txt}
+                        onChange={(e) => setOltInputs((p) => ({ ...p, [d]: e.target.value }))}
+                        placeholder="lat, lng (необяз.)"
+                        className={`flex-1 bg-[#0a0e1a] border rounded px-1.5 py-0.5 text-[10px] text-[#e2e8f0] font-mono focus:outline-none ${ok === false ? 'border-[#f87171] focus:border-[#f87171]' : ok ? 'border-[#34d399]/60 focus:border-[#34d399]' : 'border-[#1e3a5f] focus:border-[#38bdf8]'}`}
+                      />
+                      <span className={`text-[10px] w-4 ${ok === false ? 'text-[#f87171]' : ok ? 'text-[#34d399]' : 'text-[#475569]'}`}>{ok === false ? '⚠' : ok ? '✓' : '•'}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {subscribers && (
             <div className="space-y-2">
               <h3 className="text-[10px] text-[#64748b] uppercase tracking-wider">Параметры построения</h3>
               <div className="grid grid-cols-2 gap-2">
@@ -385,7 +493,7 @@ export default function ImportModal({ onClose, onBuild, onImportNetwork, current
             </button>
           ) : (
             <button
-              onClick={() => { if (subscribers) onBuild(subscribers, settings, fileName, mode); }}
+              onClick={() => { if (subscribers) onBuild(subscribers, settings, fileName, mode, parsedOlts); }}
               disabled={!subscribers}
               className="flex-1 py-2 px-4 bg-[#38bdf8] hover:bg-[#7dd3fc] disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-xs font-semibold text-[#0a0e1a] transition-colors"
             >

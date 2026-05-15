@@ -62,11 +62,13 @@ function pathLength(coords: [number, number][]): number {
   return len;
 }
 
+// Cap at ОК-48 per project requirement — never emit ОК-96.
 function pickCableType(fibers: number): CableType {
   for (const t of CABLE_SIZES) {
+    if (t === 'ОК-96') continue;
     if (CABLE_FIBERS[t] >= fibers) return t;
   }
-  return 'ОК-96';
+  return 'ОК-48';
 }
 
 /**
