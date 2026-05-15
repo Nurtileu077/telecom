@@ -2,7 +2,7 @@
 // the useNetwork hook + the map fly-to ref.  Returns a string the model can
 // read back.
 
-import type { District, Cable } from '@/types/network';
+import type { District, Cable, ValidationIssue } from '@/types/network';
 import type { AITool } from './tools';
 
 // Minimal interface — we type only what we actually use rather than coupling
@@ -10,6 +10,7 @@ import type { AITool } from './tools';
 export interface NetForExecutor {
   districts: District[];
   cables: Cable[];
+  validationIssues?: ValidationIssue[];
   addSubscriberAt: (lat: number, lon: number, district: string, desc: string) => Promise<void> | void;
   addOLTAt: (lat: number, lon: number, districtName: string) => void;
   addTBAt: (lat: number, lon: number, oltId?: string) => void;
@@ -17,6 +18,40 @@ export interface NetForExecutor {
   addCableBetween: (fromId: string, toId: string, type?: Cable['type']) => Promise<void> | void;
   reconsolidate: () => Promise<void> | void;
   deleteSubscriber: (id: string) => void;
+}
+
+function haversineM(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371000;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function minDistanceToPolyline(lat: number, lon: number, coords: [number, number][]): number {
+  if (coords.length === 0) return Infinity;
+  if (coords.length === 1) return haversineM(lat, lon, coords[0][0], coords[0][1]);
+  let best = Infinity;
+  for (let i = 1; i < coords.length; i++) {
+    const [la, lo] = coords[i - 1];
+    const [lb, lob] = coords[i];
+    // Approximate metres in local plane
+    const cosLat = Math.cos(((la + lb) / 2) * Math.PI / 180);
+    const ax = lo * 111320 * cosLat, ay = la * 111320;
+    const bx = lob * 111320 * cosLat, by = lb * 111320;
+    const px = lon * 111320 * cosLat, py = lat * 111320;
+    const dx = bx - ax, dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    const t = len2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2)) : 0;
+    const cx = ax + t * dx, cy = ay + t * dy;
+    const d = Math.hypot(px - cx, py - cy);
+    if (d < best) best = d;
+  }
+  return best;
 }
 
 export type FlyToFn = (lat: number, lon: number, zoom?: number) => void;
@@ -135,6 +170,126 @@ export async function executeTool(
         if (!id.startsWith('sub')) return `Удаление "${id}" пока не поддерживается — только абоненты (sub-*).`;
         net.deleteSubscriber(id);
         return `Удалил ${id}.`;
+      }
+      case 'inspect_cable': {
+        const { id } = tool.input;
+        const c = net.cables.find((x) => x.id === id);
+        if (!c) return `Кабель "${id}" не найден.`;
+        // Trim very long coord arrays — only show endpoints + every ~8th vertex.
+        const stride = Math.max(1, Math.floor(c.coords.length / 30));
+        const sampledCoords: [number, number][] = [];
+        for (let i = 0; i < c.coords.length; i += stride) sampledCoords.push(c.coords[i]);
+        if (sampledCoords[sampledCoords.length - 1] !== c.coords[c.coords.length - 1]) {
+          sampledCoords.push(c.coords[c.coords.length - 1]);
+        }
+        return JSON.stringify({
+          id: c.id,
+          type: c.type,
+          fibers: c.fibers,
+          fromId: c.fromId,
+          toId: c.toId,
+          lengthM: Math.round(c.lengthM),
+          routedByOSRM: c.routedByOSRM,
+          vertexCount: c.coords.length,
+          coordsSample: sampledCoords,
+        });
+      }
+      case 'cables_near': {
+        const { lat, lon, radius_m = 50, limit = 20 } = tool.input;
+        const hits: Array<{ id: string; type: string; lengthM: number; fromId: string; toId: string; routedByOSRM: boolean; minDistM: number }> = [];
+        for (const c of net.cables) {
+          const d = minDistanceToPolyline(lat, lon, c.coords);
+          if (d <= radius_m) hits.push({ id: c.id, type: c.type, lengthM: Math.round(c.lengthM), fromId: c.fromId, toId: c.toId, routedByOSRM: c.routedByOSRM, minDistM: Math.round(d) });
+        }
+        hits.sort((a, b) => a.minDistM - b.minDistM);
+        return JSON.stringify({ lat, lon, radius_m, count: hits.length, hits: hits.slice(0, limit) });
+      }
+      case 'routing_analysis': {
+        const byType = new Map<string, { total: number; routed: number; totalLengthM: number; longestStraight: number; longestStraightId: string | null }>();
+        for (const c of net.cables) {
+          const cur = byType.get(c.type) ?? { total: 0, routed: 0, totalLengthM: 0, longestStraight: 0, longestStraightId: null };
+          cur.total++;
+          if (c.routedByOSRM) cur.routed++;
+          cur.totalLengthM += c.lengthM;
+          if (!c.routedByOSRM && c.lengthM > cur.longestStraight) {
+            cur.longestStraight = c.lengthM;
+            cur.longestStraightId = c.id;
+          }
+          byType.set(c.type, cur);
+        }
+        const summary = Array.from(byType.entries()).map(([type, s]) => ({
+          type,
+          total: s.total,
+          osrmRoutedPct: s.total ? Math.round((s.routed / s.total) * 100) : 0,
+          totalKm: +(s.totalLengthM / 1000).toFixed(2),
+          longestStraightM: Math.round(s.longestStraight),
+          longestStraightId: s.longestStraightId,
+        }));
+        const totalCount = net.cables.length;
+        const totalRouted = net.cables.filter((c) => c.routedByOSRM).length;
+        return JSON.stringify({
+          totalCables: totalCount,
+          osrmRoutedOverallPct: totalCount ? Math.round((totalRouted / totalCount) * 100) : 0,
+          byType: summary,
+        });
+      }
+      case 'get_validation_issues': {
+        const issues = net.validationIssues ?? [];
+        if (issues.length === 0) return JSON.stringify({ count: 0, issues: [] });
+        // Group identical messages so the model doesn't drown in duplicates.
+        const grouped = new Map<string, { type: string; message: string; count: number; examples: string[] }>();
+        for (const i of issues) {
+          const key = `${i.type}::${i.message}`;
+          const g = grouped.get(key) ?? { type: i.type, message: i.message, count: 0, examples: [] };
+          g.count++;
+          if (i.entityId && g.examples.length < 3) g.examples.push(i.entityId);
+          grouped.set(key, g);
+        }
+        return JSON.stringify({ count: issues.length, issues: Array.from(grouped.values()) });
+      }
+      case 'inspect_entity': {
+        const { id } = tool.input;
+        for (const d of net.districts) {
+          if (d.olt.id === id) {
+            return JSON.stringify({
+              kind: 'olt',
+              id: d.olt.id,
+              lat: d.olt.lat,
+              lon: d.olt.lon,
+              district: d.name,
+              model: d.olt.model,
+              transitBoxes: d.olt.transitBoxes.map((tb) => ({ id: tb.id, orks: tb.orks.length })),
+              subscribers: d.subscribers.length,
+            });
+          }
+          for (const tb of d.olt.transitBoxes) {
+            if (tb.id === id) {
+              return JSON.stringify({
+                kind: 'tb', id: tb.id, lat: tb.lat, lon: tb.lon, district: d.name,
+                oltId: tb.oltId, muftaType: tb.muftaType, inCable: tb.inCable, outCable: tb.outCable,
+                orks: tb.orks.map((o) => ({ id: o.id, subscribers: o.subscribers.length })),
+              });
+            }
+            for (const ork of tb.orks) {
+              if (ork.id === id) {
+                return JSON.stringify({
+                  kind: 'ork', id: ork.id, lat: ork.lat, lon: ork.lon, district: d.name,
+                  tbId: ork.tbId, splitter: ork.splitter, boxType: ork.boxType,
+                  subscribers: ork.subscribers.map((s) => ({ id: s.id, desc: s.desc })),
+                });
+              }
+              for (const s of ork.subscribers) {
+                if (s.id === id) {
+                  return JSON.stringify({
+                    kind: 'sub', id: s.id, lat: s.lat, lon: s.lon,
+                    desc: s.desc, district: s.district, orkId: s.orkId,
+                  });
+                }
+              }
+            }
+          }
+        }
+        return `Сущность "${id}" не найдена.`;
       }
       default:
         return `Неизвестный инструмент: ${(tool as { name: string }).name}`;

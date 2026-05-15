@@ -802,6 +802,7 @@ A3: ...`}
           net={{
             districts: net.districts,
             cables: net.cables,
+            validationIssues: net.validationIssues,
             addSubscriberAt: net.addSubscriberAt,
             addOLTAt: net.addOLTAt,
             addTBAt: net.addTBAt,

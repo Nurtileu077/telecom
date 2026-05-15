@@ -22,16 +22,35 @@ interface Msg {
   content?: string;
 }
 
+const RULES_KEY = 'ai-user-rules-v1';
+
 export default function ChatPanel({ net, flyTo, onClose }: Props) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [showRules, setShowRules] = useState(false);
+  const [userRules, setUserRules] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const netRef = useRef(net);
   const flyToRef = useRef(flyTo);
+  const rulesRef = useRef('');
   netRef.current = net;
   flyToRef.current = flyTo;
+  rulesRef.current = userRules;
+
+  // Load rules from localStorage on first mount.
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(RULES_KEY);
+      if (stored) setUserRules(stored);
+    } catch { /* private mode etc — ignore */ }
+  }, []);
+
+  // Persist on change.
+  useEffect(() => {
+    try { window.localStorage.setItem(RULES_KEY, userRules); } catch {}
+  }, [userRules]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -53,6 +72,7 @@ export default function ChatPanel({ net, flyTo, onClose }: Props) {
           body: JSON.stringify({
             messages: cur,
             networkSummary: networkSummary(netRef.current.districts, netRef.current.cables),
+            userRules: rulesRef.current,
           }),
         });
         const data = await res.json();
@@ -104,10 +124,44 @@ export default function ChatPanel({ net, flyTo, onClose }: Props) {
           <h2 className="text-sm font-semibold text-[#e2e8f0]">Ассистент</h2>
           <span className="text-[10px] text-[#64748b] font-mono">claude-sonnet-4-6</span>
         </div>
-        <button onClick={onClose} className="text-[#64748b] hover:text-[#e2e8f0] transition-colors text-lg leading-none">
-          ✕
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setShowRules((s) => !s)}
+            className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${showRules ? 'bg-[#fbbf24]/15 border-[#fbbf24]/40 text-[#fbbf24]' : 'border-[#1e3a5f] text-[#64748b] hover:text-[#e2e8f0]'}`}
+            title="Постоянные правила (обучение ассистента)"
+          >
+            📝 Правила{userRules.trim() ? ` (${userRules.trim().split(/\n+/).length})` : ''}
+          </button>
+          <button onClick={onClose} className="text-[#64748b] hover:text-[#e2e8f0] transition-colors text-lg leading-none ml-1">
+            ✕
+          </button>
+        </div>
       </div>
+
+      {showRules && (
+        <div className="border-b border-[#1e3a5f] bg-[#0a0e1a] p-3 space-y-2 flex-shrink-0">
+          <div className="flex items-center justify-between">
+            <h3 className="text-[11px] font-semibold text-[#fbbf24]">📝 Постоянные правила</h3>
+            <span className="text-[9px] text-[#64748b]">сохраняется локально</span>
+          </div>
+          <p className="text-[10px] text-[#64748b] leading-snug">
+            Пиши инструкции, которые ассистент должен выполнять всегда. Они подмешиваются в системный промпт каждому запросу.
+          </p>
+          <textarea
+            value={userRules}
+            onChange={(e) => setUserRules(e.target.value)}
+            rows={7}
+            placeholder={'• OK-96 не использовать никогда\n• После добавления абонента беги reconsolidate\n• OLT всегда на ближайший перекрёсток\n• Кабели тянуть только по дорогам, не диагональю'}
+            className="w-full bg-[#0d1b2a] border border-[#1e3a5f] rounded px-2 py-1.5 text-[11px] text-[#e2e8f0] font-mono leading-snug resize-none focus:outline-none focus:border-[#fbbf24]"
+          />
+          <div className="flex justify-between items-center text-[10px]">
+            <button onClick={() => { if (confirm('Очистить все правила?')) setUserRules(''); }} className="text-[#64748b] hover:text-[#f87171] transition-colors">
+              Очистить
+            </button>
+            <span className="text-[#64748b]">{userRules.length} символов</span>
+          </div>
+        </div>
+      )}
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-3">
         {messages.length === 0 && (

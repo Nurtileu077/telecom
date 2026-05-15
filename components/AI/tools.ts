@@ -127,6 +127,53 @@ export const AI_TOOLS: ToolDef[] = [
       required: ['id'],
     },
   },
+  {
+    name: 'inspect_cable',
+    description:
+      'Read everything about one cable: type, fibers, endpoints, length, full coord path, OSRM-routed flag. Use this when the user asks WHY a cable looks wrong or WHERE it goes.',
+    input_schema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: 'cable-... id' } },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'cables_near',
+    description:
+      'List cables whose path passes within `radius_m` metres of the given point. Returns id, type, length, endpoints, routed flag.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        lat: { type: 'number' },
+        lon: { type: 'number' },
+        radius_m: { type: 'number', description: 'Search radius in metres, default 50' },
+        limit: { type: 'number', description: 'Max cables to return, default 20' },
+      },
+      required: ['lat', 'lon'],
+    },
+  },
+  {
+    name: 'routing_analysis',
+    description:
+      'Aggregate routing-quality stats across all cables: total/routed counts, % OSRM-routed by type, average length, longest straight (non-routed) cables. Run this to find places that look bad.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_validation_issues',
+    description:
+      'Get the project validation issues — disconnected entities, over-capacity ORKs, missing fibers, oversize cables, etc.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'inspect_entity',
+    description:
+      'Read full info about a specific OLT / TB / ORK / subscriber by id, including its children (TBs under OLT, ORKs under TB, subs under ORK).',
+    input_schema: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+    },
+  },
 ];
 
 export type AITool =
@@ -139,4 +186,9 @@ export type AITool =
   | { name: 'fly_to'; input: { lat: number; lon: number; zoom?: number } }
   | { name: 'list_entities'; input: { kind: 'olt' | 'tb' | 'ork' | 'sub'; limit?: number } }
   | { name: 'find_entity'; input: { query: string } }
-  | { name: 'delete_entity'; input: { id: string } };
+  | { name: 'delete_entity'; input: { id: string } }
+  | { name: 'inspect_cable'; input: { id: string } }
+  | { name: 'cables_near'; input: { lat: number; lon: number; radius_m?: number; limit?: number } }
+  | { name: 'routing_analysis'; input: Record<string, never> }
+  | { name: 'get_validation_issues'; input: Record<string, never> }
+  | { name: 'inspect_entity'; input: { id: string } };

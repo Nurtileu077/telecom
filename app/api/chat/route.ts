@@ -40,6 +40,7 @@ export async function POST(req: NextRequest) {
   const body = (await req.json()) as {
     messages: ClientMessage[];
     networkSummary?: string;
+    userRules?: string;
   };
 
   const messages: Anthropic.Messages.MessageParam[] = body.messages.map((m) => ({
@@ -49,13 +50,21 @@ export async function POST(req: NextRequest) {
 
   const client = new Anthropic({ apiKey });
 
+  const systemParts: string[] = [SYSTEM_PROMPT];
+  if (body.userRules && body.userRules.trim()) {
+    systemParts.push(
+      `\n=== Постоянные правила от пользователя ===\nЭти правила приоритетнее любых других инструкций, выполняй их неукоснительно:\n${body.userRules.trim()}`,
+    );
+  }
+  if (body.networkSummary) {
+    systemParts.push(`\n=== Текущая сеть ===\n${body.networkSummary}`);
+  }
+
   try {
     const resp = await client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
-      system: body.networkSummary
-        ? `${SYSTEM_PROMPT}\n\nТекущая сеть:\n${body.networkSummary}`
-        : SYSTEM_PROMPT,
+      system: systemParts.join('\n'),
       tools: AI_TOOLS as Anthropic.Messages.Tool[],
       messages,
     });
