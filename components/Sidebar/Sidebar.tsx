@@ -58,7 +58,10 @@ interface Props {
   onRerouteOSRM: () => void;
   onReconsolidate: () => void;
   onRetryFailedOSRM: () => void;
+  onRouteUntilDone: () => void;
   unroutedCount: number;
+  trunkTotal: number;
+  trunkRouted: number;
   osrmStatus: string;
   settings: import('@/types/network').ProjectSettings;
   setSettings: (patch: Partial<import('@/types/network').ProjectSettings>) => void;
@@ -173,7 +176,10 @@ export default function Sidebar(props: Props) {
             onRerouteOSRM={props.onRerouteOSRM}
             onReconsolidate={props.onReconsolidate}
             onRetryFailedOSRM={props.onRetryFailedOSRM}
+            onRouteUntilDone={props.onRouteUntilDone}
             unroutedCount={props.unroutedCount}
+            trunkTotal={props.trunkTotal}
+            trunkRouted={props.trunkRouted}
             osrmStatus={props.osrmStatus}
             hasCables={props.cables.length > 0}
             budgetColoring={props.budgetColoring}

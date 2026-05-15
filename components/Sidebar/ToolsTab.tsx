@@ -22,7 +22,10 @@ interface Props {
   onRerouteOSRM: () => void;
   onReconsolidate: () => void;
   onRetryFailedOSRM: () => void;
+  onRouteUntilDone: () => void;
   unroutedCount: number;
+  trunkTotal: number;
+  trunkRouted: number;
   osrmStatus: 'idle' | 'routing' | 'done' | 'error' | string;
   hasCables: boolean;
   budgetColoring: boolean;
@@ -31,7 +34,7 @@ interface Props {
   setSettings: (patch: Partial<ProjectSettings>) => void;
 }
 
-export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onRerouteOSRM, onReconsolidate, onRetryFailedOSRM, unroutedCount, osrmStatus, hasCables, budgetColoring, onToggleBudgetColoring, settings, setSettings }: Props) {
+export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onRerouteOSRM, onReconsolidate, onRetryFailedOSRM, onRouteUntilDone, unroutedCount, trunkTotal, trunkRouted, osrmStatus, hasCables, budgetColoring, onToggleBudgetColoring, settings, setSettings }: Props) {
   const [showProviderConfig, setShowProviderConfig] = useState(false);
   const [cacheStats, setCacheStats] = useState(() => getOSRMCacheStats());
   const [inputs, setInputs] = useState<OpticalBudgetInputs>(DEFAULT_INPUTS);
@@ -41,13 +44,34 @@ export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, o
     <div className="overflow-y-auto h-full p-3 space-y-4">
       {/* OSRM routing */}
       <section>
-        <h3 className="text-[10px] uppercase tracking-widest text-[#64748b] mb-2">Маршрутизация кабелей</h3>
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-[10px] uppercase tracking-widest text-[#64748b]">Маршрутизация кабелей</h3>
+          {trunkTotal > 0 && (
+            <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+              trunkRouted === trunkTotal ? 'bg-[#34d399]/15 text-[#34d399]' :
+              trunkRouted >= trunkTotal * 0.9 ? 'bg-[#fbbf24]/15 text-[#fbbf24]' :
+              'bg-[#f87171]/15 text-[#f87171]'
+            }`}>
+              {trunkRouted}/{trunkTotal} по дорогам
+            </span>
+          )}
+        </div>
+        <button
+          onClick={onRouteUntilDone}
+          disabled={!hasCables || osrmStatus === 'routing'}
+          className="w-full py-2.5 px-3 text-xs font-semibold rounded-lg border transition-all disabled:opacity-40 bg-gradient-to-br from-[#34d399]/20 to-[#10b981]/20 border-[#34d399]/50 text-[#34d399] hover:from-[#34d399]/30 hover:to-[#10b981]/30 mb-2"
+        >
+          {osrmStatus === 'routing' ? '⏳ Маршрутизация...' : '🚀 Маршрутизировать всё до конца'}
+        </button>
+        <p className="text-[9px] text-[#64748b] mb-2">
+          Маршрутизирует, ждёт при рейт-лимите, авто-повторяет пока все кабели не лягут на дороги. Можно оставить и забыть.
+        </p>
         <button
           onClick={onRerouteOSRM}
           disabled={!hasCables || osrmStatus === 'routing'}
           className="w-full py-2 px-3 text-xs font-semibold rounded-lg border transition-all disabled:opacity-40 disabled:cursor-not-allowed bg-[#38bdf8]/10 border-[#38bdf8]/50 text-[#38bdf8] hover:bg-[#38bdf8]/20"
         >
-          {osrmStatus === 'routing' ? '⏳ Маршрутизация...' : '🛣 Проложить по дорогам (OSRM)'}
+          {osrmStatus === 'routing' ? '⏳ Маршрутизация...' : '🛣 Один проход OSRM'}
         </button>
         <p className="text-[9px] text-[#64748b] mt-1">
           Перестраивает все кабели по дорогам через router.project-osrm.org. Занимает 1–2 мин.

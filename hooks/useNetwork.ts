@@ -577,6 +577,50 @@ export function useNetwork() {
     }
   }, [cables, settings]);
 
+  // Auto-heal: keep routing + retrying until every trunk cable is OSRM-routed
+  // or we make 3 cycles without progress. This is the "one-button" workflow
+  // the user wanted — click once, walk away, come back to a fully-routed
+  // network. Each cycle calls retryFailedOSRM internally so it benefits from
+  // the cache and adaptive rate-limiting.
+  const routeUntilDone = useCallback(async () => {
+    const isTrunk = (c: Cable) => c.type !== 'ОК-4'
+      && !c.fromId.startsWith('J-') && !c.toId.startsWith('J-');
+    let prevUnrouted = -1;
+    let stableCycles = 0;
+    const MAX_CYCLES = 8;
+
+    // First: full reroute pass to make sure every cable was at least attempted
+    await rerouteWithOSRM();
+
+    for (let cycle = 1; cycle <= MAX_CYCLES; cycle++) {
+      // Read latest cables from current state (we're outside the closure scope,
+      // so use a ref-like pattern: setCables with identity gives us latest)
+      let snapshot: Cable[] = [];
+      setCables((cs) => { snapshot = cs; return cs; });
+      const unrouted = snapshot.filter((c) => isTrunk(c) && !c.routedByOSRM);
+      console.log(`[autoHeal] cycle ${cycle}: ${unrouted.length} trunk(s) still unrouted`);
+      if (unrouted.length === 0) {
+        setOsrmError(null);
+        return;
+      }
+      if (unrouted.length === prevUnrouted) {
+        stableCycles++;
+        if (stableCycles >= 3) {
+          console.warn(`[autoHeal] 3 cycles without progress, giving up. ${unrouted.length} cables remain straight.`);
+          setOsrmError(`Не удалось проложить ${unrouted.length} кабелей даже после ${cycle} попыток. Возможно, OSM не знает дорог в этой зоне или провайдер недоступен.`);
+          return;
+        }
+      } else {
+        stableCycles = 0;
+      }
+      prevUnrouted = unrouted.length;
+      // Wait between cycles — rate-limit cooldown
+      await new Promise((r) => setTimeout(r, 5000));
+      await retryFailedOSRM();
+    }
+    setOsrmError(`Достигнут лимит циклов (${MAX_CYCLES}). Прямых кабелей осталось: ${prevUnrouted}.`);
+  }, [rerouteWithOSRM, retryFailedOSRM]);
+
   // Annotation operations
   const addAnnotation = useCallback((a: Omit<MapAnnotation, 'id' | 'createdAt' | 'updatedAt'>) => {
     const ann: MapAnnotation = {
@@ -1266,7 +1310,7 @@ export function useNetwork() {
     prices, setPrices: setPricesAndStore,
     importHistory, allSubscribers,
     layers, toggleLayer, patchLayers,
-    status, osrmProgress, osrmError, dismissOsrmError: () => setOsrmError(null), stopOSRM, rerouteWithOSRM, retryFailedOSRM,
+    status, osrmProgress, osrmError, dismissOsrmError: () => setOsrmError(null), stopOSRM, rerouteWithOSRM, retryFailedOSRM, routeUntilDone,
     validationIssues,
     editMode, setEditMode,
     autoSaveEnabled, setAutoSaveEnabled, lastSavedAt, dbEnabled,

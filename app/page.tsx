@@ -231,8 +231,21 @@ export default function HomePage() {
           <span className="px-2 py-0.5 bg-[#f59e0b]/10 border border-[#f59e0b]/30 text-[#f59e0b] rounded-md">📦 {net.totalOrks}</span>
           <span className="px-2 py-0.5 bg-[#a78bfa]/10 border border-[#a78bfa]/30 text-[#a78bfa] rounded-md">📝 {net.annotations.length}</span>
           {net.status === 'routing' && (
-            <span className="px-2 py-0.5 bg-[#a78bfa]/10 border border-[#a78bfa]/30 text-[#a78bfa] rounded-md animate-pulse">🛣 OSRM {osrmPercent}%</span>
+            <span className="px-2 py-0.5 bg-[#a78bfa]/10 border border-[#a78bfa]/30 text-[#a78bfa] rounded-md animate-pulse">🛣 OSRM {net.osrmProgress.done}/{net.osrmProgress.total}</span>
           )}
+          {net.status !== 'routing' && net.cables.length > 0 && (() => {
+            const trunks = net.cables.filter((c) => c.type !== 'ОК-4');
+            const r = trunks.filter((c) => c.routedByOSRM).length;
+            const t = trunks.length;
+            if (t === 0) return null;
+            const ok = r === t;
+            const warn = !ok && r >= t * 0.9;
+            return (
+              <span className={`px-2 py-0.5 rounded-md ${ok ? 'bg-[#34d399]/10 border border-[#34d399]/30 text-[#34d399]' : warn ? 'bg-[#fbbf24]/10 border border-[#fbbf24]/30 text-[#fbbf24]' : 'bg-[#f87171]/10 border border-[#f87171]/30 text-[#f87171]'}`}>
+                🛣 {r}/{t} {ok ? '✓' : ''}
+              </span>
+            );
+          })()}
           {net.status === 'clustering' && (
             <span className="px-2 py-0.5 bg-[#f59e0b]/10 border border-[#f59e0b]/30 text-[#f59e0b] rounded-md animate-pulse">⚙ Кластеризация...</span>
           )}
@@ -376,7 +389,10 @@ export default function HomePage() {
           onRerouteOSRM={net.rerouteWithOSRM}
           onReconsolidate={net.reconsolidate}
           onRetryFailedOSRM={net.retryFailedOSRM}
+          onRouteUntilDone={net.routeUntilDone}
           unroutedCount={net.cables.filter((c) => !c.routedByOSRM && c.type !== 'ОК-4' && !c.fromId.startsWith('J-') && !c.toId.startsWith('J-')).length}
+          trunkTotal={net.cables.filter((c) => c.type !== 'ОК-4').length}
+          trunkRouted={net.cables.filter((c) => c.type !== 'ОК-4' && c.routedByOSRM).length}
           settings={net.settings}
           setSettings={(patch) => net.setSettings({ ...net.settings, ...patch })}
           osrmStatus={net.status}

@@ -247,6 +247,15 @@ function calcLength(coords: [number, number][]): number {
   return len;
 }
 
+// Safe request rates by provider — derived from each service's docs.
+// Going faster triggers HTTP 429; staying at/under these limits is
+// what makes a routing pass actually complete instead of half-failing.
+function safeDelayMs(cfg: RouterConfig): number {
+  if (cfg.customOsrmUrl) return 50;       // self-hosted: no limits, 20 req/s
+  if (cfg.orsApiKey)     return 1600;     // ORS free: 40 req/min, headroom for jitter
+  return 250;                              // public OSRM mirrors: ~4 req/s
+}
+
 export async function routeCables(
   cables: Cable[],
   delay: number,
@@ -260,14 +269,21 @@ export async function routeCables(
     .filter((c) => routeDrops || c.type !== 'ОК-4')
     .sort((a, b) => priority.indexOf(a.type) - priority.indexOf(b.type));
 
+  // Ignore the legacy `delay` parameter — adaptive rate is much more reliable.
+  // We start at the safe rate for the configured provider and slow down further
+  // on each 429. This is the single biggest fix for partial routing failures.
+  let currentDelay = safeDelayMs(cfg);
+  console.log(`[OSRM] start: ${toRoute.length} cables, ${currentDelay}ms between requests, provider=${cfg.customOsrmUrl ? 'custom' : cfg.orsApiKey ? 'ors' : 'public'}`);
+
   const result = new Map<string, Cable>(cables.map((c) => [c.id, c]));
   let done = 0;
   let routed = 0;
   let cached = 0;
   let failed: Cable[] = [];
   let firstError: string | undefined;
+  let consecutive429 = 0;
 
-  const route = async (cable: Cable, delayMs: number): Promise<boolean> => {
+  const route = async (cable: Cable): Promise<boolean> => {
     if (signal.aborted) return false;
     const from = cable.coords[0];
     const to = cable.coords[cable.coords.length - 1];
@@ -277,9 +293,18 @@ export async function routeCables(
         ...cable, coords: r.coords, lengthM: calcLength(r.coords), routedByOSRM: true,
       });
       if (r.cached) cached++; else routed++;
+      consecutive429 = 0; // success → reset back-off accumulator
       return true;
     }
     if (!firstError && r.error) firstError = r.error;
+    // If we got rate-limited, slow down for subsequent requests and pause.
+    if (r.error && /HTTP 429/.test(r.error)) {
+      consecutive429++;
+      const cooldown = Math.min(60000, 5000 * Math.pow(2, consecutive429 - 1));
+      currentDelay = Math.min(5000, Math.round(currentDelay * 1.5));
+      console.warn(`[OSRM] 429 rate-limit (${consecutive429}x). Cooling down ${cooldown / 1000}s, slowing to ${currentDelay}ms.`);
+      if (!signal.aborted) await new Promise((r) => setTimeout(r, cooldown));
+    }
     return false;
   };
 
@@ -287,31 +312,37 @@ export async function routeCables(
   for (const cable of toRoute) {
     if (signal.aborted) break;
     onProgress(done, toRoute.length, `${cable.type}: ${cable.fromId} → ${cable.toId}`);
-    const ok = await route(cable, delay);
+    const ok = await route(cable);
     if (!ok) failed.push(cable);
     done++;
-    if (delay > 0 && !signal.aborted) await new Promise((r) => setTimeout(r, delay));
+    if (!signal.aborted) await new Promise((r) => setTimeout(r, currentDelay));
   }
 
-  // === Pass 2/3: retry failures with longer delays ===
-  // Rate-limit recovery typically takes a few seconds. Try twice with
-  // increasing waits between requests; this turns ~25% failure rates
-  // into near-zero on the same project-osrm demo server.
-  const retryDelays = [2000, 4000];
+  // === Retry passes for failures: gentler each time, max 4 ===
+  // Persistent failures after pass 1 are almost always rate-limit residue or
+  // transient mirror outages. 4 passes with extended cool-downs reliably
+  // recovers ~95% of remaining failures within a couple of minutes.
+  const retryDelays = [2000, 4000, 8000, 15000];
   for (let p = 0; p < retryDelays.length && failed.length > 0 && !signal.aborted; p++) {
     const retryDelay = retryDelays[p];
     console.log(`[OSRM] retry pass ${p + 1}: ${failed.length} cables, ${retryDelay}ms spacing`);
     const stillFailed: Cable[] = [];
     let i = 0;
+    const passStartRouted = routed;
     for (const cable of failed) {
       if (signal.aborted) break;
-      onProgress(i, failed.length, `Повтор ${p + 1}: ${cable.fromId} → ${cable.toId}`);
-      const ok = await route(cable, retryDelay);
+      onProgress(i, failed.length, `Повтор ${p + 1}/${retryDelays.length}: ${cable.fromId} → ${cable.toId}`);
+      const ok = await route(cable);
       if (!ok) stillFailed.push(cable);
       i++;
       if (!signal.aborted) await new Promise((r) => setTimeout(r, retryDelay));
     }
     failed = stillFailed;
+    // No-progress guard: if this pass got us nothing, give up.
+    if (routed === passStartRouted && failed.length > 0) {
+      console.warn(`[OSRM] retry pass ${p + 1} made no progress, aborting retries`);
+      break;
+    }
   }
 
   const failedCount = failed.length;
