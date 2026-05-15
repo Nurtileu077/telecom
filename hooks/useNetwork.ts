@@ -8,7 +8,7 @@ import {
 } from '@/types/network';
 import { buildNetwork, OltLocationMap } from '@/components/Network/AutoBuild';
 import { calculateMaterials, validateNetwork } from '@/components/Network/MaterialCalc';
-import { routeCables, getRoute } from '@/components/Network/OSRMRouter';
+import { routeCables, getRoute, snapBatch } from '@/components/Network/OSRMRouter';
 import { consolidateCables } from '@/components/Network/Consolidation';
 import { haversineM } from '@/components/Network/KMeans';
 import { calculateSubscriberBudgets, budgetStats } from '@/components/Network/PowerBudget';
@@ -185,7 +185,70 @@ export function useNetwork() {
 
     try {
       setStatus('clustering');
-      const { districts: newDistricts, cables: newCables } = buildNetwork(subs, settings, effectiveOlts);
+      let { districts: newDistricts, cables: newCables } = buildNetwork(subs, settings, effectiveOlts);
+
+      // Snap OLT/TB/ORK positions to the nearest road via OSRM nearest. Without
+      // this they end up at k-means centroids — often on a roof or in a yard —
+      // and the cable routing then makes a long detour from the off-road
+      // centroid to the road and back, producing visible zigzags and loops.
+      if (settings.useOSRM) {
+        setOsrmProgress({ done: 0, total: 1, current: 'Привязка точек к дорогам…' });
+        const pts: { lat: number; lon: number }[] = [];
+        for (const d of newDistricts) {
+          pts.push({ lat: d.olt.lat, lon: d.olt.lon });
+          for (const tb of d.olt.transitBoxes) {
+            pts.push({ lat: tb.lat, lon: tb.lon });
+            for (const ork of tb.orks) pts.push({ lat: ork.lat, lon: ork.lon });
+          }
+        }
+        const snap = await snapBatch(pts, 60, 8);
+        const remap = (lat: number, lon: number): [number, number] => {
+          const s = snap.get(`${lat},${lon}`);
+          return s ?? [lat, lon];
+        };
+        // Apply snapped coords to districts + every cable endpoint that used them.
+        newDistricts = newDistricts.map((d) => {
+          const [oltLat, oltLon] = remap(d.olt.lat, d.olt.lon);
+          return {
+            ...d,
+            olt: {
+              ...d.olt,
+              lat: oltLat,
+              lon: oltLon,
+              transitBoxes: d.olt.transitBoxes.map((tb) => {
+                const [tbLat, tbLon] = remap(tb.lat, tb.lon);
+                return {
+                  ...tb,
+                  lat: tbLat,
+                  lon: tbLon,
+                  orks: tb.orks.map((ork) => {
+                    const [orkLat, orkLon] = remap(ork.lat, ork.lon);
+                    return { ...ork, lat: orkLat, lon: orkLon };
+                  }),
+                };
+              }),
+            },
+          };
+        });
+        // Build an entity-id → (lat, lon) lookup so we can update cable endpoints.
+        const idCoords = new Map<string, [number, number]>();
+        for (const d of newDistricts) {
+          idCoords.set(d.olt.id, [d.olt.lat, d.olt.lon]);
+          for (const tb of d.olt.transitBoxes) {
+            idCoords.set(tb.id, [tb.lat, tb.lon]);
+            for (const ork of tb.orks) idCoords.set(ork.id, [ork.lat, ork.lon]);
+          }
+        }
+        newCables = newCables.map((c) => {
+          const f = idCoords.get(c.fromId);
+          const t = idCoords.get(c.toId);
+          if (!f && !t) return c;
+          const coords = [...c.coords];
+          if (f) coords[0] = f;
+          if (t) coords[coords.length - 1] = t;
+          return { ...c, coords };
+        });
+      }
 
       setStatus('routing');
       let finalCables = newCables;
