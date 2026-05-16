@@ -33,12 +33,48 @@ function folderNameOf(pm: Element, fallback: string): string {
   while (parent) {
     if (parent.tagName === 'Folder') {
       const fn = parent.querySelector(':scope > name')?.textContent?.trim();
-      if (fn && !['Абоненты', 'Subscribers', 'Points'].includes(fn)) return fn;
+      if (fn && !['Абоненты', 'Subscribers', 'Points', 'Полигоны'].includes(fn)) return fn;
       break;
     }
     parent = parent.parentElement;
   }
   return fallback;
+}
+
+// Parse the Document-level <Schema> mapping  field-id → displayName, so we
+// can later expose ExtendedData / SimpleData values under human-readable
+// keys ("itemType", "category", …) instead of opaque "COL5C42A1F37390183C".
+function parseSchemaFields(doc: Document): Map<string, string> {
+  const map = new Map<string, string>();
+  const schemas = doc.getElementsByTagName('Schema');
+  for (let i = 0; i < schemas.length; i++) {
+    const fields = schemas[i].querySelectorAll(':scope > SimpleField');
+    for (const f of fields) {
+      const id = f.getAttribute('name');
+      const disp = f.querySelector(':scope > displayName')?.textContent?.trim();
+      if (id && disp) map.set(id, disp);
+    }
+  }
+  return map;
+}
+
+// Read all <SimpleData> / <Data> children of a Placemark's <ExtendedData>
+// into a plain string → string dict keyed by displayName when available.
+function extDataOf(pm: Element, schemaMap: Map<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  const ext = pm.querySelector(':scope > ExtendedData');
+  if (!ext) return out;
+  for (const sd of ext.querySelectorAll(':scope > SchemaData > SimpleData')) {
+    const id = sd.getAttribute('name') ?? '';
+    const key = schemaMap.get(id) ?? id;
+    out[key] = (sd.textContent ?? '').trim();
+  }
+  for (const d of ext.querySelectorAll(':scope > Data')) {
+    const id = d.getAttribute('name') ?? '';
+    const v = d.querySelector(':scope > value')?.textContent?.trim() ?? '';
+    if (id) out[id] = v;
+  }
+  return out;
 }
 
 // Full ancestor chain of <Folder> names from the document root down to the
@@ -78,6 +114,7 @@ function parseKmlText(
 ): { subscribers: Subscriber[]; lines: KmlRawLine[]; structuredPoints: KmlPoint[]; structuredLines: KmlLine[] } {
   const parser = new DOMParser();
   const doc = parser.parseFromString(kmlText, 'text/xml');
+  const schemaMap = parseSchemaFields(doc);
 
   const subscribers: Subscriber[] = [];
   const lines: KmlRawLine[] = [];
@@ -91,6 +128,7 @@ function parseKmlText(
     const folderPath = folderPathOf(pm);
     const name = pm.querySelector('name')?.textContent?.trim() || '';
     const desc = pm.querySelector('description')?.textContent?.trim() || '';
+    const extData = extDataOf(pm, schemaMap);
 
     const point = pm.querySelector('Point > coordinates');
     if (point) {
@@ -105,7 +143,7 @@ function parseKmlText(
         });
         structuredPoints.push({
           lat: c[0], lon: c[1],
-          name, desc, folderPath, fileDistrict: fallback,
+          name, desc, folderPath, fileDistrict: fallback, extData,
         });
       }
     }
@@ -116,7 +154,7 @@ function parseKmlText(
       if (cs.length >= 2) {
         lines.push({ coords: cs, name: name || desc, folder });
         structuredLines.push({
-          coords: cs, name: name || desc, folderPath, fileDistrict: fallback,
+          coords: cs, name: name || desc, folderPath, fileDistrict: fallback, extData,
         });
       }
     }

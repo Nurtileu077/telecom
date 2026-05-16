@@ -96,7 +96,12 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
   // is on, submitting builds a real District tree instead of dumping flat.
   const [structuredPoints, setStructuredPoints] = useState<KmlPoint[]>([]);
   const [structuredLines, setStructuredLines] = useState<KmlLine[]>([]);
-  const [structuredPreview, setStructuredPreview] = useState<{ districts: District[]; cables: Cable[]; stats: { olt: number; tb: number; ork: number; sub: number; cablesMatched: number; cablesOrphan: number } } | null>(null);
+  const [structuredPreview, setStructuredPreview] = useState<{
+    districts: District[];
+    cables: Cable[];
+    radioLines: Array<{ coords: [number, number][]; name: string; district: string }>;
+    stats: { olt: number; tb: number; ork: number; sub: number; supports: number; joints: number; radio: number; cablesMatched: number; cablesOrphan: number };
+  } | null>(null);
 
   const handleFiles = useCallback(async (rawFiles: FileList | File[]) => {
     const files = Array.from(rawFiles);
@@ -587,6 +592,12 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
                     <div><b>{structuredPreview.stats.sub}</b> Аб.</div>
                     <div><b>{structuredPreview.stats.cablesMatched}</b> кабелей</div>
                   </div>
+                  {(structuredPreview.stats.supports > 0 || structuredPreview.stats.joints > 0 || structuredPreview.stats.radio > 0) && (
+                    <div className="mt-1 text-[#94a3b8]">
+                      Доп.: {structuredPreview.stats.supports} опор, {structuredPreview.stats.joints} узлов
+                      {structuredPreview.stats.radio > 0 ? `, ${structuredPreview.stats.radio} РРЛ` : ''} (точки крепления для кабелей)
+                    </div>
+                  )}
                   {structuredPreview.stats.cablesOrphan > 0 && (
                     <div className="text-[#fbbf24] mt-1">
                       ⚠️ {structuredPreview.stats.cablesOrphan} линий не привязалось к сущностям (расстояние &gt;75м)

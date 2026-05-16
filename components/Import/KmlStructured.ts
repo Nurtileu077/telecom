@@ -16,6 +16,11 @@ export interface KmlPoint {
   desc: string;
   folderPath: string[];
   fileDistrict: string;
+  // Custom fields from <ExtendedData><SchemaData><SimpleData …>.  Key is the
+  // schema's displayName (preferred) or raw field id; value is the cell value.
+  // Used by the classifier: if extData contains "itemType: ЦОД" that wins
+  // over folder-name guessing.
+  extData?: Record<string, string>;
 }
 
 export interface KmlLine {
@@ -23,32 +28,64 @@ export interface KmlLine {
   name: string;
   folderPath: string[];
   fileDistrict: string;
+  extData?: Record<string, string>;
 }
 
-export type EntityKind = 'olt' | 'tb' | 'ork' | 'sub';
+// Entity kinds we map.  'support' covers physical infrastructure (поддерживающие
+// опоры ОВН, столбы) and 'joint' covers cable junction points (Линейный
+// участок, Перекресток).  Neither becomes a subscriber — they live in a
+// separate snap-target list so cable endpoints still match them.
+// 'radio' is for РРЛ (радиорелейная линия) — drawn as an annotation, not as
+// a fibre cable.  'skip' is anything else we know to ignore (polygons, etc.).
+export type EntityKind = 'olt' | 'tb' | 'ork' | 'sub' | 'support' | 'joint' | 'radio' | 'skip';
 
-const RE_OLT  = /\bolt\b|узел[\s_-]*связ|magistral/i;
-const RE_TB   = /муфт|\btb\b|sleeve|транзит/i;
-const RE_ORK  = /орк|\bбокс\b|\bnap\b|шкаф|distribu/i;
-const RE_SUB  = /абонент|\bsub\b|\bont\b|client|клиент|drop/i;
-const RE_CABLE = /кабел|\bок[\s_-]?\d/i;
+// JS \b doesn't work for Cyrillic.  We anchor on either start/whitespace/-
+// or end/whitespace/-(/)  using lookaheads.  In practice each placemark's
+// folder name is short enough that simple substring match is fine for the
+// non-ambiguous cases (муфт, орк, опора), and for ambiguous short tokens
+// (овн, цод, амс, ррл, олт, тб) we require a non-letter neighbour so e.g.
+// "ОВН" matches but "Дровника" doesn't.
+const NONL = '(?:^|[^а-яА-Яa-zA-Z0-9])';
+const NONR = '(?:[^а-яА-Яa-zA-Z0-9]|$)';
+const RE_OLT     = new RegExp(`${NONL}(?:olt|цод|амс|узел[\\s_-]*связ|data[\\s-]?center)${NONR}|magistral`, 'i');
+const RE_TB      = new RegExp(`муфт|${NONL}(?:tb|sleeve|транзит)${NONR}`, 'i');
+const RE_ORK     = new RegExp(`${NONL}(?:орк|бокс|nap|шкаф)${NONR}|distribu`, 'i');
+const RE_SUPPORT = new RegExp(`${NONL}овн${NONR}|опора|столб|поддерж`, 'i');
+const RE_JOINT   = new RegExp(`линейн.+участок|перекрест|перекрёст|${NONL}joint${NONR}`, 'i');
+const RE_RADIO   = new RegExp(`${NONL}ррл${NONR}|радиорелей|wireless[\\s-]?link`, 'i');
 
-function joinText(folderPath: string[], name: string): string {
-  return [...folderPath, name].filter(Boolean).join(' ').toLowerCase();
+function joinText(folderPath: string[], name: string, extData?: Record<string, string>): string {
+  const parts: string[] = [...folderPath, name];
+  if (extData) {
+    for (const v of Object.values(extData)) if (v) parts.push(String(v));
+  }
+  return parts.filter(Boolean).join(' ').toLowerCase();
 }
 
-export function classifyEntity(folderPath: string[], name: string): EntityKind {
-  const t = joinText(folderPath, name);
-  if (RE_OLT.test(t))  return 'olt';
-  if (RE_TB.test(t))   return 'tb';
-  if (RE_ORK.test(t))  return 'ork';
-  // Default: subscriber (covers both classified sub folders and unknowns)
+export function classifyEntity(
+  folderPath: string[],
+  name: string,
+  extData?: Record<string, string>,
+): EntityKind {
+  const t = joinText(folderPath, name, extData);
+  // Order matters — support/joint/radio checked first so a folder name like
+  // "Опора ОК-8" doesn't accidentally classify as a cable / subscriber.
+  if (RE_RADIO.test(t))   return 'radio';
+  if (RE_SUPPORT.test(t)) return 'support';
+  if (RE_JOINT.test(t))   return 'joint';
+  if (RE_OLT.test(t))     return 'olt';
+  if (RE_TB.test(t))      return 'tb';
+  if (RE_ORK.test(t))     return 'ork';
   return 'sub';
 }
 
-export function classifyCableType(folderPath: string[], name: string): CableType {
-  const t = joinText(folderPath, name);
-  // Explicit ОК-N marker in folder/line name has top priority.
+export function classifyCableType(
+  folderPath: string[],
+  name: string,
+  extData?: Record<string, string>,
+): CableType {
+  const t = joinText(folderPath, name, extData);
+  // Explicit ОК-N marker has top priority.
   const m = t.match(/ок[\s_-]?(\d{1,3})/);
   if (m) {
     const n = parseInt(m[1], 10);
@@ -62,12 +99,25 @@ export function classifyCableType(folderPath: string[], name: string): CableType
   return 'ОК-12';
 }
 
+// True for line itemTypes we don't want to treat as a fibre cable
+// (currently only radio links).  Caller can stash them as annotations.
+export function isRadioLine(
+  folderPath: string[],
+  name: string,
+  extData?: Record<string, string>,
+): boolean {
+  return RE_RADIO.test(joinText(folderPath, name, extData));
+}
+
 interface DistrictBuckets {
   olts: KmlPoint[];
   tbs: KmlPoint[];
   orks: KmlPoint[];
   subs: KmlPoint[];
+  supports: KmlPoint[]; // опоры / столбы — snap-targets only, not entities
+  joints: KmlPoint[];   // линейные узлы / перекрёстки — also snap-targets
   lines: KmlLine[];
+  radioLines: KmlLine[];
 }
 
 function slugForId(s: string): string {
@@ -77,8 +127,11 @@ function slugForId(s: string): string {
 interface BuildOutcome {
   districts: District[];
   cables: Cable[];
+  // Lines that aren't fibre cables (РРЛ) — caller renders as annotations.
+  radioLines: Array<{ coords: [number, number][]; name: string; district: string }>;
   stats: {
     olt: number; tb: number; ork: number; sub: number;
+    supports: number; joints: number; radio: number;
     cablesMatched: number;
     cablesOrphan: number; // line endpoints didn't snap to any entity
   };
@@ -106,26 +159,37 @@ export function buildStructured(
   opts: { snapMaxM?: number } = {},
 ): BuildOutcome {
   const SNAP_M = opts.snapMaxM ?? 75; // endpoints often a few metres off the icon
-  const stats = { olt: 0, tb: 0, ork: 0, sub: 0, cablesMatched: 0, cablesOrphan: 0 };
+  const stats = { olt: 0, tb: 0, ork: 0, sub: 0, supports: 0, joints: 0, radio: 0, cablesMatched: 0, cablesOrphan: 0 };
 
   // Bucket by district (defaults to the KML file name).
   const byDistrict = new Map<string, DistrictBuckets>();
   const bucket = (name: string) => {
     if (!byDistrict.has(name)) {
-      byDistrict.set(name, { olts: [], tbs: [], orks: [], subs: [], lines: [] });
+      byDistrict.set(name, { olts: [], tbs: [], orks: [], subs: [], supports: [], joints: [], lines: [], radioLines: [] });
     }
     return byDistrict.get(name)!;
   };
 
   for (const p of rawPoints) {
-    const kind = classifyEntity(p.folderPath, p.name);
+    const kind = classifyEntity(p.folderPath, p.name, p.extData);
     const b = bucket(p.fileDistrict);
-    if (kind === 'olt') b.olts.push(p);
-    else if (kind === 'tb') b.tbs.push(p);
-    else if (kind === 'ork') b.orks.push(p);
-    else b.subs.push(p);
+    if      (kind === 'olt')     b.olts.push(p);
+    else if (kind === 'tb')      b.tbs.push(p);
+    else if (kind === 'ork')     b.orks.push(p);
+    else if (kind === 'support') { b.supports.push(p); stats.supports++; }
+    else if (kind === 'joint')   { b.joints.push(p);   stats.joints++; }
+    else if (kind === 'skip' || kind === 'radio') { /* drop */ }
+    else                          b.subs.push(p);
   }
-  for (const l of rawLines) bucket(l.fileDistrict).lines.push(l);
+  for (const l of rawLines) {
+    const b = bucket(l.fileDistrict);
+    if (isRadioLine(l.folderPath, l.name, l.extData)) {
+      b.radioLines.push(l);
+      stats.radio++;
+    } else {
+      b.lines.push(l);
+    }
+  }
 
   const outDistricts: District[] = [];
   const outCables: Cable[] = [];
@@ -239,11 +303,16 @@ export function buildStructured(
     });
 
     // ── Cables — match each LineString to a pair of entities by snap-to-nearest.
+    // Supports (опоры/столбы) and joints (перекрёстки) are added as snap
+    // targets with synthetic ids so the cable still has named endpoints — the
+    // alternative (orphan cable) loses the line completely.
     const entityIndex = [
       { id: oltId, lat: olt.lat, lon: olt.lon },
       ...tbs.map((t) => ({ id: t.id, lat: t.lat, lon: t.lon })),
       ...orks.map((o) => ({ id: o.id, lat: o.lat, lon: o.lon })),
       ...subs.map((s) => ({ id: s.id, lat: s.lat, lon: s.lon })),
+      ...b.supports.map((p, i) => ({ id: `pole-${slug}-${i + 1}`, lat: p.lat, lon: p.lon })),
+      ...b.joints.map((p, i) => ({ id: `J-${slug}-${i + 1}`,    lat: p.lat, lon: p.lon })),
     ];
 
     for (const line of b.lines) {
@@ -256,7 +325,7 @@ export function buildStructured(
         stats.cablesOrphan++;
         continue;
       }
-      const type = classifyCableType(line.folderPath, line.name);
+      const type = classifyCableType(line.folderPath, line.name, line.extData);
       let lengthM = 0;
       for (let i = 1; i < line.coords.length; i++) {
         lengthM += haversineM(line.coords[i - 1][0], line.coords[i - 1][1], line.coords[i][0], line.coords[i][1]);
@@ -277,5 +346,13 @@ export function buildStructured(
     }
   }
 
-  return { districts: outDistricts, cables: outCables, stats };
+  // Collect radio lines (РРЛ) so the caller can show them as annotations.
+  const radioLines: Array<{ coords: [number, number][]; name: string; district: string }> = [];
+  for (const [districtName, b] of byDistrict.entries()) {
+    for (const r of b.radioLines) {
+      radioLines.push({ coords: r.coords, name: r.name || 'РРЛ', district: districtName });
+    }
+  }
+
+  return { districts: outDistricts, cables: outCables, radioLines, stats };
 }
