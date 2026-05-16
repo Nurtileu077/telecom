@@ -80,6 +80,15 @@ export default function HomePage() {
     }
   }, [net]);
 
+  const handleLoadRaw = useCallback(async (
+    subs: Subscriber[],
+    lines: { coords: [number, number][]; name: string; folder: string }[],
+    source: string,
+  ) => {
+    setShowImport(false);
+    await net.loadRaw(subs, lines, source);
+  }, [net]);
+
   // Drag-drop reassignment: when an ORK is dropped near a different TB (≤80m), reassign it.
   // For subscribers: if dropped near another ORK (≤120m), reassign.
   const SNAP_TB_M = 80;
@@ -373,6 +382,17 @@ export default function HomePage() {
           >
             💾 Сохранить
           </button>
+          {/* «Построить» — кластеризация подгруженных абонентов в OLT/Муфты/ОРК.
+              Видимо только когда есть «сырые» подписчики без сети (raw-import). */}
+          {net.allSubscribers.length > 0 && net.districts.length === 0 && (
+            <button
+              onClick={() => net.rebuildFromCurrent()}
+              className="px-3 py-1 text-xs bg-[#fbbf24] hover:bg-[#fde68a] text-[#0a0e1a] font-semibold rounded-lg transition-colors animate-pulse"
+              title="Запустить авто-построение сети (kmeans → OSRM → консолидация)"
+            >
+              🔨 Построить
+            </button>
+          )}
           <button
             onClick={() => setShowImport(true)}
             className="px-3 py-1 text-xs bg-[#38bdf8] hover:bg-[#7dd3fc] text-[#0a0e1a] font-semibold rounded-lg transition-colors"
@@ -438,6 +458,7 @@ export default function HomePage() {
             districts={net.districts}
             cables={net.cables}
             joints={net.joints}
+            unassignedSubscribers={net.allSubscribers}
             layers={net.layers}
             flyToRef={flyToRef}
             mapElRef={mapElRef}
@@ -581,6 +602,7 @@ export default function HomePage() {
         <ImportModal
           onClose={() => setShowImport(false)}
           onBuild={handleBuild}
+          onLoadRaw={handleLoadRaw}
           onImportNetwork={handleImportNetwork}
           currentSettings={net.settings}
           hasExistingData={net.totalSubscribers > 0}

@@ -2,7 +2,7 @@
 import { useState, useRef, useCallback, useMemo } from 'react';
 import { Subscriber, ProjectSettings, Project } from '@/types/network';
 import { importExcel } from './ExcelImporter';
-import { importKmz, importKmzBatch } from './KmzImporter';
+import { importKmz, importKmzBatch, importKmzRaw, importKmzBatchRaw, type KmlRawLine } from './KmzImporter';
 import { importCsv, parseTabular } from './CsvImporter';
 
 export type ImportMode = 'replace' | 'append';
@@ -13,6 +13,7 @@ export type OltLocations = Record<string, Array<{ lat: number; lon: number }>>;
 interface Props {
   onClose: () => void;
   onBuild: (subscribers: Subscriber[], settings: ProjectSettings, source: string, mode: ImportMode, oltLocations?: OltLocations) => void;
+  onLoadRaw: (subs: Subscriber[], lines: KmlRawLine[], source: string) => void;
   onImportNetwork: (project: Project, mode: NetworkImportMode) => void;
   currentSettings: ProjectSettings;
   hasExistingData: boolean;
@@ -43,7 +44,7 @@ const TEST_SUBSCRIBERS: Subscriber[] = [
   { id: 't10', lat: 40.790642, lon: 68.317131, desc: 'Жетісай қ., Ескендиров/Мұсабаев қиылысы', district: 'Жетысай', fibers: { working: 2, spare: 1 } },
 ];
 
-export default function ImportModal({ onClose, onBuild, onImportNetwork, currentSettings, hasExistingData }: Props) {
+export default function ImportModal({ onClose, onBuild, onLoadRaw, onImportNetwork, currentSettings, hasExistingData }: Props) {
   const [subscribers, setSubscribers] = useState<Subscriber[] | null>(null);
   const [fileName, setFileName] = useState<string>('');
   const [settings, setSettings] = useState<ProjectSettings>(currentSettings);
@@ -84,41 +85,51 @@ export default function ImportModal({ onClose, onBuild, onImportNetwork, current
 
   // Per-file breakdown for multi-KML imports — kept for the summary panel.
   const [batchReport, setBatchReport] = useState<Array<{ name: string; count: number; error?: string }> | null>(null);
+  // Raw mode: load KML 1:1 (points + LineStrings) without running the build.
+  const [rawMode, setRawMode] = useState(true);
+  const [rawLines, setRawLines] = useState<KmlRawLine[]>([]);
 
   const handleFiles = useCallback(async (rawFiles: FileList | File[]) => {
     const files = Array.from(rawFiles);
     if (files.length === 0) return;
-    setLoading(true); setError(''); setBatchReport(null);
+    setLoading(true); setError(''); setBatchReport(null); setRawLines([]);
     try {
-      // Multi-file path: batch of KML/KMZ — every file becomes its own
-      // district by default (the user's "15 KML in a folder, different layers"
-      // case).  If the batch contains a non-KML, fall back to single-file
-      // handling for the FIRST file only.
       const allKml = files.every((f) => /\.(kml|kmz)$/i.test(f.name));
+
+      // Multi-file path: batch of KML/KMZ — each file becomes a district / layer.
       if (files.length > 1 && allKml) {
-        const { subscribers: subs, perFile } = await importKmzBatch(files);
-        setBatchReport(perFile);
+        const { subscribers: subs, lines, perFile } = await importKmzBatchRaw(files);
+        setBatchReport(perFile.map((p) => ({ name: p.name, count: p.subs + p.lines, error: p.error })));
         setFileName(`${files.length} KML/KMZ файлов`);
-        if (subs.length === 0) throw new Error('Ни в одном файле не нашлось точек');
+        if (subs.length === 0 && lines.length === 0) {
+          throw new Error('Ни точек, ни линий не нашлось');
+        }
         setSubscribers(subs);
+        setRawLines(lines);
         return;
       }
 
       const file = files[0];
       setFileName(file.name);
-      let subs: Subscriber[];
       const ext = file.name.toLowerCase();
       if (ext.endsWith('.xlsx') || ext.endsWith('.xls')) {
-        subs = await importExcel(file);
+        const subs = await importExcel(file);
+        if (subs.length === 0) throw new Error('Файл не содержит данных абонентов');
+        setSubscribers(subs);
       } else if (ext.endsWith('.kml') || ext.endsWith('.kmz')) {
-        subs = await importKmz(file);
+        const { subscribers: subs, lines } = await importKmzRaw(file);
+        if (subs.length === 0 && lines.length === 0) {
+          throw new Error('Ни точек, ни линий не нашлось');
+        }
+        setSubscribers(subs);
+        setRawLines(lines);
       } else if (ext.endsWith('.csv') || ext.endsWith('.tsv') || ext.endsWith('.txt')) {
-        subs = await importCsv(file);
+        const subs = await importCsv(file);
+        if (subs.length === 0) throw new Error('Файл не содержит данных абонентов');
+        setSubscribers(subs);
       } else {
         throw new Error('Используйте .xlsx, .kml, .kmz или .csv');
       }
-      if (subs.length === 0) throw new Error('Файл не содержит данных абонентов');
-      setSubscribers(subs);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -457,7 +468,7 @@ export default function ImportModal({ onClose, onBuild, onImportNetwork, current
             </div>
           )}
 
-          {subscribers && (
+          {subscribers && !rawMode && (
             <div className="space-y-2 bg-[#0a0e1a] border border-[#38bdf8]/30 rounded-lg p-3">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-semibold text-[#38bdf8]">📡 OLT (узлы связи)</h3>
@@ -518,6 +529,33 @@ export default function ImportModal({ onClose, onBuild, onImportNetwork, current
           )}
 
           {subscribers && (
+            <div className="bg-[#0a0e1a] border border-[#1e3a5f] rounded-lg p-2">
+              <div className="text-[10px] text-[#64748b] uppercase tracking-wider mb-2">Режим импорта</div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setRawMode(true)}
+                  className={`p-2 rounded-md text-xs transition-all text-left ${rawMode ? 'bg-[#94a3b8]/20 border border-[#94a3b8] text-[#e2e8f0]' : 'border border-[#1e3a5f] text-[#94a3b8]'}`}
+                >
+                  📥 Как есть
+                  <div className="text-[9px] text-[#64748b] mt-0.5">Просто показать точки и линии</div>
+                </button>
+                <button
+                  onClick={() => setRawMode(false)}
+                  className={`p-2 rounded-md text-xs transition-all text-left ${!rawMode ? 'bg-[#38bdf8]/15 border border-[#38bdf8] text-[#38bdf8]' : 'border border-[#1e3a5f] text-[#94a3b8]'}`}
+                >
+                  🚀 Построить
+                  <div className="text-[9px] text-[#64748b] mt-0.5">Кластеризация + кабели</div>
+                </button>
+              </div>
+              {rawLines.length > 0 && rawMode && (
+                <p className="mt-2 text-[10px] text-[#fbbf24]">
+                  📐 В файле найдено {rawLines.length} линий — покажу как нарисовано.
+                </p>
+              )}
+            </div>
+          )}
+
+          {subscribers && !rawMode && (
             <div className="space-y-2">
               <h3 className="text-[10px] text-[#64748b] uppercase tracking-wider">Параметры построения</h3>
               <div className="grid grid-cols-2 gap-2">
@@ -563,11 +601,24 @@ export default function ImportModal({ onClose, onBuild, onImportNetwork, current
             </button>
           ) : (
             <button
-              onClick={() => { if (subscribers) onBuild(subscribers, settings, fileName, mode, parsedOlts); }}
+              onClick={() => {
+                if (!subscribers) return;
+                if (rawMode) {
+                  onLoadRaw(subscribers, rawLines, fileName);
+                } else {
+                  onBuild(subscribers, settings, fileName, mode, parsedOlts);
+                }
+              }}
               disabled={!subscribers}
-              className="flex-1 py-2 px-4 bg-[#38bdf8] hover:bg-[#7dd3fc] disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-xs font-semibold text-[#0a0e1a] transition-colors"
+              className={`flex-1 py-2 px-4 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-xs font-semibold transition-colors ${
+                rawMode
+                  ? 'bg-[#94a3b8] hover:bg-[#cbd5e1] text-[#0a0e1a]'
+                  : 'bg-[#38bdf8] hover:bg-[#7dd3fc] text-[#0a0e1a]'
+              }`}
             >
-              {mode === 'append' ? '➕ Добавить и построить' : '🚀 Построить сеть'}
+              {rawMode
+                ? `📥 Загрузить как есть${rawLines.length > 0 ? ` (+${rawLines.length} линий)` : ''}`
+                : mode === 'append' ? '➕ Добавить и построить' : '🚀 Построить сеть'}
             </button>
           )}
         </div>

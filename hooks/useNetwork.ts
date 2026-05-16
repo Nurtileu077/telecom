@@ -1099,6 +1099,42 @@ export function useNetwork() {
     if (allSubscribers.length > 0) await runBuild(allSubscribers);
   }, [allSubscribers, runBuild]);
 
+  // Raw KML load — show the file as it was drawn (points + LineStrings)
+  // WITHOUT running the auto-build / clustering pipeline.  Points become
+  // subscribers (no ORK assignment yet), LineStrings become annotations of
+  // type 'cable-route' so the original cable routes are visible 1:1.
+  // The "🔨 Построить" button later calls rebuildFromCurrent to cluster.
+  const loadRaw = useCallback(async (
+    subs: Subscriber[],
+    lines: Array<{ coords: [number, number][]; name: string; folder: string }>,
+    source: string,
+  ) => {
+    setAllSubscribers(subs);
+    setDistricts([]);
+    setCables([]);
+    setJoints([]);
+    const annotations: MapAnnotation[] = lines.map((ln, i) => ({
+      id: `ann-kml-${Date.now()}-${i}`,
+      type: 'cable-route',
+      shape: 'line',
+      coords: ln.coords,
+      name: ln.name || `Линия ${i + 1}`,
+      description: ln.folder ? `Слой: ${ln.folder}` : '',
+      color: '#fbbf24', // amber — distinct from real cables (orange/blue/green)
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }));
+    setAnnotations(annotations);
+    setImportHistory([{
+      id: newId('imp'),
+      source: `${source} (raw)`,
+      districts: Array.from(new Set(subs.map((s) => s.district))),
+      count: subs.length,
+      importedAt: new Date().toISOString(),
+    }]);
+    setStatus('done');
+  }, []);
+
   // Bulk repair pass.  Deletes phantom / cross-district cables and OSRM-
   // routes drops for any subscriber that has no cable but a nearby ORK.
   // Returns a structured report — the AI can read it back via the tool
@@ -1371,7 +1407,7 @@ export function useNetwork() {
     autoSaveEnabled, setAutoSaveEnabled, lastSavedAt, dbEnabled,
     buildFromSubscribers, appendSubscribers,
     addAnnotation, updateAnnotation, deleteAnnotation,
-    addSubscriberAt, deleteSubscriber, moveEntity, rebuildFromCurrent, autoRepair,
+    addSubscriberAt, deleteSubscriber, moveEntity, rebuildFromCurrent, autoRepair, loadRaw,
     saveProject, loadProject, deleteProject, listProjects, newProject,
     exportProjectJSON, importProjectJSON,
     totalSubscribers, totalCableKm, totalOrks,

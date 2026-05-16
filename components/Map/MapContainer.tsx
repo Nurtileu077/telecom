@@ -10,6 +10,10 @@ interface Props {
   districts: District[];
   cables: Cable[];
   joints?: InlineJoint[];
+  // Subscribers that aren't yet placed inside any district's ORK — used to
+  // show "raw" KML imports before the user clicks Build.  Renders as gray
+  // dots so they're visibly different from the colored, ORK-assigned ones.
+  unassignedSubscribers?: import('@/types/network').Subscriber[];
   layers: LayerVisibility;
   flyToRef?: React.MutableRefObject<((lat: number, lon: number, zoom?: number) => void) | null>;
   mapElRef?: React.MutableRefObject<HTMLElement | null>;
@@ -560,6 +564,32 @@ export default function LeafletMap(props: Props) {
               }
             }
           }
+        }
+      }
+
+      // ── Unassigned subscribers (raw KML before build) ──
+      // Districts is empty (or sub.id isn't found in any ORK).  Show as
+      // gray dots so the user can see what was loaded before clustering.
+      const assigned = new Set<string>();
+      for (const d of districts) {
+        for (const tb of d.olt.transitBoxes) {
+          for (const ork of tb.orks) for (const s of ork.subscribers) assigned.add(s.id);
+        }
+      }
+      const unassigned = (propsRef.current.unassignedSubscribers ?? [])
+        .filter((s) => !assigned.has(s.id));
+      if (layers.subscribers && unassigned.length > 0) {
+        const radius = zoom >= 16 ? 3.5 : zoom >= 13 ? 2.5 : 1.5;
+        for (const s of unassigned) {
+          const c = L.circleMarker([s.lat, s.lon], {
+            radius,
+            color: '#94a3b8',
+            fillColor: '#94a3b8',
+            fillOpacity: 0.6,
+            weight: 1,
+          });
+          c.bindTooltip(`<b>${s.desc}</b><br/>${s.district}<br/><i style="color:#64748b">не привязан — нажми «Построить»</i>`, { sticky: true, className: 'text-xs' });
+          group.addLayer(c);
         }
       }
     });

@@ -16,108 +16,148 @@ async function readKmlText(file: File): Promise<string> {
   return file.text();
 }
 
+export interface KmlRawLine {
+  coords: [number, number][]; // [lat, lon]
+  name: string;
+  folder: string;
+}
+
 interface ParseOpts {
-  // Used as the district name when no enclosing <Folder> provides one.
-  // For multi-KML imports we pass the file name (без расширения) so each
-  // KML becomes its own layer/district instead of all collapsing to "Imported".
   defaultDistrict?: string;
-  // Continue numbering across multiple KML files in one batch.
   resetIds?: boolean;
 }
 
-function parseKmlText(kmlText: string, opts: ParseOpts = {}): Subscriber[] {
-  if (opts.resetIds !== false) {
-    // default behaviour for single-file flow: reset.  Batch caller passes false.
+// Walk up to find the nearest <Folder>'s <name>.  Falls back to caller-supplied.
+function folderNameOf(pm: Element, fallback: string): string {
+  let parent = pm.parentElement;
+  while (parent) {
+    if (parent.tagName === 'Folder') {
+      const fn = parent.querySelector(':scope > name')?.textContent?.trim();
+      if (fn && !['Абоненты', 'Subscribers', 'Points'].includes(fn)) return fn;
+      break;
+    }
+    parent = parent.parentElement;
   }
+  return fallback;
+}
+
+// Parse a coordinate triplet block "lon,lat,alt lon,lat,alt …" → [lat, lon][].
+function parseCoordList(text: string): [number, number][] {
+  const out: [number, number][] = [];
+  for (const triplet of text.trim().split(/\s+/)) {
+    const parts = triplet.split(',');
+    if (parts.length < 2) continue;
+    const lon = parseFloat(parts[0]);
+    const lat = parseFloat(parts[1]);
+    if (isNaN(lat) || isNaN(lon)) continue;
+    if (lat < 35 || lat > 60 || lon < 45 || lon > 90) continue;
+    out.push([lat, lon]);
+  }
+  return out;
+}
+
+function parseKmlText(
+  kmlText: string,
+  opts: ParseOpts = {},
+): { subscribers: Subscriber[]; lines: KmlRawLine[] } {
   const parser = new DOMParser();
   const doc = parser.parseFromString(kmlText, 'text/xml');
 
   const subscribers: Subscriber[] = [];
-  const placemarks = doc.querySelectorAll('Placemark');
+  const lines: KmlRawLine[] = [];
   const fallback = opts.defaultDistrict ?? 'Imported';
+  const placemarks = doc.querySelectorAll('Placemark');
 
   for (const pm of placemarks) {
-    const point = pm.querySelector('Point');
-    if (!point) continue;
-
-    const coordsEl = point.querySelector('coordinates');
-    if (!coordsEl) continue;
-
-    const parts = coordsEl.textContent?.trim().split(',') || [];
-    if (parts.length < 2) continue;
-
-    const lon = parseFloat(parts[0]);
-    const lat = parseFloat(parts[1]);
-
-    if (isNaN(lat) || isNaN(lon)) continue;
-    if (lat < 35 || lat > 60 || lon < 45 || lon > 90) continue;
-
+    const folder = folderNameOf(pm, fallback);
     const name = pm.querySelector('name')?.textContent?.trim() || '';
     const desc = pm.querySelector('description')?.textContent?.trim() || '';
 
-    // Determine district from parent folder name; fall back to opts.defaultDistrict.
-    let district = fallback;
-    let parent = pm.parentElement;
-    while (parent) {
-      if (parent.tagName === 'Folder') {
-        const folderName = parent.querySelector(':scope > name')?.textContent?.trim();
-        if (folderName && !['Абоненты', 'Subscribers', 'Points'].includes(folderName)) {
-          district = folderName;
-        }
-        break;
+    // <Point> → subscriber
+    const point = pm.querySelector('Point > coordinates');
+    if (point) {
+      const c = parseCoordList(point.textContent ?? '')[0];
+      if (c) {
+        subscribers.push({
+          id: newId(),
+          lat: c[0], lon: c[1],
+          desc: name || desc || `Або. ${subscribers.length + 1}`,
+          district: folder,
+          fibers: { working: 2, spare: 1 },
+        });
       }
-      parent = parent.parentElement;
     }
 
-    subscribers.push({
-      id: newId(),
-      lat,
-      lon,
-      desc: name || desc || `Або. ${subscribers.length + 1}`,
-      district,
-      fibers: { working: 2, spare: 1 },
-    });
+    // <LineString> → raw line (cable route as the vendor drew it)
+    const lineEl = pm.querySelector('LineString > coordinates');
+    if (lineEl) {
+      const cs = parseCoordList(lineEl.textContent ?? '');
+      if (cs.length >= 2) {
+        lines.push({ coords: cs, name: name || desc, folder });
+      }
+    }
   }
 
-  return subscribers;
+  return { subscribers, lines };
 }
 
 export async function importKmz(file: File): Promise<Subscriber[]> {
   idCounter = 0;
   const text = await readKmlText(file);
-  // Use the file name (sans extension) as the fallback district — the same
-  // file name will be reused as the layer name on the map.
+  const fallback = file.name.replace(/\.(kml|kmz)$/i, '').trim() || 'Imported';
+  return parseKmlText(text, { defaultDistrict: fallback }).subscribers;
+}
+
+// Same as importKmz but returns BOTH points and lines.  Used by the
+// "Загрузить как есть" flow that displays the KML 1:1 instead of running
+// the auto-build over its points and discarding the original cable routes.
+export async function importKmzRaw(file: File): Promise<{ subscribers: Subscriber[]; lines: KmlRawLine[] }> {
+  idCounter = 0;
+  const text = await readKmlText(file);
   const fallback = file.name.replace(/\.(kml|kmz)$/i, '').trim() || 'Imported';
   return parseKmlText(text, { defaultDistrict: fallback });
 }
 
-// Multi-file import: 15 KMLs in a folder → one combined Subscriber[] where each
-// KML's points carry the file's name as their district (when the KML itself
-// doesn't expose a Folder name).  IDs are globally unique across the batch.
-export async function importKmzBatch(files: File[]): Promise<{
+// Multi-file batch — raw flavour.
+export async function importKmzBatchRaw(files: File[]): Promise<{
   subscribers: Subscriber[];
-  perFile: Array<{ name: string; count: number; error?: string }>;
+  lines: KmlRawLine[];
+  perFile: Array<{ name: string; subs: number; lines: number; error?: string }>;
 }> {
   idCounter = 0;
-  const all: Subscriber[] = [];
-  const perFile: Array<{ name: string; count: number; error?: string }> = [];
+  const allSubs: Subscriber[] = [];
+  const allLines: KmlRawLine[] = [];
+  const perFile: Array<{ name: string; subs: number; lines: number; error?: string }> = [];
 
   for (const file of files) {
     const ext = file.name.toLowerCase();
     if (!ext.endsWith('.kml') && !ext.endsWith('.kmz')) {
-      perFile.push({ name: file.name, count: 0, error: 'не KML/KMZ' });
+      perFile.push({ name: file.name, subs: 0, lines: 0, error: 'не KML/KMZ' });
       continue;
     }
     try {
       const text = await readKmlText(file);
       const fallback = file.name.replace(/\.(kml|kmz)$/i, '').trim() || file.name;
-      const subs = parseKmlText(text, { defaultDistrict: fallback, resetIds: false });
-      all.push(...subs);
-      perFile.push({ name: file.name, count: subs.length });
+      const { subscribers, lines } = parseKmlText(text, { defaultDistrict: fallback, resetIds: false });
+      allSubs.push(...subscribers);
+      allLines.push(...lines);
+      perFile.push({ name: file.name, subs: subscribers.length, lines: lines.length });
     } catch (e: any) {
-      perFile.push({ name: file.name, count: 0, error: e?.message ?? 'parse error' });
+      perFile.push({ name: file.name, subs: 0, lines: 0, error: e?.message ?? 'parse error' });
     }
   }
 
-  return { subscribers: all, perFile };
+  return { subscribers: allSubs, lines: allLines, perFile };
+}
+
+// Existing batch function — points only, used by the auto-build flow.
+export async function importKmzBatch(files: File[]): Promise<{
+  subscribers: Subscriber[];
+  perFile: Array<{ name: string; count: number; error?: string }>;
+}> {
+  const { subscribers, perFile } = await importKmzBatchRaw(files);
+  return {
+    subscribers,
+    perFile: perFile.map((p) => ({ name: p.name, count: p.subs, error: p.error })),
+  };
 }
