@@ -2,7 +2,7 @@
 import { useState, useRef, useCallback, useMemo } from 'react';
 import { Subscriber, ProjectSettings, Project } from '@/types/network';
 import { importExcel } from './ExcelImporter';
-import { importKmz } from './KmzImporter';
+import { importKmz, importKmzBatch } from './KmzImporter';
 import { importCsv, parseTabular } from './CsvImporter';
 
 export type ImportMode = 'replace' | 'append';
@@ -82,9 +82,30 @@ export default function ImportModal({ onClose, onBuild, onImportNetwork, current
     }
   }, [pasteText, pasteDistrict]);
 
-  const handleFile = useCallback(async (file: File) => {
-    setLoading(true); setError(''); setFileName(file.name);
+  // Per-file breakdown for multi-KML imports — kept for the summary panel.
+  const [batchReport, setBatchReport] = useState<Array<{ name: string; count: number; error?: string }> | null>(null);
+
+  const handleFiles = useCallback(async (rawFiles: FileList | File[]) => {
+    const files = Array.from(rawFiles);
+    if (files.length === 0) return;
+    setLoading(true); setError(''); setBatchReport(null);
     try {
+      // Multi-file path: batch of KML/KMZ — every file becomes its own
+      // district by default (the user's "15 KML in a folder, different layers"
+      // case).  If the batch contains a non-KML, fall back to single-file
+      // handling for the FIRST file only.
+      const allKml = files.every((f) => /\.(kml|kmz)$/i.test(f.name));
+      if (files.length > 1 && allKml) {
+        const { subscribers: subs, perFile } = await importKmzBatch(files);
+        setBatchReport(perFile);
+        setFileName(`${files.length} KML/KMZ файлов`);
+        if (subs.length === 0) throw new Error('Ни в одном файле не нашлось точек');
+        setSubscribers(subs);
+        return;
+      }
+
+      const file = files[0];
+      setFileName(file.name);
       let subs: Subscriber[];
       const ext = file.name.toLowerCase();
       if (ext.endsWith('.xlsx') || ext.endsWith('.xls')) {
@@ -105,12 +126,13 @@ export default function ImportModal({ onClose, onBuild, onImportNetwork, current
     }
   }, []);
 
+  const handleFile = useCallback((file: File) => handleFiles([file]), [handleFiles]);
+
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
-  }, [handleFile]);
+    if (e.dataTransfer.files.length > 0) handleFiles(e.dataTransfer.files);
+  }, [handleFiles]);
 
   const handleNetFile = useCallback(async (file: File) => {
     setNetError('');
@@ -357,8 +379,14 @@ export default function ImportModal({ onClose, onBuild, onImportNetwork, current
               onDrop={handleDrop}
               onClick={() => fileRef.current?.click()}
             >
-              <input ref={fileRef} type="file" accept=".xlsx,.xls,.kml,.kmz,.csv,.tsv,.txt" className="hidden"
-                     onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
+              <input
+                ref={fileRef}
+                type="file"
+                multiple
+                accept=".xlsx,.xls,.kml,.kmz,.csv,.tsv,.txt"
+                className="hidden"
+                onChange={(e) => { const fs = e.target.files; if (fs && fs.length > 0) handleFiles(fs); }}
+              />
               {loading ? (
                 <div className="flex flex-col items-center gap-2">
                   <div className="w-6 h-6 border-2 border-[#38bdf8] border-t-transparent rounded-full animate-spin" />
@@ -367,11 +395,27 @@ export default function ImportModal({ onClose, onBuild, onImportNetwork, current
               ) : (
                 <>
                   <div className="text-3xl mb-2">📂</div>
-                  <p className="text-sm text-[#e2e8f0] mb-1">Перетащите файл или нажмите</p>
+                  <p className="text-sm text-[#e2e8f0] mb-1">Перетащите файл/папку или нажмите</p>
                   <p className="text-xs text-[#64748b]">.xlsx, .xls, .kml, .kmz, .csv, .tsv</p>
+                  <p className="text-[10px] text-[#475569] mt-1">Можно сразу несколько KML — каждый станет своим слоем-районом</p>
                 </>
               )}
               {error && <p className="mt-2 text-xs text-[#f87171]">⚠️ {error}</p>}
+            </div>
+          )}
+
+          {/* Per-file batch report after a multi-KML import */}
+          {batchReport && batchReport.length > 0 && (
+            <div className="bg-[#0a0e1a] border border-[#1e3a5f] rounded-lg p-2 max-h-32 overflow-y-auto">
+              <div className="text-[10px] text-[#64748b] mb-1">Файлы в импорте:</div>
+              {batchReport.map((r) => (
+                <div key={r.name} className="flex items-center justify-between text-[10px]">
+                  <span className="text-[#94a3b8] truncate" title={r.name}>{r.name}</span>
+                  <span className={`font-mono ${r.error ? 'text-[#f87171]' : 'text-[#34d399]'}`}>
+                    {r.error ? `⚠ ${r.error}` : `${r.count} точек`}
+                  </span>
+                </div>
+              ))}
             </div>
           )}
 
@@ -388,7 +432,7 @@ export default function ImportModal({ onClose, onBuild, onImportNetwork, current
             <div className="bg-[#0a0e1a] border border-[#1e3a5f] rounded-lg p-3">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-xs font-semibold text-[#e2e8f0] truncate">📄 {fileName}</h3>
-                <button onClick={() => setSubscribers(null)} className="text-[10px] text-[#64748b] hover:text-[#38bdf8] transition-colors flex-shrink-0 ml-2">
+                <button onClick={() => { setSubscribers(null); setBatchReport(null); }} className="text-[10px] text-[#64748b] hover:text-[#38bdf8] transition-colors flex-shrink-0 ml-2">
                   Сменить
                 </button>
               </div>
