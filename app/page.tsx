@@ -89,6 +89,15 @@ export default function HomePage() {
     await net.loadRaw(subs, lines, source);
   }, [net]);
 
+  const handleLoadStructured = useCallback(async (
+    districts: import('@/types/network').District[],
+    cables: import('@/types/network').Cable[],
+    source: string,
+  ) => {
+    setShowImport(false);
+    await net.loadStructured(districts, cables, source);
+  }, [net]);
+
   // Drag-drop reassignment: when an ORK is dropped near a different TB (≤80m), reassign it.
   // For subscribers: if dropped near another ORK (≤120m), reassign.
   const SNAP_TB_M = 80;
@@ -603,6 +612,7 @@ export default function HomePage() {
           onClose={() => setShowImport(false)}
           onBuild={handleBuild}
           onLoadRaw={handleLoadRaw}
+          onLoadStructured={handleLoadStructured}
           onImportNetwork={handleImportNetwork}
           currentSettings={net.settings}
           hasExistingData={net.totalSubscribers > 0}

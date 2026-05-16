@@ -1099,6 +1099,33 @@ export function useNetwork() {
     if (allSubscribers.length > 0) await runBuild(allSubscribers);
   }, [allSubscribers, runBuild]);
 
+  // Load a fully-built structure (districts + cables) directly into state.
+  // Used by the smart-KML importer: vendor file already has OLT/TB/ORK/cables
+  // drawn — we DON'T cluster, we just take it as the source of truth.
+  const loadStructured = useCallback(async (
+    newDistricts: District[],
+    newCables: Cable[],
+    source: string,
+  ) => {
+    setDistricts(newDistricts);
+    setCables(newCables);
+    setJoints([]);
+    setAnnotations([]);
+    const allSubs = newDistricts.flatMap((d) => d.subscribers);
+    setAllSubscribers(allSubs);
+    const mats = calculateMaterials(newDistricts, newCables, settings, 0);
+    setMaterials(mats);
+    setValidationIssues(validateNetwork(newDistricts, newCables));
+    setImportHistory([{
+      id: newId('imp'),
+      source: `${source} (structured)`,
+      districts: newDistricts.map((d) => d.name),
+      count: allSubs.length,
+      importedAt: new Date().toISOString(),
+    }]);
+    setStatus('done');
+  }, [settings]);
+
   // Raw KML load — show the file as it was drawn (points + LineStrings)
   // WITHOUT running the auto-build / clustering pipeline.  Points become
   // subscribers (no ORK assignment yet), LineStrings become annotations of
@@ -1407,7 +1434,7 @@ export function useNetwork() {
     autoSaveEnabled, setAutoSaveEnabled, lastSavedAt, dbEnabled,
     buildFromSubscribers, appendSubscribers,
     addAnnotation, updateAnnotation, deleteAnnotation,
-    addSubscriberAt, deleteSubscriber, moveEntity, rebuildFromCurrent, autoRepair, loadRaw,
+    addSubscriberAt, deleteSubscriber, moveEntity, rebuildFromCurrent, autoRepair, loadRaw, loadStructured,
     saveProject, loadProject, deleteProject, listProjects, newProject,
     exportProjectJSON, importProjectJSON,
     totalSubscribers, totalCableKm, totalOrks,

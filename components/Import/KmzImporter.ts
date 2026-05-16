@@ -1,4 +1,5 @@
 import { Subscriber } from '@/types/network';
+import type { KmlPoint, KmlLine } from './KmlStructured';
 
 let idCounter = 0;
 function newId() { return `sub-kmz-${++idCounter}`; }
@@ -27,7 +28,6 @@ interface ParseOpts {
   resetIds?: boolean;
 }
 
-// Walk up to find the nearest <Folder>'s <name>.  Falls back to caller-supplied.
 function folderNameOf(pm: Element, fallback: string): string {
   let parent = pm.parentElement;
   while (parent) {
@@ -41,7 +41,23 @@ function folderNameOf(pm: Element, fallback: string): string {
   return fallback;
 }
 
-// Parse a coordinate triplet block "lon,lat,alt lon,lat,alt …" → [lat, lon][].
+// Full ancestor chain of <Folder> names from the document root down to the
+// placemark.  Drives the smart classifier — different vendors use slightly
+// different folder structures and the deeper folder name is usually the most
+// specific (e.g. ["Туркестан", "Магистраль", "ОК-48"]).
+function folderPathOf(pm: Element): string[] {
+  const path: string[] = [];
+  let parent: Element | null = pm.parentElement;
+  while (parent) {
+    if (parent.tagName === 'Folder') {
+      const fn = parent.querySelector(':scope > name')?.textContent?.trim();
+      if (fn) path.unshift(fn);
+    }
+    parent = parent.parentElement;
+  }
+  return path;
+}
+
 function parseCoordList(text: string): [number, number][] {
   const out: [number, number][] = [];
   for (const triplet of text.trim().split(/\s+/)) {
@@ -59,21 +75,23 @@ function parseCoordList(text: string): [number, number][] {
 function parseKmlText(
   kmlText: string,
   opts: ParseOpts = {},
-): { subscribers: Subscriber[]; lines: KmlRawLine[] } {
+): { subscribers: Subscriber[]; lines: KmlRawLine[]; structuredPoints: KmlPoint[]; structuredLines: KmlLine[] } {
   const parser = new DOMParser();
   const doc = parser.parseFromString(kmlText, 'text/xml');
 
   const subscribers: Subscriber[] = [];
   const lines: KmlRawLine[] = [];
+  const structuredPoints: KmlPoint[] = [];
+  const structuredLines: KmlLine[] = [];
   const fallback = opts.defaultDistrict ?? 'Imported';
   const placemarks = doc.querySelectorAll('Placemark');
 
   for (const pm of placemarks) {
     const folder = folderNameOf(pm, fallback);
+    const folderPath = folderPathOf(pm);
     const name = pm.querySelector('name')?.textContent?.trim() || '';
     const desc = pm.querySelector('description')?.textContent?.trim() || '';
 
-    // <Point> → subscriber
     const point = pm.querySelector('Point > coordinates');
     if (point) {
       const c = parseCoordList(point.textContent ?? '')[0];
@@ -85,20 +103,26 @@ function parseKmlText(
           district: folder,
           fibers: { working: 2, spare: 1 },
         });
+        structuredPoints.push({
+          lat: c[0], lon: c[1],
+          name, desc, folderPath, fileDistrict: fallback,
+        });
       }
     }
 
-    // <LineString> → raw line (cable route as the vendor drew it)
     const lineEl = pm.querySelector('LineString > coordinates');
     if (lineEl) {
       const cs = parseCoordList(lineEl.textContent ?? '');
       if (cs.length >= 2) {
         lines.push({ coords: cs, name: name || desc, folder });
+        structuredLines.push({
+          coords: cs, name: name || desc, folderPath, fileDistrict: fallback,
+        });
       }
     }
   }
 
-  return { subscribers, lines };
+  return { subscribers, lines, structuredPoints, structuredLines };
 }
 
 export async function importKmz(file: File): Promise<Subscriber[]> {
@@ -108,25 +132,30 @@ export async function importKmz(file: File): Promise<Subscriber[]> {
   return parseKmlText(text, { defaultDistrict: fallback }).subscribers;
 }
 
-// Same as importKmz but returns BOTH points and lines.  Used by the
-// "Загрузить как есть" flow that displays the KML 1:1 instead of running
-// the auto-build over its points and discarding the original cable routes.
-export async function importKmzRaw(file: File): Promise<{ subscribers: Subscriber[]; lines: KmlRawLine[] }> {
+export async function importKmzRaw(file: File): Promise<{
+  subscribers: Subscriber[];
+  lines: KmlRawLine[];
+  structuredPoints: KmlPoint[];
+  structuredLines: KmlLine[];
+}> {
   idCounter = 0;
   const text = await readKmlText(file);
   const fallback = file.name.replace(/\.(kml|kmz)$/i, '').trim() || 'Imported';
   return parseKmlText(text, { defaultDistrict: fallback });
 }
 
-// Multi-file batch — raw flavour.
 export async function importKmzBatchRaw(files: File[]): Promise<{
   subscribers: Subscriber[];
   lines: KmlRawLine[];
+  structuredPoints: KmlPoint[];
+  structuredLines: KmlLine[];
   perFile: Array<{ name: string; subs: number; lines: number; error?: string }>;
 }> {
   idCounter = 0;
   const allSubs: Subscriber[] = [];
   const allLines: KmlRawLine[] = [];
+  const allSP: KmlPoint[] = [];
+  const allSL: KmlLine[] = [];
   const perFile: Array<{ name: string; subs: number; lines: number; error?: string }> = [];
 
   for (const file of files) {
@@ -138,19 +167,21 @@ export async function importKmzBatchRaw(files: File[]): Promise<{
     try {
       const text = await readKmlText(file);
       const fallback = file.name.replace(/\.(kml|kmz)$/i, '').trim() || file.name;
-      const { subscribers, lines } = parseKmlText(text, { defaultDistrict: fallback, resetIds: false });
+      const { subscribers, lines, structuredPoints, structuredLines } =
+        parseKmlText(text, { defaultDistrict: fallback, resetIds: false });
       allSubs.push(...subscribers);
       allLines.push(...lines);
+      allSP.push(...structuredPoints);
+      allSL.push(...structuredLines);
       perFile.push({ name: file.name, subs: subscribers.length, lines: lines.length });
     } catch (e: any) {
       perFile.push({ name: file.name, subs: 0, lines: 0, error: e?.message ?? 'parse error' });
     }
   }
 
-  return { subscribers: allSubs, lines: allLines, perFile };
+  return { subscribers: allSubs, lines: allLines, structuredPoints: allSP, structuredLines: allSL, perFile };
 }
 
-// Existing batch function — points only, used by the auto-build flow.
 export async function importKmzBatch(files: File[]): Promise<{
   subscribers: Subscriber[];
   perFile: Array<{ name: string; count: number; error?: string }>;

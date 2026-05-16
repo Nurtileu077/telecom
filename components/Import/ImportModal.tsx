@@ -3,6 +3,8 @@ import { useState, useRef, useCallback, useMemo } from 'react';
 import { Subscriber, ProjectSettings, Project } from '@/types/network';
 import { importExcel } from './ExcelImporter';
 import { importKmz, importKmzBatch, importKmzRaw, importKmzBatchRaw, type KmlRawLine } from './KmzImporter';
+import { buildStructured, type KmlPoint, type KmlLine } from './KmlStructured';
+import type { District, Cable } from '@/types/network';
 import { importCsv, parseTabular } from './CsvImporter';
 
 export type ImportMode = 'replace' | 'append';
@@ -14,6 +16,7 @@ interface Props {
   onClose: () => void;
   onBuild: (subscribers: Subscriber[], settings: ProjectSettings, source: string, mode: ImportMode, oltLocations?: OltLocations) => void;
   onLoadRaw: (subs: Subscriber[], lines: KmlRawLine[], source: string) => void;
+  onLoadStructured: (districts: District[], cables: Cable[], source: string) => void;
   onImportNetwork: (project: Project, mode: NetworkImportMode) => void;
   currentSettings: ProjectSettings;
   hasExistingData: boolean;
@@ -44,7 +47,7 @@ const TEST_SUBSCRIBERS: Subscriber[] = [
   { id: 't10', lat: 40.790642, lon: 68.317131, desc: 'Жетісай қ., Ескендиров/Мұсабаев қиылысы', district: 'Жетысай', fibers: { working: 2, spare: 1 } },
 ];
 
-export default function ImportModal({ onClose, onBuild, onLoadRaw, onImportNetwork, currentSettings, hasExistingData }: Props) {
+export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructured, onImportNetwork, currentSettings, hasExistingData }: Props) {
   const [subscribers, setSubscribers] = useState<Subscriber[] | null>(null);
   const [fileName, setFileName] = useState<string>('');
   const [settings, setSettings] = useState<ProjectSettings>(currentSettings);
@@ -88,17 +91,24 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onImportNetwo
   // Raw mode: load KML 1:1 (points + LineStrings) without running the build.
   const [rawMode, setRawMode] = useState(true);
   const [rawLines, setRawLines] = useState<KmlRawLine[]>([]);
+  // Structured KML data — populated when the file has classifiable
+  // folder structure (OLT/Муфта/ОРК/Кабель…).  When non-null and rawMode
+  // is on, submitting builds a real District tree instead of dumping flat.
+  const [structuredPoints, setStructuredPoints] = useState<KmlPoint[]>([]);
+  const [structuredLines, setStructuredLines] = useState<KmlLine[]>([]);
+  const [structuredPreview, setStructuredPreview] = useState<{ districts: District[]; cables: Cable[]; stats: { olt: number; tb: number; ork: number; sub: number; cablesMatched: number; cablesOrphan: number } } | null>(null);
 
   const handleFiles = useCallback(async (rawFiles: FileList | File[]) => {
     const files = Array.from(rawFiles);
     if (files.length === 0) return;
     setLoading(true); setError(''); setBatchReport(null); setRawLines([]);
+    setStructuredPoints([]); setStructuredLines([]); setStructuredPreview(null);
     try {
       const allKml = files.every((f) => /\.(kml|kmz)$/i.test(f.name));
 
       // Multi-file path: batch of KML/KMZ — each file becomes a district / layer.
       if (files.length > 1 && allKml) {
-        const { subscribers: subs, lines, perFile } = await importKmzBatchRaw(files);
+        const { subscribers: subs, lines, structuredPoints: sp, structuredLines: sl, perFile } = await importKmzBatchRaw(files);
         setBatchReport(perFile.map((p) => ({ name: p.name, count: p.subs + p.lines, error: p.error })));
         setFileName(`${files.length} KML/KMZ файлов`);
         if (subs.length === 0 && lines.length === 0) {
@@ -106,6 +116,15 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onImportNetwo
         }
         setSubscribers(subs);
         setRawLines(lines);
+        setStructuredPoints(sp);
+        setStructuredLines(sl);
+        // Build a preview right away so the user sees the classification result
+        // before submitting.  If we recognise ≥1 OLT/TB/ORK or ≥1 matched
+        // cable, treat it as a structured import.
+        const preview = buildStructured(sp, sl);
+        if (preview.stats.olt + preview.stats.tb + preview.stats.ork > 0 || preview.stats.cablesMatched > 0) {
+          setStructuredPreview(preview);
+        }
         return;
       }
 
@@ -117,12 +136,18 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onImportNetwo
         if (subs.length === 0) throw new Error('Файл не содержит данных абонентов');
         setSubscribers(subs);
       } else if (ext.endsWith('.kml') || ext.endsWith('.kmz')) {
-        const { subscribers: subs, lines } = await importKmzRaw(file);
+        const { subscribers: subs, lines, structuredPoints: sp, structuredLines: sl } = await importKmzRaw(file);
         if (subs.length === 0 && lines.length === 0) {
           throw new Error('Ни точек, ни линий не нашлось');
         }
         setSubscribers(subs);
         setRawLines(lines);
+        setStructuredPoints(sp);
+        setStructuredLines(sl);
+        const preview = buildStructured(sp, sl);
+        if (preview.stats.olt + preview.stats.tb + preview.stats.ork > 0 || preview.stats.cablesMatched > 0) {
+          setStructuredPreview(preview);
+        }
       } else if (ext.endsWith('.csv') || ext.endsWith('.tsv') || ext.endsWith('.txt')) {
         const subs = await importCsv(file);
         if (subs.length === 0) throw new Error('Файл не содержит данных абонентов');
@@ -547,10 +572,27 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onImportNetwo
                   <div className="text-[9px] text-[#64748b] mt-0.5">Кластеризация + кабели</div>
                 </button>
               </div>
-              {rawLines.length > 0 && rawMode && (
+              {rawLines.length > 0 && rawMode && !structuredPreview && (
                 <p className="mt-2 text-[10px] text-[#fbbf24]">
                   📐 В файле найдено {rawLines.length} линий — покажу как нарисовано.
                 </p>
+              )}
+              {structuredPreview && rawMode && (
+                <div className="mt-2 p-2 bg-[#34d399]/10 border border-[#34d399]/40 rounded text-[10px] text-[#34d399] space-y-0.5">
+                  <div>✓ Распознана структура сети:</div>
+                  <div className="grid grid-cols-5 gap-1 font-mono text-center mt-1">
+                    <div><b>{structuredPreview.stats.olt}</b> OLT</div>
+                    <div><b>{structuredPreview.stats.tb}</b> Муфт</div>
+                    <div><b>{structuredPreview.stats.ork}</b> ОРК</div>
+                    <div><b>{structuredPreview.stats.sub}</b> Аб.</div>
+                    <div><b>{structuredPreview.stats.cablesMatched}</b> кабелей</div>
+                  </div>
+                  {structuredPreview.stats.cablesOrphan > 0 && (
+                    <div className="text-[#fbbf24] mt-1">
+                      ⚠️ {structuredPreview.stats.cablesOrphan} линий не привязалось к сущностям (расстояние &gt;75м)
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           )}
@@ -604,7 +646,14 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onImportNetwo
               onClick={() => {
                 if (!subscribers) return;
                 if (rawMode) {
-                  onLoadRaw(subscribers, rawLines, fileName);
+                  // If we recognised proper folder structure, load the typed
+                  // tree so the AI / consolidation / export systems see real
+                  // OLT/TB/ORK/cables instead of a flat dump of gray dots.
+                  if (structuredPreview) {
+                    onLoadStructured(structuredPreview.districts, structuredPreview.cables, fileName);
+                  } else {
+                    onLoadRaw(subscribers, rawLines, fileName);
+                  }
                 } else {
                   onBuild(subscribers, settings, fileName, mode, parsedOlts);
                 }
@@ -612,12 +661,14 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onImportNetwo
               disabled={!subscribers}
               className={`flex-1 py-2 px-4 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-xs font-semibold transition-colors ${
                 rawMode
-                  ? 'bg-[#94a3b8] hover:bg-[#cbd5e1] text-[#0a0e1a]'
+                  ? (structuredPreview ? 'bg-[#34d399] hover:bg-[#6ee7b7] text-[#0a0e1a]' : 'bg-[#94a3b8] hover:bg-[#cbd5e1] text-[#0a0e1a]')
                   : 'bg-[#38bdf8] hover:bg-[#7dd3fc] text-[#0a0e1a]'
               }`}
             >
               {rawMode
-                ? `📥 Загрузить как есть${rawLines.length > 0 ? ` (+${rawLines.length} линий)` : ''}`
+                ? (structuredPreview
+                    ? `✓ Загрузить сеть (${structuredPreview.stats.olt}+${structuredPreview.stats.tb}+${structuredPreview.stats.ork}+${structuredPreview.stats.cablesMatched})`
+                    : `📥 Загрузить как есть${rawLines.length > 0 ? ` (+${rawLines.length} линий)` : ''}`)
                 : mode === 'append' ? '➕ Добавить и построить' : '🚀 Построить сеть'}
             </button>
           )}
