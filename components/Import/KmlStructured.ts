@@ -47,11 +47,15 @@ export type EntityKind = 'olt' | 'tb' | 'ork' | 'sub' | 'support' | 'joint' | 'r
 // "ОВН" matches but "Дровника" doesn't.
 const NONL = '(?:^|[^а-яА-Яa-zA-Z0-9])';
 const NONR = '(?:[^а-яА-Яa-zA-Z0-9]|$)';
+// "Муфта" одиночное слово — это сварная муфта = JOINT, а не транзитная
+// муфта ТB (вендор различает: TB = МТОК / транзитная муфта МТОК-96А).
+// Без явного маркера ТB/МТОК/транзит просто "Муфта" интерпретируется как
+// внутренняя точка сварки между двумя кабельными отрезками.
 const RE_OLT     = new RegExp(`${NONL}(?:olt|цод|амс|узел[\\s_-]*связ|data[\\s-]?center)${NONR}|magistral`, 'i');
-const RE_TB      = new RegExp(`муфт|${NONL}(?:tb|sleeve|транзит)${NONR}`, 'i');
+const RE_TB      = new RegExp(`мток|транзит[нaаыое]*[\\s_-]+муфт|${NONL}(?:tb|sleeve)${NONR}`, 'i');
 const RE_ORK     = new RegExp(`${NONL}(?:орк|бокс|nap|шкаф)${NONR}|distribu`, 'i');
 const RE_SUPPORT = new RegExp(`${NONL}овн${NONR}|опора|столб|поддерж`, 'i');
-const RE_JOINT   = new RegExp(`линейн.+участок|перекрест|перекрёст|${NONL}joint${NONR}`, 'i');
+const RE_JOINT   = new RegExp(`${NONL}муфт|линейн.+участок|перекрест|перекрёст|${NONL}joint${NONR}|splice|сварн`, 'i');
 const RE_RADIO   = new RegExp(`${NONL}ррл${NONR}|радиорелей|wireless[\\s-]?link`, 'i');
 
 function joinText(folderPath: string[], name: string, extData?: Record<string, string>): string {
@@ -68,13 +72,14 @@ export function classifyEntity(
   extData?: Record<string, string>,
 ): EntityKind {
   const t = joinText(folderPath, name, extData);
-  // Order matters — support/joint/radio checked first so a folder name like
-  // "Опора ОК-8" doesn't accidentally classify as a cable / subscriber.
+  // Order: more specific patterns first.  TB ("МТОК" / "транзитная муфта")
+  // must win over the generic "муфт" → joint, otherwise a Transit Box
+  // Placemark gets demoted to a plain splice joint.
   if (RE_RADIO.test(t))   return 'radio';
   if (RE_SUPPORT.test(t)) return 'support';
+  if (RE_TB.test(t))      return 'tb';
   if (RE_JOINT.test(t))   return 'joint';
   if (RE_OLT.test(t))     return 'olt';
-  if (RE_TB.test(t))      return 'tb';
   if (RE_ORK.test(t))     return 'ork';
   return 'sub';
 }
@@ -204,131 +209,157 @@ export function buildStructured(
   let cableSeq = 0;
   let colorIdx = 0;
 
-  for (const [districtName, b] of byDistrict.entries()) {
-    if (b.olts.length === 0 && b.tbs.length === 0 && b.orks.length === 0 && b.subs.length === 0) continue;
+  // Global entity index used for cable snap-matching across ALL districts /
+  // OLT subtrees.  Vendor magistral cables routinely connect points that we
+  // assigned to different Voronoi partitions — without a global index those
+  // would become orphans.
+  const globalEntityIndex: Array<{ id: string; lat: number; lon: number }> = [];
 
-    // ── Synthesize a single OLT for this district ──
-    // If the KML had an OLT use the first one; else put it at the TB/sub centroid
-    // so the rest of the tree still has a root.
-    let oltLat: number;
-    let oltLon: number;
+  for (const [districtName, b] of byDistrict.entries()) {
+    if (b.olts.length === 0 && b.tbs.length === 0 && b.orks.length === 0 && b.subs.length === 0 && b.supports.length === 0 && b.joints.length === 0 && b.lines.length === 0) continue;
+
+    // ── 1. Determine OLT positions ──
+    // KML may have multiple OLTs (ЦОД + АМС etc.) — each becomes its own
+    // sub-district.  No explicit OLT → one virtual at the entity centroid.
+    type OltPos = { lat: number; lon: number; name: string };
+    let oltPositions: OltPos[];
     if (b.olts.length > 0) {
-      oltLat = b.olts[0].lat;
-      oltLon = b.olts[0].lon;
+      oltPositions = b.olts.map((o) => ({ lat: o.lat, lon: o.lon, name: o.name || 'OLT' }));
     } else {
       const refs = b.tbs.length > 0 ? b.tbs : (b.orks.length > 0 ? b.orks : b.subs);
       if (refs.length === 0) continue;
-      oltLat = refs.reduce((s, p) => s + p.lat, 0) / refs.length;
-      oltLon = refs.reduce((s, p) => s + p.lon, 0) / refs.length;
+      oltPositions = [{
+        lat: refs.reduce((s, p) => s + p.lat, 0) / refs.length,
+        lon: refs.reduce((s, p) => s + p.lon, 0) / refs.length,
+        name: 'OLT-auto',
+      }];
     }
-    const slug = slugForId(districtName);
-    const oltId = `OLT-${slug}`;
-    stats.olt++;
 
-    // ── Transit boxes ──
-    // If KML had explicit TBs use them.  Otherwise create a single virtual TB
-    // co-located with the OLT so the ORK→TB→OLT chain still exists.
-    const tbInput = b.tbs.length > 0
-      ? b.tbs
-      : (b.orks.length > 0
-          ? [{ lat: oltLat, lon: oltLon, name: 'TB-auto', desc: '', folderPath: [], fileDistrict: districtName } as KmlPoint]
-          : []);
-
-    const tbs: TransitBox[] = tbInput.map((t, i) => ({
-      id: `TB-${slug}-${i + 1}`,
-      lat: t.lat, lon: t.lon,
-      district: districtName,
-      oltId,
-      orks: [],
-      inCable: 'ОК-48',
-      outCable: 'ОК-4',
-      muftaType: 'МТОК-96А',
-    }));
-    stats.tb += tbs.length;
-
-    // ── ORKs ── each ORK joins the nearest TB.
-    const orks: ORK[] = b.orks.map((o, i) => {
-      let nearest = tbs[0];
-      let bestD = nearest ? haversineM(o.lat, o.lon, nearest.lat, nearest.lon) : Infinity;
-      for (const tb of tbs) {
-        const d = haversineM(o.lat, o.lon, tb.lat, tb.lon);
-        if (d < bestD) { bestD = d; nearest = tb; }
+    // ── 2. Voronoi-assign every other entity to its nearest OLT ──
+    const nearestOltIdx = (lat: number, lon: number): number => {
+      let bestI = 0;
+      let bestD = Infinity;
+      for (let i = 0; i < oltPositions.length; i++) {
+        const d = haversineM(lat, lon, oltPositions[i].lat, oltPositions[i].lon);
+        if (d < bestD) { bestD = d; bestI = i; }
       }
-      return {
-        id: `ORK-${slug}-${i + 1}`,
-        lat: o.lat, lon: o.lon,
-        district: districtName,
-        splitter: '1:8' as const,
-        tbId: nearest?.id ?? '',
-        subscribers: [],
-        cableType: 'ОК-4' as CableType,
-        boxType: 'Бокс-16',
-      };
-    });
-    stats.ork += orks.length;
-
-    // ── Subscribers ── attached to nearest ORK if one exists.
-    const subs: Subscriber[] = b.subs.map((s, i) => {
-      let nearest = orks[0];
-      let bestD = nearest ? haversineM(s.lat, s.lon, nearest.lat, nearest.lon) : Infinity;
-      for (const o of orks) {
-        const d = haversineM(s.lat, s.lon, o.lat, o.lon);
-        if (d < bestD) { bestD = d; nearest = o; }
-      }
-      return {
-        id: `sub-${slug}-${i + 1}`,
-        lat: s.lat, lon: s.lon,
-        desc: s.name || s.desc || `Або. ${i + 1}`,
-        district: districtName,
-        orkId: nearest?.id,
-        fibers: { working: 2, spare: 1 },
-      };
-    });
-    stats.sub += subs.length;
-
-    for (const o of orks) {
-      o.subscribers = subs.filter((s) => s.orkId === o.id);
-    }
-    for (const tb of tbs) {
-      tb.orks = orks.filter((o) => o.tbId === tb.id);
-    }
-
-    const olt: OLT = {
-      id: oltId,
-      lat: oltLat, lon: oltLon,
-      district: districtName,
-      model: 'Huawei MA5800-X7',
-      capacity: 64,
-      transitBoxes: tbs,
-      l1Splitter: '1:4',
+      return bestI;
     };
+    const assignedTBs: KmlPoint[][] = oltPositions.map(() => []);
+    const assignedOrks: KmlPoint[][] = oltPositions.map(() => []);
+    const assignedSubs: KmlPoint[][] = oltPositions.map(() => []);
+    const assignedSupports: KmlPoint[][] = oltPositions.map(() => []);
+    const assignedJoints: KmlPoint[][] = oltPositions.map(() => []);
+    for (const p of b.tbs)       assignedTBs[nearestOltIdx(p.lat, p.lon)].push(p);
+    for (const p of b.orks)      assignedOrks[nearestOltIdx(p.lat, p.lon)].push(p);
+    for (const p of b.subs)      assignedSubs[nearestOltIdx(p.lat, p.lon)].push(p);
+    for (const p of b.supports)  assignedSupports[nearestOltIdx(p.lat, p.lon)].push(p);
+    for (const p of b.joints)    assignedJoints[nearestOltIdx(p.lat, p.lon)].push(p);
 
-    outDistricts.push({
-      name: districtName,
-      color: DISTRICT_COLORS[colorIdx++ % DISTRICT_COLORS.length],
-      olt,
-      subscribers: subs,
-    });
+    // ── 3. Build subtree per OLT ──
+    for (let oi = 0; oi < oltPositions.length; oi++) {
+      const oltPos = oltPositions[oi];
+      const subName = oltPositions.length === 1 ? districtName : `${districtName}-${oi + 1}`;
+      const slug = slugForId(subName);
+      const oltId = `OLT-${slug}`;
+      stats.olt++;
 
-    // ── Cables — match each LineString to a pair of entities by snap-to-nearest.
-    // Supports (опоры/столбы) and joints (перекрёстки) are added as snap
-    // targets with synthetic ids so the cable still has named endpoints — the
-    // alternative (orphan cable) loses the line completely.
-    const entityIndex = [
-      { id: oltId, lat: olt.lat, lon: olt.lon },
-      ...tbs.map((t) => ({ id: t.id, lat: t.lat, lon: t.lon })),
-      ...orks.map((o) => ({ id: o.id, lat: o.lat, lon: o.lon })),
-      ...subs.map((s) => ({ id: s.id, lat: s.lat, lon: s.lon })),
-      ...b.supports.map((p, i) => ({ id: `pole-${slug}-${i + 1}`, lat: p.lat, lon: p.lon })),
-      ...b.joints.map((p, i) => ({ id: `J-${slug}-${i + 1}`,    lat: p.lat, lon: p.lon })),
-    ];
+      // Transit boxes: explicit, else one virtual at the OLT so ORK→TB→OLT exists.
+      const tbInput = assignedTBs[oi].length > 0
+        ? assignedTBs[oi]
+        : (assignedOrks[oi].length > 0
+            ? [{ lat: oltPos.lat, lon: oltPos.lon, name: 'TB-auto', desc: '', folderPath: [], fileDistrict: subName } as KmlPoint]
+            : []);
+      const tbs: TransitBox[] = tbInput.map((t, i) => ({
+        id: `TB-${slug}-${i + 1}`,
+        lat: t.lat, lon: t.lon,
+        district: subName,
+        oltId,
+        orks: [],
+        inCable: 'ОК-48',
+        outCable: 'ОК-4',
+        muftaType: 'МТОК-96А',
+      }));
+      stats.tb += tbs.length;
 
+      const orks: ORK[] = assignedOrks[oi].map((o, i) => {
+        let nearest = tbs[0];
+        let bestD = nearest ? haversineM(o.lat, o.lon, nearest.lat, nearest.lon) : Infinity;
+        for (const tb of tbs) {
+          const d = haversineM(o.lat, o.lon, tb.lat, tb.lon);
+          if (d < bestD) { bestD = d; nearest = tb; }
+        }
+        return {
+          id: `ORK-${slug}-${i + 1}`,
+          lat: o.lat, lon: o.lon,
+          district: subName,
+          splitter: '1:8' as const,
+          tbId: nearest?.id ?? '',
+          subscribers: [],
+          cableType: 'ОК-4' as CableType,
+          boxType: 'Бокс-16',
+        };
+      });
+      stats.ork += orks.length;
+
+      const subs: Subscriber[] = assignedSubs[oi].map((s, i) => {
+        let nearest = orks[0];
+        let bestD = nearest ? haversineM(s.lat, s.lon, nearest.lat, nearest.lon) : Infinity;
+        for (const o of orks) {
+          const d = haversineM(s.lat, s.lon, o.lat, o.lon);
+          if (d < bestD) { bestD = d; nearest = o; }
+        }
+        return {
+          id: `sub-${slug}-${i + 1}`,
+          lat: s.lat, lon: s.lon,
+          desc: s.name || s.desc || `Або. ${i + 1}`,
+          district: subName,
+          orkId: nearest?.id,
+          fibers: { working: 2, spare: 1 },
+        };
+      });
+      stats.sub += subs.length;
+
+      for (const o of orks) o.subscribers = subs.filter((s) => s.orkId === o.id);
+      for (const tb of tbs) tb.orks = orks.filter((o) => o.tbId === tb.id);
+
+      const olt: OLT = {
+        id: oltId,
+        lat: oltPos.lat, lon: oltPos.lon,
+        district: subName,
+        model: 'Huawei MA5800-X7',
+        capacity: 64,
+        transitBoxes: tbs,
+        l1Splitter: '1:4',
+      };
+      outDistricts.push({
+        name: subName,
+        color: DISTRICT_COLORS[colorIdx++ % DISTRICT_COLORS.length],
+        olt,
+        subscribers: subs,
+      });
+
+      // Add this subtree's entities + its support poles / joints to the global
+      // snap index so any cable from any district can attach to them.
+      globalEntityIndex.push({ id: oltId, lat: olt.lat, lon: olt.lon });
+      for (const tb of tbs)  globalEntityIndex.push({ id: tb.id, lat: tb.lat, lon: tb.lon });
+      for (const o  of orks) globalEntityIndex.push({ id: o.id, lat: o.lat, lon: o.lon });
+      for (const s  of subs) globalEntityIndex.push({ id: s.id, lat: s.lat, lon: s.lon });
+      assignedSupports[oi].forEach((p, i) => globalEntityIndex.push({ id: `pole-${slug}-${i + 1}`, lat: p.lat, lon: p.lon }));
+      assignedJoints[oi].forEach((p, i)   => globalEntityIndex.push({ id: `J-${slug}-${i + 1}`,    lat: p.lat, lon: p.lon }));
+    }
+  }
+
+  // ── 4. Cable matching — pass over ALL lines from ALL districts using the
+  // global index built above.  Each line's endpoints snap to the nearest
+  // known entity within SNAP_M; unmatched ends → orphan.
+  for (const [, b] of byDistrict.entries()) {
     for (const line of b.lines) {
       if (line.coords.length < 2) continue;
       const start = line.coords[0];
       const end = line.coords[line.coords.length - 1];
-      const a = snapEndpoint(start, entityIndex, SNAP_M);
-      const c = snapEndpoint(end, entityIndex, SNAP_M);
+      const a = snapEndpoint(start, globalEntityIndex, SNAP_M);
+      const c = snapEndpoint(end, globalEntityIndex, SNAP_M);
       if (!a || !c || a.id === c.id) {
         stats.cablesOrphan++;
         continue;
@@ -346,8 +377,6 @@ export function buildStructured(
         toId: c.id,
         coords: line.coords,
         lengthM,
-        // KML-drawn paths are pre-routed by whoever made the file — treat them
-        // as routed so the per-cable renderer doesn't dash them as "straight".
         routedByOSRM: true,
       });
       stats.cablesMatched++;
