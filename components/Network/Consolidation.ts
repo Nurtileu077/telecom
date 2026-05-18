@@ -71,6 +71,23 @@ function pickCableType(fibers: number): CableType {
   return 'ОК-48';
 }
 
+// Cable type for a segment shared by N subscribers.
+// - 1 subscriber  → ОК-4 (a normal drop)
+// - 2+ subscribers → ОК-8 minimum.  In practice 2×ОК-4 was being emitted
+//   for the shared run + 2 short ОК-4 drops after the splice, which looks
+//   like "two parallel ОК-4 along a road" to the user.  Using ОК-8 with a
+//   muffta-splice into 2 drops is the standard физический design and adds
+//   spare fibers for future subscribers along the same road.
+function pickSharedCableType(subsCount: number): CableType {
+  if (subsCount <= 1) return 'ОК-4';
+  const fibers = Math.max(8, subsCount * 2);
+  for (const t of CABLE_SIZES) {
+    if (t === 'ОК-96') continue;
+    if (CABLE_FIBERS[t] >= fibers) return t;
+  }
+  return 'ОК-48';
+}
+
 /**
  * Глобальная консолидация: строит граф дорог из всех кабелей одного района,
  * для каждого сегмента считает уникальных абонентов, проходящих через него,
@@ -225,10 +242,11 @@ export function consolidateCables(
       }
     }
 
-    // Размер кабеля = по числу уникальных абонентов через сегмент × 2 жилы +
-    // запас по округлению до ближайшего ОК-X.
+    // Размер кабеля: одна точка → ОК-4 (одиночный дроп).
+    // 2+ абонента через сегмент → минимум ОК-8 (общий магистральный с
+    // муфтой-разветвителем, а не два параллельных ОК-4).
     const segCableType = (s: Segment): CableType =>
-      pickCableType(Math.max(2, s.subs.size * 2));
+      pickSharedCableType(s.subs.size);
 
     // Получить «соседа» (другой конец сегмента, не равный nodeKey).
     const otherEnd = (s: Segment, nodeKey: string): string =>
@@ -249,7 +267,7 @@ export function consolidateCables(
       routed: boolean,
     ) => {
       if (coords.length < 2) return;
-      const type = pickCableType(Math.max(2, subsCount * 2));
+      const type = pickSharedCableType(subsCount);
       outCables.push({
         id: nextCableId(),
         type,
