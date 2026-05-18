@@ -165,6 +165,8 @@ export async function routeCables(
   routeDrops: boolean,
   onProgress: ProgressCallback,
   signal: AbortSignal,
+  /** Called after each cable is routed so the map can update live. */
+  onCableRouted?: (cable: Cable) => void,
 ): Promise<Cable[]> {
   const priority: Cable['type'][] = ['ОК-96', 'ОК-48', 'ОК-32', 'ОК-24', 'ОК-16', 'ОК-12', 'ОК-8', 'ОК-4'];
   const toRoute = cables
@@ -211,12 +213,14 @@ export async function routeCables(
       // OSRM may snap the first/last point to a node a few metres away.
       simplified[0] = from;
       simplified[simplified.length - 1] = to;
-      result.set(cable.id, {
+      const updated: Cable = {
         ...cable,
         coords: simplified,
         lengthM: calcLength(simplified),
         routedByOSRM: true,
-      });
+      };
+      result.set(cable.id, updated);
+      onCableRouted?.(updated);
     }
     // else: keep original straight-line coords
 

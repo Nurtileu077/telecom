@@ -38,6 +38,10 @@ function newId(prefix = 'id') {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function patchCable(prev: Cable[], updated: Cable): Cable[] {
+  return prev.map((c) => (c.id === updated.id ? updated : c));
+}
+
 export function useNetwork() {
   const [projectId, setProjectId] = useState<string>(() => newId('proj'));
   const [projectName, setProjectName] = useState('Новый проект');
@@ -309,6 +313,14 @@ export function useNetwork() {
         });
       }
 
+      // Show the clustered network immediately (straight lines) so the user
+      // can pan/zoom while OSRM runs in the background.
+      setDistricts(newDistricts);
+      setCables(newCables);
+      setJoints([]);
+      setMaterials(calculateMaterials(newDistricts, newCables, settings, 0));
+      setValidationIssues(validateNetwork(newDistricts, newCables));
+
       setStatus('routing');
       let finalCables = newCables;
 
@@ -319,6 +331,7 @@ export function useNetwork() {
           true, // routeDrops — нужно для слияния дропов с магистралью по общим дорогам
           (done, total, current) => setOsrmProgress({ done, total, current }),
           controller.signal,
+          (cable) => setCables((prev) => patchCable(prev, cable)),
         );
       }
 
@@ -331,7 +344,6 @@ export function useNetwork() {
       const mats = calculateMaterials(newDistricts, finalCables, settings, newJoints.length);
       const issues = validateNetwork(newDistricts, finalCables);
 
-      setDistricts(newDistricts);
       setCables(finalCables);
       setJoints(newJoints);
       setMaterials(mats);
@@ -451,10 +463,12 @@ export function useNetwork() {
       const ctrl = new AbortController();
       abortRef.current = ctrl;
       try {
+        setCables(raw);
         const reRouted = await routeCables(
           needRouting, settings.osrmDelay, true,
           (d, t, c) => setOsrmProgress({ done: d, total: t, current: c }),
           ctrl.signal,
+          (cable) => setCables((prev) => patchCable(prev, cable)),
         );
         const map = new Map(reRouted.map((c) => [c.id, c]));
         routed = raw.map((c) => map.get(c.id) ?? c);
@@ -520,6 +534,7 @@ export function useNetwork() {
           affected, settings.osrmDelay, true,
           (done, total, current) => setOsrmProgress({ done, total, current }),
           controller.signal,
+          (cable) => setCables((prev) => patchCable(prev, cable)),
         );
         if (controller.signal.aborted) return;
         const byId = new Map(reRouted.map((c) => [c.id, c] as const));
@@ -563,10 +578,12 @@ export function useNetwork() {
           }
         }
       }
+      setCables(raw);
       const routed = await routeCables(
         raw, 200, true,
         (done, total, current) => setOsrmProgress({ done, total, current }),
         controller.signal,
+        (cable) => setCables((prev) => patchCable(prev, cable)),
       );
       if (!controller.signal.aborted) {
         const { cables: consolidated, joints: newJoints } = consolidateCables(routed, districts);
