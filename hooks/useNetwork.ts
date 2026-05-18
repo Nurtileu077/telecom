@@ -10,6 +10,7 @@ import { buildNetwork, OltLocationMap } from '@/components/Network/AutoBuild';
 import { calculateMaterials, validateNetwork } from '@/components/Network/MaterialCalc';
 import { routeCables, getRoute, snapBatch } from '@/components/Network/OSRMRouter';
 import { planRepair, buildDropCable, type RepairReport } from '@/components/Network/NetworkRepair';
+import { filterByBBox, polylineTouchesBBox, pointInBBox, type BBox } from '@/components/Network/Selection';
 import { consolidateCables } from '@/components/Network/Consolidation';
 import { haversineM } from '@/components/Network/KMeans';
 import { calculateSubscriberBudgets, budgetStats } from '@/components/Network/PowerBudget';
@@ -387,7 +388,7 @@ export function useNetwork() {
   // current district structure (preserving any existing routed coords for
   // direct entity-to-entity pairs), then consolidate. This works even after
   // previous consolidation (where trunk cables go through joint IDs).
-  const reconsolidate = useCallback(async () => {
+  const reconsolidate = useCallback(async (bbox?: BBox | null) => {
     if (districts.length === 0) return;
 
     // Reconstruct OSRM-routed paths between direct entity pairs, EVEN when
@@ -460,16 +461,36 @@ export function useNetwork() {
       } catch { /* abort */ }
     }
 
-    // Consolidate
+    // Consolidate (optionally only the subset that touches the bbox).
+    if (bbox) {
+      // Scope-limited consolidation: run consolidate over a filtered district
+      // set + filtered cables, then splice the result back into full state.
+      // Outside-bbox cables/joints are preserved.
+      const scope = filterByBBox(districts, routed, joints, bbox);
+      const { cables: newConsolidated, joints: newJoints } = consolidateCables(routed.filter((c) => polylineTouchesBBox(c.coords, bbox)), scope.districts);
+      // Replace bbox cables with the consolidated set; keep the rest untouched.
+      setCables((prev) => [
+        ...prev.filter((c) => !polylineTouchesBBox(c.coords, bbox)),
+        ...newConsolidated,
+      ]);
+      setJoints((prev) => [
+        ...prev.filter((j) => !pointInBBox(j.lat, j.lon, bbox)),
+        ...newJoints,
+      ]);
+      setStatus('done');
+      return;
+    }
     const { cables: consolidated, joints: newJoints } = consolidateCables(routed, districts);
     setCables(consolidated);
     setJoints(newJoints);
     setMaterials(calculateMaterials(districts, consolidated, settings, newJoints.length));
     setStatus('done');
-  }, [districts, cables, settings, buildExistingCoordsMap]);
+  }, [districts, cables, joints, settings, buildExistingCoordsMap]);
 
   // Re-route existing cables with OSRM (without re-clustering)
-  const rerouteWithOSRM = useCallback(async () => {
+  // bbox: if provided, only re-route cables that have at least one vertex
+  // inside the rectangle.  Other cables are left untouched in state.
+  const rerouteWithOSRM = useCallback(async (bbox?: BBox | null) => {
     if (districts.length === 0) return;
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
@@ -488,32 +509,41 @@ export function useNetwork() {
       let seq = 0;
       const nextId = () => `cable-r-${++seq}`;
       const raw: Cable[] = [];
+      // For bbox mode: a TB/ORK/sub is "in scope" if its coord is in bbox OR
+      // any of the existing cables touching it does.  This lets the user
+      // outline a road and re-route every cable along it without separately
+      // selecting both endpoints.
+      const cableTouches = (a: [number, number], b: [number, number]) =>
+        !bbox ? true : pointInBBox(a[0], a[1], bbox) || pointInBBox(b[0], b[1], bbox);
       for (const d of districts) {
         const olt = d.olt;
         for (const tb of olt.transitBoxes) {
-          raw.push({
-            id: nextId(), type: tb.inCable, fibers: CABLE_FIBERS[tb.inCable],
-            fromId: olt.id, toId: tb.id,
-            coords: [[olt.lat, olt.lon], [tb.lat, tb.lon]],
-            lengthM: pathLen([[olt.lat, olt.lon], [tb.lat, tb.lon]]),
-            routedByOSRM: false,
-          });
-          for (const ork of tb.orks) {
+          const oltTbCoords: [number, number][] = [[olt.lat, olt.lon], [tb.lat, tb.lon]];
+          if (cableTouches(oltTbCoords[0], oltTbCoords[1])) {
             raw.push({
-              id: nextId(), type: ork.cableType, fibers: CABLE_FIBERS[ork.cableType],
-              fromId: tb.id, toId: ork.id,
-              coords: [[tb.lat, tb.lon], [ork.lat, ork.lon]],
-              lengthM: pathLen([[tb.lat, tb.lon], [ork.lat, ork.lon]]),
-              routedByOSRM: false,
+              id: nextId(), type: tb.inCable, fibers: CABLE_FIBERS[tb.inCable],
+              fromId: olt.id, toId: tb.id,
+              coords: oltTbCoords, lengthM: pathLen(oltTbCoords), routedByOSRM: false,
             });
-            for (const sub of ork.subscribers) {
+          }
+          for (const ork of tb.orks) {
+            const tbOrkCoords: [number, number][] = [[tb.lat, tb.lon], [ork.lat, ork.lon]];
+            if (cableTouches(tbOrkCoords[0], tbOrkCoords[1])) {
               raw.push({
-                id: nextId(), type: 'ОК-4', fibers: CABLE_FIBERS['ОК-4'],
-                fromId: ork.id, toId: sub.id,
-                coords: [[ork.lat, ork.lon], [sub.lat, sub.lon]],
-                lengthM: pathLen([[ork.lat, ork.lon], [sub.lat, sub.lon]]),
-                routedByOSRM: false,
+                id: nextId(), type: ork.cableType, fibers: CABLE_FIBERS[ork.cableType],
+                fromId: tb.id, toId: ork.id,
+                coords: tbOrkCoords, lengthM: pathLen(tbOrkCoords), routedByOSRM: false,
               });
+            }
+            for (const sub of ork.subscribers) {
+              const orkSubCoords: [number, number][] = [[ork.lat, ork.lon], [sub.lat, sub.lon]];
+              if (cableTouches(orkSubCoords[0], orkSubCoords[1])) {
+                raw.push({
+                  id: nextId(), type: 'ОК-4', fibers: CABLE_FIBERS['ОК-4'],
+                  fromId: ork.id, toId: sub.id,
+                  coords: orkSubCoords, lengthM: pathLen(orkSubCoords), routedByOSRM: false,
+                });
+              }
             }
           }
         }
@@ -525,11 +555,21 @@ export function useNetwork() {
         controller.signal,
       );
       if (!controller.signal.aborted) {
-        const { cables: consolidated, joints: newJoints } = consolidateCables(routed, districts);
-        setCables(consolidated);
-        setJoints(newJoints);
-        const mats = calculateMaterials(districts, consolidated, settings, newJoints.length);
-        setMaterials(mats);
+        if (bbox) {
+          // Bbox mode: merge re-routed cables into existing state instead of
+          // replacing everything.  Outside-bbox cables keep their geometry.
+          const routedByPair = new Map<string, Cable>();
+          for (const r of routed) routedByPair.set(`${r.fromId}::${r.toId}`, r);
+          setCables((prev) => prev.map((c) => routedByPair.get(`${c.fromId}::${c.toId}`) ?? c));
+          const mats = calculateMaterials(districts, cables, settings, joints.length);
+          setMaterials(mats);
+        } else {
+          const { cables: consolidated, joints: newJoints } = consolidateCables(routed, districts);
+          setCables(consolidated);
+          setJoints(newJoints);
+          const mats = calculateMaterials(districts, consolidated, settings, newJoints.length);
+          setMaterials(mats);
+        }
         setStatus('done');
       }
     } catch (err) {
@@ -538,7 +578,7 @@ export function useNetwork() {
         console.error(err);
       }
     }
-  }, [districts, settings]);
+  }, [districts, cables, joints, settings]);
 
   // Annotation operations
   const addAnnotation = useCallback((a: Omit<MapAnnotation, 'id' | 'createdAt' | 'updatedAt'>) => {
@@ -1166,8 +1206,14 @@ export function useNetwork() {
   // routes drops for any subscriber that has no cable but a nearby ORK.
   // Returns a structured report — the AI can read it back via the tool
   // result and decide whether to do another pass.
-  const autoRepair = useCallback(async (): Promise<RepairReport> => {
-    const plan = planRepair(districts, cables);
+  const autoRepair = useCallback(async (bbox?: BBox | null): Promise<RepairReport> => {
+    // If a selection rectangle is active, only act on the subset inside it
+    // — but still resolve nearest-ORK lookups against the FULL district tree
+    // so an orphan sub at the bbox edge can attach to an ORK just outside.
+    const scope = bbox ? filterByBBox(districts, cables, joints, bbox) : null;
+    const planSourceDistricts = scope ? scope.districts : districts;
+    const planSourceCables = scope ? scope.cables : cables;
+    const plan = planRepair(planSourceDistricts, planSourceCables);
     // Apply deletions in one state update.
     if (plan.toDelete.length > 0) {
       const remove = new Set(plan.toDelete);
@@ -1183,7 +1229,7 @@ export function useNetwork() {
       if (settings.useOSRM) await new Promise((r) => setTimeout(r, 120));
     }
     return plan.report;
-  }, [districts, cables, settings.useOSRM]);
+  }, [districts, cables, joints, settings.useOSRM]);
 
   // Import a full Project as-is (no re-clustering) — used for "existing network" import
   const importNetworkReplace = useCallback((incoming: Project) => {

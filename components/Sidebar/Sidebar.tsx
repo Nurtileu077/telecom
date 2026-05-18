@@ -171,6 +171,7 @@ export default function Sidebar(props: Props) {
             onPrintMap={props.onPrintMap}
             onRerouteOSRM={props.onRerouteOSRM}
             onReconsolidate={props.onReconsolidate}
+            selectionBBox={props.selectionBBox}
             osrmStatus={props.osrmStatus}
             hasCables={props.cables.length > 0}
             budgetColoring={props.budgetColoring}

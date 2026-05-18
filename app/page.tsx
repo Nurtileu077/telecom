@@ -503,8 +503,8 @@ export default function HomePage() {
           setHeatmapEnabled={setHeatmapEnabled}
           onExportPDF={onExportPDF}
           onPrintMap={onPrintMap}
-          onRerouteOSRM={net.rerouteWithOSRM}
-          onReconsolidate={net.reconsolidate}
+          onRerouteOSRM={() => net.rerouteWithOSRM(selectionBBox)}
+          onReconsolidate={() => net.reconsolidate(selectionBBox)}
           osrmStatus={net.status}
           powerBudgets={net.powerBudgets}
           powerBudgetStats={net.powerBudgetStats}
@@ -902,6 +902,7 @@ A3: ...`}
             deleteCable: net.deleteCable,
             rebuildFromCurrent: net.rebuildFromCurrent,
             autoRepair: net.autoRepair,
+            selectionBBox,
           }}
           flyTo={flyToRef.current}
           onClose={() => setShowChat(false)}
