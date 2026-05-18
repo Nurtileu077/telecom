@@ -52,11 +52,8 @@ export default function HomePage() {
   const [coordInput, setCoordInput] = useState<{ kind: 'sub' | 'olt' | 'tb' | 'ork' } | null>(null);
   const [coordText, setCoordText] = useState('');
   const [showChat, setShowChat] = useState(false);
-  // Two-click rectangle selection for "export only this area".
-  // selectionStage='waiting-first' → next map click is the first corner.
-  // selectionStage='waiting-second' → next click is the second corner.
-  const [selectionStage, setSelectionStage] = useState<'idle' | 'waiting-first' | 'waiting-second'>('idle');
-  const [selectionFirstPt, setSelectionFirstPt] = useState<[number, number] | null>(null);
+  // Drag on map to draw export/reroute bounding box (rubber-band rectangle).
+  const [selectionDrawActive, setSelectionDrawActive] = useState(false);
   const [selectionBBox, setSelectionBBox] = useState<{ latMin: number; lonMin: number; latMax: number; lonMax: number } | null>(null);
 
   const budgetMap = useRef<Map<string, 'ok' | 'warn' | 'fail'>>(new Map());
@@ -149,22 +146,7 @@ export default function HomePage() {
   }, [net]);
 
   const handleMapClickAddSub = useCallback((lat: number, lon: number) => {
-    // Selection-rectangle drawing takes top priority.
-    if (selectionStage === 'waiting-first') {
-      setSelectionFirstPt([lat, lon]);
-      setSelectionStage('waiting-second');
-      return;
-    }
-    if (selectionStage === 'waiting-second' && selectionFirstPt) {
-      const [la, lo] = selectionFirstPt;
-      setSelectionBBox({
-        latMin: Math.min(la, lat), latMax: Math.max(la, lat),
-        lonMin: Math.min(lo, lon), lonMax: Math.max(lo, lon),
-      });
-      setSelectionFirstPt(null);
-      setSelectionStage('idle');
-      return;
-    }
+    if (selectionDrawActive) return;
     // Placement mode takes priority over add-subscriber
     if (placing === 'olt') {
       const name = window.prompt('Название района для нового OLT:', 'Новый район');
@@ -189,7 +171,12 @@ export default function HomePage() {
     setShowAddSub({ lat, lon });
     const existing = Array.from(new Set(net.districts.map((d) => d.name)));
     if (existing.length === 1) setNewSubDistrict(existing[0]);
-  }, [net, placing, selectionStage, selectionFirstPt]);
+  }, [net, placing, selectionDrawActive]);
+
+  const handleSelectionComplete = useCallback((bbox: { latMin: number; lonMin: number; latMax: number; lonMax: number }) => {
+    setSelectionBBox(bbox);
+    setSelectionDrawActive(false);
+  }, []);
 
   // Drop a point of the requested kind at (lat, lon) — used by the right-click
   // context menu and by the manual-coordinate dialog.  Bypasses placing/edit mode.
@@ -265,8 +252,7 @@ export default function HomePage() {
           setCableDraw(null);
           setEntitySelection(null);
           setSelectedCableId(null);
-          setSelectionStage('idle');
-          setSelectionFirstPt(null);
+          setSelectionDrawActive(false);
         }
       }
     };
@@ -429,7 +415,7 @@ export default function HomePage() {
           {/* Selection rectangle: toggle drawing mode, or show "clear" pill when active. */}
           {selectionBBox ? (
             <button
-              onClick={() => { setSelectionBBox(null); setSelectionStage('idle'); setSelectionFirstPt(null); }}
+              onClick={() => { setSelectionBBox(null); setSelectionDrawActive(false); }}
               className="px-2 py-1 text-[11px] bg-[#fbbf24]/20 border border-[#fbbf24]/60 text-[#fbbf24] font-mono rounded-lg transition-colors hover:bg-[#fbbf24]/30"
               title="Снять выделение"
             >
@@ -438,21 +424,17 @@ export default function HomePage() {
           ) : (
             <button
               onClick={() => {
-                if (selectionStage === 'idle') { setSelectionStage('waiting-first'); setPlacing(null); setCableDraw(null); }
-                else { setSelectionStage('idle'); setSelectionFirstPt(null); }
+                if (selectionDrawActive) setSelectionDrawActive(false);
+                else { setSelectionDrawActive(true); setPlacing(null); setCableDraw(null); }
               }}
               className={`px-2 py-1 text-[11px] rounded-lg transition-colors ${
-                selectionStage !== 'idle'
+                selectionDrawActive
                   ? 'bg-[#fbbf24]/30 border border-[#fbbf24] text-[#fbbf24]'
                   : 'text-[#94a3b8] border border-[#1e3a5f] hover:text-[#e2e8f0] hover:border-[#fbbf24]/50'
               }`}
-              title="Выделить прямоугольник для экспорта"
+              title="Зажмите мышь на карте и потяните — выделить область"
             >
-              {selectionStage === 'waiting-first'
-                ? '🔲 Кликни первый угол'
-                : selectionStage === 'waiting-second'
-                ? '🔲 Кликни второй угол'
-                : '🔲 Выделить'}
+              {selectionDrawActive ? '🔲 Потяните область…' : '🔲 Выделить'}
             </button>
           )}
           <button
@@ -535,7 +517,8 @@ export default function HomePage() {
             deleteAnnotation={net.deleteAnnotation}
             editMode={net.editMode}
             placingMode={!!placing}
-            selectingMode={selectionStage !== 'idle'}
+            selectionDrawActive={selectionDrawActive}
+            onSelectionComplete={handleSelectionComplete}
             onMapClick={handleMapClickAddSub}
             onMapContextMenu={(lat, lon, x, y) => setContextMenu({ lat, lon, x, y })}
             selectionBBox={selectionBBox}
@@ -615,30 +598,34 @@ export default function HomePage() {
             </div>
           )}
 
+          {selectionDrawActive && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#fbbf24]/50 rounded-lg px-3 py-1.5 text-xs text-[#fbbf24] shadow-2xl flex items-center gap-2 animate-fade-in">
+              <span>🔲 Зажмите мышь на карте и потяните — выделить область</span>
+              <button type="button" onClick={() => setSelectionDrawActive(false)} className="text-[#94a3b8] hover:text-white border border-[#fbbf24]/30 rounded px-1.5 py-0.5 text-[10px]">Esc</button>
+            </div>
+          )}
+
           {net.status === 'routing' && (
-            <div className="absolute inset-0 flex items-end justify-center pb-8 z-[500] pointer-events-none">
-              <div className="bg-[#0d1b2a]/98 border border-[#38bdf8]/40 rounded-2xl p-5 shadow-2xl min-w-[340px] max-w-[420px] pointer-events-auto animate-fade-in">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-5 h-5 border-2 border-[#38bdf8] border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                  <span className="text-sm font-semibold text-[#e2e8f0]">Прокладка кабелей по дорогам</span>
+            <div className="absolute bottom-4 right-4 z-[500] pointer-events-none flex justify-end">
+              <div className="bg-[#0d1b2a]/97 border border-[#38bdf8]/40 rounded-xl p-3 shadow-2xl w-[min(100vw-2rem,360px)] pointer-events-auto animate-fade-in">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-4 h-4 border-2 border-[#38bdf8] border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                  <span className="text-xs font-semibold text-[#e2e8f0]">Прокладка по дорогам — карта доступна</span>
                 </div>
                 {net.osrmProgress.total > 0 && (
                   <>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-[11px] text-[#94a3b8] truncate mr-3">{net.osrmProgress.current || 'Запрос к OSRM...'}</span>
-                      <span className="text-xs font-mono text-[#38bdf8] flex-shrink-0">{net.osrmProgress.done} / {net.osrmProgress.total}</span>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] text-[#94a3b8] truncate mr-2">{net.osrmProgress.current || 'OSRM…'}</span>
+                      <span className="text-[10px] font-mono text-[#38bdf8]">{net.osrmProgress.done}/{net.osrmProgress.total}</span>
                     </div>
-                    <div className="h-2 bg-[#1e3a5f] rounded-full overflow-hidden mb-2">
+                    <div className="h-1.5 bg-[#1e3a5f] rounded-full overflow-hidden mb-2">
                       <div className="progress-bar h-full" style={{ width: `${osrmPercent}%` }} />
                     </div>
                   </>
                 )}
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] text-[#64748b]">router.project-osrm.org — бесплатный сервер</span>
-                  <button onClick={net.stopOSRM} className="text-xs text-[#f87171] hover:text-[#fca5a5] transition-colors border border-[#f87171]/30 rounded px-2 py-0.5 ml-3">
-                    ✕ Стоп
-                  </button>
-                </div>
+                <button type="button" onClick={net.stopOSRM} className="text-[10px] text-[#f87171] hover:text-[#fca5a5] border border-[#f87171]/30 rounded px-2 py-0.5">
+                  ✕ Остановить
+                </button>
               </div>
             </div>
           )}

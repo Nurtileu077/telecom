@@ -27,10 +27,9 @@ interface Props {
   // Edit mode
   editMode: boolean;
   placingMode?: boolean;
-  // True while the host is waiting for a rectangle-selection corner click.
-  // We fire onMapClick in this mode so the host can record the corner without
-  // having to flip edit/placing mode on (which would change marker visuals).
-  selectingMode?: boolean;
+  /** User activated "Выделить" — drag on the map to draw a rubber-band rectangle. */
+  selectionDrawActive?: boolean;
+  onSelectionComplete?: (bbox: { latMin: number; lonMin: number; latMax: number; lonMax: number }) => void;
   onMapClick?: (lat: number, lon: number) => void;
   onMapContextMenu?: (lat: number, lon: number, screenX: number, screenY: number) => void;
   moveEntity?: (kind: 'tb' | 'ork' | 'olt', id: string, lat: number, lon: number) => void;
@@ -297,10 +296,10 @@ export default function LeafletMap(props: Props) {
           return;
         }
 
-        // Edit mode: add subscriber. Placement mode: place OLT/TB/ORK
         // Edit mode: add subscriber. Placement mode: place OLT/TB/ORK.
-        // Selection mode: record rectangle corner.
-        if ((p.editMode || p.placingMode || p.selectingMode) && p.onMapClick) {
+        // Selection uses drag (mousedown/move/up), not clicks.
+        if (p.selectionDrawActive) return;
+        if ((p.editMode || p.placingMode) && p.onMapClick) {
           p.onMapClick(lat, lon);
           return;
         }
@@ -405,12 +404,12 @@ export default function LeafletMap(props: Props) {
   // Cursor based on mode
   useEffect(() => {
     if (!containerRef.current) return;
-    if (props.activeTool || props.editMode || props.measureMode || props.placingMode || props.selectingMode) {
+    if (props.activeTool || props.editMode || props.measureMode || props.placingMode || props.selectionDrawActive) {
       containerRef.current.style.cursor = 'crosshair';
     } else {
       containerRef.current.style.cursor = '';
     }
-  }, [props.activeTool, props.editMode, props.measureMode, props.placingMode, props.selectingMode]);
+  }, [props.activeTool, props.editMode, props.measureMode, props.placingMode, props.selectionDrawActive]);
 
   function renderData() {
     const map = mapRef.current;
@@ -799,14 +798,19 @@ export default function LeafletMap(props: Props) {
   }, [props.editingCableId, props.cables]);
   useEffect(() => { renderAnnotations(); }, [props.annotations]);
 
-  // Draw the selection-rectangle overlay (independent layer so it doesn't
-  // get cleared by the data-layer rerender).
+  // Selection rectangle: final bbox overlay + rubber-band drag while drawing.
   const selectionLayerRef = useRef<any>(null);
+  const selectionDragRef = useRef<{
+    start: { lat: number; lon: number };
+    rect: any;
+    onMove: (e: any) => void;
+    onUp: (e: any) => void;
+  } | null>(null);
+
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     import('leaflet').then((L) => {
-      // Remove the previous overlay regardless — even if no new bbox.
       if (selectionLayerRef.current) {
         map.removeLayer(selectionLayerRef.current);
         selectionLayerRef.current = null;
@@ -821,6 +825,85 @@ export default function LeafletMap(props: Props) {
       selectionLayerRef.current = rect;
     });
   }, [props.selectionBBox]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const cleanupDrag = () => {
+      const d = selectionDragRef.current;
+      if (!d) return;
+      map.off('mousemove', d.onMove);
+      map.off('mouseup', d.onUp);
+      if (d.rect) map.removeLayer(d.rect);
+      selectionDragRef.current = null;
+      map.dragging.enable();
+      if (map.getContainer()) map.getContainer().style.cursor = '';
+    };
+
+    if (!props.selectionDrawActive) {
+      cleanupDrag();
+      return;
+    }
+
+    let cancelled = false;
+    let teardown: (() => void) | null = null;
+
+    import('leaflet').then((L) => {
+      if (cancelled || !mapRef.current) return;
+
+      const onDown = (e: any) => {
+        if (e.originalEvent.button !== 0) return;
+        L.DomEvent.stop(e);
+        cleanupDrag();
+        map.dragging.disable();
+        const start = { lat: e.latlng.lat, lon: e.latlng.lng };
+        const rect = L.rectangle(
+          [[start.lat, start.lon], [start.lat, start.lon]] as any,
+          { color: '#fbbf24', weight: 2, dashArray: '4,6', fillColor: '#fbbf24', fillOpacity: 0.12 } as any,
+        ).addTo(map);
+
+        const onMove = (ev: any) => {
+          const la = ev.latlng.lat;
+          const lo = ev.latlng.lng;
+          rect.setBounds([
+            [Math.min(start.lat, la), Math.min(start.lon, lo)],
+            [Math.max(start.lat, la), Math.max(start.lon, lo)],
+          ] as any);
+        };
+
+        const onUp = (ev: any) => {
+          L.DomEvent.stop(ev);
+          const la = ev.latlng.lat;
+          const lo = ev.latlng.lng;
+          const latMin = Math.min(start.lat, la);
+          const latMax = Math.max(start.lat, la);
+          const lonMin = Math.min(start.lon, lo);
+          const lonMax = Math.max(start.lon, lo);
+          cleanupDrag();
+          if (Math.abs(latMax - latMin) < 1e-5 && Math.abs(lonMax - lonMin) < 1e-5) return;
+          propsRef.current.onSelectionComplete?.({ latMin, lonMin, latMax, lonMax });
+        };
+
+        selectionDragRef.current = { start, rect, onMove, onUp };
+        map.on('mousemove', onMove);
+        map.on('mouseup', onUp);
+      };
+
+      map.on('mousedown', onDown);
+      map.getContainer().style.cursor = 'crosshair';
+      teardown = () => {
+        map.off('mousedown', onDown);
+        cleanupDrag();
+      };
+    });
+
+    return () => {
+      cancelled = true;
+      teardown?.();
+      cleanupDrag();
+    };
+  }, [props.selectionDrawActive]);
 
   // Heatmap
   useEffect(() => {
