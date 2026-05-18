@@ -1,4 +1,4 @@
-import { District, Cable, CableType, CABLE_FIBERS } from '@/types/network';
+import { District, Cable } from '@/types/network';
 
 // KML colors are AABBGGRR (alpha, blue, green, red)
 const CABLE_STYLES: Record<string, { color: string; width: number; label: string }> = {
@@ -11,117 +11,6 @@ const CABLE_STYLES: Record<string, { color: string; width: number; label: string
   'ОК-48': { color: 'ff008aec', width: 5,   label: 'ОК-48 магистральный (48 вол.)' },
   'ОК-96': { color: 'ff7171f8', width: 6,   label: 'ОК-96 магистральный (96 вол.)' },
 };
-
-const CABLE_ROLE: Record<CableType, string> = {
-  'ОК-4':  'Дроп до абонента',
-  'ОК-8':  'Абонентский / распределительный',
-  'ОК-12': 'Распределительный',
-  'ОК-16': 'Распределительный',
-  'ОК-24': 'Питающий',
-  'ОК-32': 'Питающий',
-  'ОК-48': 'Магистральный',
-  'ОК-96': 'Магистральный',
-};
-
-interface EntityInfo {
-  label: string;
-  role: string;
-  district: string;
-}
-
-/** Human-readable labels for map/KMZ (Муфта 1, ОРК 2, адрес абонента). */
-function buildEntityIndex(districts: District[]): Map<string, EntityInfo> {
-  const index = new Map<string, EntityInfo>();
-  for (const d of districts) {
-    index.set(d.olt.id, { label: 'OLT', role: 'OLT', district: d.name });
-    let tbN = 0;
-    for (const tb of d.olt.transitBoxes) {
-      tbN++;
-      index.set(tb.id, { label: `Муфта ${tbN}`, role: 'Муфта МТОК', district: d.name });
-      let orkN = 0;
-      for (const ork of tb.orks) {
-        orkN++;
-        index.set(ork.id, {
-          label: `ОРК ${orkN} (${ork.splitter})`,
-          role: 'ОРК / бокс',
-          district: d.name,
-        });
-        for (const sub of ork.subscribers) {
-          const addr = (sub.desc || 'Абонент').slice(0, 60);
-          index.set(sub.id, { label: addr, role: 'Абонент', district: d.name });
-        }
-      }
-    }
-    for (const sub of d.subscribers) {
-      if (!index.has(sub.id)) {
-        const addr = (sub.desc || 'Абонент').slice(0, 60);
-        index.set(sub.id, { label: addr, role: 'Абонент', district: d.name });
-      }
-    }
-  }
-  return index;
-}
-
-function entityLabel(index: Map<string, EntityInfo>, id: string): string {
-  return index.get(id)?.label ?? id.replace(/_/g, '-');
-}
-
-function cablePlacemarkName(cable: Cable, index: Map<string, EntityInfo>): string {
-  const from = entityLabel(index, cable.fromId);
-  const to = entityLabel(index, cable.toId);
-  return `${cable.type} (${CABLE_FIBERS[cable.type]} вол.) · ${from} → ${to} · ${fmtLen(cable.lengthM)}`;
-}
-
-function cableExtendedData(
-  cable: Cable,
-  index: Map<string, EntityInfo>,
-  district: string,
-  routed: string,
-): string {
-  const from = entityLabel(index, cable.fromId);
-  const to = entityLabel(index, cable.toId);
-  const role = CABLE_ROLE[cable.type];
-  const style = CABLE_STYLES[cable.type];
-  return `<ExtendedData>
-  <SchemaData schemaUrl="#cableSchema">
-    <SimpleData name="cableType">${esc(cable.type)}</SimpleData>
-    <SimpleData name="fibers">${cable.fibers}</SimpleData>
-    <SimpleData name="role">${esc(role)}</SimpleData>
-    <SimpleData name="district">${esc(district)}</SimpleData>
-    <SimpleData name="from">${esc(from)}</SimpleData>
-    <SimpleData name="to">${esc(to)}</SimpleData>
-    <SimpleData name="fromId">${esc(cable.fromId)}</SimpleData>
-    <SimpleData name="toId">${esc(cable.toId)}</SimpleData>
-    <SimpleData name="lengthM">${Math.round(cable.lengthM)}</SimpleData>
-    <SimpleData name="route">${esc(routed)}</SimpleData>
-    <SimpleData name="lineColor">${style.color}</SimpleData>
-    <SimpleData name="lineWidth">${style.width}</SimpleData>
-  </SchemaData>
-</ExtendedData>`;
-}
-
-function cableDescription(
-  cable: Cable,
-  index: Map<string, EntityInfo>,
-  district: string,
-  routed: string,
-): string {
-  const from = entityLabel(index, cable.fromId);
-  const to = entityLabel(index, cable.toId);
-  const fromInfo = index.get(cable.fromId);
-  const toInfo = index.get(cable.toId);
-  const role = CABLE_ROLE[cable.type];
-  return `<b>${esc(cable.type)} — ${esc(role)}</b><br/>
-Волокон: ${cable.fibers} (G.652D)<br/>
-Район: ${esc(district)}<br/>
-<br/>
-<b>Участок:</b> ${esc(from)} → ${esc(to)}<br/>
-${fromInfo ? `От (${esc(fromInfo.role)}): ${esc(cable.fromId)}<br/>` : ''}${toInfo ? `До (${esc(toInfo.role)}): ${esc(cable.toId)}<br/>` : ''}
-<br/>
-<b>Длина:</b> ${fmtLen(cable.lengthM)}<br/>
-<b>Маршрут:</b> ${routed}<br/>
-Точек трассы: ${cable.coords.length}`;
-}
 
 // Material specs per item type
 const SPECS = {
@@ -162,13 +51,7 @@ function pt(name: string, desc: string, lat: number, lon: number, style: string)
 </Placemark>\n`;
 }
 
-function line(
-  name: string,
-  coords: [number, number][],
-  style: string,
-  desc = '',
-  extendedData = '',
-): string {
+function line(name: string, coords: [number, number][], style: string, desc = ''): string {
   // Filter NaN / out-of-range pairs; collapse adjacent duplicates so Google Maps
   // doesn't reject the LineString as degenerate.
   const clean: [number, number][] = [];
@@ -186,7 +69,6 @@ function line(
   <name>${esc(name)}</name>
   <description><![CDATA[${desc}]]></description>
   <styleUrl>#${style}</styleUrl>
-  ${extendedData}
   <LineString><tessellate>1</tessellate><altitudeMode>clampToGround</altitudeMode><coordinates>${cs}</coordinates></LineString>
 </Placemark>\n`;
 }
@@ -240,20 +122,6 @@ ${Object.entries(CABLE_STYLES).map(([t, s]) =>
 <kml xmlns="http://www.opengis.net/kml/2.2">
 <Document>
 <name>GPON Network — ${new Date().toLocaleDateString('ru')}</name>
-<Schema id="cableSchema" name="Кабель ВОЛС">
-  <SimpleField name="cableType" type="string"><displayName>Тип кабеля (ОК)</displayName></SimpleField>
-  <SimpleField name="fibers" type="int"><displayName>Волокон</displayName></SimpleField>
-  <SimpleField name="role" type="string"><displayName>Назначение</displayName></SimpleField>
-  <SimpleField name="district" type="string"><displayName>Район</displayName></SimpleField>
-  <SimpleField name="from" type="string"><displayName>От (подпись)</displayName></SimpleField>
-  <SimpleField name="to" type="string"><displayName>До (подпись)</displayName></SimpleField>
-  <SimpleField name="fromId" type="string"><displayName>ID от</displayName></SimpleField>
-  <SimpleField name="toId" type="string"><displayName>ID до</displayName></SimpleField>
-  <SimpleField name="lengthM" type="float"><displayName>Длина, м</displayName></SimpleField>
-  <SimpleField name="route" type="string"><displayName>Маршрут</displayName></SimpleField>
-  <SimpleField name="lineColor" type="string"><displayName>Цвет линии (AABBGGRR)</displayName></SimpleField>
-  <SimpleField name="lineWidth" type="float"><displayName>Толщина линии</displayName></SimpleField>
-</Schema>
 ${styles}
 `;
 
@@ -359,9 +227,18 @@ ${html(SPECS.sub)}`;
   // Build district → entity-id  index so we can attribute cables.  An ORK belongs
   // to district X if it shows up under X's OLT; subscriber too.  Cables that
   // can't be attributed (joints span districts) fall into a "Без района" bucket.
-  const entityIndex = buildEntityIndex(districts);
   const entityDistrict = new Map<string, string>();
-  for (const [id, info] of entityIndex.entries()) entityDistrict.set(id, info.district);
+  for (const d of districts) {
+    entityDistrict.set(d.olt.id, d.name);
+    for (const tb of d.olt.transitBoxes) {
+      entityDistrict.set(tb.id, d.name);
+      for (const ork of tb.orks) {
+        entityDistrict.set(ork.id, d.name);
+        for (const sub of ork.subscribers) entityDistrict.set(sub.id, d.name);
+      }
+    }
+    for (const sub of d.subscribers) entityDistrict.set(sub.id, d.name);
+  }
   const cableDistrict = (c: Cable): string =>
     entityDistrict.get(c.fromId) ?? entityDistrict.get(c.toId) ?? 'Без района';
 
@@ -380,23 +257,17 @@ ${html(SPECS.sub)}`;
       byDist.get(dn)!.push(c);
     }
 
-    kml += `<Folder><name>${styleInfo.label} — ${typeCables.length} уч. / ${fmtLen(totalTypeM)}</name>
-<description><![CDATA[Тип: <b>${esc(type)}</b> (${CABLE_FIBERS[type]} вол.)<br/>Назначение: ${esc(CABLE_ROLE[type])}<br/>Цвет: ${styleInfo.color} · толщина: ${styleInfo.width}]]></description>\n`;
+    kml += `<Folder><name>${styleInfo.label} — ${typeCables.length} уч. / ${fmtLen(totalTypeM)}</name>\n`;
     for (const [distName, distCables] of byDist.entries()) {
-      const distTotalM = distCables.reduce((s, c) => s + c.lengthM, 0);
-      kml += `<Folder><name>${esc(distName)} · ${type} · ${distCables.length} уч. · ${fmtLen(distTotalM)}</name>
-<description><![CDATA[Район: <b>${esc(distName)}</b><br/>Кабель: ${esc(type)} — ${esc(CABLE_ROLE[type])}<br/>Участков: ${distCables.length}<br/>Суммарная длина: ${fmtLen(distTotalM)}]]></description>\n`;
-      let segN = 0;
+      kml += `<Folder><name>${esc(distName)} (${distCables.length} уч.)</name>\n`;
       for (const cable of distCables) {
-        segN++;
-        const routedLabel = cable.routedByOSRM ? 'по дороге (OSRM)' : 'прямая линия';
         const routed = cable.routedByOSRM ? '✅ по дороге (OSRM)' : '⚠️ прямая линия';
-        const dist = cableDistrict(cable);
-        const name = cablePlacemarkName(cable, entityIndex);
-        const desc = cableDescription(cable, entityIndex, dist, routed)
-          + `<br/><br/><i>Участок ${segN} из ${distCables.length} в группе</i>`;
-        const ext = cableExtendedData(cable, entityIndex, dist, routedLabel);
-        const placemark = line(name, cable.coords, `cable-${type}`, desc, ext);
+        const desc = `<b>${esc(cable.fromId)} → ${esc(cable.toId)}</b><br/>
+Тип: ${esc(cable.type)}<br/>
+Длина: ${fmtLen(cable.lengthM)}<br/>
+Маршрут: ${routed}<br/>
+Точек: ${cable.coords.length}`;
+        const placemark = line(`${cable.fromId}→${cable.toId}`, cable.coords, `cable-${type}`, desc);
         if (!placemark) { skippedCables++; continue; }
         kml += placemark;
       }
