@@ -535,6 +535,7 @@ export default function HomePage() {
             deleteAnnotation={net.deleteAnnotation}
             editMode={net.editMode}
             placingMode={!!placing}
+            selectingMode={selectionStage !== 'idle'}
             onMapClick={handleMapClickAddSub}
             onMapContextMenu={(lat, lon, x, y) => setContextMenu({ lat, lon, x, y })}
             selectionBBox={selectionBBox}

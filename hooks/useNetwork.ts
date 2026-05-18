@@ -488,88 +488,91 @@ export function useNetwork() {
   }, [districts, cables, joints, settings, buildExistingCoordsMap]);
 
   // Re-route existing cables with OSRM (without re-clustering)
-  // bbox: if provided, only re-route cables that have at least one vertex
-  // inside the rectangle.  Other cables are left untouched in state.
+  // bbox: if provided, only re-route cables whose polyline touches the
+  // rectangle.  In that mode we route IN PLACE on the current cables —
+  // works correctly even after consolidation (where cables go through
+  // joints and don't have direct entity-pair ids).
   const rerouteWithOSRM = useCallback(async (bbox?: BBox | null) => {
-    if (districts.length === 0) return;
+    if (districts.length === 0 && cables.length === 0) return;
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
     abortRef.current = controller;
     try {
       setStatus('routing');
 
-      // Regenerate raw cable tree from districts — like reconsolidate, but
-      // always re-routes everything. We can't route the current cables
-      // directly because after consolidation many of them go through joint IDs.
       const pathLen = (cs: [number, number][]) => {
         let l = 0;
         for (let i = 1; i < cs.length; i++) l += haversineM(cs[i - 1][0], cs[i - 1][1], cs[i][0], cs[i][1]);
         return l;
       };
+
+      // ─── BBox mode: re-route ONLY cables that touch the rectangle ───
+      // No regeneration from districts; no consolidation.  Each affected
+      // cable's coords are replaced with the OSRM route between its current
+      // endpoints.  Anything outside the bbox is preserved as-is.
+      if (bbox) {
+        const affected = cables.filter((c) => polylineTouchesBBox(c.coords, bbox));
+        if (affected.length === 0) {
+          setStatus('done');
+          return;
+        }
+        const reRouted = await routeCables(
+          affected, settings.osrmDelay, true,
+          (done, total, current) => setOsrmProgress({ done, total, current }),
+          controller.signal,
+        );
+        if (controller.signal.aborted) return;
+        const byId = new Map(reRouted.map((c) => [c.id, c] as const));
+        setCables((prev) => prev.map((c) => byId.get(c.id) ?? c));
+        setMaterials(calculateMaterials(districts, cables, settings, joints.length));
+        setStatus('done');
+        return;
+      }
+
+      // ─── Full reroute: regenerate raw tree and re-consolidate ───
       let seq = 0;
       const nextId = () => `cable-r-${++seq}`;
       const raw: Cable[] = [];
-      // For bbox mode: a TB/ORK/sub is "in scope" if its coord is in bbox OR
-      // any of the existing cables touching it does.  This lets the user
-      // outline a road and re-route every cable along it without separately
-      // selecting both endpoints.
-      const cableTouches = (a: [number, number], b: [number, number]) =>
-        !bbox ? true : pointInBBox(a[0], a[1], bbox) || pointInBBox(b[0], b[1], bbox);
       for (const d of districts) {
         const olt = d.olt;
         for (const tb of olt.transitBoxes) {
-          const oltTbCoords: [number, number][] = [[olt.lat, olt.lon], [tb.lat, tb.lon]];
-          if (cableTouches(oltTbCoords[0], oltTbCoords[1])) {
-            raw.push({
-              id: nextId(), type: tb.inCable, fibers: CABLE_FIBERS[tb.inCable],
-              fromId: olt.id, toId: tb.id,
-              coords: oltTbCoords, lengthM: pathLen(oltTbCoords), routedByOSRM: false,
-            });
-          }
+          raw.push({
+            id: nextId(), type: tb.inCable, fibers: CABLE_FIBERS[tb.inCable],
+            fromId: olt.id, toId: tb.id,
+            coords: [[olt.lat, olt.lon], [tb.lat, tb.lon]],
+            lengthM: pathLen([[olt.lat, olt.lon], [tb.lat, tb.lon]]),
+            routedByOSRM: false,
+          });
           for (const ork of tb.orks) {
-            const tbOrkCoords: [number, number][] = [[tb.lat, tb.lon], [ork.lat, ork.lon]];
-            if (cableTouches(tbOrkCoords[0], tbOrkCoords[1])) {
-              raw.push({
-                id: nextId(), type: ork.cableType, fibers: CABLE_FIBERS[ork.cableType],
-                fromId: tb.id, toId: ork.id,
-                coords: tbOrkCoords, lengthM: pathLen(tbOrkCoords), routedByOSRM: false,
-              });
-            }
+            raw.push({
+              id: nextId(), type: ork.cableType, fibers: CABLE_FIBERS[ork.cableType],
+              fromId: tb.id, toId: ork.id,
+              coords: [[tb.lat, tb.lon], [ork.lat, ork.lon]],
+              lengthM: pathLen([[tb.lat, tb.lon], [ork.lat, ork.lon]]),
+              routedByOSRM: false,
+            });
             for (const sub of ork.subscribers) {
-              const orkSubCoords: [number, number][] = [[ork.lat, ork.lon], [sub.lat, sub.lon]];
-              if (cableTouches(orkSubCoords[0], orkSubCoords[1])) {
-                raw.push({
-                  id: nextId(), type: 'ОК-4', fibers: CABLE_FIBERS['ОК-4'],
-                  fromId: ork.id, toId: sub.id,
-                  coords: orkSubCoords, lengthM: pathLen(orkSubCoords), routedByOSRM: false,
-                });
-              }
+              raw.push({
+                id: nextId(), type: 'ОК-4', fibers: CABLE_FIBERS['ОК-4'],
+                fromId: ork.id, toId: sub.id,
+                coords: [[ork.lat, ork.lon], [sub.lat, sub.lon]],
+                lengthM: pathLen([[ork.lat, ork.lon], [sub.lat, sub.lon]]),
+                routedByOSRM: false,
+              });
             }
           }
         }
       }
-
       const routed = await routeCables(
         raw, 200, true,
         (done, total, current) => setOsrmProgress({ done, total, current }),
         controller.signal,
       );
       if (!controller.signal.aborted) {
-        if (bbox) {
-          // Bbox mode: merge re-routed cables into existing state instead of
-          // replacing everything.  Outside-bbox cables keep their geometry.
-          const routedByPair = new Map<string, Cable>();
-          for (const r of routed) routedByPair.set(`${r.fromId}::${r.toId}`, r);
-          setCables((prev) => prev.map((c) => routedByPair.get(`${c.fromId}::${c.toId}`) ?? c));
-          const mats = calculateMaterials(districts, cables, settings, joints.length);
-          setMaterials(mats);
-        } else {
-          const { cables: consolidated, joints: newJoints } = consolidateCables(routed, districts);
-          setCables(consolidated);
-          setJoints(newJoints);
-          const mats = calculateMaterials(districts, consolidated, settings, newJoints.length);
-          setMaterials(mats);
-        }
+        const { cables: consolidated, joints: newJoints } = consolidateCables(routed, districts);
+        setCables(consolidated);
+        setJoints(newJoints);
+        setMaterials(calculateMaterials(districts, consolidated, settings, newJoints.length));
         setStatus('done');
       }
     } catch (err) {

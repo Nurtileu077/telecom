@@ -27,6 +27,10 @@ interface Props {
   // Edit mode
   editMode: boolean;
   placingMode?: boolean;
+  // True while the host is waiting for a rectangle-selection corner click.
+  // We fire onMapClick in this mode so the host can record the corner without
+  // having to flip edit/placing mode on (which would change marker visuals).
+  selectingMode?: boolean;
   onMapClick?: (lat: number, lon: number) => void;
   onMapContextMenu?: (lat: number, lon: number, screenX: number, screenY: number) => void;
   moveEntity?: (kind: 'tb' | 'ork' | 'olt', id: string, lat: number, lon: number) => void;
@@ -294,7 +298,9 @@ export default function LeafletMap(props: Props) {
         }
 
         // Edit mode: add subscriber. Placement mode: place OLT/TB/ORK
-        if ((p.editMode || p.placingMode) && p.onMapClick) {
+        // Edit mode: add subscriber. Placement mode: place OLT/TB/ORK.
+        // Selection mode: record rectangle corner.
+        if ((p.editMode || p.placingMode || p.selectingMode) && p.onMapClick) {
           p.onMapClick(lat, lon);
           return;
         }
@@ -399,12 +405,12 @@ export default function LeafletMap(props: Props) {
   // Cursor based on mode
   useEffect(() => {
     if (!containerRef.current) return;
-    if (props.activeTool || props.editMode || props.measureMode || props.placingMode) {
+    if (props.activeTool || props.editMode || props.measureMode || props.placingMode || props.selectingMode) {
       containerRef.current.style.cursor = 'crosshair';
     } else {
       containerRef.current.style.cursor = '';
     }
-  }, [props.activeTool, props.editMode, props.measureMode, props.placingMode]);
+  }, [props.activeTool, props.editMode, props.measureMode, props.placingMode, props.selectingMode]);
 
   function renderData() {
     const map = mapRef.current;
