@@ -124,9 +124,12 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
         setStructuredPoints(sp);
         setStructuredLines(sl);
         // Build a preview right away so the user sees the classification result
-        // before submitting.  If we recognise ≥1 OLT/TB/ORK or ≥1 matched
-        // cable, treat it as a structured import.
-        const preview = buildStructured(sp, sl);
+        // Multi-file batch: merge everything into one combined district.
+        // Vendors split a project across files by LAYER (Боксы.kml /
+        // Кабели-ОК-48.kml / Абоненты.kml) — without merging, cables from
+        // one file can't snap to entities in another.
+        const mergedName = files.length === 1 ? undefined : 'Сеть';
+        const preview = buildStructured(sp, sl, { mergeAll: true, mergedName });
         if (preview.stats.olt + preview.stats.tb + preview.stats.ork > 0 || preview.stats.cablesMatched > 0) {
           setStructuredPreview(preview);
         }

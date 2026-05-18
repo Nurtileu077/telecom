@@ -1,12 +1,18 @@
 'use client';
-import { Materials, District, Cable, CABLE_SIZES } from '@/types/network';
+import { Materials, District, Cable, CABLE_SIZES, InlineJoint } from '@/types/network';
 import { exportExcel } from '@/components/Export/ExportExcel';
 import { exportKMZ } from '@/components/Export/ExportKMZ';
+import { filterByBBox, type BBox } from '@/components/Network/Selection';
+import { calculateMaterials } from '@/components/Network/MaterialCalc';
 
 interface Props {
   materials: Materials | null;
   districts: District[];
   cables: Cable[];
+  joints?: InlineJoint[];
+  selectionBBox?: BBox | null;
+  // Settings is needed to recalculate materials for the filtered subset.
+  cableReserve?: number;
 }
 
 interface Row {
@@ -42,7 +48,7 @@ function Section({ title, rows }: { title: string; rows: Row[] }) {
   );
 }
 
-export default function MaterialsTab({ materials, districts, cables }: Props) {
+export default function MaterialsTab({ materials, districts, cables, joints, selectionBBox, cableReserve = 1.10 }: Props) {
   if (!materials) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-center p-6">
@@ -52,22 +58,38 @@ export default function MaterialsTab({ materials, districts, cables }: Props) {
     );
   }
 
+  // When a bbox is active, exports send only the subset that falls inside.
+  // Materials are recomputed for that subset — using the project's saved
+  // cableReserve so reserve-padded totals stay consistent with the sidebar.
+  const exportSet = (): { districts: District[]; cables: Cable[]; materials: Materials } => {
+    if (!selectionBBox) return { districts, cables, materials: materials! };
+    const f = filterByBBox(districts, cables, joints ?? [], selectionBBox);
+    const m = calculateMaterials(
+      f.districts, f.cables,
+      { maxPerORK: 8, maxORKperTB: 4, spareFiresPerSub: 1, cableReserve, useOSRM: true, osrmDelay: 100 },
+      f.joints.length,
+    );
+    return { districts: f.districts, cables: f.cables, materials: m };
+  };
+
   const handleExcelExport = async () => {
-    const blob = await exportExcel(districts, cables, materials);
+    const { districts: d, cables: c, materials: m } = exportSet();
+    const blob = await exportExcel(d, c, m);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'gpon-materials.xlsx';
+    a.download = selectionBBox ? 'gpon-materials-выделение.xlsx' : 'gpon-materials.xlsx';
     a.click();
     URL.revokeObjectURL(url);
   };
 
   const handleKMZExport = async () => {
-    const blob = await exportKMZ(districts, cables);
+    const { districts: d, cables: c } = exportSet();
+    const blob = await exportKMZ(d, c);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'gpon-network.kmz';
+    a.download = selectionBBox ? 'gpon-network-выделение.kmz' : 'gpon-network.kmz';
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -121,17 +143,26 @@ export default function MaterialsTab({ materials, districts, cables }: Props) {
 
       {/* Export buttons */}
       <div className="p-3 border-t border-[#1e3a5f] space-y-2">
+        {selectionBBox && (() => {
+          const f = filterByBBox(districts, cables, joints ?? [], selectionBBox);
+          return (
+            <div className="p-2 bg-[#fbbf24]/10 border border-[#fbbf24]/40 rounded text-[10px] text-[#fbbf24]">
+              🔲 Выделено: <b>{f.counts.olt}</b> OLT · <b>{f.counts.tb}</b> Муфт · <b>{f.counts.ork}</b> ОРК · <b>{f.counts.sub}</b> Аб. · <b>{f.counts.cable}</b> кабелей
+              <div className="text-[#94a3b8] mt-0.5">Экспорт пойдёт только по этой области.</div>
+            </div>
+          );
+        })()}
         <button
           onClick={handleExcelExport}
           className="w-full py-2 px-3 bg-[#0d1b2a] hover:bg-[#1a2744] border border-[#1e3a5f] rounded-lg text-xs text-[#e2e8f0] transition-colors flex items-center gap-2"
         >
-          📊 Экспорт в Excel
+          📊 {selectionBBox ? 'Excel (выделение)' : 'Экспорт в Excel'}
         </button>
         <button
           onClick={handleKMZExport}
           className="w-full py-2 px-3 bg-[#0d1b2a] hover:bg-[#1a2744] border border-[#1e3a5f] rounded-lg text-xs text-[#e2e8f0] transition-colors flex items-center gap-2"
         >
-          🗺 Экспорт в KMZ
+          🗺 {selectionBBox ? 'KMZ (выделение)' : 'Экспорт в KMZ'}
         </button>
       </div>
     </div>

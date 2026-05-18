@@ -15,11 +15,15 @@ import CostTab from './CostTab';
 import ToolsTab from './ToolsTab';
 import BudgetTab from './BudgetTab';
 import type { SubBudget, BudgetStats } from '@/components/Network/PowerBudget';
-import type { ProjectSnapshot, ProjectStatus } from '@/types/network';
+import type { ProjectSnapshot, ProjectStatus, InlineJoint } from '@/types/network';
+import type { BBox } from '@/components/Network/Selection';
 
 interface Props {
   districts: District[];
   cables: Cable[];
+  joints?: InlineJoint[];
+  selectionBBox?: BBox | null;
+  cableReserve?: number;
   materials: Materials | null;
   layers: LayerVisibility;
   toggleLayer: (key: keyof LayerVisibility) => void;
@@ -137,7 +141,7 @@ export default function Sidebar(props: Props) {
           />
         )}
         {activeTab === 'materials' && (
-          <MaterialsTab materials={props.materials} districts={props.districts} cables={props.cables} />
+          <MaterialsTab materials={props.materials} districts={props.districts} cables={props.cables} joints={props.joints} selectionBBox={props.selectionBBox} cableReserve={props.cableReserve} />
         )}
         {activeTab === 'budget' && (
           <BudgetTab

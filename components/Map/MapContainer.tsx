@@ -44,6 +44,9 @@ interface Props {
   setMeasureMode: (v: boolean) => void;
   // Heatmap
   heatmapEnabled: boolean;
+  // Bounding-box overlay for "export selection".  Drawn as a translucent
+  // amber rectangle so the user can see what's about to be exported.
+  selectionBBox?: { latMin: number; lonMin: number; latMax: number; lonMax: number } | null;
 }
 
 const CABLE_COLORS: Record<string, string> = CABLE_COLORS_MAP as Record<string, string>;
@@ -789,6 +792,29 @@ export default function LeafletMap(props: Props) {
     });
   }, [props.editingCableId, props.cables]);
   useEffect(() => { renderAnnotations(); }, [props.annotations]);
+
+  // Draw the selection-rectangle overlay (independent layer so it doesn't
+  // get cleared by the data-layer rerender).
+  const selectionLayerRef = useRef<any>(null);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    import('leaflet').then((L) => {
+      // Remove the previous overlay regardless — even if no new bbox.
+      if (selectionLayerRef.current) {
+        map.removeLayer(selectionLayerRef.current);
+        selectionLayerRef.current = null;
+      }
+      const bb = props.selectionBBox;
+      if (!bb) return;
+      const rect = L.rectangle(
+        [[bb.latMin, bb.lonMin], [bb.latMax, bb.lonMax]] as any,
+        { color: '#fbbf24', weight: 2, dashArray: '6,4', fillColor: '#fbbf24', fillOpacity: 0.08 } as any,
+      );
+      rect.addTo(map);
+      selectionLayerRef.current = rect;
+    });
+  }, [props.selectionBBox]);
 
   // Heatmap
   useEffect(() => {

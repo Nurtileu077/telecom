@@ -156,12 +156,20 @@ function snapEndpoint(
 export function buildStructured(
   rawPoints: KmlPoint[],
   rawLines: KmlLine[],
-  opts: { snapMaxM?: number } = {},
+  opts: { snapMaxM?: number; mergeAll?: boolean; mergedName?: string } = {},
 ): BuildOutcome {
   const SNAP_M = opts.snapMaxM ?? 75; // endpoints often a few metres off the icon
   const stats = { olt: 0, tb: 0, ork: 0, sub: 0, supports: 0, joints: 0, radio: 0, cablesMatched: 0, cablesOrphan: 0 };
 
-  // Bucket by district (defaults to the KML file name).
+  // When the user imports several KML files in one go, each file would
+  // normally become its own district — but vendors split a single project
+  // across files by LAYER (Боксы.kml / Кабели-ОК-48.kml / Абоненты.kml).
+  // In that case cables from one file can't find their endpoints in another
+  // and subscribers from a 3rd file have no ORK to attach to.  mergeAll=true
+  // collapses everything into a single district so cross-file matching works.
+  const partitionKey = (p: { fileDistrict: string }): string =>
+    opts.mergeAll ? (opts.mergedName ?? 'Сеть') : p.fileDistrict;
+
   const byDistrict = new Map<string, DistrictBuckets>();
   const bucket = (name: string) => {
     if (!byDistrict.has(name)) {
@@ -172,7 +180,7 @@ export function buildStructured(
 
   for (const p of rawPoints) {
     const kind = classifyEntity(p.folderPath, p.name, p.extData);
-    const b = bucket(p.fileDistrict);
+    const b = bucket(partitionKey(p));
     if      (kind === 'olt')     b.olts.push(p);
     else if (kind === 'tb')      b.tbs.push(p);
     else if (kind === 'ork')     b.orks.push(p);
@@ -182,7 +190,7 @@ export function buildStructured(
     else                          b.subs.push(p);
   }
   for (const l of rawLines) {
-    const b = bucket(l.fileDistrict);
+    const b = bucket(partitionKey(l));
     if (isRadioLine(l.folderPath, l.name, l.extData)) {
       b.radioLines.push(l);
       stats.radio++;
