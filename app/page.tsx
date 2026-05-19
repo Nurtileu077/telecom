@@ -325,6 +325,9 @@ export default function HomePage() {
           {net.status === 'routing' && (
             <span className="px-2 py-0.5 bg-[#a78bfa]/10 border border-[#a78bfa]/30 text-[#a78bfa] rounded-md animate-pulse">🛣 OSRM {osrmPercent}%</span>
           )}
+          {net.status === 'calculating' && (
+            <span className="px-2 py-0.5 bg-[#34d399]/10 border border-[#34d399]/30 text-[#34d399] rounded-md animate-pulse">🔁 Слияние…</span>
+          )}
           {net.status === 'clustering' && (
             <span className="px-2 py-0.5 bg-[#f59e0b]/10 border border-[#f59e0b]/30 text-[#f59e0b] rounded-md animate-pulse">⚙ Кластеризация...</span>
           )}
@@ -655,14 +658,18 @@ export default function HomePage() {
             </div>
           )}
 
-          {net.status === 'routing' && (
-            <div className="absolute bottom-4 right-4 z-[500] pointer-events-none flex justify-end">
-              <div className="bg-[#0d1b2a]/97 border border-[#38bdf8]/40 rounded-xl p-3 shadow-2xl w-[min(100vw-2rem,360px)] pointer-events-auto animate-fade-in">
+          {(net.status === 'routing' || net.status === 'calculating') && (
+            <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-[9100] pointer-events-none flex justify-center w-full max-w-[min(100vw-2rem,420px)] px-4">
+              <div className="bg-[#0d1b2a]/97 border border-[#38bdf8]/40 rounded-xl p-3 shadow-2xl w-full pointer-events-auto animate-fade-in">
                 <div className="flex items-center gap-2 mb-2">
                   <div className="w-4 h-4 border-2 border-[#38bdf8] border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                  <span className="text-xs font-semibold text-[#e2e8f0]">Прокладка по дорогам — карта доступна</span>
+                  <span className="text-xs font-semibold text-[#e2e8f0]">
+                    {net.status === 'calculating'
+                      ? '2-й проход: объединение кабелей и муфт…'
+                      : '1-й проход: прокладка по дорогам (OSRM)'}
+                  </span>
                 </div>
-                {net.osrmProgress.total > 0 && (
+                {net.status === 'routing' && net.osrmProgress.total > 0 && (
                   <>
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-[10px] text-[#94a3b8] truncate mr-2">{net.osrmProgress.current || 'OSRM…'}</span>
@@ -673,9 +680,14 @@ export default function HomePage() {
                     </div>
                   </>
                 )}
-                <button type="button" onClick={net.stopOSRM} className="text-[10px] text-[#f87171] hover:text-[#fca5a5] border border-[#f87171]/30 rounded px-2 py-0.5">
-                  ✕ Остановить
-                </button>
+                {net.status === 'calculating' && (
+                  <p className="text-[10px] text-[#94a3b8] mb-2">Счётчик 1/N — только для OSRM; слияние идёт сразу после маршрутизации.</p>
+                )}
+                {net.status === 'routing' && (
+                  <button type="button" onClick={net.stopOSRM} className="text-[10px] text-[#f87171] hover:text-[#fca5a5] border border-[#f87171]/30 rounded px-2 py-0.5">
+                    ✕ Остановить
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -930,7 +942,9 @@ A3: ...`}
       {!showChat && (
         <button
           onClick={() => setShowChat(true)}
-          className="fixed right-4 bottom-4 z-[8999] w-12 h-12 rounded-full bg-[#38bdf8] hover:bg-[#7dd3fc] text-[#0a0e1a] text-xl font-bold shadow-2xl flex items-center justify-center transition-colors"
+          className={`fixed right-4 z-[8999] w-12 h-12 rounded-full bg-[#38bdf8] hover:bg-[#7dd3fc] text-[#0a0e1a] text-xl font-bold shadow-2xl flex items-center justify-center transition-colors ${
+            net.status === 'routing' || net.status === 'calculating' ? 'bottom-28' : 'bottom-4'
+          }`}
           title="ИИ-ассистент"
         >
           🤖
