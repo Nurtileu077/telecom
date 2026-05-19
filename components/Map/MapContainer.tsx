@@ -550,7 +550,16 @@ export default function LeafletMap(props: Props) {
               const budgetMap = propsRef.current.budgetMap;
               const colorByBudget = propsRef.current.budgetColoring;
               for (const sub of ork.subscribers) {
-                let fillColor = district.color;
+                // Camera-type colour overrides district when set (Sergek):
+                //   ЛУ = жёлтый, Перекрёсток = красный, ОВН = синий.
+                // Без типа — цвет района (legacy / generic subscriber).
+                const camType = sub.cameraType;
+                const baseColor = camType === 'apk-lu' ? '#fbbf24'
+                                : camType === 'apk-intersection' ? '#f87171'
+                                : camType === 'ovn' ? '#38bdf8'
+                                : district.color;
+                let fillColor = baseColor;
+                let radius = camType === 'apk-intersection' ? 5 : 4;
                 if (colorByBudget && budgetMap) {
                   const s = budgetMap.get(sub.id);
                   if (s === 'ok')   fillColor = '#34d399';
@@ -558,10 +567,14 @@ export default function LeafletMap(props: Props) {
                   if (s === 'fail') fillColor = '#f87171';
                 }
                 const c = L.circleMarker([sub.lat, sub.lon], {
-                  radius: 4, fillColor, fillOpacity: 0.85,
+                  radius, fillColor, fillOpacity: 0.9,
                   color: fillColor, weight: 1,
                 });
-                c.bindPopup(`<b>${sub.desc}</b><br/>ОРК: ${ork.id}<br/>Волокна: ${sub.fibers.working}+${sub.fibers.spare}${propsRef.current.editMode ? '<br/><button onclick="window.__deleteSub__(\'' + sub.id + '\')" style="margin-top:6px;padding:2px 8px;background:#f87171;color:#fff;border:none;border-radius:3px;font-size:10px;cursor:pointer">Удалить</button>' : ''}`);
+                const typeLabel = camType === 'apk-lu' ? 'АПК · ЛУ'
+                                : camType === 'apk-intersection' ? 'АПК · Перекрёсток'
+                                : camType === 'ovn' ? 'ОВН' : 'Камера';
+                const speed = sub.minSpeedMbps ? ` · ${sub.minSpeedMbps} Мбит/с` : '';
+                c.bindPopup(`<b>${sub.desc}</b><br/>Тип: ${typeLabel}${speed}<br/>ОРК: ${ork.id}<br/>Волокна: ${sub.fibers.working}+${sub.fibers.spare}${propsRef.current.editMode ? '<br/><button onclick="window.__deleteSub__(\'' + sub.id + '\')" style="margin-top:6px;padding:2px 8px;background:#f87171;color:#fff;border:none;border-radius:3px;font-size:10px;cursor:pointer">Удалить</button>' : ''}`);
                 c.on('contextmenu', (e: any) => {
                   e.originalEvent.preventDefault();
                   if (propsRef.current.editMode && confirm(`Удалить абонента «${sub.desc}»?`)) {
