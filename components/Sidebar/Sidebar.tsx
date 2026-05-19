@@ -15,13 +15,14 @@ import CostTab from './CostTab';
 import ToolsTab from './ToolsTab';
 import BudgetTab from './BudgetTab';
 import type { SubBudget, BudgetStats } from '@/components/Network/PowerBudget';
-import type { ProjectSnapshot, ProjectStatus, InlineJoint } from '@/types/network';
+import type { ProjectSnapshot, ProjectStatus, InlineJoint, OntBox } from '@/types/network';
 import type { SelectionPolygon } from '@/components/Network/Selection';
 
 interface Props {
   districts: District[];
   cables: Cable[];
   joints?: InlineJoint[];
+  ontBoxes?: OntBox[];
   selectionPolygon?: SelectionPolygon | null;
   cableReserve?: number;
   materials: Materials | null;
@@ -58,8 +59,8 @@ interface Props {
   setHeatmapEnabled: (v: boolean) => void;
   onExportPDF: () => void;
   onPrintMap: () => void;
-  onRerouteOSRM: () => void;
-  onReconsolidate: () => void;
+  onPass1: () => void;
+  onPass2: () => void;
   osrmStatus: string;
 
   powerBudgets: SubBudget[];
@@ -141,7 +142,7 @@ export default function Sidebar(props: Props) {
           />
         )}
         {activeTab === 'materials' && (
-          <MaterialsTab materials={props.materials} districts={props.districts} cables={props.cables} joints={props.joints} selectionPolygon={props.selectionPolygon} cableReserve={props.cableReserve} />
+          <MaterialsTab materials={props.materials} districts={props.districts} cables={props.cables} ontBoxes={props.ontBoxes} joints={props.joints} selectionPolygon={props.selectionPolygon} cableReserve={props.cableReserve} />
         )}
         {activeTab === 'budget' && (
           <BudgetTab
@@ -169,8 +170,8 @@ export default function Sidebar(props: Props) {
             heatmapEnabled={props.heatmapEnabled}
             onExportPDF={props.onExportPDF}
             onPrintMap={props.onPrintMap}
-            onRerouteOSRM={props.onRerouteOSRM}
-            onReconsolidate={props.onReconsolidate}
+            onPass1={props.onPass1}
+            onPass2={props.onPass2}
             selectionPolygon={props.selectionPolygon}
             osrmStatus={props.osrmStatus}
             hasCables={props.cables.length > 0}

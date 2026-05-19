@@ -1,5 +1,6 @@
-import { Cable, CABLE_FIBERS, CABLE_SIZES, CableType, District } from '@/types/network';
+import { Cable, CABLE_FIBERS, CableType, District, OntBox } from '@/types/network';
 import { haversineM } from './KMeans';
+import { EntityRole, pickSegmentCableType } from './SergekTopology';
 
 // In-line муфта — точка, где трасса разветвляется или меняется жильность.
 // Рендерится как небольшой ⊕ маркер и учитывается в смете.
@@ -64,30 +65,82 @@ function pathLength(coords: [number, number][]): number {
   return len;
 }
 
-// Cap at ОК-48 per project requirement — never emit ОК-96.
-function pickCableType(fibers: number): CableType {
-  for (const t of CABLE_SIZES) {
-    if (t === 'ОК-96') continue;
-    if (CABLE_FIBERS[t] >= fibers) return t;
+function buildEntityRoles(
+  districts: District[],
+  ontBoxes: OntBox[] = [],
+): Map<string, EntityRole> {
+  const roles = new Map<string, EntityRole>();
+  for (const d of districts) {
+    roles.set(d.olt.id, 'olt');
+    for (const tb of d.olt.transitBoxes) {
+      roles.set(tb.id, 'tb');
+      for (const ork of tb.orks) {
+        roles.set(ork.id, 'ork');
+        for (const sub of ork.subscribers) roles.set(sub.id, 'sub');
+      }
+    }
   }
-  return 'ОК-48';
+  for (const b of ontBoxes) roles.set(b.id, 'box');
+  return roles;
 }
 
-// Cable type for a segment shared by N subscribers.
-// - 1 subscriber  → ОК-4 (a normal drop)
-// - 2+ subscribers → ОК-8 minimum.  In practice 2×ОК-4 was being emitted
-//   for the shared run + 2 short ОК-4 drops after the splice, which looks
-//   like "two parallel ОК-4 along a road" to the user.  Using ОК-8 with a
-//   muffta-splice into 2 drops is the standard физический design and adds
-//   spare fibers for future subscribers along the same road.
-function pickSharedCableType(subsCount: number): CableType {
-  if (subsCount <= 1) return 'ОК-4';
-  const fibers = Math.max(8, subsCount * 2);
-  for (const t of CABLE_SIZES) {
-    if (t === 'ОК-96') continue;
-    if (CABLE_FIBERS[t] >= fibers) return t;
+function segBearing(a: [number, number], b: [number, number]): number {
+  return Math.atan2(b[1] - a[1], b[0] - a[0]);
+}
+
+function bearingsClose(a: number, b: number): boolean {
+  let d = Math.abs(a - b);
+  if (d > Math.PI) d = 2 * Math.PI - d;
+  return d < 0.35;
+}
+
+function segMidpoint(c: [[number, number], [number, number]]): [number, number] {
+  return [(c[0][0] + c[1][0]) / 2, (c[0][1] + c[1][1]) / 2];
+}
+
+function concatPaths(
+  base: [number, number][],
+  extra: [number, number][],
+): [number, number][] {
+  if (extra.length === 0) return base;
+  if (base.length === 0) return [...extra];
+  const out = [...base];
+  const last = out[out.length - 1];
+  const start = extra[0];
+  if (
+    Math.abs(last[0] - start[0]) < 1e-9 &&
+    Math.abs(last[1] - start[1]) < 1e-9
+  ) {
+    out.push(...extra.slice(1));
+  } else {
+    out.push(...extra);
   }
-  return 'ОК-48';
+  return out;
+}
+
+/** Кабели ОРКСП → BOX → BOX … в порядке прокладки (tree AutoBuild). */
+export function walkOrkBoxChain(
+  orkId: string,
+  cableByEndpoint: Map<string, Cable>,
+): Cable[] {
+  const chain: Cable[] = [];
+  const used = new Set<string>();
+  let fromId = orkId;
+  while (true) {
+    const hops = [...cableByEndpoint.entries()].filter(([k]) =>
+      k.startsWith(`${fromId}::`),
+    );
+    if (hops.length === 0) break;
+    const boxHop = hops.find(([, c]) => c.toId.startsWith('BOX-'));
+    const picked = boxHop ?? hops[0];
+    const [, cable] = picked;
+    if (used.has(cable.id)) break;
+    used.add(cable.id);
+    chain.push(cable);
+    if (!cable.toId.startsWith('BOX-')) break;
+    fromId = cable.toId;
+  }
+  return chain;
 }
 
 /**
@@ -105,6 +158,7 @@ export function consolidateCables(
    *  параллельные улицы; 12 м только сливает соседние OSRM-нити одной
    *  дороги. */
   gridM: number = DEFAULT_GRID_M,
+  ontBoxes: OntBox[] = [],
 ): { cables: Cable[]; joints: InlineJoint[] } {
   if (!districts || districts.length === 0) {
     return { cables, joints: [] };
@@ -134,6 +188,7 @@ export function consolidateCables(
   const nextCableId = () => `cable-g-${++cableSeq}`;
   const nextJointId = () => `J-${++jointSeq}`;
   const usedCableIds = new Set<string>();
+  const entityRoles = buildEntityRoles(districts, ontBoxes);
 
   for (const district of districts) {
     const olt = district.olt;
@@ -158,6 +213,17 @@ export function consolidateCables(
       nodeCoord.set(bK, b);
       const key = aK < bK ? `${aK}|${bK}` : `${bK}|${aK}`;
       let s = segments.get(key);
+      if (!s) {
+        const mid = segMidpoint([a, b]);
+        const bear = segBearing(a, b);
+        for (const cand of segments.values()) {
+          const cm = segMidpoint(cand.coords);
+          if (haversineM(mid[0], mid[1], cm[0], cm[1]) > gridM) continue;
+          if (!bearingsClose(bear, segBearing(cand.coords[0], cand.coords[1]))) continue;
+          s = cand;
+          break;
+        }
+      }
       if (!s) {
         s = {
           key,
@@ -194,20 +260,51 @@ export function consolidateCables(
         if (tbOrk.coords.length >= 2) {
           effectivePos.set(ork.id, tbOrk.coords[tbOrk.coords.length - 1]);
         }
-        for (const sub of ork.subscribers) {
-          const orkSub = cableByEndpoint.get(`${ork.id}::${sub.id}`);
-          if (!orkSub) continue;
-          if (orkSub.coords.length >= 2) {
-            effectivePos.set(sub.id, orkSub.coords[orkSub.coords.length - 1]);
+        const boxChain = walkOrkBoxChain(ork.id, cableByEndpoint);
+        for (const hop of boxChain) {
+          if (hop.coords.length >= 2) {
+            effectivePos.set(hop.toId, hop.coords[hop.coords.length - 1]);
           }
-          usedCableIds.add(oltTb.id);
-          usedCableIds.add(tbOrk.id);
-          usedCableIds.add(orkSub.id);
-          const path: [number, number][] = [
-            ...oltTb.coords,
-            ...tbOrk.coords.slice(1),
-            ...orkSub.coords.slice(1),
-          ];
+        }
+
+        for (let subIdx = 0; subIdx < ork.subscribers.length; subIdx++) {
+          const sub = ork.subscribers[subIdx];
+          const orkSub = cableByEndpoint.get(`${ork.id}::${sub.id}`);
+
+          let path: [number, number][] = concatPaths(
+            [...oltTb.coords],
+            tbOrk.coords.length >= 2 ? tbOrk.coords.slice(1) : [],
+          );
+
+          const pathCables: Cable[] = [oltTb, tbOrk];
+
+          if (orkSub) {
+            path = concatPaths(path, orkSub.coords.length >= 2 ? orkSub.coords.slice(1) : []);
+            pathCables.push(orkSub);
+            if (orkSub.coords.length >= 2) {
+              effectivePos.set(sub.id, orkSub.coords[orkSub.coords.length - 1]);
+            }
+          } else if (boxChain.length > 0) {
+            const hops = Math.min(subIdx + 1, boxChain.length);
+            for (let i = 0; i < hops; i++) {
+              const hop = boxChain[i];
+              path = concatPaths(
+                path,
+                hop.coords.length >= 2 ? hop.coords.slice(1) : [],
+              );
+              pathCables.push(hop);
+              if (hop.coords.length >= 2) {
+                const end = hop.coords[hop.coords.length - 1];
+                effectivePos.set(hop.toId, end);
+                if (i === hops - 1) effectivePos.set(sub.id, end);
+              }
+            }
+          } else {
+            continue;
+          }
+
+          for (const pc of pathCables) usedCableIds.add(pc.id);
+          if (path.length < 2) continue;
           for (let i = 1; i < path.length; i++) {
             addSeg(path[i - 1], path[i], sub.id);
           }
@@ -246,18 +343,22 @@ export function consolidateCables(
       for (const ork of tb.orks) {
         const orkCoord = effectivePos.get(ork.id) ?? [ork.lat, ork.lon];
         nodeId.set(quantize(orkCoord[0], orkCoord[1]), ork.id);
+        const boxChainForNodes = walkOrkBoxChain(ork.id, cableByEndpoint);
+        for (const hop of boxChainForNodes) {
+          const boxCoord = effectivePos.get(hop.toId) ??
+            (hop.coords.length >= 2
+              ? hop.coords[hop.coords.length - 1]
+              : undefined);
+          if (boxCoord) {
+            nodeId.set(quantize(boxCoord[0], boxCoord[1]), hop.toId);
+          }
+        }
         for (const sub of ork.subscribers) {
           const subCoord = effectivePos.get(sub.id) ?? [sub.lat, sub.lon];
           nodeId.set(quantize(subCoord[0], subCoord[1]), sub.id);
         }
       }
     }
-
-    // Размер кабеля: одна точка → ОК-4 (одиночный дроп).
-    // 2+ абонента через сегмент → минимум ОК-8 (общий магистральный с
-    // муфтой-разветвителем, а не два параллельных ОК-4).
-    const segCableType = (s: Segment): CableType =>
-      pickSharedCableType(s.subs.size);
 
     // Получить «соседа» (другой конец сегмента, не равный nodeKey).
     const otherEnd = (s: Segment, nodeKey: string): string =>
@@ -278,7 +379,7 @@ export function consolidateCables(
       routed: boolean,
     ) => {
       if (coords.length < 2) return;
-      const type = pickSharedCableType(subsCount);
+      const type = pickSegmentCableType(subsCount, fromId, toId, entityRoles);
       outCables.push({
         id: nextCableId(),
         type,
@@ -317,11 +418,11 @@ export function consolidateCables(
       let branchOrigin = fromId;
       const isStartNode = nodeKey === oltKey;
       const totalBranches = segKeys.length;
+      const distinctGroups = groups.size;
       const needJoint =
         !isStartNode &&
-        // Уже не OLT/ORK/sub точка
-        !nodeId.has(nodeKey) &&
-        totalBranches >= 2;
+        totalBranches >= 2 &&
+        (distinctGroups >= 2 || !nodeId.has(nodeKey));
       if (needJoint) {
         const jid = nextJointId();
         const coord = nodeCoord.get(nodeKey)!;

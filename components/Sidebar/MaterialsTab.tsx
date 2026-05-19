@@ -1,6 +1,7 @@
 'use client';
 import { useState, useMemo } from 'react';
-import { Materials, District, Cable, CABLE_SIZES, CableType, InlineJoint } from '@/types/network';
+import { Materials, District, Cable, CABLE_SIZES, CableType, InlineJoint, OntBox } from '@/types/network';
+import { pointInPolygon } from '@/components/Network/Selection';
 import { exportExcel } from '@/components/Export/ExportExcel';
 import {
   exportKMZ,
@@ -19,6 +20,7 @@ interface Props {
   materials: Materials | null;
   districts: District[];
   cables: Cable[];
+  ontBoxes?: OntBox[];
   joints?: InlineJoint[];
   selectionPolygon?: SelectionPolygon | null;
   cableReserve?: number;
@@ -79,7 +81,7 @@ function LayerCheckbox({
   );
 }
 
-export default function MaterialsTab({ materials, districts, cables, joints, selectionPolygon, cableReserve = 1.10 }: Props) {
+export default function MaterialsTab({ materials, districts, cables, ontBoxes = [], joints, selectionPolygon, cableReserve = 1.10 }: Props) {
   const [kmzLayers, setKmzLayers] = useState<KmzExportLayers>(() => ({ ...DEFAULT_KMZ_LAYERS, cables: { ...DEFAULT_KMZ_LAYERS.cables } }));
   const [showKmzPanel, setShowKmzPanel] = useState(false);
   const [kmzBusy, setKmzBusy] = useState<string | null>(null);
@@ -93,17 +95,32 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
     );
   }
 
-  const exportSet = (): { districts: District[]; cables: Cable[]; joints: InlineJoint[]; materials: Materials } => {
+  const exportSet = (): {
+    districts: District[];
+    cables: Cable[];
+    joints: InlineJoint[];
+    ontBoxes: OntBox[];
+    materials: Materials;
+  } => {
     if (!selectionPolygon || selectionPolygon.length < 3) {
-      return { districts, cables, joints: joints ?? [], materials: materials! };
+      return { districts, cables, joints: joints ?? [], ontBoxes, materials: materials! };
     }
     const f = filterByPolygon(districts, cables, joints ?? [], selectionPolygon);
+    const filteredBoxes = ontBoxes.filter((b) =>
+      pointInPolygon(b.lat, b.lon, selectionPolygon),
+    );
     const m = calculateMaterials(
       f.districts, f.cables,
       { maxPerORK: 8, maxORKperTB: 4, spareFiresPerSub: 1, cableReserve, useOSRM: true, osrmDelay: 100 },
       f.joints.length,
     );
-    return { districts: f.districts, cables: f.cables, joints: f.joints, materials: m };
+    return {
+      districts: f.districts,
+      cables: f.cables,
+      joints: f.joints,
+      ontBoxes: filteredBoxes,
+      materials: m,
+    };
   };
 
   const filePrefix = selectionPolygon && selectionPolygon.length >= 3 ? 'gpon-выделение' : 'gpon-network';
@@ -111,7 +128,7 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
   const activeCableTypes = useMemo(() => {
     const { cables: c } = exportSet();
     return CABLE_SIZES.filter((t) => c.some((x) => x.type === t));
-  }, [districts, cables, joints, selectionPolygon, materials]);
+  }, [districts, cables, joints, ontBoxes, selectionPolygon, materials]);
 
   const setEntityLayer = (key: keyof Pick<KmzExportLayers, 'olt' | 'mufta' | 'transitJoint' | 'ork' | 'subscribers' | 'summary'>, v: boolean) => {
     setKmzLayers((prev) => ({ ...prev, [key]: v }));
@@ -161,21 +178,21 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
   };
 
   const handleKMZFull = () => runKmz('full', async () => {
-    const { districts: d, cables: c, joints: j } = exportSet();
-    const blob = await exportKMZ(d, c, { layers: kmzLayers, joints: j, flatCableFolders: true });
+    const { districts: d, cables: c, joints: j, ontBoxes: boxes } = exportSet();
+    const blob = await exportKMZ(d, c, { layers: kmzLayers, joints: j, ontBoxes: boxes, flatCableFolders: true });
     downloadBlob(blob, `${filePrefix}.kmz`);
   });
 
   const handleKMZZip = (mode: KmzPackageMode) => runKmz('zip', async () => {
-    const { districts: d, cables: c, joints: j } = exportSet();
-    const blob = await exportKMZPackage(d, c, j, kmzLayers, mode);
+    const { districts: d, cables: c, joints: j, ontBoxes: boxes } = exportSet();
+    const blob = await exportKMZPackage(d, c, j, kmzLayers, mode, boxes);
     const name = mode === 'split-by-type' ? `${filePrefix}-по-типам-ок.zip` : `${filePrefix}-полный+по-типам.zip`;
     downloadBlob(blob, name);
   });
 
   const handleKMZSplitObjects = () => runKmz('split-obj', async () => {
-    const { districts: d, cables: c, joints: j } = exportSet();
-    await downloadKMZSplitByEntity(d, c, j, kmzLayers, filePrefix);
+    const { districts: d, cables: c, joints: j, ontBoxes: boxes } = exportSet();
+    await downloadKMZSplitByEntity(d, c, j, kmzLayers, filePrefix, boxes);
   });
 
   const handleKMZSplitCables = () => runKmz('split-cab', async () => {
@@ -184,8 +201,8 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
   });
 
   const handleKMZSplitAll = () => runKmz('split-all', async () => {
-    const { districts: d, cables: c, joints: j } = exportSet();
-    await downloadKMZSplitAll(d, c, j, kmzLayers, filePrefix);
+    const { districts: d, cables: c, joints: j, ontBoxes: boxes } = exportSet();
+    await downloadKMZSplitAll(d, c, j, kmzLayers, filePrefix, boxes);
   });
 
   const cableRows: Row[] = CABLE_SIZES

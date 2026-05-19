@@ -18,16 +18,16 @@ interface Props {
   heatmapEnabled: boolean;
   onExportPDF: () => void;
   onPrintMap: () => void;
-  onRerouteOSRM: () => void;
-  onReconsolidate: () => void;
+  onPass1: () => void;
+  onPass2: () => void;
   selectionPolygon?: [number, number][] | null;
-  osrmStatus: 'idle' | 'routing' | 'done' | 'error' | string;
+  osrmStatus: 'idle' | 'routing' | 'calculating' | 'done' | 'error' | string;
   hasCables: boolean;
   budgetColoring: boolean;
   onToggleBudgetColoring: () => void;
 }
 
-export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onRerouteOSRM, onReconsolidate, selectionPolygon, osrmStatus, hasCables, budgetColoring, onToggleBudgetColoring }: Props) {
+export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onPass1, onPass2, selectionPolygon, osrmStatus, hasCables, budgetColoring, onToggleBudgetColoring }: Props) {
   const [inputs, setInputs] = useState<OpticalBudgetInputs>(DEFAULT_INPUTS);
   const result = useMemo(() => calculateOpticalBudget(inputs), [inputs]);
 
@@ -35,39 +35,35 @@ export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, o
     <div className="overflow-y-auto h-full p-3 space-y-4">
       {/* OSRM routing */}
       <section>
-        <h3 className="text-[10px] uppercase tracking-widest text-[#64748b] mb-2">Маршрутизация кабелей</h3>
+        <h3 className="text-[10px] uppercase tracking-widest text-[#64748b] mb-2">Проходы прокладки</h3>
         {selectionPolygon && selectionPolygon.length >= 3 && (
           <div className="mb-2 p-1.5 bg-[#fbbf24]/10 border border-[#fbbf24]/40 rounded text-[10px] text-[#fbbf24]">
             🔷 Операции применятся только внутри выделенного полигона.
           </div>
         )}
         <button
-          onClick={onRerouteOSRM}
-          disabled={!hasCables || osrmStatus === 'routing'}
+          onClick={onPass1}
+          disabled={!hasCables || osrmStatus === 'routing' || osrmStatus === 'calculating'}
           className="w-full py-2 px-3 text-xs font-semibold rounded-lg border transition-all disabled:opacity-40 disabled:cursor-not-allowed bg-[#38bdf8]/10 border-[#38bdf8]/50 text-[#38bdf8] hover:bg-[#38bdf8]/20"
         >
           {osrmStatus === 'routing'
-            ? '⏳ Маршрутизация...'
-            : selectionPolygon && selectionPolygon.length >= 3
-              ? '🛣 Проложить (выделение)'
-              : '🛣 Проложить по дорогам (OSRM)'}
+            ? '⏳ Проход 1…'
+            : '① Проход 1 — по дорогам (OSRM)'}
         </button>
         <p className="text-[9px] text-[#64748b] mt-1">
-          {selectionPolygon && selectionPolygon.length >= 3
-            ? 'Перемаршрутизирует только кабели, пересекающие выделенный полигон.'
-            : 'Перестраивает все кабели по дорогам через router.project-osrm.org. Занимает 1–2 мин.'}
+          Тянет кабели по OSRM. После импорта/построения нажмите сначала это.
         </p>
         <button
-          onClick={onReconsolidate}
-          disabled={!hasCables}
-          className="mt-2 w-full py-2 px-3 text-xs font-semibold rounded-lg border transition-all disabled:opacity-40 bg-[#a78bfa]/10 border-[#a78bfa]/50 text-[#a78bfa] hover:bg-[#a78bfa]/20"
+          onClick={onPass2}
+          disabled={!hasCables || osrmStatus === 'routing' || osrmStatus === 'calculating'}
+          className="mt-2 w-full py-2 px-3 text-xs font-semibold rounded-lg border transition-all disabled:opacity-40 disabled:cursor-not-allowed bg-[#a78bfa]/10 border-[#a78bfa]/50 text-[#a78bfa] hover:bg-[#a78bfa]/20"
         >
-          {selectionPolygon && selectionPolygon.length >= 3 ? '🔁 Объединить (выделение)' : '🔁 Объединить кабели на общих дорогах'}
+          {osrmStatus === 'calculating'
+            ? '⏳ Проход 2…'
+            : '② Проход 2 — слияние + муфты'}
         </button>
         <p className="text-[9px] text-[#64748b] mt-1">
-          {selectionPolygon && selectionPolygon.length >= 3
-            ? 'Консолидация и муфты только внутри полигона, остальная сеть не трогается.'
-            : 'Снэп вершин к сетке 25м, объединение параллельных кабелей, муфты в развилках. Используй после ручных правок.'}
+          Параллельные нити на одной дороге → одна линия. ОК-16 / ОК-4 по схеме, муфты ⊕ в развилках.
         </p>
       </section>
 
