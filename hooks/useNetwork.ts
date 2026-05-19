@@ -4,7 +4,7 @@ import {
   District, Cable, Subscriber, ProjectSettings, Materials, LayerVisibility,
   DEFAULT_SETTINGS, Project, MapAnnotation, ImportRecord, ValidationIssue,
   PriceCatalog, DEFAULT_PRICES, InlineJoint, OLT, TransitBox, ORK, CABLE_FIBERS, DISTRICT_COLORS,
-  ProjectStatus, ProjectSnapshot, OntBox,
+  ProjectStatus, ProjectSnapshot, OntBox, CameraType, CAMERA_MIN_SPEED_MBPS,
 } from '@/types/network';
 import { buildNetwork, OltLocationMap } from '@/components/Network/AutoBuild';
 import { calculateMaterials, validateNetwork } from '@/components/Network/MaterialCalc';
@@ -638,7 +638,13 @@ export function useNetwork() {
   // re-route every cable, making the map flash through a "spaghetti"
   // state for ~30 s with 600+ subs.  Instead: find the nearest existing
   // ORK, attach the new sub to it, and add ONE drop cable.
-  const addSubscriberAt = useCallback(async (lat: number, lon: number, district: string, desc: string) => {
+  const addSubscriberAt = useCallback(async (
+    lat: number, lon: number, district: string, desc: string,
+    cameraType?: CameraType,
+  ) => {
+    const camFields = cameraType
+      ? { cameraType, minSpeedMbps: CAMERA_MIN_SPEED_MBPS[cameraType] }
+      : {};
     // Find nearest existing ORK.  If the project has no ORKs yet, fall back
     // to the legacy full-rebuild path so the user gets some structure.
     let nearestOrk: { id: string; lat: number; lon: number; tbId: string; district: string } | null = null;
@@ -661,6 +667,7 @@ export function useNetwork() {
         id: newId('sub'),
         lat, lon, desc, district,
         fibers: { working: 2, spare: 1 },
+        ...camFields,
       };
       const merged = [...allSubscribers, sub];
       setAllSubscribers(merged);
@@ -674,7 +681,17 @@ export function useNetwork() {
       district: nearestOrk.district,
       orkId: nearestOrk.id,
       fibers: { working: 2, spare: 1 },
+      ...camFields,
     };
+
+    // Create ONT box at camera (Sergek: каждая камера = бокс на столбе).
+    const newBox: OntBox = {
+      id: `BOX-${newId('box')}`,
+      lat, lon,
+      subscriberId: sub.id,
+      orkspId: nearestOrk.id,
+    };
+    setOntBoxes((prev) => [...prev, newBox]);
 
     // Insert sub into the matching ORK + into the district subscribers list.
     setDistricts((prev) => prev.map((d) => {

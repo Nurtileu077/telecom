@@ -4,6 +4,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNetwork } from '@/hooks/useNetwork';
 import Sidebar from '@/components/Sidebar/Sidebar';
 import ImportModal, { ImportMode, NetworkImportMode, OltLocations } from '@/components/Import/ImportModal';
+import AddCamerasModal from '@/components/Import/AddCamerasModal';
 import { Subscriber, ProjectSettings, AnnotationType, Project, ProjectStatus, PROJECT_STATUS_LABELS } from '@/types/network';
 import type { DrawingTool } from '@/components/Sidebar/NotesTab';
 import GeocodeSearch from '@/components/Geocoding/GeocodeSearch';
@@ -32,6 +33,7 @@ const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
 export default function HomePage() {
   const net = useNetwork();
   const [showImport, setShowImport] = useState(false);
+  const [showAddCameras, setShowAddCameras] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showProjects, setShowProjects] = useState(false);
   const [showCatalog, setShowCatalog] = useState(false);
@@ -468,6 +470,16 @@ export default function HomePage() {
               🔷 Выделить
             </button>
           )}
+          {/* Brownfield: добавить камеры на существующую сеть. */}
+          {net.districts.length > 0 && (
+            <button
+              onClick={() => setShowAddCameras(true)}
+              className="px-3 py-1 text-xs text-[#94a3b8] border border-[#1e3a5f] hover:text-[#e2e8f0] hover:border-[#38bdf8]/50 rounded-lg transition-colors"
+              title="Добавить новые камеры Excel-ом к существующей сети"
+            >
+              📷 Камеры
+            </button>
+          )}
           <button
             onClick={() => setShowImport(true)}
             className="px-3 py-1 text-xs bg-[#38bdf8] hover:bg-[#7dd3fc] text-[#0a0e1a] font-semibold rounded-lg transition-colors"
@@ -698,6 +710,18 @@ export default function HomePage() {
           onImportNetwork={handleImportNetwork}
           currentSettings={net.settings}
           hasExistingData={net.totalSubscribers > 0}
+        />
+      )}
+
+      {showAddCameras && (
+        <AddCamerasModal
+          onClose={() => setShowAddCameras(false)}
+          onAdd={async (rows) => {
+            for (const r of rows) {
+              const district = r.district || net.districts[0]?.name || 'Камеры';
+              await net.addSubscriberAt(r.lat, r.lon, district, r.desc, r.cameraType);
+            }
+          }}
         />
       )}
 
