@@ -1,7 +1,15 @@
 'use client';
-import { Materials, District, Cable, CABLE_SIZES, InlineJoint } from '@/types/network';
+import { useState, useMemo } from 'react';
+import { Materials, District, Cable, CABLE_SIZES, CableType, InlineJoint } from '@/types/network';
 import { exportExcel } from '@/components/Export/ExportExcel';
-import { exportKMZ } from '@/components/Export/ExportKMZ';
+import {
+  exportKMZ,
+  exportKMZPackage,
+  downloadKMZSplitByType,
+  DEFAULT_KMZ_LAYERS,
+  type KmzExportLayers,
+  type KmzPackageMode,
+} from '@/components/Export/ExportKMZ';
 import { filterByBBox, type BBox } from '@/components/Network/Selection';
 import { calculateMaterials } from '@/components/Network/MaterialCalc';
 
@@ -11,7 +19,6 @@ interface Props {
   cables: Cable[];
   joints?: InlineJoint[];
   selectionBBox?: BBox | null;
-  // Settings is needed to recalculate materials for the filtered subset.
   cableReserve?: number;
 }
 
@@ -48,7 +55,33 @@ function Section({ title, rows }: { title: string; rows: Row[] }) {
   );
 }
 
+function LayerCheckbox({
+  checked,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+}) {
+  return (
+    <label className="flex items-center gap-2 py-0.5 cursor-pointer text-xs text-[#cbd5e1] hover:text-[#e2e8f0]">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="rounded border-[#1e3a5f] bg-[#0d1b2a] text-[#38bdf8] focus:ring-[#38bdf8]/40"
+      />
+      <span className="truncate">{label}</span>
+    </label>
+  );
+}
+
 export default function MaterialsTab({ materials, districts, cables, joints, selectionBBox, cableReserve = 1.10 }: Props) {
+  const [kmzLayers, setKmzLayers] = useState<KmzExportLayers>(() => ({ ...DEFAULT_KMZ_LAYERS, cables: { ...DEFAULT_KMZ_LAYERS.cables } }));
+  const [showKmzPanel, setShowKmzPanel] = useState(false);
+  const [kmzBusy, setKmzBusy] = useState<string | null>(null);
+
   if (!materials) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-center p-6">
@@ -58,9 +91,6 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
     );
   }
 
-  // When a bbox is active, exports send only the subset that falls inside.
-  // Materials are recomputed for that subset — using the project's saved
-  // cableReserve so reserve-padded totals stay consistent with the sidebar.
   const exportSet = (): { districts: District[]; cables: Cable[]; materials: Materials } => {
     if (!selectionBBox) return { districts, cables, materials: materials! };
     const f = filterByBBox(districts, cables, joints ?? [], selectionBBox);
@@ -70,6 +100,31 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
       f.joints.length,
     );
     return { districts: f.districts, cables: f.cables, materials: m };
+  };
+
+  const filePrefix = selectionBBox ? 'gpon-выделение' : 'gpon-network';
+
+  const activeCableTypes = useMemo(() => {
+    const { cables: c } = exportSet();
+    return CABLE_SIZES.filter((t) => c.some((x) => x.type === t));
+  }, [districts, cables, selectionBBox, materials]);
+
+  const setEntityLayer = (key: keyof Pick<KmzExportLayers, 'olt' | 'mufta' | 'ork' | 'subscribers' | 'summary'>, v: boolean) => {
+    setKmzLayers((prev) => ({ ...prev, [key]: v }));
+  };
+
+  const setCableLayer = (type: CableType, v: boolean) => {
+    setKmzLayers((prev) => ({
+      ...prev,
+      cables: { ...prev.cables, [type]: v },
+    }));
+  };
+
+  const selectAllLayers = () => {
+    setKmzLayers({
+      olt: true, mufta: true, ork: true, subscribers: true, summary: true,
+      cables: Object.fromEntries(CABLE_SIZES.map((t) => [t, true])) as Record<CableType, boolean>,
+    });
   };
 
   const handleExcelExport = async () => {
@@ -83,16 +138,41 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
     URL.revokeObjectURL(url);
   };
 
-  const handleKMZExport = async () => {
-    const { districts: d, cables: c } = exportSet();
-    const blob = await exportKMZ(d, c);
+  const downloadBlob = (blob: Blob, name: string) => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = selectionBBox ? 'gpon-network-выделение.kmz' : 'gpon-network.kmz';
+    a.download = name;
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  const runKmz = async (label: string, fn: () => Promise<void>) => {
+    setKmzBusy(label);
+    try {
+      await fn();
+    } finally {
+      setKmzBusy(null);
+    }
+  };
+
+  const handleKMZFull = () => runKmz('full', async () => {
+    const { districts: d, cables: c } = exportSet();
+    const blob = await exportKMZ(d, c, { layers: kmzLayers, flatCableFolders: true });
+    downloadBlob(blob, `${filePrefix}.kmz`);
+  });
+
+  const handleKMZZip = (mode: KmzPackageMode) => runKmz('zip', async () => {
+    const { districts: d, cables: c } = exportSet();
+    const blob = await exportKMZPackage(d, c, kmzLayers, mode);
+    const name = mode === 'split-by-type' ? `${filePrefix}-по-типам-ок.zip` : `${filePrefix}-полный+по-типам.zip`;
+    downloadBlob(blob, name);
+  });
+
+  const handleKMZSplitFiles = () => runKmz('split', async () => {
+    const { districts: d, cables: c } = exportSet();
+    await downloadKMZSplitByType(d, c, kmzLayers, filePrefix);
+  });
 
   const cableRows: Row[] = CABLE_SIZES
     .filter((t) => (materials.cables[t] || 0) > 0)
@@ -118,7 +198,6 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
   return (
     <div className="flex flex-col h-full">
       <div className="flex-1 overflow-y-auto p-3">
-        {/* Summary */}
         <div className="grid grid-cols-2 gap-2 mb-2">
           <div className="bg-[#0d1b2a] border border-[#1e3a5f] rounded-lg p-2 text-center">
             <div className="text-lg font-mono font-bold text-[#38bdf8]">
@@ -141,29 +220,98 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
         <p className="text-[10px] text-[#64748b] mt-3 italic">* Длины с запасом +10% от маршрута</p>
       </div>
 
-      {/* Export buttons */}
       <div className="p-3 border-t border-[#1e3a5f] space-y-2">
         {selectionBBox && (() => {
           const f = filterByBBox(districts, cables, joints ?? [], selectionBBox);
           return (
             <div className="p-2 bg-[#fbbf24]/10 border border-[#fbbf24]/40 rounded text-[10px] text-[#fbbf24]">
               🔲 Выделено: <b>{f.counts.olt}</b> OLT · <b>{f.counts.tb}</b> Муфт · <b>{f.counts.ork}</b> ОРК · <b>{f.counts.sub}</b> Аб. · <b>{f.counts.cable}</b> кабелей
-              <div className="text-[#94a3b8] mt-0.5">Экспорт пойдёт только по этой области.</div>
             </div>
           );
         })()}
+
         <button
+          type="button"
           onClick={handleExcelExport}
           className="w-full py-2 px-3 bg-[#0d1b2a] hover:bg-[#1a2744] border border-[#1e3a5f] rounded-lg text-xs text-[#e2e8f0] transition-colors flex items-center gap-2"
         >
           📊 {selectionBBox ? 'Excel (выделение)' : 'Экспорт в Excel'}
         </button>
+
         <button
-          onClick={handleKMZExport}
-          className="w-full py-2 px-3 bg-[#0d1b2a] hover:bg-[#1a2744] border border-[#1e3a5f] rounded-lg text-xs text-[#e2e8f0] transition-colors flex items-center gap-2"
+          type="button"
+          onClick={() => setShowKmzPanel((v) => !v)}
+          className="w-full py-2 px-3 bg-[#0d1b2a] hover:bg-[#1a2744] border border-[#38bdf8]/40 rounded-lg text-xs text-[#e2e8f0] transition-colors flex items-center justify-between"
         >
-          🗺 {selectionBBox ? 'KMZ (выделение)' : 'Экспорт в KMZ'}
+          <span>🗺 Экспорт KMZ — слои и файлы</span>
+          <span className="text-[#64748b]">{showKmzPanel ? '▲' : '▼'}</span>
         </button>
+
+        {showKmzPanel && (
+          <div className="p-2.5 bg-[#0a1020] border border-[#1e3a5f] rounded-lg space-y-3 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase tracking-widest text-[#64748b]">Слои в файле</span>
+              <button type="button" onClick={selectAllLayers} className="text-[10px] text-[#38bdf8] hover:underline">
+                Все
+              </button>
+            </div>
+
+            <div>
+              <div className="text-[10px] text-[#64748b] mb-1">Объекты</div>
+              <LayerCheckbox checked={kmzLayers.olt} onChange={(v) => setEntityLayer('olt', v)} label="📡 OLT" />
+              <LayerCheckbox checked={kmzLayers.mufta} onChange={(v) => setEntityLayer('mufta', v)} label="🔷 Муфты МТОК — общий" />
+              <LayerCheckbox checked={kmzLayers.ork} onChange={(v) => setEntityLayer('ork', v)} label="📦 ОРК / боксы — общий" />
+              <LayerCheckbox checked={kmzLayers.subscribers} onChange={(v) => setEntityLayer('subscribers', v)} label="🏠 Абоненты — общий" />
+              <LayerCheckbox checked={kmzLayers.summary} onChange={(v) => setEntityLayer('summary', v)} label="📋 Сводка (ОК-4 общий, ОК-8 общий…)" />
+            </div>
+
+            <div>
+              <div className="text-[10px] text-[#64748b] mb-1">Кабели (каждый тип — один общий слой)</div>
+              {CABLE_SIZES.map((t) => {
+                const has = activeCableTypes.includes(t);
+                return (
+                  <LayerCheckbox
+                    key={t}
+                    checked={kmzLayers.cables[t] && has}
+                    onChange={(v) => setCableLayer(t, v)}
+                    label={`〰 ${t}${has ? '' : ' (нет в сети)'}`}
+                  />
+                );
+              })}
+            </div>
+
+            <p className="text-[10px] text-[#64748b] leading-relaxed">
+              В KMZ: один слой <b>ОК-4 — общий</b>, один <b>ОК-8 — общий</b> и т.д. Подписи: Муфта 1, ОРК 2, адрес абонента.
+            </p>
+
+            <div className="space-y-1.5 pt-1 border-t border-[#1e3a5f]">
+              <button
+                type="button"
+                disabled={!!kmzBusy}
+                onClick={handleKMZFull}
+                className="w-full py-2 px-2 bg-[#38bdf8]/15 hover:bg-[#38bdf8]/25 border border-[#38bdf8]/50 rounded-lg text-[#7dd3fc] font-medium disabled:opacity-50"
+              >
+                {kmzBusy === 'full' ? '…' : '📥 Один общий KMZ'}
+              </button>
+              <button
+                type="button"
+                disabled={!!kmzBusy}
+                onClick={() => handleKMZZip('full-and-split')}
+                className="w-full py-2 px-2 bg-[#0d1b2a] hover:bg-[#1a2744] border border-[#1e3a5f] rounded-lg text-[#e2e8f0] disabled:opacity-50"
+              >
+                {kmzBusy === 'zip' ? '…' : '📦 ZIP: общий + ОК-4.kmz, ОК-8.kmz…'}
+              </button>
+              <button
+                type="button"
+                disabled={!!kmzBusy}
+                onClick={handleKMZSplitFiles}
+                className="w-full py-2 px-2 bg-[#0d1b2a] hover:bg-[#1a2744] border border-[#1e3a5f] rounded-lg text-[#e2e8f0] disabled:opacity-50"
+              >
+                {kmzBusy === 'split' ? '…' : '📂 Отдельные KMZ: ОК-4.kmz, ОК-8.kmz…'}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
