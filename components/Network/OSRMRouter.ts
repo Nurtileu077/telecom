@@ -1,6 +1,7 @@
 import { Cable } from '@/types/network';
 import {
-  offsetPolylineToSide,
+  harmonizeCableIntersections,
+  offsetCablePath,
   pickSnapOnRoadSide,
   RoadSidePreference,
 } from './roadSideOffset';
@@ -16,7 +17,7 @@ export interface OsrmRouteOptions {
 }
 
 const DEFAULT_OSRM_OPTS: Required<OsrmRouteOptions> = {
-  roadSide: 'center',
+  roadSide: 'right',
   roadSideOffsetM: 4,
 };
 
@@ -45,15 +46,11 @@ async function fetchRoute(
 function applyRoadSide(
   coords: [number, number][],
   opts: Required<OsrmRouteOptions>,
-  endpoints?: { from: [number, number]; to: [number, number] },
+  fromId: string,
+  toId: string,
 ): [number, number][] {
   if (opts.roadSide === 'center' || coords.length < 2) return coords;
-  const shifted = offsetPolylineToSide(coords, opts.roadSide, opts.roadSideOffsetM);
-  if (endpoints) {
-    shifted[0] = endpoints.from;
-    shifted[shifted.length - 1] = endpoints.to;
-  }
-  return shifted;
+  return offsetCablePath(coords, fromId, toId, opts.roadSide, opts.roadSideOffsetM);
 }
 
 export async function getRoute(
@@ -66,10 +63,7 @@ export async function getRoute(
   const timer = setTimeout(() => ctrl.abort(), 12000);
   try {
     const coords = await fetchRoute(lat1, lon1, lat2, lon2, ctrl.signal);
-    return applyRoadSide(coords, o, {
-      from: [lat1, lon1],
-      to: [lat2, lon2],
-    });
+    return applyRoadSide(coords, o, 'ОРКСП-0', 'sub-0');
   } catch {
     return [[lat1, lon1], [lat2, lon2]];
   } finally {
@@ -255,7 +249,7 @@ export async function routeCables(
 
     if (routedCoords && routedCoords.length > 2) {
       const simplified = simplifyPath(routedCoords, 5);
-      const shifted = applyRoadSide(simplified, o, { from, to });
+      const shifted = applyRoadSide(simplified, o, cable.fromId, cable.toId);
       const updated: Cable = {
         ...cable,
         coords: shifted,
@@ -271,7 +265,9 @@ export async function routeCables(
   }
 
   onProgress(toRoute.length, toRoute.length, '');
-  return cables.map((c) => result.get(c.id) ?? c);
+
+  const merged = cables.map((c) => result.get(c.id) ?? c);
+  return harmonizeCableIntersections(merged, 12);
 }
 
 export type { RoadSidePreference };

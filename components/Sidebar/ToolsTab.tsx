@@ -56,24 +56,10 @@ export default function ToolsTab({
             ? '⏳ Проход 1…'
             : '① Проход 1 — по дорогам (OSRM)'}
         </button>
-        <div className="mt-2 grid grid-cols-2 gap-2">
-          <label className="block">
-            <span className="text-[9px] text-[#64748b] block mb-0.5">Сторона дороги</span>
-            <select
-              value={settings.roadSide ?? 'left'}
-              onChange={(e) => setSettings((s) => ({
-                ...s,
-                roadSide: e.target.value as 'center' | 'left' | 'right',
-              }))}
-              className="w-full bg-[#0a0e1a] border border-[#1e3a5f] rounded px-1.5 py-1 text-[10px] text-[#e2e8f0]"
-            >
-              <option value="left">Только слева</option>
-              <option value="right">Только справа</option>
-              <option value="center">По оси (как OSRM)</option>
-            </select>
-          </label>
-          <label className="block">
-            <span className="text-[9px] text-[#64748b] block mb-0.5">Отступ от оси, м</span>
+        <div className="mt-2 p-2 bg-[#0a0e1a] border border-[#1e3a5f]/60 rounded text-[9px] text-[#94a3b8]">
+          <span className="text-[#38bdf8]">Только правая сторона</span> дороги (к OLT)
+          <label className="block mt-1.5">
+            <span className="text-[#64748b]">Отступ от оси, м</span>
             <input
               type="number"
               min={2}
@@ -82,14 +68,15 @@ export default function ToolsTab({
               value={settings.roadSideOffsetM ?? 4}
               onChange={(e) => setSettings((s) => ({
                 ...s,
+                roadSide: 'right',
                 roadSideOffsetM: Math.max(2, Math.min(12, parseFloat(e.target.value) || 4)),
               }))}
-              className="w-full bg-[#0a0e1a] border border-[#1e3a5f] rounded px-1.5 py-1 text-[10px] text-[#e2e8f0] font-mono"
+              className="mt-0.5 w-full bg-[#050810] border border-[#1e3a5f] rounded px-1.5 py-1 text-[10px] text-[#e2e8f0] font-mono"
             />
           </label>
         </div>
         <p className="text-[9px] text-[#64748b] mt-1">
-          Проход 1: OSRM + одна сторона улицы. После смены стороны — снова ① и ②.
+          Проход 1: OSRM + правая полоса, ровные перекрёстки. Затем ② слияние.
         </p>
         <button
           onClick={onPass2}

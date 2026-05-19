@@ -16,6 +16,7 @@ import {
 import { consolidateCables } from '@/components/Network/Consolidation';
 import { rebuildCablesFromDistricts } from '@/components/Network/rebuildTopologyCables';
 import { mergeParallelCableGeometry } from '@/components/Network/mergeParallelRoutes';
+import { harmonizeCableIntersections } from '@/components/Network/roadSideOffset';
 import { haversineM } from '@/components/Network/KMeans';
 import { ensureCableLengths, polylineLengthM } from '@/components/Network/pathLength';
 import { calculateSubscriberBudgets, budgetStats } from '@/components/Network/PowerBudget';
@@ -39,7 +40,7 @@ export interface OSRMProgress {
 
 function osrmOptsFromSettings(settings: ProjectSettings): OsrmRouteOptions {
   return {
-    roadSide: settings.roadSide ?? 'left',
+    roadSide: 'right',
     roadSideOffsetM: settings.roadSideOffsetM ?? 4,
   };
 }
@@ -478,6 +479,7 @@ export function useNetwork() {
           settings.mergeCorridorM,
           ontBoxes,
         );
+        const alignedNew = harmonizeCableIntersections(newConsolidated, corridorM);
         setJoints((prev) => [
           ...prev.filter((j) => !pointInPolygon(j.lat, j.lon, poly)),
           ...newJoints,
@@ -485,7 +487,7 @@ export function useNetwork() {
         setCables((prev) => {
           const merged = [
             ...prev.filter((c) => !polylineTouchesPolygon(c.coords, poly)),
-            ...newConsolidated,
+            ...alignedNew,
           ];
           setMaterials(calculateMaterials(districts, merged, settings, newJoints.length));
           return merged;
@@ -497,9 +499,10 @@ export function useNetwork() {
           settings.mergeCorridorM,
           ontBoxes,
         );
-        setCables(consolidated);
+        const aligned = harmonizeCableIntersections(consolidated, corridorM);
+        setCables(aligned);
         setJoints(newJoints);
-        setMaterials(calculateMaterials(districts, consolidated, settings, newJoints.length));
+        setMaterials(calculateMaterials(districts, aligned, settings, newJoints.length));
       }
       setStatus('done');
     } catch (err) {

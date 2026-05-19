@@ -631,23 +631,8 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
                     <span className="text-xs text-[#94a3b8]">{settings.useOSRM ? 'по дорогам' : 'прямые'}</span>
                   </div>
                 </label>
-                <label className="block">
-                  <span className="text-[10px] text-[#64748b] block mb-1">Сторона дороги</span>
-                  <select
-                    value={settings.roadSide ?? 'left'}
-                    onChange={(e) => setSettings((s) => ({
-                      ...s,
-                      roadSide: e.target.value as 'center' | 'left' | 'right',
-                    }))}
-                    className="w-full bg-[#0a0e1a] border border-[#1e3a5f] rounded px-2 py-1 text-xs text-[#e2e8f0]"
-                  >
-                    <option value="left">Только левая</option>
-                    <option value="right">Только правая</option>
-                    <option value="center">По оси дороги</option>
-                  </select>
-                </label>
-                <label className="block">
-                  <span className="text-[10px] text-[#64748b] block mb-1">Отступ от оси, м</span>
+                <label className="block col-span-2">
+                  <span className="text-[10px] text-[#64748b] block mb-1">Правая сторона дороги (к OLT), отступ м</span>
                   <input
                     type="number"
                     min={2}
@@ -656,6 +641,7 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
                     value={settings.roadSideOffsetM ?? 4}
                     onChange={(e) => setSettings((s) => ({
                       ...s,
+                      roadSide: 'right',
                       roadSideOffsetM: Math.max(2, Math.min(12, parseFloat(e.target.value) || 4)),
                     }))}
                     className="w-full bg-[#0a0e1a] border border-[#1e3a5f] rounded px-2 py-1 text-xs text-[#e2e8f0] font-mono"

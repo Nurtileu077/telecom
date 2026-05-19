@@ -319,7 +319,7 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
   l1SplitterDefault: '1:8',
   mergeCorridorM: 12,
   maxSubsPerOltPort: 64,
-  roadSide: 'left',
+  roadSide: 'right',
   roadSideOffsetM: 4,
 };
 
