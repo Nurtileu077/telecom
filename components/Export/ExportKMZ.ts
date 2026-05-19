@@ -1,4 +1,4 @@
-import { District, Cable, CableType, CABLE_FIBERS, CABLE_SIZES, InlineJoint } from '@/types/network';
+import { District, Cable, CableType, CABLE_FIBERS, CABLE_SIZES, InlineJoint, OntBox } from '@/types/network';
 import { ENTITY_LABELS } from '@/lib/labels';
 import { polylineLengthM } from '@/components/Network/pathLength';
 
@@ -53,6 +53,8 @@ export const DEFAULT_KMZ_LAYERS: KmzExportLayers = {
 
 export interface KmzExportOptions {
   layers?: KmzExportLayers;
+  /** Боксы ОНТ из сборки (отдельные id BOX-*, не дублировать с абонентами). */
+  ontBoxes?: OntBox[];
   /** Транзитные муфты (InlineJoint + импорт KML). */
   joints?: InlineJoint[];
   /** Один общий слой на тип ОК без подпапок по районам (по умолчанию да). */
@@ -365,6 +367,7 @@ export function buildKmlDocument(
 ): string {
   const layers = options.layers ?? DEFAULT_KMZ_LAYERS;
   const joints = options.joints ?? [];
+  const ontBoxes = options.ontBoxes ?? [];
   const flatCables = options.flatCableFolders !== false;
   const cableTypes = enabledCableTypes(layers, options.onlyCableTypes);
   const docName = options.documentName ?? `GPON Network — ${new Date().toLocaleDateString('ru')}`;
@@ -499,17 +502,33 @@ ${html(SPECS.sub)}`;
     }
     kml += `</Folder>\n`;
 
-    kml += `<Folder><name>📦 ${ENTITY_LABELS.ontBox} — у абонентов (${subs.length} шт.)</name>
-<description><![CDATA[Бокс с ONT на координатах абонента. Медь до квартиры не учитывается.]]></description>\n`;
-    let boxN = 0;
-    for (const { sub, district } of subs) {
-      boxN++;
-      const label = `${ENTITY_LABELS.ontBox} ${boxN}`;
+    const boxList = ontBoxes.length > 0
+      ? ontBoxes.map((box) => {
+          const sub = subs.find((s) => s.sub.id === box.subscriberId);
+          return {
+            box,
+            district: sub?.district ?? entityDistrict.get(box.orkspId) ?? '—',
+            subDesc: sub?.sub.desc ?? box.subscriberId,
+            orkLabel: entityIndex.get(box.orkspId)?.label ?? box.orkspId,
+          };
+        })
+      : subs.map(({ sub, district }) => ({
+          box: { id: sub.id, lat: sub.lat, lon: sub.lon, subscriberId: sub.id, orkspId: sub.orkId ?? '' },
+          district,
+          subDesc: sub.desc,
+          orkLabel: sub.orkId ? (entityIndex.get(sub.orkId)?.label ?? sub.orkId) : '—',
+        }));
+
+    kml += `<Folder><name>📦 ${ENTITY_LABELS.ontBox} — на столбах (${boxList.length} шт.)</name>
+<description><![CDATA[Бокс с ONT. Медь до квартиры не учитывается.]]></description>\n`;
+    for (const { box, district, subDesc, orkLabel } of boxList) {
+      const label = entityIndex.get(box.id)?.label ?? `${ENTITY_LABELS.ontBox} ${box.id}`;
       const desc = `<b>${esc(label)}</b><br/>
-Абонент: ${esc(sub.desc)}<br/>
+Камера: ${esc(subDesc)}<br/>
+${ENTITY_LABELS.orksp}: ${esc(orkLabel)}<br/>
 Район: ${esc(district)}<br/>
 ${html(SPECS.box)}`;
-      kml += pt(label, desc, sub.lat, sub.lon, 'ork');
+      kml += pt(label, desc, box.lat, box.lon, 'ork');
     }
     kml += `</Folder>\n`;
   }
@@ -625,11 +644,13 @@ export async function exportKMZForEntityLayer(
   cables: Cable[],
   joints: InlineJoint[],
   entity: KmzEntityLayer,
+  ontBoxes: OntBox[] = [],
 ): Promise<Blob> {
   const meta = ENTITY_EXPORT[entity];
   return exportKMZ(districts, cables, {
     layers: layersForEntityOnly(entity),
     joints,
+    ontBoxes,
     documentName: meta.title,
     flatCableFolders: true,
   });
@@ -649,13 +670,14 @@ export async function exportKMZPackage(
   joints: InlineJoint[],
   layers: KmzExportLayers,
   mode: KmzPackageMode,
+  ontBoxes: OntBox[] = [],
 ): Promise<Blob> {
   const JSZip = (await import('jszip')).default;
   const zip = new JSZip();
   const types = enabledCableTypes(layers).filter((t) => cables.some((c) => c.type === t));
 
   if (mode === 'full-only' || mode === 'full-and-split') {
-    const fullKml = buildKmlDocument(districts, cables, { layers, joints, flatCableFolders: true });
+    const fullKml = buildKmlDocument(districts, cables, { layers, joints, ontBoxes, flatCableFolders: true });
     await addKmzToZip(zip, 'gpon-network.kmz', fullKml);
   }
 
@@ -666,6 +688,7 @@ export async function exportKMZPackage(
       const kml = buildKmlDocument(districts, cables, {
         layers: layersForEntityOnly(entity),
         joints,
+        ontBoxes,
         documentName: ENTITY_EXPORT[entity].title,
         flatCableFolders: true,
       });
@@ -706,11 +729,12 @@ export async function downloadKMZSplitByEntity(
   joints: InlineJoint[],
   layers: KmzExportLayers,
   filenamePrefix: string,
+  ontBoxes: OntBox[] = [],
 ): Promise<void> {
   for (const entity of ENTITY_LAYER_ORDER) {
     if (!layers[entity]) continue;
     if (!entityLayerHasContent(districts, cables, entity, joints)) continue;
-    const blob = await exportKMZForEntityLayer(districts, cables, joints, entity);
+    const blob = await exportKMZForEntityLayer(districts, cables, joints, entity, ontBoxes);
     await triggerDownload(blob, `${filenamePrefix}-${ENTITY_EXPORT[entity].filename}.kmz`);
   }
 }
@@ -736,7 +760,8 @@ export async function downloadKMZSplitAll(
   joints: InlineJoint[],
   layers: KmzExportLayers,
   filenamePrefix: string,
+  ontBoxes: OntBox[] = [],
 ): Promise<void> {
-  await downloadKMZSplitByEntity(districts, cables, joints, layers, filenamePrefix);
+  await downloadKMZSplitByEntity(districts, cables, joints, layers, filenamePrefix, ontBoxes);
   await downloadKMZSplitByType(districts, cables, layers, filenamePrefix);
 }

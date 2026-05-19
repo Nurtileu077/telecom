@@ -15,13 +15,14 @@ import CostTab from './CostTab';
 import ToolsTab from './ToolsTab';
 import BudgetTab from './BudgetTab';
 import type { SubBudget, BudgetStats } from '@/components/Network/PowerBudget';
-import type { ProjectSnapshot, ProjectStatus, InlineJoint } from '@/types/network';
+import type { ProjectSnapshot, ProjectStatus, InlineJoint, OntBox } from '@/types/network';
 import type { SelectionPolygon } from '@/components/Network/Selection';
 
 interface Props {
   districts: District[];
   cables: Cable[];
   joints?: InlineJoint[];
+  ontBoxes?: OntBox[];
   selectionPolygon?: SelectionPolygon | null;
   cableReserve?: number;
   materials: Materials | null;
@@ -141,7 +142,7 @@ export default function Sidebar(props: Props) {
           />
         )}
         {activeTab === 'materials' && (
-          <MaterialsTab materials={props.materials} districts={props.districts} cables={props.cables} joints={props.joints} selectionPolygon={props.selectionPolygon} cableReserve={props.cableReserve} />
+          <MaterialsTab materials={props.materials} districts={props.districts} cables={props.cables} ontBoxes={props.ontBoxes} joints={props.joints} selectionPolygon={props.selectionPolygon} cableReserve={props.cableReserve} />
         )}
         {activeTab === 'budget' && (
           <BudgetTab

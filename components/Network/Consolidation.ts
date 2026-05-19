@@ -90,6 +90,51 @@ function pickSharedCableType(subsCount: number): CableType {
   return 'ОК-48';
 }
 
+function concatPaths(
+  base: [number, number][],
+  extra: [number, number][],
+): [number, number][] {
+  if (extra.length === 0) return base;
+  if (base.length === 0) return [...extra];
+  const out = [...base];
+  const last = out[out.length - 1];
+  const start = extra[0];
+  if (
+    Math.abs(last[0] - start[0]) < 1e-9 &&
+    Math.abs(last[1] - start[1]) < 1e-9
+  ) {
+    out.push(...extra.slice(1));
+  } else {
+    out.push(...extra);
+  }
+  return out;
+}
+
+/** Кабели ОРКСП → BOX → BOX … в порядке прокладки (tree AutoBuild). */
+export function walkOrkBoxChain(
+  orkId: string,
+  cableByEndpoint: Map<string, Cable>,
+): Cable[] {
+  const chain: Cable[] = [];
+  const used = new Set<string>();
+  let fromId = orkId;
+  while (true) {
+    const hops = [...cableByEndpoint.entries()].filter(([k]) =>
+      k.startsWith(`${fromId}::`),
+    );
+    if (hops.length === 0) break;
+    const boxHop = hops.find(([, c]) => c.toId.startsWith('BOX-'));
+    const picked = boxHop ?? hops[0];
+    const [, cable] = picked;
+    if (used.has(cable.id)) break;
+    used.add(cable.id);
+    chain.push(cable);
+    if (!cable.toId.startsWith('BOX-')) break;
+    fromId = cable.toId;
+  }
+  return chain;
+}
+
 /**
  * Глобальная консолидация: строит граф дорог из всех кабелей одного района,
  * для каждого сегмента считает уникальных абонентов, проходящих через него,
@@ -194,20 +239,51 @@ export function consolidateCables(
         if (tbOrk.coords.length >= 2) {
           effectivePos.set(ork.id, tbOrk.coords[tbOrk.coords.length - 1]);
         }
-        for (const sub of ork.subscribers) {
-          const orkSub = cableByEndpoint.get(`${ork.id}::${sub.id}`);
-          if (!orkSub) continue;
-          if (orkSub.coords.length >= 2) {
-            effectivePos.set(sub.id, orkSub.coords[orkSub.coords.length - 1]);
+        const boxChain = walkOrkBoxChain(ork.id, cableByEndpoint);
+        for (const hop of boxChain) {
+          if (hop.coords.length >= 2) {
+            effectivePos.set(hop.toId, hop.coords[hop.coords.length - 1]);
           }
-          usedCableIds.add(oltTb.id);
-          usedCableIds.add(tbOrk.id);
-          usedCableIds.add(orkSub.id);
-          const path: [number, number][] = [
-            ...oltTb.coords,
-            ...tbOrk.coords.slice(1),
-            ...orkSub.coords.slice(1),
-          ];
+        }
+
+        for (let subIdx = 0; subIdx < ork.subscribers.length; subIdx++) {
+          const sub = ork.subscribers[subIdx];
+          const orkSub = cableByEndpoint.get(`${ork.id}::${sub.id}`);
+
+          let path: [number, number][] = concatPaths(
+            [...oltTb.coords],
+            tbOrk.coords.length >= 2 ? tbOrk.coords.slice(1) : [],
+          );
+
+          const pathCables: Cable[] = [oltTb, tbOrk];
+
+          if (orkSub) {
+            path = concatPaths(path, orkSub.coords.length >= 2 ? orkSub.coords.slice(1) : []);
+            pathCables.push(orkSub);
+            if (orkSub.coords.length >= 2) {
+              effectivePos.set(sub.id, orkSub.coords[orkSub.coords.length - 1]);
+            }
+          } else if (boxChain.length > 0) {
+            const hops = Math.min(subIdx + 1, boxChain.length);
+            for (let i = 0; i < hops; i++) {
+              const hop = boxChain[i];
+              path = concatPaths(
+                path,
+                hop.coords.length >= 2 ? hop.coords.slice(1) : [],
+              );
+              pathCables.push(hop);
+              if (hop.coords.length >= 2) {
+                const end = hop.coords[hop.coords.length - 1];
+                effectivePos.set(hop.toId, end);
+                if (i === hops - 1) effectivePos.set(sub.id, end);
+              }
+            }
+          } else {
+            continue;
+          }
+
+          for (const pc of pathCables) usedCableIds.add(pc.id);
+          if (path.length < 2) continue;
           for (let i = 1; i < path.length; i++) {
             addSeg(path[i - 1], path[i], sub.id);
           }
@@ -246,6 +322,16 @@ export function consolidateCables(
       for (const ork of tb.orks) {
         const orkCoord = effectivePos.get(ork.id) ?? [ork.lat, ork.lon];
         nodeId.set(quantize(orkCoord[0], orkCoord[1]), ork.id);
+        const boxChainForNodes = walkOrkBoxChain(ork.id, cableByEndpoint);
+        for (const hop of boxChainForNodes) {
+          const boxCoord = effectivePos.get(hop.toId) ??
+            (hop.coords.length >= 2
+              ? hop.coords[hop.coords.length - 1]
+              : undefined);
+          if (boxCoord) {
+            nodeId.set(quantize(boxCoord[0], boxCoord[1]), hop.toId);
+          }
+        }
         for (const sub of ork.subscribers) {
           const subCoord = effectivePos.get(sub.id) ?? [sub.lat, sub.lon];
           nodeId.set(quantize(subCoord[0], subCoord[1]), sub.id);

@@ -276,6 +276,9 @@ export function useNetwork() {
             for (const ork of tb.orks) pts.push({ lat: ork.lat, lon: ork.lon });
           }
         }
+        for (const box of newOntBoxes) {
+          pts.push({ lat: box.lat, lon: box.lon });
+        }
         const snap = await snapBatch(pts, 60, 8);
         const remap = (lat: number, lon: number): [number, number] => {
           const s = snap.get(`${lat},${lon}`);
@@ -307,12 +310,19 @@ export function useNetwork() {
         });
         // Build an entity-id → (lat, lon) lookup so we can update cable endpoints.
         const idCoords = new Map<string, [number, number]>();
+        newOntBoxes = newOntBoxes.map((box) => {
+          const [lat, lon] = remap(box.lat, box.lon);
+          return { ...box, lat, lon };
+        });
         for (const d of newDistricts) {
           idCoords.set(d.olt.id, [d.olt.lat, d.olt.lon]);
           for (const tb of d.olt.transitBoxes) {
             idCoords.set(tb.id, [tb.lat, tb.lon]);
             for (const ork of tb.orks) idCoords.set(ork.id, [ork.lat, ork.lon]);
           }
+        }
+        for (const box of newOntBoxes) {
+          idCoords.set(box.id, [box.lat, box.lon]);
         }
         newCables = newCables.map((c) => {
           const f = idCoords.get(c.fromId);

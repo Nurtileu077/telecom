@@ -495,6 +495,7 @@ export default function HomePage() {
           districts={net.districts}
           cables={net.cables}
           joints={net.joints}
+          ontBoxes={net.ontBoxes}
           selectionPolygon={selectionPolygon}
           cableReserve={net.settings.cableReserve}
           materials={net.materials}
