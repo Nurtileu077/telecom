@@ -232,28 +232,38 @@ export function useNetwork() {
       adj.get(c.fromId)!.push({ to: c.toId, coords: c.coords, routed: c.routedByOSRM });
       adj.get(c.toId)!.push({ to: c.fromId, coords: [...c.coords].reverse(), routed: c.routedByOSRM });
     }
+    const pathLen = (coords: [number, number][]) => {
+      let l = 0;
+      for (let i = 1; i < coords.length; i++) {
+        l += haversineM(
+          coords[i - 1][0], coords[i - 1][1],
+          coords[i][0], coords[i][1],
+        );
+      }
+      return l;
+    };
+
     for (const start of adj.keys()) {
       if (start.startsWith('J-')) continue;
-      type Frame = { node: string; path: [number, number][]; allRouted: boolean };
-      const queue: Frame[] = [{ node: start, path: [], allRouted: true }];
+      type Frame = { node: string; path: [number, number][] };
+      const queue: Frame[] = [{ node: start, path: [] }];
       const visited = new Set<string>([start]);
       while (queue.length > 0) {
-        const { node, path, allRouted } = queue.shift()!;
+        const { node, path } = queue.shift()!;
         for (const e of adj.get(node) || []) {
           if (visited.has(e.to)) continue;
           visited.add(e.to);
           const newPath = path.length === 0 ? e.coords : [...path, ...e.coords.slice(1)];
-          const newRouted = allRouted && e.routed;
           if (!e.to.startsWith('J-')) {
             const key = `${start}::${e.to}`;
-            if (newRouted && !out.has(key)) {
+            const prev = out.get(key);
+            if (!prev || pathLen(newPath) > pathLen(prev)) {
               out.set(key, newPath);
               out.set(`${e.to}::${start}`, [...newPath].reverse());
             }
-            // don't continue past terminal nodes
             continue;
           }
-          queue.push({ node: e.to, path: newPath, allRouted: newRouted });
+          queue.push({ node: e.to, path: newPath });
         }
       }
     }
@@ -466,15 +476,26 @@ export function useNetwork() {
       setStatus('calculating');
       const existingCoords = buildExistingCoordsMap(cables);
       const corridorM = settings.mergeCorridorM ?? 12;
-      const logical = mergeParallelCableGeometry(
-        rebuildCablesFromDistricts(districts, ontBoxes, existingCoords),
+      const logical = rebuildCablesFromDistricts(districts, ontBoxes, existingCoords);
+      const logicalPairs = new Set(
+        logical.flatMap((c) => [`${c.fromId}::${c.toId}`, `${c.toId}::${c.fromId}`]),
+      );
+      // Отводы ОРКСП→камера и прочие прямые пары, которых нет в дереве rebuild.
+      const supplement = cables.filter(
+        (c) =>
+          !c.fromId.startsWith('J-') &&
+          !c.toId.startsWith('J-') &&
+          !logicalPairs.has(`${c.fromId}::${c.toId}`),
+      );
+      const mergedInput = mergeParallelCableGeometry(
+        [...logical, ...supplement],
         Math.max(corridorM, 15),
       );
 
       if (poly && poly.length >= 3) {
         const scope = filterByPolygon(districts, logical, joints, poly);
         const { cables: newConsolidated, joints: newJoints } = consolidateCables(
-          logical.filter((c) => polylineTouchesPolygon(c.coords, poly)),
+          mergedInput.filter((c) => polylineTouchesPolygon(c.coords, poly)),
           scope.districts,
           settings.mergeCorridorM,
           ontBoxes,
@@ -494,7 +515,7 @@ export function useNetwork() {
         });
       } else {
         const { cables: consolidated, joints: newJoints } = consolidateCables(
-          logical,
+          mergedInput,
           districts,
           settings.mergeCorridorM,
           ontBoxes,

@@ -26,37 +26,6 @@ function makeQuantize(gridM: number) {
     `${Math.round(lat * fLat)}_${Math.round(lon * fLon)}`;
 }
 
-function makeSnap(gridM: number) {
-  const fLat = 1 / (gridM / 111320);
-  const fLon = 1 / (gridM / 81400);
-  return (lat: number, lon: number): [number, number] =>
-    [Math.round(lat * fLat) / fLat, Math.round(lon * fLon) / fLon];
-}
-
-function makeSnapCablePath(gridM: number) {
-  const quantize = makeQuantize(gridM);
-  const snapCoord = makeSnap(gridM);
-  return (coords: [number, number][]): [number, number][] => {
-    if (coords.length < 2) return coords;
-    const out: [number, number][] = [coords[0]];
-    let lastKey = quantize(coords[0][0], coords[0][1]);
-    for (let i = 1; i < coords.length - 1; i++) {
-      const [la, lo] = coords[i];
-      const snapped = snapCoord(la, lo);
-      const k = quantize(snapped[0], snapped[1]);
-      if (k !== lastKey) {
-        out.push(snapped);
-        lastKey = k;
-      }
-    }
-    const last = coords[coords.length - 1];
-    const lastK = quantize(last[0], last[1]);
-    if (lastK !== lastKey) out.push(last);
-    else out[out.length - 1] = last;
-    return out;
-  };
-}
-
 function pathLength(coords: [number, number][]): number {
   let len = 0;
   for (let i = 1; i < coords.length; i++) {
@@ -84,20 +53,6 @@ function buildEntityRoles(
   return roles;
 }
 
-function segBearing(a: [number, number], b: [number, number]): number {
-  return Math.atan2(b[1] - a[1], b[0] - a[0]);
-}
-
-function bearingsClose(a: number, b: number): boolean {
-  let d = Math.abs(a - b);
-  if (d > Math.PI) d = 2 * Math.PI - d;
-  return d < 0.35;
-}
-
-function segMidpoint(c: [[number, number], [number, number]]): [number, number] {
-  return [(c[0][0] + c[1][0]) / 2, (c[0][1] + c[1][1]) / 2];
-}
-
 function concatPaths(
   base: [number, number][],
   extra: [number, number][],
@@ -116,6 +71,32 @@ function concatPaths(
     out.push(...extra);
   }
   return out;
+}
+
+function sameCoord(a: [number, number], b: [number, number]): boolean {
+  return Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9;
+}
+
+/** Добавить геометрию сегмента вдоль обхода (не только конечную точку). */
+function appendSegmentGeometry(
+  run: [number, number][],
+  seg: { fromKey: string; toKey: string; coords: [[number, number], [number, number]] },
+  atNodeKey: string,
+): void {
+  const forward = seg.fromKey === atNodeKey;
+  const pts: [number, number][] = forward
+    ? [seg.coords[0], seg.coords[1]]
+    : [seg.coords[1], seg.coords[0]];
+  if (pts.length === 0) return;
+  if (run.length === 0) {
+    run.push(...pts);
+    return;
+  }
+  if (sameCoord(run[run.length - 1], pts[0])) {
+    run.push(...pts.slice(1));
+  } else {
+    run.push(...pts);
+  }
 }
 
 /** Кабели ОРКСП → BOX → BOX … в порядке прокладки (tree AutoBuild). */
@@ -164,20 +145,12 @@ export function consolidateCables(
     return { cables, joints: [] };
   }
 
-  // Per-call quantize / snap, привязанные к выбранному коридору.
+  // Квантование только для ключей узлов графа; геометрию OSRM не упрощаем —
+  // иначе pass 2 превращает изгибы дорог в прямые диагонали.
   const quantize = makeQuantize(gridM);
-  const snapCablePath = makeSnapCablePath(gridM);
 
-  // Снэпаем промежуточные координаты всех кабелей к общему гриду, чтобы
-  // OSRM-маршруты по одной дороге сошлись к одинаковым узлам.
-  const snappedCables: Cable[] = cables.map((c) => ({
-    ...c,
-    coords: snapCablePath(c.coords),
-  }));
-
-  // Карта кабелей по конечным точкам — для прохода вверх по иерархии.
   const cableByEndpoint = new Map<string, Cable>();
-  for (const c of snappedCables) {
+  for (const c of cables) {
     cableByEndpoint.set(`${c.fromId}::${c.toId}`, c);
   }
 
@@ -213,17 +186,6 @@ export function consolidateCables(
       nodeCoord.set(bK, b);
       const key = aK < bK ? `${aK}|${bK}` : `${bK}|${aK}`;
       let s = segments.get(key);
-      if (!s) {
-        const mid = segMidpoint([a, b]);
-        const bear = segBearing(a, b);
-        for (const cand of segments.values()) {
-          const cm = segMidpoint(cand.coords);
-          if (haversineM(mid[0], mid[1], cm[0], cm[1]) > gridM) continue;
-          if (!bearingsClose(bear, segBearing(cand.coords[0], cand.coords[1]))) continue;
-          s = cand;
-          break;
-        }
-      }
       if (!s) {
         s = {
           key,
@@ -364,12 +326,6 @@ export function consolidateCables(
     const otherEnd = (s: Segment, nodeKey: string): string =>
       s.fromKey === nodeKey ? s.toKey : s.fromKey;
 
-    // Получить координату «другого конца».
-    const otherCoord = (s: Segment, nodeKey: string): [number, number] => {
-      const aK = quantize(s.coords[0][0], s.coords[0][1]);
-      return aK === nodeKey ? s.coords[1] : s.coords[0];
-    };
-
     // Эмитим кабель.
     const emitCable = (
       coords: [number, number][],
@@ -453,8 +409,8 @@ export function consolidateCables(
           let runSubsRef = curSeg.subs;
           while (true) {
             usedSeg.add(curSeg.key);
+            appendSegmentGeometry(runCoords, curSeg, curNode);
             const next = otherEnd(curSeg, curNode);
-            runCoords.push(otherCoord(curSeg, curNode));
             // Условия остановки: соседний узел — это OLT/ORK/sub/TB; или там
             // есть развилка; или меняется subs-set.
             const isTerminalNode = nodeId.has(next);
@@ -515,10 +471,9 @@ export function consolidateCables(
     }
   }
 
-  // Кабели, которые НЕ были покрыты глобальной консолидацией (например, если
-  // нет соответствующего OLT→TB→ORK→sub звена), оставляем как есть (со снэпом).
+  // Кабели без пути OLT→…→абонент (отводы и пр.) — без изменений.
   let passthrough = 0;
-  for (const c of snappedCables) {
+  for (const c of cables) {
     if (!usedCableIds.has(c.id)) { outCables.push(c); passthrough++; }
   }
 
