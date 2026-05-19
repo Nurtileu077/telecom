@@ -472,7 +472,7 @@ export default function LeafletMap(props: Props) {
           });
           const m = L.marker([j.lat, j.lon], { icon });
           m.bindTooltip(
-            `<b>Транзитная муфта</b><br/>${j.id}<br/>Ответвлений: ${j.branchCount}`,
+            `<b>Муфта (магистраль)</b><br/>${j.id}<br/>Ответвлений: ${j.branchCount}`,
             { sticky: true, className: 'text-xs' },
           );
           group.addLayer(m);
@@ -483,12 +483,12 @@ export default function LeafletMap(props: Props) {
         const { olt } = district;
         if (layers.olt) {
           const icon = L.divIcon({
-            html: `<div style="width:40px;height:22px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;font-family:monospace;background:linear-gradient(135deg,#f59e0b,#fbbf24);border:2px solid #f59e0b;border-radius:4px;color:#0a0e1a;box-shadow:0 2px 8px rgba(0,0,0,0.5)">OLT</div>`,
+            html: `<div style="width:40px;height:22px;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;font-family:monospace;background:linear-gradient(135deg,#f59e0b,#fbbf24);border:2px solid #f59e0b;border-radius:4px;color:#0a0e1a;box-shadow:0 2px 8px rgba(0,0,0,0.5)">УС</div>`,
             className: '', iconSize: [40, 22], iconAnchor: [20, 11],
           });
           const draggable = !!propsRef.current.editMode;
           const m = L.marker([olt.lat, olt.lon], { icon, draggable });
-          m.bindPopup(`<b>${olt.id}</b><br/>${olt.model}<br/>Район: ${district.name}<br/>Ёмкость: ${olt.capacity}<br/>TB: ${olt.transitBoxes.length}`);
+          m.bindPopup(`<b>Узел связи</b><br/>${olt.model}<br/>Район: ${district.name}<br/>Ёмкость: ${olt.capacity}<br/>Муфт: ${olt.transitBoxes.length}`);
           m.on('click', () => { propsRef.current.onEntityClick?.('olt', olt.id); });
           m.on('contextmenu', (e: any) => {
             e.originalEvent.preventDefault();
@@ -505,12 +505,12 @@ export default function LeafletMap(props: Props) {
         for (const tb of olt.transitBoxes) {
           if (layers.tb) {
             const icon = L.divIcon({
-              html: `<div style="width:30px;height:18px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;font-family:monospace;background:#1a2744;border:2px solid #38bdf8;border-radius:3px;color:#38bdf8;box-shadow:0 1px 4px rgba(0,0,0,0.4)">TB</div>`,
+              html: `<div style="width:30px;height:18px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;font-family:monospace;background:#1a2744;border:2px solid #38bdf8;border-radius:3px;color:#38bdf8;box-shadow:0 1px 4px rgba(0,0,0,0.4)">МТ</div>`,
               className: '', iconSize: [30, 18], iconAnchor: [15, 9],
             });
             const draggable = !!propsRef.current.editMode;
             const m = L.marker([tb.lat, tb.lon], { icon, draggable });
-            m.bindPopup(`<b>${tb.id}</b><br/>OLT: ${olt.id}<br/>ОРК: ${tb.orks.length}<br/>Муфта: ${tb.muftaType}${draggable ? '<br/><i style="color:#64748b;font-size:10px">Перетащи для перемещения</i>' : ''}`);
+            m.bindPopup(`<b>Транзитная муфта</b><br/>${tb.muftaType}<br/>Узел связи: ${district.name}<br/>ОРКСП: ${tb.orks.length}${draggable ? '<br/><i style="color:#64748b;font-size:10px">Перетащи для перемещения</i>' : ''}`);
             m.on('click', () => { propsRef.current.onEntityClick?.('tb', tb.id); });
             m.on('contextmenu', (e: any) => {
               e.originalEvent.preventDefault();
@@ -527,12 +527,12 @@ export default function LeafletMap(props: Props) {
           for (const ork of tb.orks) {
             if (layers.ork) {
               const icon = L.divIcon({
-                html: `<div style="width:32px;height:18px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;font-family:monospace;background:#1a2744;border:2px solid #f59e0b;border-radius:3px;color:#f59e0b;box-shadow:0 1px 4px rgba(0,0,0,0.4)">ОРК</div>`,
+                html: `<div style="width:32px;height:18px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;font-family:monospace;background:#1a2744;border:2px solid #f59e0b;border-radius:3px;color:#f59e0b;box-shadow:0 1px 4px rgba(0,0,0,0.4)">ОРКСП</div>`,
                 className: '', iconSize: [32, 18], iconAnchor: [16, 9],
               });
               const draggable = !!propsRef.current.editMode;
               const m = L.marker([ork.lat, ork.lon], { icon, draggable });
-              m.bindPopup(`<b>${ork.id}</b><br/>Сплиттер: ${ork.splitter}<br/>Або.: ${ork.subscribers.length}<br/>Муфта: ${tb.id}${draggable ? '<br/><i style="color:#64748b;font-size:10px">Перетащи для перемещения</i>' : ''}`);
+              m.bindPopup(`<b>ОРКСП</b><br/>Сплиттер: ${ork.splitter}<br/>Абонентов: ${ork.subscribers.length}<br/>Муфта: ${tb.muftaType}${draggable ? '<br/><i style="color:#64748b;font-size:10px">Перетащи для перемещения</i>' : ''}`);
               m.on('click', () => { propsRef.current.onEntityClick?.('ork', ork.id); });
               m.on('contextmenu', (e: any) => {
                 e.originalEvent.preventDefault();

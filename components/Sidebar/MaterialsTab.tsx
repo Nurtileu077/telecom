@@ -126,7 +126,7 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
 
   const selectAllLayers = () => {
     setKmzLayers({
-      olt: true, mufta: true, transitJoint: true, ork: true, subscribers: true, summary: true,
+      olt: true, mufta: true, transitJoint: true, ork: true, subscribers: true, summary: false,
       cables: Object.fromEntries(CABLE_SIZES.map((t) => [t, true])) as Record<CableType, boolean>,
     });
   };
@@ -272,12 +272,11 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
 
             <div>
               <div className="text-[10px] text-[#64748b] mb-1">Объекты</div>
-              <LayerCheckbox checked={kmzLayers.olt} onChange={(v) => setEntityLayer('olt', v)} label="📡 OLT" />
-              <LayerCheckbox checked={kmzLayers.mufta} onChange={(v) => setEntityLayer('mufta', v)} label="🔷 Муфты МТОК — общий" />
-              <LayerCheckbox checked={kmzLayers.transitJoint} onChange={(v) => setEntityLayer('transitJoint', v)} label="⊕ Транзитные муфты — общий" />
-              <LayerCheckbox checked={kmzLayers.ork} onChange={(v) => setEntityLayer('ork', v)} label="📦 ОРК / боксы — общий" />
-              <LayerCheckbox checked={kmzLayers.subscribers} onChange={(v) => setEntityLayer('subscribers', v)} label="🏠 Абоненты — общий" />
-              <LayerCheckbox checked={kmzLayers.summary} onChange={(v) => setEntityLayer('summary', v)} label="📋 Сводка (ОК-4 общий, ОК-8 общий…)" />
+              <LayerCheckbox checked={kmzLayers.olt} onChange={(v) => setEntityLayer('olt', v)} label="📡 Узлы связи — общий" />
+              <LayerCheckbox checked={kmzLayers.mufta} onChange={(v) => setEntityLayer('mufta', v)} label="🔷 Транзитные муфты МТОК — общий" />
+              <LayerCheckbox checked={kmzLayers.transitJoint} onChange={(v) => setEntityLayer('transitJoint', v)} label="⊕ Муфты на магистрали / стыки — общий" />
+              <LayerCheckbox checked={kmzLayers.ork} onChange={(v) => setEntityLayer('ork', v)} label="📦 ОРКСП — общий" />
+              <LayerCheckbox checked={kmzLayers.subscribers} onChange={(v) => setEntityLayer('subscribers', v)} label="🏠 Абоненты + боксы ОНТ — общий" />
             </div>
 
             <div>

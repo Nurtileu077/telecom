@@ -89,7 +89,7 @@ function OLTEditor({ olt, onSave }: { olt: OLT; onSave: (patch: Partial<Omit<OLT
 
   return (
     <div className="space-y-2.5">
-      <Row label="Модель OLT">
+      <Row label="Модель узла">
         <Sel value={model} options={[...OLT_MODELS, model].filter((v, i, a) => a.indexOf(v) === i)} onChange={setModel} />
       </Row>
       <Row label="Ёмкость портов">
@@ -129,13 +129,13 @@ function TBEditor({ tb, onSave }: { tb: TransitBox; onSave: (patch: Partial<Omit
           onChange={setMufta}
         />
       </Row>
-      <Row label="Вход (OLT→TB)">
+      <Row label="Вход (узел→муфта)">
         <Sel value={inCable} options={CABLE_SIZES} onChange={(v) => setInCable(v as typeof inCable)} />
       </Row>
-      <Row label="Выход (TB→ОРК)">
+      <Row label="Выход (муфта→ОРКСП)">
         <Sel value={outCable} options={CABLE_SIZES} onChange={(v) => setOutCable(v as typeof outCable)} />
       </Row>
-      <div className="text-[10px] text-[#475569]">ОРК в этой муфте: {tb.orks.length}</div>
+      <div className="text-[10px] text-[#475569]">ОРКСП в этой муфте: {tb.orks.length}</div>
       <button
         onClick={() => onSave({ muftaType: mufta as MuftaType, inCable, outCable })}
         className="w-full py-1.5 bg-[#38bdf8]/15 hover:bg-[#38bdf8]/25 text-[#38bdf8] text-xs rounded transition-colors"
@@ -170,14 +170,14 @@ function ORKEditor({
       <Row label="Сплиттер">
         <Sel value={splitter} options={SPLITTERS} onChange={(v) => setSplitter(v as SplitterRatio)} />
       </Row>
-      <Row label="Тип бокса">
+      <Row label="Тип ОРКСП">
         <Sel
           value={boxType}
           options={[...BOX_TYPES, boxType].filter((v, i, a) => a.indexOf(v) === i)}
           onChange={setBoxType}
         />
       </Row>
-      <Row label="Кабель TB→ОРК">
+      <Row label="Кабель муфта→ОРКСП">
         <Sel value={cableType} options={CABLE_SIZES} onChange={(v) => setCableType(v as typeof cableType)} />
       </Row>
       <div className="text-[10px] text-[#475569]">Родительская Муфта: <span className="text-[#94a3b8]">{ork.tbId}</span> · Абонентов: {ork.subscribers.length}</div>

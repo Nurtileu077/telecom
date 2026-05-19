@@ -86,7 +86,7 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'stats',     label: 'Стат.',    icon: '📊' },
   { id: 'tools',     label: 'Инстр.',   icon: '🧰' },
   { id: 'schema',    label: 'Схема',    icon: '🌳' },
-  { id: 'groups',    label: 'ОРК',      icon: '👥' },
+  { id: 'groups',    label: 'ОРКСП',    icon: '👥' },
   { id: 'projects',  label: 'Проекты',  icon: '💾' },
 ];
 

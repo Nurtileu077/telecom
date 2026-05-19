@@ -1,4 +1,6 @@
 import { District, Cable, CableType, CABLE_FIBERS, CABLE_SIZES, InlineJoint } from '@/types/network';
+import { ENTITY_LABELS } from '@/lib/labels';
+import { polylineLengthM } from '@/components/Network/pathLength';
 
 // KML colors are AABBGGRR (alpha, blue, green, red)
 const CABLE_STYLES: Record<CableType, { color: string; width: number; label: string }> = {
@@ -42,7 +44,7 @@ export const DEFAULT_KMZ_LAYERS: KmzExportLayers = {
   transitJoint: true,
   ork: true,
   subscribers: true,
-  summary: true,
+  summary: false,
   cables: {
     'ОК-4': true, 'ОК-8': true, 'ОК-12': true, 'ОК-16': true,
     'ОК-24': true, 'ОК-32': true, 'ОК-48': true, 'ОК-96': true,
@@ -67,10 +69,11 @@ interface EntityInfo {
 }
 
 const SPECS = {
-  olt: `Тип: OLT (Optical Line Terminal)\nМодель: ZTE C300/C320 или Huawei MA5800\nПорты: 8×GPON`,
-  tb:  `Тип: Транзитная муфта МТОК-96А\nСплиттер L1: 1:4 или 1:8 (PLC)`,
-  ork: `Тип: ОРК / распределительный бокс\nСплиттер L2: 1:8 или 1:16 (PLC)`,
-  sub: `Тип: ONT (абонентский терминал)\nМодель: ZTE F601 / Huawei HG8310M`,
+  olt: `Тип: ${ENTITY_LABELS.olt}\nМодель: ZTE C300/C320 или Huawei MA5800\nПорты: 8×GPON`,
+  tb:  `Тип: ${ENTITY_LABELS.transitMufta} (МТОК)\nСплиттер L1: 1:4 или 1:8 (PLC)`,
+  ork: `Тип: ${ENTITY_LABELS.orksp}\nСплиттер L2: 1:8 или 1:16 (PLC)`,
+  sub: `Тип: ${ENTITY_LABELS.subscriber}\nДроп до ${ENTITY_LABELS.ontBox}`,
+  box: `Тип: ${ENTITY_LABELS.ontBox}\nВнутри: ONT (ZTE F601 / Huawei HG8310M)\nДалее — медь до абонента (не учитывается)`,
 };
 
 function esc(s: string): string {
@@ -128,45 +131,74 @@ function line(name: string, coords: [number, number][], style: string, desc = ''
 </Placemark>\n`;
 }
 
-/** Глобальные подписи: Муфта 1, ОРК 2, адрес абонента. */
-function buildEntityIndex(districts: District[]): Map<string, EntityInfo> {
+/** Глобальные подписи: Узел связи, транзитная муфта, ОРКСП, абонент. */
+function buildEntityIndex(districts: District[], joints: InlineJoint[] = []): Map<string, EntityInfo> {
   const index = new Map<string, EntityInfo>();
   let globalTb = 0;
   let globalOrk = 0;
+  let globalSplice = 0;
+  let globalTransit = 0;
   for (const d of districts) {
-    index.set(d.olt.id, { label: `OLT · ${d.name}`, role: 'OLT', district: d.name });
+    index.set(d.olt.id, {
+      label: `${ENTITY_LABELS.olt} · ${d.name}`,
+      role: ENTITY_LABELS.olt,
+      district: d.name,
+    });
     for (const tb of d.olt.transitBoxes) {
       globalTb++;
       index.set(tb.id, {
-        label: `Муфта ${globalTb} · ${d.name}`,
-        role: 'Муфта МТОК',
+        label: `${ENTITY_LABELS.transitMufta} ${globalTb} · ${tb.muftaType} · ${d.name}`,
+        role: ENTITY_LABELS.transitMufta,
         district: d.name,
       });
       for (const ork of tb.orks) {
         globalOrk++;
         index.set(ork.id, {
-          label: `ОРК ${globalOrk} (${ork.splitter}) · ${d.name}`,
-          role: 'ОРК / бокс',
+          label: `${ENTITY_LABELS.orksp} ${globalOrk} (${ork.splitter}) · ${d.name}`,
+          role: ENTITY_LABELS.orksp,
           district: d.name,
         });
         for (const sub of ork.subscribers) {
-          const addr = (sub.desc || 'Абонент').slice(0, 80);
-          index.set(sub.id, { label: addr, role: 'Абонент', district: d.name });
+          const addr = (sub.desc || ENTITY_LABELS.subscriber).slice(0, 80);
+          index.set(sub.id, { label: addr, role: ENTITY_LABELS.subscriber, district: d.name });
         }
       }
     }
     for (const sub of d.subscribers) {
       if (!index.has(sub.id)) {
-        const addr = (sub.desc || 'Абонент').slice(0, 80);
-        index.set(sub.id, { label: addr, role: 'Абонент', district: d.name });
+        const addr = (sub.desc || ENTITY_LABELS.subscriber).slice(0, 80);
+        index.set(sub.id, { label: addr, role: ENTITY_LABELS.subscriber, district: d.name });
       }
+    }
+  }
+  for (const j of joints) {
+    const fromKml = j.id.includes('kml');
+    if (fromKml) {
+      globalSplice++;
+      index.set(j.id, {
+        label: `${ENTITY_LABELS.spliceMufta} ${globalSplice}`,
+        role: ENTITY_LABELS.spliceMufta,
+        district: '',
+      });
+    } else {
+      globalTransit++;
+      index.set(j.id, {
+        label: `${ENTITY_LABELS.transitMufta} (магистраль) ${globalTransit}`,
+        role: ENTITY_LABELS.transitMufta,
+        district: '',
+      });
     }
   }
   return index;
 }
 
 function entityLabel(index: Map<string, EntityInfo>, id: string): string {
-  return index.get(id)?.label ?? id.replace(/_/g, '-');
+  const hit = index.get(id);
+  if (hit) return hit.label;
+  if (/^sheet\d/i.test(id) || /sheet\d/i.test(id)) {
+    return id.replace(/sheet\d+[-_]?/gi, '').replace(/_/g, ' ').trim() || id;
+  }
+  return id.replace(/_/g, '-');
 }
 
 function allSubscribers(districts: District[]): Array<{ sub: District['subscribers'][0]; district: string; orkId?: string }> {
@@ -188,10 +220,14 @@ function allSubscribers(districts: District[]): Array<{ sub: District['subscribe
   return out;
 }
 
+function cableLengthForExport(cable: Cable): number {
+  return cable.lengthM > 0 ? cable.lengthM : Math.round(polylineLengthM(cable.coords));
+}
+
 function cablePlacemarkName(cable: Cable, index: Map<string, EntityInfo>): string {
   const from = entityLabel(index, cable.fromId);
   const to = entityLabel(index, cable.toId);
-  return `${cable.type} · ${from} → ${to} · ${fmtLen(cable.lengthM)}`;
+  return `${cable.type} · ${from} → ${to} · ${fmtLen(cableLengthForExport(cable))}`;
 }
 
 function cableExtendedData(
@@ -203,7 +239,7 @@ function cableExtendedData(
   const from = entityLabel(index, cable.fromId);
   const to = entityLabel(index, cable.toId);
   const role = CABLE_ROLE[cable.type];
-  const style = CABLE_STYLES[cable.type];
+  const lenM = cableLengthForExport(cable);
   return `<ExtendedData>
   <SchemaData schemaUrl="#cableSchema">
     <SimpleData name="cableType">${esc(cable.type)}</SimpleData>
@@ -212,10 +248,12 @@ function cableExtendedData(
     <SimpleData name="district">${esc(district)}</SimpleData>
     <SimpleData name="from">${esc(from)}</SimpleData>
     <SimpleData name="to">${esc(to)}</SimpleData>
-    <SimpleData name="lengthM">${Math.round(cable.lengthM)}</SimpleData>
+    <SimpleData name="lengthM">${lenM}</SimpleData>
+    <SimpleData name="metrazh_m">${lenM}</SimpleData>
+    <SimpleData name="Metrazh_m">${lenM}</SimpleData>
+    <SimpleData name="GPS_metrazh">${lenM}</SimpleData>
+    <SimpleData name="Obshchiy_metrazh">${lenM}</SimpleData>
     <SimpleData name="route">${esc(routed)}</SimpleData>
-    <SimpleData name="lineColor">${style.color}</SimpleData>
-    <SimpleData name="lineWidth">${style.width}</SimpleData>
   </SchemaData>
 </ExtendedData>`;
 }
@@ -229,10 +267,11 @@ function cableDescription(
   const from = entityLabel(index, cable.fromId);
   const to = entityLabel(index, cable.toId);
   const role = CABLE_ROLE[cable.type];
+  const lenM = cableLengthForExport(cable);
   return `<b>${esc(cable.type)} — ${esc(role)}</b><br/>
 Район: ${esc(district)}<br/>
 Участок: ${esc(from)} → ${esc(to)}<br/>
-Длина: ${fmtLen(cable.lengthM)}<br/>
+Метраж: ${fmtLen(lenM)}<br/>
 Маршрут: ${routed}`;
 }
 
@@ -296,7 +335,7 @@ const ENTITY_EXPORT: Record<KmzEntityLayer, { filename: string; title: string }>
   olt: { filename: 'olt', title: 'GPON — OLT — узлы связи' },
   mufta: { filename: 'mufty-mtok', title: 'GPON — Муфты МТОК-96А' },
   transitJoint: { filename: 'transit-mufty', title: 'GPON — Транзитные муфты (магистраль)' },
-  ork: { filename: 'ork-boksy', title: 'GPON — ОРК и боксы — общий' },
+  ork: { filename: 'orksp', title: `GPON — ${ENTITY_LABELS.orksp} — общий` },
   subscribers: { filename: 'abonenty', title: 'GPON — Абоненты — общий' },
   summary: { filename: 'svodka-kabely', title: 'GPON — Сводка по кабелям' },
 };
@@ -330,7 +369,7 @@ export function buildKmlDocument(
   const cableTypes = enabledCableTypes(layers, options.onlyCableTypes);
   const docName = options.documentName ?? `GPON Network — ${new Date().toLocaleDateString('ru')}`;
 
-  const entityIndex = buildEntityIndex(districts);
+  const entityIndex = buildEntityIndex(districts, joints);
   const entityDistrict = new Map<string, string>();
   for (const [id, info] of entityIndex.entries()) entityDistrict.set(id, info.district);
   const cableDistrict = (c: Cable): string =>
@@ -353,13 +392,16 @@ export function buildKmlDocument(
   <SimpleField name="from" type="string"><displayName>От</displayName></SimpleField>
   <SimpleField name="to" type="string"><displayName>До</displayName></SimpleField>
   <SimpleField name="lengthM" type="float"><displayName>Длина, м</displayName></SimpleField>
+  <SimpleField name="metrazh_m" type="float"><displayName>Метраж (м.)</displayName></SimpleField>
+  <SimpleField name="GPS_metrazh" type="float"><displayName>GPS метраж (м.)</displayName></SimpleField>
+  <SimpleField name="Obshchiy_metrazh" type="float"><displayName>Общий метраж (м.)</displayName></SimpleField>
 </Schema>
 ${kmlStyles()}
 `;
 
   kml += `<description><![CDATA[
 <b>GPON — экспорт слоёв</b><br/>
-OLT: ${districts.length} · Муфты МТОК: ${totalTbs} · Транзитные муфты: ${joints.length} · ОРК: ${totalOrks} · Абоненты: ${subs.length}<br/>
+${ENTITY_LABELS.olt}: ${districts.length} · ${ENTITY_LABELS.transitMufta}: ${totalTbs} · Стыки: ${joints.length} · ${ENTITY_LABELS.orksp}: ${totalOrks} · ${ENTITY_LABELS.subscriber}: ${subs.length}<br/>
 Кабели в файле: ${filteredCables.length} уч. / ${fmtLen(totalCableM)}<br/>
 Дата: ${new Date().toLocaleString('ru')}
 ]]></description>\n`;
@@ -381,9 +423,9 @@ OLT: ${districts.length} · Муфты МТОК: ${totalTbs} · Транзитн
 
   // ---- OLT ----
   if (layers.olt) {
-    kml += `<Folder><name>📡 OLT — узлы связи (${districts.length} шт.)</name>\n`;
+    kml += `<Folder><name>📡 ${ENTITY_LABELS.olt} (${districts.length} шт.)</name>\n`;
     for (const d of districts) {
-      const label = entityIndex.get(d.olt.id)?.label ?? `OLT · ${d.name}`;
+      const label = entityIndex.get(d.olt.id)?.label ?? `${ENTITY_LABELS.olt} · ${d.name}`;
       const desc = `<b>${esc(label)}</b><br/>Район: ${esc(d.name)}<br/>${html(SPECS.olt)}`;
       kml += pt(label, desc, d.olt.lat, d.olt.lon, 'olt');
     }
@@ -392,15 +434,15 @@ OLT: ${districts.length} · Муфты МТОК: ${totalTbs} · Транзитн
 
   // ---- Муфты (общий слой) ----
   if (layers.mufta) {
-    kml += `<Folder><name>🔷 Муфты МТОК — общий (${totalTbs} шт.)</name>\n`;
+    kml += `<Folder><name>🔷 ${ENTITY_LABELS.transitMufta} МТОК — общий (${totalTbs} шт.)</name>\n`;
     for (const d of districts) {
       for (const tb of d.olt.transitBoxes) {
         const label = entityIndex.get(tb.id)?.label ?? tb.id;
         const desc = `<b>${esc(label)}</b><br/>
 Район: ${esc(d.name)}<br/>
-OLT: ${esc(d.olt.id)}<br/>
+${ENTITY_LABELS.olt}: ${esc(entityIndex.get(d.olt.id)?.label ?? d.olt.id)}<br/>
 Тип: ${esc(tb.muftaType)}<br/>
-ОРК: ${tb.orks.length} шт.<br/>
+${ENTITY_LABELS.orksp}: ${tb.orks.length} шт.<br/>
 ${html(SPECS.tb)}`;
         kml += pt(label, desc, tb.lat, tb.lon, 'tb');
       }
@@ -410,17 +452,15 @@ ${html(SPECS.tb)}`;
 
   // ---- Транзитные муфты на магистрали (консолидация + KML) ----
   if (layers.transitJoint && joints.length > 0) {
-    kml += `<Folder><name>⊕ Транзитные муфты — общий (${joints.length} шт.)</name>
-<description><![CDATA[Стыки и транзитные муфты на магистрали (не МТОК-96 у OLT). Создаются при консолидации или из KML.]]></description>\n`;
-    let tjN = 0;
+    kml += `<Folder><name>⊕ ${ENTITY_LABELS.transitMufta} на магистрали (${joints.length} шт.)</name>
+<description><![CDATA[Транзитные муфты и стыки на магистрали (не МТОК у узла связи).]]></description>\n`;
     for (const j of joints) {
-      tjN++;
-      const label = `Транзитная муфта ${tjN}`;
+      const label = entityIndex.get(j.id)?.label ?? j.id;
+      const role = j.id.includes('kml') ? ENTITY_LABELS.spliceMufta : ENTITY_LABELS.transitMufta;
       const desc = `<b>${esc(label)}</b><br/>
-ID: ${esc(j.id)}<br/>
+Тип: ${esc(role)}<br/>
 Ответвлений: ${j.branchCount}<br/>
-Родитель: ${esc(j.parentId || '—')}<br/>
-Тип: транзитная муфта на магистрали`;
+Родитель: ${esc(j.parentId || '—')}`;
       kml += pt(label, desc, j.lat, j.lon, 'tb');
     }
     kml += `</Folder>\n`;
@@ -428,14 +468,14 @@ ID: ${esc(j.id)}<br/>
 
   // ---- ОРК / боксы ----
   if (layers.ork) {
-    kml += `<Folder><name>📦 ОРК и боксы — общий (${totalOrks} шт.)</name>\n`;
+    kml += `<Folder><name>📦 ${ENTITY_LABELS.orksp} — общий (${totalOrks} шт.)</name>\n`;
     for (const d of districts) {
       for (const tb of d.olt.transitBoxes) {
         for (const ork of tb.orks) {
           const label = entityIndex.get(ork.id)?.label ?? ork.id;
           const desc = `<b>${esc(label)}</b><br/>
 Район: ${esc(d.name)}<br/>
-Муфта: ${esc(entityIndex.get(tb.id)?.label ?? tb.id)}<br/>
+${ENTITY_LABELS.transitMufta}: ${esc(entityIndex.get(tb.id)?.label ?? tb.id)}<br/>
 Сплиттер: ${esc(ork.splitter)}<br/>
 Абонентов: ${ork.subscribers.length}<br/>
 ${html(SPECS.ork)}`;
@@ -448,14 +488,28 @@ ${html(SPECS.ork)}`;
 
   // ---- Абоненты ----
   if (layers.subscribers) {
-    kml += `<Folder><name>🏠 Абоненты — общий (${subs.length} шт.)</name>\n`;
+    kml += `<Folder><name>🏠 ${ENTITY_LABELS.subscriber} — общий (${subs.length} шт.)</name>\n`;
     for (const { sub, district, orkId } of subs) {
       const label = entityIndex.get(sub.id)?.label ?? sub.desc;
       const desc = `<b>${esc(label)}</b><br/>
 Район: ${esc(district)}<br/>
-ОРК: ${esc(orkId ? (entityIndex.get(orkId)?.label ?? orkId) : '—')}<br/>
+${ENTITY_LABELS.orksp}: ${esc(orkId ? (entityIndex.get(orkId)?.label ?? orkId) : '—')}<br/>
 ${html(SPECS.sub)}`;
       kml += pt(label, desc, sub.lat, sub.lon, 'sub');
+    }
+    kml += `</Folder>\n`;
+
+    kml += `<Folder><name>📦 ${ENTITY_LABELS.ontBox} — у абонентов (${subs.length} шт.)</name>
+<description><![CDATA[Бокс с ONT на координатах абонента. Медь до квартиры не учитывается.]]></description>\n`;
+    let boxN = 0;
+    for (const { sub, district } of subs) {
+      boxN++;
+      const label = `${ENTITY_LABELS.ontBox} ${boxN}`;
+      const desc = `<b>${esc(label)}</b><br/>
+Абонент: ${esc(sub.desc)}<br/>
+Район: ${esc(district)}<br/>
+${html(SPECS.box)}`;
+      kml += pt(label, desc, sub.lat, sub.lon, 'ork');
     }
     kml += `</Folder>\n`;
   }
@@ -472,8 +526,7 @@ ${html(SPECS.sub)}`;
 <description><![CDATA[
 <b>${esc(type)}</b> — ${esc(CABLE_ROLE[type])}<br/>
 Всего участков: ${typeCables.length}<br/>
-Суммарная длина: ${fmtLen(totalTypeM)}<br/>
-Цвет: ${styleInfo.color} · толщина: ${styleInfo.width}
+Суммарная длина: ${fmtLen(totalTypeM)}
 ]]></description>\n`;
 
     if (!flatCables) {

@@ -31,7 +31,7 @@ export default function SchemaTab({ districts, flyTo }: Props) {
 
           <div className="ml-3">
             <div className="text-[#f59e0b]">
-              📡 {d.olt.id}
+              📡 Узел связи · {d.name}
             </div>
             <div className="ml-3 text-[#64748b]">
               └─ L1 SPL {d.olt.l1Splitter}
@@ -43,7 +43,7 @@ export default function SchemaTab({ districts, flyTo }: Props) {
                   onClick={() => flyTo?.(tb.lat, tb.lon, 15)}
                   className="text-[#38bdf8] hover:text-[#7dd3fc] transition-colors text-left"
                 >
-                  {ti < d.olt.transitBoxes.length - 1 ? '├─' : '└─'} 🔷 {tb.id}
+                  {ti < d.olt.transitBoxes.length - 1 ? '├─' : '└─'} 🔷 Муфта {tb.muftaType}
                 </button>
 
                 {tb.orks.map((ork, oi) => (
@@ -52,7 +52,7 @@ export default function SchemaTab({ districts, flyTo }: Props) {
                       onClick={() => flyTo?.(ork.lat, ork.lon, 17)}
                       className="text-[#f59e0b] hover:text-[#fcd34d] transition-colors text-left"
                     >
-                      {oi < tb.orks.length - 1 ? '├─' : '└─'} 📦 {ork.id}
+                      {oi < tb.orks.length - 1 ? '├─' : '└─'} 📦 ОРКСП {oi + 1}
                       <span className="text-[#64748b] ml-1">({ork.subscribers.length}/{ork.splitter === '1:4' ? '4' : ork.splitter === '1:8' ? '8' : '16'})</span>
                     </button>
                   </div>

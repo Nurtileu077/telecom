@@ -116,7 +116,7 @@ function buildSingleOlt(
       .map((p) => subs.find((s) => s.id === p.id))
       .filter(Boolean) as Subscriber[];
     const orkAnchor = pickOrkAnchor(orkSubsRaw);
-    const orkId = `Бокс-${slug}${oltSuffix}-${i + 1}`;
+    const orkId = `ORKSP-${slug}${oltSuffix}-${i + 1}`;
     const splitter: '1:4' | '1:8' | '1:16' =
       cluster.length <= 4 ? '1:4' : cluster.length <= 8 ? '1:8' : '1:16';
 

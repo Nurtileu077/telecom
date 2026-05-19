@@ -1,4 +1,5 @@
 import { Subscriber } from '@/types/network';
+import { sanitizeDescription } from '@/lib/labels';
 import type { KmlPoint, KmlLine } from './KmlStructured';
 
 let idCounter = 0;
@@ -127,7 +128,7 @@ function parseKmlText(
     const folder = folderNameOf(pm, fallback);
     const folderPath = folderPathOf(pm);
     const name = pm.querySelector('name')?.textContent?.trim() || '';
-    const desc = pm.querySelector('description')?.textContent?.trim() || '';
+    const desc = sanitizeDescription(pm.querySelector('description')?.textContent?.trim() || '');
     const extData = extDataOf(pm, schemaMap);
 
     const point = pm.querySelector('Point > coordinates');

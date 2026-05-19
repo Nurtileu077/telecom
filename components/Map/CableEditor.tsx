@@ -32,7 +32,8 @@ export default function CableEditor({
 
   if (!cable) return null;
 
-  const lengthKm = (cable.lengthM / 1000).toFixed(2);
+  const lenM = cable.lengthM > 0 ? Math.round(cable.lengthM) : 0;
+  const lengthLabel = lenM >= 1000 ? `${(lenM / 1000).toFixed(2)} км` : `${lenM} м`;
   const isRouting = rerouteStatus === 'routing';
 
   return (
@@ -52,8 +53,8 @@ export default function CableEditor({
         {/* Stats row */}
         <div className="flex gap-3 text-[11px]">
           <div className="flex-1 bg-[#0a0e1a] rounded-lg px-2.5 py-2 text-center">
-            <div className="font-mono font-bold text-[#38bdf8]">{lengthKm} км</div>
-            <div className="text-[#64748b] mt-0.5">длина</div>
+            <div className="font-mono font-bold text-[#38bdf8]">{lengthLabel}</div>
+            <div className="text-[#64748b] mt-0.5">метраж</div>
           </div>
           <div className="flex-1 bg-[#0a0e1a] rounded-lg px-2.5 py-2 text-center">
             <div className="font-mono font-bold text-[#34d399]">{cable.fibers}</div>

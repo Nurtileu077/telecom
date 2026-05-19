@@ -15,6 +15,7 @@ import {
 } from '@/components/Network/Selection';
 import { consolidateCables } from '@/components/Network/Consolidation';
 import { haversineM } from '@/components/Network/KMeans';
+import { ensureCableLengths, polylineLengthM } from '@/components/Network/pathLength';
 import { calculateSubscriberBudgets, budgetStats } from '@/components/Network/PowerBudget';
 import { dbListProjects, dbSaveProject, dbDeleteProject, dbLoadProject, supabase } from '@/lib/supabase';
 
@@ -774,6 +775,10 @@ export function useNetwork() {
       if (c.id !== id) return c;
       const updated = { ...c, ...patch };
       if (patch.type) updated.fibers = CABLE_FIBERS[patch.type];
+      if (patch.coords) {
+        const len = polylineLengthM(patch.coords);
+        if (len > 0) updated.lengthM = len;
+      }
       return updated;
     }));
   }, []);
@@ -1175,7 +1180,7 @@ export function useNetwork() {
     source: string,
   ) => {
     setDistricts(newDistricts);
-    setCables(newCables);
+    setCables(ensureCableLengths(newCables));
     setJoints(newJoints);
     setAnnotations([]);
     const allSubs = newDistricts.flatMap((d) => d.subscribers);
@@ -1406,7 +1411,7 @@ export function useNetwork() {
     setProjectId(p.id);
     setProjectName(p.name);
     setDistricts(p.districts || []);
-    setCables(p.cables || []);
+    setCables(ensureCableLengths(p.cables || []));
     setJoints(p.joints || []);
     setAnnotations(p.annotations || []);
     setImportHistory(p.importHistory || []);
