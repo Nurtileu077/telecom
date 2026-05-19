@@ -6,6 +6,7 @@
 import {
   District, Cable, OLT, TransitBox, ORK, Subscriber, CableType,
   CABLE_FIBERS, DISTRICT_COLORS, InlineJoint,
+  CameraType, CAMERA_MIN_SPEED_MBPS,
 } from '@/types/network';
 import { haversineM } from '../Network/KMeans';
 import { resolveCableLengthM } from '../Network/pathLength';
@@ -39,7 +40,26 @@ export interface KmlLine {
 // separate snap-target list so cable endpoints still match them.
 // 'radio' is for РРЛ (радиорелейная линия) — drawn as an annotation, not as
 // a fibre cable.  'skip' is anything else we know to ignore (polygons, etc.).
-export type EntityKind = 'olt' | 'tb' | 'ork' | 'sub' | 'box' | 'support' | 'joint' | 'radio' | 'skip';
+export type EntityKind =
+  | 'olt' | 'tb' | 'ork' | 'sub' | 'box'
+  | 'support' | 'joint' | 'radio' | 'skip'
+  // Sergek-cameras subtypes — типизированные камеры с минимальной скоростью.
+  | 'cam_lu' | 'cam_intersection' | 'cam_ovn';
+
+// Узнать подтип камеры (CameraType) по тексту папки/имени.
+// undefined если это не камера.
+export function classifyCameraType(
+  folderPath: string[],
+  name: string,
+  extData?: Record<string, string>,
+): CameraType | undefined {
+  const t = joinText(folderPath, name, extData);
+  if (RE_CAM_INTERSECT.test(t)) return 'apk-intersection';
+  if (RE_CAM_LU.test(t))        return 'apk-lu';
+  if (RE_CAM_OVN.test(t))       return 'ovn';
+  if (RE_CAM_APK.test(t))       return 'apk-lu'; // АПК без подтипа → ЛУ
+  return undefined;
+}
 
 // JS \b doesn't work for Cyrillic.  We anchor on either start/whitespace/-
 // or end/whitespace/-(/)  using lookaheads.  In practice each placemark's
@@ -49,16 +69,32 @@ export type EntityKind = 'olt' | 'tb' | 'ork' | 'sub' | 'box' | 'support' | 'joi
 // "ОВН" matches but "Дровника" doesn't.
 const NONL = '(?:^|[^а-яА-Яa-zA-Z0-9])';
 const NONR = '(?:[^а-яА-Яa-zA-Z0-9]|$)';
-const RE_OLT     = new RegExp(`${NONL}(?:olt|цод|амс|узел[\\s_-]*связ|data[\\s-]?center)${NONR}|magistral`, 'i');
+// Short tokens (olt/цод/амс) требуют non-letter границу против ложных
+// срабатываний (например, «амс» в «Амстердам»).  Фразы с падежными
+// окончаниями (узел связи/связь) ловим по стволу без NONR.
+const RE_OLT     = new RegExp(`${NONL}(?:olt|цод|амс|data[\\s-]?center)${NONR}|узел[\\s_-]*связ|magistral`, 'i');
 // Транзитные муфты МТОК — отдельно от «обычных» муфт на линии (стыки).
 const RE_TRANSIT_TB = new RegExp(`транзитн|мток|mtok|${NONL}tb${NONR}|sleeve|транзитная`, 'i');
 const RE_SPLICE     = new RegExp(`муфт|splice|стык|соединит`, 'i');
 const RE_ORKSP   = new RegExp(`${NONL}(?:орксп|орк\\s*сп)${NONR}`, 'i');
 const RE_BOX_ONT = new RegExp(`${NONL}(?:бокс|ont|онт|терминал)${NONR}`, 'i');
 const RE_ORK     = new RegExp(`${NONL}(?:орк|nap|шкаф)${NONR}|distribu`, 'i');
-const RE_SUPPORT = new RegExp(`${NONL}овн${NONR}|опора|столб|поддерж`, 'i');
-const RE_JOINT   = new RegExp(`линейн.+участок|перекрест|перекрёст|${NONL}joint${NONR}`, 'i');
+// Опора несущая — только явные слова про столб/опору.  «ОВН» (общественное
+// видеонаблюдение) — это тип КАМЕРЫ, не опора; вынесено в RE_CAM_OVN.
+const RE_SUPPORT = new RegExp(`опора|столб|поддерж|несущ`, 'i');
+// Сварные / стыковые муфты НА ЛИНИИ (НЕ ЛУ/Перекр — те камеры, см. ниже).
+const RE_JOINT   = new RegExp(`${NONL}joint${NONR}|splice|сварн|стык|соединит`, 'i');
 const RE_RADIO   = new RegExp(`${NONL}ррл${NONR}|радиорелей|wireless[\\s-]?link`, 'i');
+
+// ── Sergek camera types ────────────────────────────────────────────────
+// Папки/имена вида «Перекресток», «ЛУ», «Линейный участок», «ОВН» — это
+// ТИПЫ КАМЕР, а не точки сварки или опоры. РАСПОЗНАЁМ ИХ РАНЬШЕ joint /
+// support, потому что слова пересекаются ("линейный участок" ~ ЛУ-камера).
+const RE_CAM_INTERSECT = new RegExp(`перекрест|перекрёст|intersection|crossroad`, 'i');
+const RE_CAM_LU        = new RegExp(`${NONL}лу${NONR}|линейн.+участок|baseline`, 'i');
+const RE_CAM_OVN       = new RegExp(`${NONL}овн${NONR}|обществ.*видео|public[\\s-]?surveil`, 'i');
+// АПК без явного подтипа — fallback на ЛУ (большинство АПК = baseline + speed).
+const RE_CAM_APK       = new RegExp(`${NONL}апк${NONR}|аппарат`, 'i');
 
 function joinText(folderPath: string[], name: string, extData?: Record<string, string>): string {
   const parts: string[] = [...folderPath, name];
@@ -74,14 +110,20 @@ export function classifyEntity(
   extData?: Record<string, string>,
 ): EntityKind {
   const t = joinText(folderPath, name, extData);
-  // Order matters — support/joint/radio checked first so a folder name like
-  // "Опора ОК-8" doesn't accidentally classify as a cable / subscriber.
-  if (RE_RADIO.test(t))      return 'radio';
-  if (RE_SUPPORT.test(t))    return 'support';
-  if (RE_TRANSIT_TB.test(t)) return 'tb';
-  if (RE_JOINT.test(t))      return 'joint';
-  if (RE_OLT.test(t))        return 'olt';
-  if (RE_SPLICE.test(t))     return 'joint';
+  // Order matters — cameras (ЛУ/Перекр/ОВН) распознаются ПЕРВЫМИ потому что
+  // их корневые слова пересекаются с joint ("линейный участок") и support
+  // ("ОВН"). Иначе камера ЛУ ушла бы в joint, а камера ОВН — в support.
+  if (RE_RADIO.test(t))         return 'radio';
+  if (RE_CAM_INTERSECT.test(t)) return 'cam_intersection';
+  if (RE_CAM_LU.test(t))        return 'cam_lu';
+  if (RE_CAM_OVN.test(t))       return 'cam_ovn';
+  if (RE_CAM_APK.test(t))       return 'cam_lu'; // АПК без подтипа → ЛУ
+  // После камер — инфраструктура.
+  if (RE_SUPPORT.test(t))       return 'support';
+  if (RE_TRANSIT_TB.test(t))    return 'tb';
+  if (RE_JOINT.test(t))         return 'joint';
+  if (RE_OLT.test(t))           return 'olt';
+  if (RE_SPLICE.test(t))        return 'joint';
   if (RE_BOX_ONT.test(t) && !RE_ORKSP.test(t)) return 'box';
   if (RE_ORKSP.test(t) || RE_ORK.test(t)) return 'ork';
   return 'sub';
@@ -122,6 +164,9 @@ interface DistrictBuckets {
   tbs: KmlPoint[];
   orks: KmlPoint[];
   subs: KmlPoint[];
+  // Параллельная мапа: для каждого sub.lat,lon — его тип камеры (Sergek).
+  // Хранится отдельно потому что KmlPoint — общий тип для всех сущностей.
+  subCameraTypes: Map<KmlPoint, CameraType>;
   boxes: KmlPoint[];    // боксы ОНТ у абонента
   supports: KmlPoint[]; // опоры / столбы — snap-targets only, not entities
   joints: KmlPoint[];   // линейные узлы / перекрёстки — also snap-targets
@@ -192,7 +237,7 @@ export function buildStructured(
   const byDistrict = new Map<string, DistrictBuckets>();
   const bucket = (name: string) => {
     if (!byDistrict.has(name)) {
-      byDistrict.set(name, { olts: [], tbs: [], orks: [], subs: [], boxes: [], supports: [], joints: [], lines: [], radioLines: [] });
+      byDistrict.set(name, { olts: [], tbs: [], orks: [], subs: [], subCameraTypes: new Map(), boxes: [], supports: [], joints: [], lines: [], radioLines: [] });
     }
     return byDistrict.get(name)!;
   };
@@ -203,11 +248,14 @@ export function buildStructured(
     if      (kind === 'olt')     b.olts.push(p);
     else if (kind === 'tb')      b.tbs.push(p);
     else if (kind === 'ork')     b.orks.push(p);
-    else if (kind === 'box')    b.boxes.push(p);
+    else if (kind === 'box')     b.boxes.push(p);
     else if (kind === 'support') { b.supports.push(p); stats.supports++; }
     else if (kind === 'joint')   { b.joints.push(p);   stats.joints++; }
     else if (kind === 'skip' || kind === 'radio') { /* drop */ }
-    else                          b.subs.push(p);
+    else if (kind === 'cam_lu')           { b.subs.push(p); b.subCameraTypes.set(p, 'apk-lu'); }
+    else if (kind === 'cam_intersection') { b.subs.push(p); b.subCameraTypes.set(p, 'apk-intersection'); }
+    else if (kind === 'cam_ovn')          { b.subs.push(p); b.subCameraTypes.set(p, 'ovn'); }
+    else                                   b.subs.push(p);  // generic sub — без cameraType
   }
   for (const l of rawLines) {
     const b = bucket(partitionKey(l));
@@ -301,6 +349,7 @@ export function buildStructured(
         if (d < bestD) { bestD = d; nearest = o; }
       }
       const title = kmlPointTitle(s);
+      const ct = b.subCameraTypes.get(s);
       return {
         id: `sub-${slug}-${i + 1}`,
         lat: s.lat, lon: s.lon,
@@ -308,6 +357,7 @@ export function buildStructured(
         district: districtName,
         orkId: nearest?.id,
         fibers: { working: 2, spare: 1 },
+        ...(ct ? { cameraType: ct, minSpeedMbps: CAMERA_MIN_SPEED_MBPS[ct] } : {}),
       };
     });
 

@@ -632,8 +632,21 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
                   </div>
                 </label>
               </div>
+              {/* Sergek-cascade: L1-сплиттер на муфте, L2 однозначно следует из L1
+                  для L1×L2 = 64 (макс. абонентов на порт OLT). */}
+              <label className="block">
+                <span className="text-[10px] text-[#64748b] block mb-1">L1-сплиттер (на муфте)</span>
+                <select
+                  value={settings.l1SplitterDefault ?? '1:4'}
+                  onChange={(e) => setSettings((s) => ({ ...s, l1SplitterDefault: e.target.value as '1:4' | '1:8' }))}
+                  className="w-full bg-[#0a0e1a] border border-[#1e3a5f] rounded px-2 py-1 text-xs text-[#e2e8f0] focus:outline-none focus:border-[#38bdf8]"
+                >
+                  <option value="1:4">1:4 → 4 ОРКСП × L2 1:16 = 64 камеры/порт</option>
+                  <option value="1:8">1:8 → 8 ОРКСП × L2 1:8 = 64 камеры/порт</option>
+                </select>
+              </label>
               <div className="text-[10px] text-[#475569] bg-[#0a0e1a] border border-[#1e3a5f]/40 rounded px-2 py-1.5">
-                ⚙ Кластеризация ОРК/Муфт — авто (по плотности абонентов).
+                ⚙ Каскад GPON: ≤64 камер на порт OLT. Камеры одного ОРКСП — цепочкой бокс→бокс по дороге.
               </div>
             </div>
           )}
