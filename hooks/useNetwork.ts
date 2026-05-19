@@ -14,6 +14,7 @@ import {
   filterByPolygon, polylineTouchesPolygon, pointInPolygon, type SelectionPolygon,
 } from '@/components/Network/Selection';
 import { consolidateCables } from '@/components/Network/Consolidation';
+import { rebuildCablesFromDistricts } from '@/components/Network/rebuildTopologyCables';
 import { haversineM } from '@/components/Network/KMeans';
 import { ensureCableLengths, polylineLengthM } from '@/components/Network/pathLength';
 import { calculateSubscriberBudgets, budgetStats } from '@/components/Network/PowerBudget';
@@ -343,35 +344,9 @@ export function useNetwork() {
       setMaterials(calculateMaterials(newDistricts, newCables, settings, 0));
       setValidationIssues(validateNetwork(newDistricts, newCables));
 
-      setStatus('routing');
-      let finalCables = newCables;
-
-      if (settings.useOSRM) {
-        finalCables = await routeCables(
-          newCables,
-          settings.osrmDelay,
-          true, // routeDrops — нужно для слияния дропов с магистралью по общим дорогам
-          (done, total, current) => setOsrmProgress({ done, total, current }),
-          controller.signal,
-          (cable) => setCables((prev) => patchCable(prev, cable)),
-        );
-      }
-
-      // Глобальная консолидация: одна дорога — один кабель, размер по числу
-      // абонентов, муфты в точках расхождения.
-      const { cables: consolidated, joints: newJoints } = consolidateCables(finalCables, newDistricts, settings.mergeCorridorM);
-      finalCables = consolidated;
-
-      setStatus('calculating');
-      const mats = calculateMaterials(newDistricts, finalCables, settings, newJoints.length);
-      const issues = validateNetwork(newDistricts, finalCables);
-
-      setCables(finalCables);
-      setJoints(newJoints);
       setOntBoxes(newOntBoxes);
-      setMaterials(mats);
-      setValidationIssues(issues);
       setStatus('done');
+      // Проход 1 (OSRM) и проход 2 (слияние) — кнопками в «Инструменты».
     } catch (err) {
       if (!controller.signal.aborted) {
         setStatus('error');
@@ -419,6 +394,96 @@ export function useNetwork() {
     if (abortRef.current) abortRef.current.abort();
   }, []);
 
+  /** Проход 1: OSRM по текущим кабелям (без слияния). */
+  const runPass1Osrm = useCallback(async (poly?: SelectionPolygon | null) => {
+    if (cables.length === 0) return;
+    if (!settings.useOSRM) {
+      console.warn('[Pass1] useOSRM выключен в настройках');
+      return;
+    }
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    try {
+      setStatus('routing');
+      setJoints([]);
+      const toRoute = poly && poly.length >= 3
+        ? cables.filter((c) => polylineTouchesPolygon(c.coords, poly))
+        : cables;
+      if (toRoute.length === 0) {
+        setStatus('done');
+        return;
+      }
+      const reRouted = await routeCables(
+        toRoute,
+        settings.osrmDelay,
+        true,
+        (d, t, c) => setOsrmProgress({ done: d, total: t, current: c }),
+        controller.signal,
+        (cable) => setCables((prev) => patchCable(prev, cable)),
+      );
+      if (controller.signal.aborted) return;
+      const byId = new Map(reRouted.map((c) => [c.id, c] as const));
+      setCables((prev) => {
+        const next = prev.map((c) => byId.get(c.id) ?? c);
+        setMaterials(calculateMaterials(districts, next, settings, 0));
+        return next;
+      });
+      setStatus('done');
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        setStatus('error');
+        console.error(err);
+      }
+    }
+  }, [cables, districts, settings]);
+
+  /** Проход 2: слияние параллельных нитей на одной дороге + муфты + типы ОК по схеме. */
+  const runPass2Consolidate = useCallback(async (poly?: SelectionPolygon | null) => {
+    if (districts.length === 0) return;
+    try {
+      setStatus('calculating');
+      const existingCoords = buildExistingCoordsMap(cables);
+      const logical = rebuildCablesFromDistricts(districts, ontBoxes, existingCoords);
+
+      if (poly && poly.length >= 3) {
+        const scope = filterByPolygon(districts, logical, joints, poly);
+        const { cables: newConsolidated, joints: newJoints } = consolidateCables(
+          logical.filter((c) => polylineTouchesPolygon(c.coords, poly)),
+          scope.districts,
+          settings.mergeCorridorM,
+          ontBoxes,
+        );
+        setJoints((prev) => [
+          ...prev.filter((j) => !pointInPolygon(j.lat, j.lon, poly)),
+          ...newJoints,
+        ]);
+        setCables((prev) => {
+          const merged = [
+            ...prev.filter((c) => !polylineTouchesPolygon(c.coords, poly)),
+            ...newConsolidated,
+          ];
+          setMaterials(calculateMaterials(districts, merged, settings, newJoints.length));
+          return merged;
+        });
+      } else {
+        const { cables: consolidated, joints: newJoints } = consolidateCables(
+          logical,
+          districts,
+          settings.mergeCorridorM,
+          ontBoxes,
+        );
+        setCables(consolidated);
+        setJoints(newJoints);
+        setMaterials(calculateMaterials(districts, consolidated, settings, newJoints.length));
+      }
+      setStatus('done');
+    } catch (err) {
+      setStatus('error');
+      console.error(err);
+    }
+  }, [districts, cables, joints, ontBoxes, settings, buildExistingCoordsMap]);
+
   // Manually trigger consolidation: regenerate the raw cable tree from the
   // current district structure (preserving any existing routed coords for
   // direct entity-to-entity pairs), then consolidate. This works even after
@@ -432,97 +497,8 @@ export function useNetwork() {
     // reconsolidate calls would fall back to straight lines on every trunk,
     // and the OSRM re-routing pass below either had to redo all of them
     // (slow, partial failures) or leave them straight (spaghetti).
-    const existingCoords = buildExistingCoordsMap(cables);
-
-    const pathLen = (cs: [number, number][]) => {
-      let l = 0;
-      for (let i = 1; i < cs.length; i++) l += haversineM(cs[i - 1][0], cs[i - 1][1], cs[i][0], cs[i][1]);
-      return l;
-    };
-
-    // Regenerate raw cables from the district tree, reusing OSRM coords where
-    // available, falling back to straight line.
-    let nextSeq = 0;
-    const nextId = () => `cable-r-${++nextSeq}`;
-    const raw: Cable[] = [];
-    for (const d of districts) {
-      const olt = d.olt;
-      for (const tb of olt.transitBoxes) {
-        const k1 = `${olt.id}::${tb.id}`;
-        const c1 = existingCoords.get(k1) ?? [[olt.lat, olt.lon] as [number, number], [tb.lat, tb.lon] as [number, number]];
-        raw.push({
-          id: nextId(), type: tb.inCable, fibers: CABLE_FIBERS[tb.inCable],
-          fromId: olt.id, toId: tb.id, coords: c1,
-          lengthM: pathLen(c1), routedByOSRM: existingCoords.has(k1),
-        });
-        for (const ork of tb.orks) {
-          const k2 = `${tb.id}::${ork.id}`;
-          const c2 = existingCoords.get(k2) ?? [[tb.lat, tb.lon] as [number, number], [ork.lat, ork.lon] as [number, number]];
-          raw.push({
-            id: nextId(), type: ork.cableType, fibers: CABLE_FIBERS[ork.cableType],
-            fromId: tb.id, toId: ork.id, coords: c2,
-            lengthM: pathLen(c2), routedByOSRM: existingCoords.has(k2),
-          });
-          for (const sub of ork.subscribers) {
-            const k3 = `${ork.id}::${sub.id}`;
-            const c3 = existingCoords.get(k3) ?? [[ork.lat, ork.lon] as [number, number], [sub.lat, sub.lon] as [number, number]];
-            raw.push({
-              id: nextId(), type: 'ОК-4', fibers: CABLE_FIBERS['ОК-4'],
-              fromId: ork.id, toId: sub.id, coords: c3,
-              lengthM: pathLen(c3), routedByOSRM: existingCoords.has(k3),
-            });
-          }
-        }
-      }
-    }
-
-    // OSRM-route any cables that lost their routing (trunk OLT→TB after
-    // previous consolidation typically falls into this category).
-    let routed = raw;
-    const needRouting = raw.filter((c) => !c.routedByOSRM);
-    if (settings.useOSRM && needRouting.length > 0) {
-      setStatus('routing');
-      if (abortRef.current) abortRef.current.abort();
-      const ctrl = new AbortController();
-      abortRef.current = ctrl;
-      try {
-        setCables(raw);
-        const reRouted = await routeCables(
-          needRouting, settings.osrmDelay, true,
-          (d, t, c) => setOsrmProgress({ done: d, total: t, current: c }),
-          ctrl.signal,
-          (cable) => setCables((prev) => patchCable(prev, cable)),
-        );
-        const map = new Map(reRouted.map((c) => [c.id, c]));
-        routed = raw.map((c) => map.get(c.id) ?? c);
-      } catch { /* abort */ }
-    }
-
-    // Consolidate (optionally only the subset inside the selection polygon).
-    if (poly && poly.length >= 3) {
-      const scope = filterByPolygon(districts, routed, joints, poly);
-      const { cables: newConsolidated, joints: newJoints } = consolidateCables(
-        routed.filter((c) => polylineTouchesPolygon(c.coords, poly)),
-        scope.districts,
-        settings.mergeCorridorM,
-      );
-      setCables((prev) => [
-        ...prev.filter((c) => !polylineTouchesPolygon(c.coords, poly)),
-        ...newConsolidated,
-      ]);
-      setJoints((prev) => [
-        ...prev.filter((j) => !pointInPolygon(j.lat, j.lon, poly)),
-        ...newJoints,
-      ]);
-      setStatus('done');
-      return;
-    }
-    const { cables: consolidated, joints: newJoints } = consolidateCables(routed, districts, settings.mergeCorridorM);
-    setCables(consolidated);
-    setJoints(newJoints);
-    setMaterials(calculateMaterials(districts, consolidated, settings, newJoints.length));
-    setStatus('done');
-  }, [districts, cables, joints, settings, buildExistingCoordsMap]);
+    await runPass2Consolidate(poly);
+  }, [runPass2Consolidate]);
 
   // Re-route existing cables with OSRM (without re-clustering)
   // bbox: if provided, only re-route cables whose polyline touches the
@@ -530,95 +506,8 @@ export function useNetwork() {
   // works correctly even after consolidation (where cables go through
   // joints and don't have direct entity-pair ids).
   const rerouteWithOSRM = useCallback(async (poly?: SelectionPolygon | null) => {
-    if (districts.length === 0 && cables.length === 0) return;
-    if (abortRef.current) abortRef.current.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-    try {
-      setStatus('routing');
-
-      const pathLen = (cs: [number, number][]) => {
-        let l = 0;
-        for (let i = 1; i < cs.length; i++) l += haversineM(cs[i - 1][0], cs[i - 1][1], cs[i][0], cs[i][1]);
-        return l;
-      };
-
-      // ─── Selection polygon: re-route ONLY cables that touch the area ───
-      if (poly && poly.length >= 3) {
-        const affected = cables.filter((c) => polylineTouchesPolygon(c.coords, poly));
-        if (affected.length === 0) {
-          setStatus('done');
-          return;
-        }
-        const reRouted = await routeCables(
-          affected, settings.osrmDelay, true,
-          (done, total, current) => setOsrmProgress({ done, total, current }),
-          controller.signal,
-          (cable) => setCables((prev) => patchCable(prev, cable)),
-        );
-        if (controller.signal.aborted) return;
-        const byId = new Map(reRouted.map((c) => [c.id, c] as const));
-        setCables((prev) => prev.map((c) => byId.get(c.id) ?? c));
-        setMaterials(calculateMaterials(districts, cables, settings, joints.length));
-        setStatus('done');
-        return;
-      }
-
-      // ─── Full reroute: regenerate raw tree and re-consolidate ───
-      let seq = 0;
-      const nextId = () => `cable-r-${++seq}`;
-      const raw: Cable[] = [];
-      for (const d of districts) {
-        const olt = d.olt;
-        for (const tb of olt.transitBoxes) {
-          raw.push({
-            id: nextId(), type: tb.inCable, fibers: CABLE_FIBERS[tb.inCable],
-            fromId: olt.id, toId: tb.id,
-            coords: [[olt.lat, olt.lon], [tb.lat, tb.lon]],
-            lengthM: pathLen([[olt.lat, olt.lon], [tb.lat, tb.lon]]),
-            routedByOSRM: false,
-          });
-          for (const ork of tb.orks) {
-            raw.push({
-              id: nextId(), type: ork.cableType, fibers: CABLE_FIBERS[ork.cableType],
-              fromId: tb.id, toId: ork.id,
-              coords: [[tb.lat, tb.lon], [ork.lat, ork.lon]],
-              lengthM: pathLen([[tb.lat, tb.lon], [ork.lat, ork.lon]]),
-              routedByOSRM: false,
-            });
-            for (const sub of ork.subscribers) {
-              raw.push({
-                id: nextId(), type: 'ОК-4', fibers: CABLE_FIBERS['ОК-4'],
-                fromId: ork.id, toId: sub.id,
-                coords: [[ork.lat, ork.lon], [sub.lat, sub.lon]],
-                lengthM: pathLen([[ork.lat, ork.lon], [sub.lat, sub.lon]]),
-                routedByOSRM: false,
-              });
-            }
-          }
-        }
-      }
-      setCables(raw);
-      const routed = await routeCables(
-        raw, 200, true,
-        (done, total, current) => setOsrmProgress({ done, total, current }),
-        controller.signal,
-        (cable) => setCables((prev) => patchCable(prev, cable)),
-      );
-      if (!controller.signal.aborted) {
-        const { cables: consolidated, joints: newJoints } = consolidateCables(routed, districts, settings.mergeCorridorM);
-        setCables(consolidated);
-        setJoints(newJoints);
-        setMaterials(calculateMaterials(districts, consolidated, settings, newJoints.length));
-        setStatus('done');
-      }
-    } catch (err) {
-      if (!controller.signal.aborted) {
-        setStatus('error');
-        console.error(err);
-      }
-    }
-  }, [districts, cables, joints, settings]);
+    await runPass1Osrm(poly);
+  }, [runPass1Osrm]);
 
   // Annotation operations
   const addAnnotation = useCallback((a: Omit<MapAnnotation, 'id' | 'createdAt' | 'updatedAt'>) => {
@@ -1573,5 +1462,7 @@ export function useNetwork() {
     takeSnapshot, restoreSnapshot, deleteSnapshot, snapshots,
     projectStatus: status_, setProjectStatus,
     reconsolidate,
+    runPass1Osrm,
+    runPass2Consolidate,
   };
 }

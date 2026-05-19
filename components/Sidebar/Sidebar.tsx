@@ -59,8 +59,8 @@ interface Props {
   setHeatmapEnabled: (v: boolean) => void;
   onExportPDF: () => void;
   onPrintMap: () => void;
-  onRerouteOSRM: () => void;
-  onReconsolidate: () => void;
+  onPass1: () => void;
+  onPass2: () => void;
   osrmStatus: string;
 
   powerBudgets: SubBudget[];
@@ -170,8 +170,8 @@ export default function Sidebar(props: Props) {
             heatmapEnabled={props.heatmapEnabled}
             onExportPDF={props.onExportPDF}
             onPrintMap={props.onPrintMap}
-            onRerouteOSRM={props.onRerouteOSRM}
-            onReconsolidate={props.onReconsolidate}
+            onPass1={props.onPass1}
+            onPass2={props.onPass2}
             selectionPolygon={props.selectionPolygon}
             osrmStatus={props.osrmStatus}
             hasCables={props.cables.length > 0}

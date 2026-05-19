@@ -1,6 +1,6 @@
-import { Cable, CABLE_FIBERS, CableType, District } from '@/types/network';
+import { Cable, CABLE_FIBERS, CableType, District, OntBox } from '@/types/network';
 import { haversineM } from './KMeans';
-import { pickSergekSharedCableType } from './SergekTopology';
+import { EntityRole, pickSegmentCableType } from './SergekTopology';
 
 // In-line муфта — точка, где трасса разветвляется или меняется жильность.
 // Рендерится как небольшой ⊕ маркер и учитывается в смете.
@@ -65,9 +65,37 @@ function pathLength(coords: [number, number][]): number {
   return len;
 }
 
-// Sergek: 1 камера → ОК-4; ветка до 8 → ОК-16; магистраль порта → ОК-16 (не ОК-48).
-function pickSharedCableType(subsCount: number): CableType {
-  return pickSergekSharedCableType(subsCount);
+function buildEntityRoles(
+  districts: District[],
+  ontBoxes: OntBox[] = [],
+): Map<string, EntityRole> {
+  const roles = new Map<string, EntityRole>();
+  for (const d of districts) {
+    roles.set(d.olt.id, 'olt');
+    for (const tb of d.olt.transitBoxes) {
+      roles.set(tb.id, 'tb');
+      for (const ork of tb.orks) {
+        roles.set(ork.id, 'ork');
+        for (const sub of ork.subscribers) roles.set(sub.id, 'sub');
+      }
+    }
+  }
+  for (const b of ontBoxes) roles.set(b.id, 'box');
+  return roles;
+}
+
+function segBearing(a: [number, number], b: [number, number]): number {
+  return Math.atan2(b[1] - a[1], b[0] - a[0]);
+}
+
+function bearingsClose(a: number, b: number): boolean {
+  let d = Math.abs(a - b);
+  if (d > Math.PI) d = 2 * Math.PI - d;
+  return d < 0.35;
+}
+
+function segMidpoint(c: [[number, number], [number, number]]): [number, number] {
+  return [(c[0][0] + c[1][0]) / 2, (c[0][1] + c[1][1]) / 2];
 }
 
 function concatPaths(
@@ -130,6 +158,7 @@ export function consolidateCables(
    *  параллельные улицы; 12 м только сливает соседние OSRM-нити одной
    *  дороги. */
   gridM: number = DEFAULT_GRID_M,
+  ontBoxes: OntBox[] = [],
 ): { cables: Cable[]; joints: InlineJoint[] } {
   if (!districts || districts.length === 0) {
     return { cables, joints: [] };
@@ -159,6 +188,7 @@ export function consolidateCables(
   const nextCableId = () => `cable-g-${++cableSeq}`;
   const nextJointId = () => `J-${++jointSeq}`;
   const usedCableIds = new Set<string>();
+  const entityRoles = buildEntityRoles(districts, ontBoxes);
 
   for (const district of districts) {
     const olt = district.olt;
@@ -183,6 +213,17 @@ export function consolidateCables(
       nodeCoord.set(bK, b);
       const key = aK < bK ? `${aK}|${bK}` : `${bK}|${aK}`;
       let s = segments.get(key);
+      if (!s) {
+        const mid = segMidpoint([a, b]);
+        const bear = segBearing(a, b);
+        for (const cand of segments.values()) {
+          const cm = segMidpoint(cand.coords);
+          if (haversineM(mid[0], mid[1], cm[0], cm[1]) > gridM) continue;
+          if (!bearingsClose(bear, segBearing(cand.coords[0], cand.coords[1]))) continue;
+          s = cand;
+          break;
+        }
+      }
       if (!s) {
         s = {
           key,
@@ -319,12 +360,6 @@ export function consolidateCables(
       }
     }
 
-    // Размер кабеля: одна точка → ОК-4 (одиночный дроп).
-    // 2+ абонента через сегмент → минимум ОК-8 (общий магистральный с
-    // муфтой-разветвителем, а не два параллельных ОК-4).
-    const segCableType = (s: Segment): CableType =>
-      pickSharedCableType(s.subs.size);
-
     // Получить «соседа» (другой конец сегмента, не равный nodeKey).
     const otherEnd = (s: Segment, nodeKey: string): string =>
       s.fromKey === nodeKey ? s.toKey : s.fromKey;
@@ -344,7 +379,7 @@ export function consolidateCables(
       routed: boolean,
     ) => {
       if (coords.length < 2) return;
-      const type = pickSharedCableType(subsCount);
+      const type = pickSegmentCableType(subsCount, fromId, toId, entityRoles);
       outCables.push({
         id: nextCableId(),
         type,

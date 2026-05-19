@@ -532,8 +532,8 @@ export default function HomePage() {
           setHeatmapEnabled={setHeatmapEnabled}
           onExportPDF={onExportPDF}
           onPrintMap={onPrintMap}
-          onRerouteOSRM={() => net.rerouteWithOSRM(selectionPolygon)}
-          onReconsolidate={() => net.reconsolidate(selectionPolygon)}
+          onPass1={() => net.runPass1Osrm(selectionPolygon)}
+          onPass2={() => net.runPass2Consolidate(selectionPolygon)}
           osrmStatus={net.status}
           powerBudgets={net.powerBudgets}
           powerBudgetStats={net.powerBudgetStats}

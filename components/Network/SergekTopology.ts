@@ -16,7 +16,42 @@ export const CABLE_L1_BRANCH: CableType = 'ОК-4';
 /** ОРКСП → группа ONT (до 8 на ветке), 16 волокон. */
 export const CABLE_ORK_DISTRIBUTION: CableType = 'ОК-16';
 
-/** Жильность при слиянии трасс (2-й проход): не раздувать до ОК-48. */
+export type EntityRole = 'olt' | 'tb' | 'ork' | 'box' | 'sub' | 'joint' | 'other';
+
+function inferRole(id: string, roles: Map<string, EntityRole>): EntityRole {
+  const hit = roles.get(id);
+  if (hit) return hit;
+  if (id.startsWith('J-')) return 'joint';
+  if (id.startsWith('BOX-')) return 'box';
+  if (id.startsWith('ОРКСП-')) return 'ork';
+  if (id.startsWith('Муфта-')) return 'tb';
+  if (id.startsWith('OLT-')) return 'olt';
+  return 'other';
+}
+
+/** Жильность сегмента 2-го прохода с учётом ролей концов (не везде ОК-16). */
+export function pickSegmentCableType(
+  subsCount: number,
+  fromId: string,
+  toId: string,
+  roles: Map<string, EntityRole>,
+): CableType {
+  const from = inferRole(fromId, roles);
+  const to = inferRole(toId, roles);
+
+  if (from === 'olt' && to === 'tb') return CABLE_OLT_FEEDER;
+  if (from === 'tb' && to === 'ork') return CABLE_L1_BRANCH;
+  if (from === 'ork' && to === 'tb') return CABLE_L1_BRANCH;
+
+  if (subsCount <= 1) return 'ОК-4';
+  if (from === 'ork' || to === 'ork' || from === 'box' || to === 'box') {
+    return CABLE_ORK_DISTRIBUTION;
+  }
+  if (subsCount <= 8) return CABLE_ORK_DISTRIBUTION;
+  return CABLE_OLT_FEEDER;
+}
+
+/** @deprecated use pickSegmentCableType */
 export function pickSergekSharedCableType(subsCount: number): CableType {
   if (subsCount <= 1) return 'ОК-4';
   if (subsCount <= 8) return CABLE_ORK_DISTRIBUTION;
