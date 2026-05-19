@@ -6,6 +6,8 @@ import {
   exportKMZ,
   exportKMZPackage,
   downloadKMZSplitByType,
+  downloadKMZSplitByEntity,
+  downloadKMZSplitAll,
   DEFAULT_KMZ_LAYERS,
   type KmzExportLayers,
   type KmzPackageMode,
@@ -169,9 +171,19 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
     downloadBlob(blob, name);
   });
 
-  const handleKMZSplitFiles = () => runKmz('split', async () => {
+  const handleKMZSplitObjects = () => runKmz('split-obj', async () => {
+    const { districts: d, cables: c } = exportSet();
+    await downloadKMZSplitByEntity(d, c, kmzLayers, filePrefix);
+  });
+
+  const handleKMZSplitCables = () => runKmz('split-cab', async () => {
     const { districts: d, cables: c } = exportSet();
     await downloadKMZSplitByType(d, c, kmzLayers, filePrefix);
+  });
+
+  const handleKMZSplitAll = () => runKmz('split-all', async () => {
+    const { districts: d, cables: c } = exportSet();
+    await downloadKMZSplitAll(d, c, kmzLayers, filePrefix);
   });
 
   const cableRows: Row[] = CABLE_SIZES
@@ -299,15 +311,31 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
                 onClick={() => handleKMZZip('full-and-split')}
                 className="w-full py-2 px-2 bg-[#0d1b2a] hover:bg-[#1a2744] border border-[#1e3a5f] rounded-lg text-[#e2e8f0] disabled:opacity-50"
               >
-                {kmzBusy === 'zip' ? '…' : '📦 ZIP: общий + ОК-4.kmz, ОК-8.kmz…'}
+                {kmzBusy === 'zip' ? '…' : '📦 ZIP: общий + объекты + кабели'}
               </button>
               <button
                 type="button"
                 disabled={!!kmzBusy}
-                onClick={handleKMZSplitFiles}
+                onClick={handleKMZSplitObjects}
                 className="w-full py-2 px-2 bg-[#0d1b2a] hover:bg-[#1a2744] border border-[#1e3a5f] rounded-lg text-[#e2e8f0] disabled:opacity-50"
               >
-                {kmzBusy === 'split' ? '…' : '📂 Отдельные KMZ: ОК-4.kmz, ОК-8.kmz…'}
+                {kmzBusy === 'split-obj' ? '…' : '📂 OLT, муфты, ОРК, абоненты (отдельно)'}
+              </button>
+              <button
+                type="button"
+                disabled={!!kmzBusy}
+                onClick={handleKMZSplitCables}
+                className="w-full py-2 px-2 bg-[#0d1b2a] hover:bg-[#1a2744] border border-[#1e3a5f] rounded-lg text-[#e2e8f0] disabled:opacity-50"
+              >
+                {kmzBusy === 'split-cab' ? '…' : '📂 Кабели: ОК-4, ОК-8… (отдельно)'}
+              </button>
+              <button
+                type="button"
+                disabled={!!kmzBusy}
+                onClick={handleKMZSplitAll}
+                className="w-full py-2 px-2 bg-[#34d399]/10 hover:bg-[#34d399]/20 border border-[#34d399]/40 rounded-lg text-[#34d399] disabled:opacity-50"
+              >
+                {kmzBusy === 'split-all' ? '…' : '📥 Всё отдельно (объекты + кабели)'}
               </button>
             </div>
           </div>

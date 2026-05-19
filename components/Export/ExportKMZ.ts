@@ -270,6 +270,41 @@ function enabledCableTypes(layers: KmzExportLayers, only?: CableType[]): CableTy
   return base.filter((t) => only.includes(t));
 }
 
+function emptyCableLayers(): Record<CableType, boolean> {
+  return Object.fromEntries(CABLE_SIZES.map((t) => [t, false])) as Record<CableType, boolean>;
+}
+
+/** Только один слой объектов, без кабелей. */
+export function layersForEntityOnly(entity: KmzEntityLayer): KmzExportLayers {
+  return {
+    olt: entity === 'olt',
+    mufta: entity === 'mufta',
+    ork: entity === 'ork',
+    subscribers: entity === 'subscribers',
+    summary: entity === 'summary',
+    cables: emptyCableLayers(),
+  };
+}
+
+const ENTITY_EXPORT: Record<KmzEntityLayer, { filename: string; title: string }> = {
+  olt: { filename: 'olt', title: 'GPON — OLT — узлы связи' },
+  mufta: { filename: 'mufty', title: 'GPON — Муфты МТОК — общий' },
+  ork: { filename: 'ork-boksy', title: 'GPON — ОРК и боксы — общий' },
+  subscribers: { filename: 'abonenty', title: 'GPON — Абоненты — общий' },
+  summary: { filename: 'svodka-kabely', title: 'GPON — Сводка по кабелям' },
+};
+
+export function entityLayerHasContent(districts: District[], cables: Cable[], entity: KmzEntityLayer): boolean {
+  if (entity === 'olt') return districts.length > 0;
+  if (entity === 'mufta') return districts.some((d) => d.olt.transitBoxes.length > 0);
+  if (entity === 'ork') return districts.some((d) => d.olt.transitBoxes.some((tb) => tb.orks.length > 0));
+  if (entity === 'subscribers') return allSubscribers(districts).length > 0;
+  if (entity === 'summary') return cables.length > 0;
+  return false;
+}
+
+const ENTITY_LAYER_ORDER: KmzEntityLayer[] = ['olt', 'mufta', 'ork', 'subscribers', 'summary'];
+
 /** Собрать KML-документ по выбранным слоям. */
 export function buildKmlDocument(
   districts: District[],
@@ -476,17 +511,19 @@ export async function exportKMZ(
   return kmlToKmzBlob(kml);
 }
 
-/** Отдельный KMZ только с одним типом кабеля (+ выбранные объекты). */
+/** Отдельный KMZ только с одним типом кабеля (без OLT/муфт/ОРК). */
 export async function exportKMZForCableType(
   districts: District[],
   cables: Cable[],
   type: CableType,
-  layers: KmzExportLayers,
 ): Promise<Blob> {
   const cableLayers: KmzExportLayers = {
-    ...layers,
+    olt: false,
+    mufta: false,
+    ork: false,
+    subscribers: false,
     summary: false,
-    cables: { 'ОК-4': false, 'ОК-8': false, 'ОК-12': false, 'ОК-16': false, 'ОК-24': false, 'ОК-32': false, 'ОК-48': false, 'ОК-96': false, [type]: true },
+    cables: { ...emptyCableLayers(), [type]: true },
   };
   return exportKMZ(districts, cables, {
     layers: cableLayers,
@@ -496,9 +533,28 @@ export async function exportKMZForCableType(
   });
 }
 
+/** Отдельный KMZ только с одним слоём объектов (OLT / муфты / ОРК / абоненты / сводка). */
+export async function exportKMZForEntityLayer(
+  districts: District[],
+  cables: Cable[],
+  entity: KmzEntityLayer,
+): Promise<Blob> {
+  const meta = ENTITY_EXPORT[entity];
+  return exportKMZ(districts, cables, {
+    layers: layersForEntityOnly(entity),
+    documentName: meta.title,
+    flatCableFolders: true,
+  });
+}
+
 export type KmzPackageMode = 'full-only' | 'split-by-type' | 'full-and-split';
 
-/** ZIP: общий KMZ + отдельный файл на каждый включённый тип ОК. */
+async function addKmzToZip(zip: { file: (name: string, data: ArrayBuffer) => void }, path: string, kml: string) {
+  const buf = await (await kmlToKmzBlob(kml)).arrayBuffer();
+  zip.file(path, buf);
+}
+
+/** ZIP: общий KMZ + отдельные файлы по объектам и по типам ОК. */
 export async function exportKMZPackage(
   districts: District[],
   cables: Cable[],
@@ -511,27 +567,63 @@ export async function exportKMZPackage(
 
   if (mode === 'full-only' || mode === 'full-and-split') {
     const fullKml = buildKmlDocument(districts, cables, { layers, flatCableFolders: true });
-    const fullBuf = await (await kmlToKmzBlob(fullKml)).arrayBuffer();
-    zip.file('gpon-network.kmz', fullBuf);
+    await addKmzToZip(zip, 'gpon-network.kmz', fullKml);
   }
 
   if (mode === 'split-by-type' || mode === 'full-and-split') {
+    for (const entity of ENTITY_LAYER_ORDER) {
+      if (!layers[entity]) continue;
+      if (!entityLayerHasContent(districts, cables, entity)) continue;
+      const kml = buildKmlDocument(districts, cables, {
+        layers: layersForEntityOnly(entity),
+        documentName: ENTITY_EXPORT[entity].title,
+        flatCableFolders: true,
+      });
+      await addKmzToZip(zip, `objects/gpon-${ENTITY_EXPORT[entity].filename}.kmz`, kml);
+    }
     for (const type of types) {
       const kml = buildKmlDocument(districts, cables, {
-        layers,
+        layers: {
+          olt: false, mufta: false, ork: false, subscribers: false, summary: false,
+          cables: { ...emptyCableLayers(), [type]: true },
+        },
         onlyCableTypes: [type],
         documentName: `GPON — ${type}`,
         flatCableFolders: true,
       });
-      const buf = await (await kmlToKmzBlob(kml)).arrayBuffer();
-      zip.file(`cables/gpon-${type.toLowerCase()}.kmz`, buf);
+      await addKmzToZip(zip, `cables/gpon-${type.toLowerCase()}.kmz`, kml);
     }
   }
 
   return zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 9 } });
 }
 
-/** Скачать несколько KMZ подряд (отдельные файлы в браузере). */
+async function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+  await new Promise((r) => setTimeout(r, 280));
+}
+
+/** Отдельные KMZ: OLT, муфты, ОРК, абоненты, сводка. */
+export async function downloadKMZSplitByEntity(
+  districts: District[],
+  cables: Cable[],
+  layers: KmzExportLayers,
+  filenamePrefix: string,
+): Promise<void> {
+  for (const entity of ENTITY_LAYER_ORDER) {
+    if (!layers[entity]) continue;
+    if (!entityLayerHasContent(districts, cables, entity)) continue;
+    const blob = await exportKMZForEntityLayer(districts, cables, entity);
+    await triggerDownload(blob, `${filenamePrefix}-${ENTITY_EXPORT[entity].filename}.kmz`);
+  }
+}
+
+/** Отдельные KMZ по типам ОК. */
 export async function downloadKMZSplitByType(
   districts: District[],
   cables: Cable[],
@@ -540,13 +632,18 @@ export async function downloadKMZSplitByType(
 ): Promise<void> {
   const types = enabledCableTypes(layers).filter((t) => cables.some((c) => c.type === t));
   for (const type of types) {
-    const blob = await exportKMZForCableType(districts, cables, type, layers);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${filenamePrefix}-${type}.kmz`;
-    a.click();
-    URL.revokeObjectURL(url);
-    await new Promise((r) => setTimeout(r, 300));
+    const blob = await exportKMZForCableType(districts, cables, type);
+    await triggerDownload(blob, `${filenamePrefix}-${type.toLowerCase()}.kmz`);
   }
+}
+
+/** Все отдельные файлы: объекты + кабели. */
+export async function downloadKMZSplitAll(
+  districts: District[],
+  cables: Cable[],
+  layers: KmzExportLayers,
+  filenamePrefix: string,
+): Promise<void> {
+  await downloadKMZSplitByEntity(districts, cables, layers, filenamePrefix);
+  await downloadKMZSplitByType(districts, cables, layers, filenamePrefix);
 }
