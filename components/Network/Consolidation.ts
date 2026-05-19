@@ -11,47 +11,49 @@ export interface InlineJoint {
   branchCount: number;
 }
 
-// Шаг квантования координат: точки ближе ≈40 м считаются одним узлом графа.
-// Подняли с 25 до 40, потому что после OSRM-snap-to-road и Voronoi-split на
-// несколько OLT на одной улице соседние трассы расходятся по road-нодам в
-// пределах 10–30 м. Грид 25 м не сливал их → параллельные кабели на одной
-// дороге. 40 м объединяет такие соседние нити в один сегмент.
-const GRID_M = 40;
+// Шаг квантования координат: точки ближе чем corridorM считаются одним
+// узлом графа.  По умолчанию 12 м — достаточно для слияния соседних
+// OSRM-нитей по одной улице (после snap-to-road OSRM возвращает узлы
+// road-graph с разбросом ~5-15 м), но не сольёт две параллельные улицы.
+// Меняется через settings.mergeCorridorM (см. consolidateCables).
+const DEFAULT_GRID_M = 12;
 
-function quantize(lat: number, lon: number): string {
-  const fLat = 1 / (GRID_M / 111320);
-  const fLon = 1 / (GRID_M / 81400);
-  return `${Math.round(lat * fLat)}_${Math.round(lon * fLon)}`;
+function makeQuantize(gridM: number) {
+  const fLat = 1 / (gridM / 111320);
+  const fLon = 1 / (gridM / 81400);
+  return (lat: number, lon: number) =>
+    `${Math.round(lat * fLat)}_${Math.round(lon * fLon)}`;
 }
 
-// Снэп координаты к центру сетки. Используем для приведения всех
-// кабельных вершин к общему набору узлов перед консолидацией.
-function snapCoord(lat: number, lon: number): [number, number] {
-  const fLat = 1 / (GRID_M / 111320);
-  const fLon = 1 / (GRID_M / 81400);
-  return [Math.round(lat * fLat) / fLat, Math.round(lon * fLon) / fLon];
+function makeSnap(gridM: number) {
+  const fLat = 1 / (gridM / 111320);
+  const fLon = 1 / (gridM / 81400);
+  return (lat: number, lon: number): [number, number] =>
+    [Math.round(lat * fLat) / fLat, Math.round(lon * fLon) / fLon];
 }
 
-// Снэпает все координаты кабеля к сетке (кроме первой и последней —
-// они остаются точными, чтобы кабель начинался/заканчивался у entity).
-function snapCablePath(coords: [number, number][]): [number, number][] {
-  if (coords.length < 2) return coords;
-  const out: [number, number][] = [coords[0]];
-  let lastKey = quantize(coords[0][0], coords[0][1]);
-  for (let i = 1; i < coords.length - 1; i++) {
-    const [la, lo] = coords[i];
-    const snapped = snapCoord(la, lo);
-    const k = quantize(snapped[0], snapped[1]);
-    if (k !== lastKey) {
-      out.push(snapped);
-      lastKey = k;
+function makeSnapCablePath(gridM: number) {
+  const quantize = makeQuantize(gridM);
+  const snapCoord = makeSnap(gridM);
+  return (coords: [number, number][]): [number, number][] => {
+    if (coords.length < 2) return coords;
+    const out: [number, number][] = [coords[0]];
+    let lastKey = quantize(coords[0][0], coords[0][1]);
+    for (let i = 1; i < coords.length - 1; i++) {
+      const [la, lo] = coords[i];
+      const snapped = snapCoord(la, lo);
+      const k = quantize(snapped[0], snapped[1]);
+      if (k !== lastKey) {
+        out.push(snapped);
+        lastKey = k;
+      }
     }
-  }
-  const last = coords[coords.length - 1];
-  const lastK = quantize(last[0], last[1]);
-  if (lastK !== lastKey) out.push(last);
-  else out[out.length - 1] = last;
-  return out;
+    const last = coords[coords.length - 1];
+    const lastK = quantize(last[0], last[1]);
+    if (lastK !== lastKey) out.push(last);
+    else out[out.length - 1] = last;
+    return out;
+  };
 }
 
 function pathLength(coords: [number, number][]): number {
@@ -98,10 +100,19 @@ function pickSharedCableType(subsCount: number): CableType {
 export function consolidateCables(
   cables: Cable[],
   districts?: District[],
+  /** Корпус слияния (м).  По умолчанию 12 — настраивается через
+   *  settings.mergeCorridorM.  Использовался жёстко 40 → слипал две
+   *  параллельные улицы; 12 м только сливает соседние OSRM-нити одной
+   *  дороги. */
+  gridM: number = DEFAULT_GRID_M,
 ): { cables: Cable[]; joints: InlineJoint[] } {
   if (!districts || districts.length === 0) {
     return { cables, joints: [] };
   }
+
+  // Per-call quantize / snap, привязанные к выбранному коридору.
+  const quantize = makeQuantize(gridM);
+  const snapCablePath = makeSnapCablePath(gridM);
 
   // Снэпаем промежуточные координаты всех кабелей к общему гриду, чтобы
   // OSRM-маршруты по одной дороге сошлись к одинаковым узлам.

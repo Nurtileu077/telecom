@@ -1,3 +1,32 @@
+// Camera classification for Sergek-cameras projects.
+//   apk-lu          — ЛУ (линейный участок), baseline + скорость, ≥26 Мбит/с
+//   apk-intersection — Перекрёсток (stop line + baseline + …), ≥78 Мбит/с
+//   ovn             — ОВН (общественное видеонаблюдение, оффлайн), ≥5 Мбит/с
+export type CameraType = 'apk-lu' | 'apk-intersection' | 'ovn';
+
+export const CAMERA_MIN_SPEED_MBPS: Record<CameraType, number> = {
+  'apk-lu': 26,
+  'apk-intersection': 78,
+  'ovn': 5,
+};
+
+export const CAMERA_TYPE_LABEL: Record<CameraType, string> = {
+  'apk-lu': 'АПК · ЛУ',
+  'apk-intersection': 'АПК · Перекрёсток',
+  'ovn': 'ОВН',
+};
+
+// Pole-mounted box at every camera ("Бокс ОНТ" в терминологии вендора).
+// Содержит ONT, входной ОК-4 и пробросы дальше по цепочке камер.
+// Coords совпадают с координатами камеры — фактически бокс на том же столбе.
+export interface OntBox {
+  id: string;
+  lat: number;
+  lon: number;
+  subscriberId: string;
+  orkspId: string;
+}
+
 export interface Subscriber {
   id: string;
   lat: number;
@@ -6,6 +35,10 @@ export interface Subscriber {
   district: string;
   orkId?: string;
   fibers: { working: number; spare: number };
+  // Sergek-domain: тип камеры и опциональная минимальная скорость.
+  // Оставлены опциональными — старые сейвы без полей продолжают грузиться.
+  cameraType?: CameraType;
+  minSpeedMbps?: number;
 }
 
 export interface ORK {
@@ -124,6 +157,9 @@ export interface Project {
   districts: District[];
   cables: Cable[];
   joints?: InlineJoint[];
+  // Боксы (ОНТ) у каждой камеры — отдельный слой, не сущность в дереве OLT.
+  // Координаты совпадают с камерой; ссылка на abrendid + ОРКСП наверху.
+  ontBoxes?: OntBox[];
   annotations: MapAnnotation[];
   importHistory: ImportRecord[];
   settings: ProjectSettings;
@@ -171,6 +207,18 @@ export interface ProjectSettings {
   cableReserve: number;
   useOSRM: boolean;
   osrmDelay: number;
+  // ── Sergek-domain settings ─────────────────────────────────────────
+  // L1-сплиттер по умолчанию на муфте: 1:4 (→ 4 ОРКСП с L2 1:16 = 64
+  // камер) или 1:8 (→ 8 ОРКСП с L2 1:8 = 64).  Произведение L1×L2 всегда
+  // 64 — это жёсткий лимит на порт OLT.
+  l1SplitterDefault?: '1:4' | '1:8';
+  // Коридор слияния параллельных кабелей на одной дороге, метры.
+  // По умолчанию 12 м: достаточно чтобы соседние OSRM-нити слились,
+  // но не сольёт две параллельные улицы (как было при 40 м).
+  mergeCorridorM?: number;
+  // Жёсткий лимит камер на один порт OLT.  При превышении группа
+  // разбивается на дополнительные порты / OLT.
+  maxSubsPerOltPort?: number;
 }
 
 export interface Materials {
@@ -264,6 +312,9 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
   cableReserve: 1.10,
   useOSRM: true,
   osrmDelay: 100,
+  l1SplitterDefault: '1:4',
+  mergeCorridorM: 12,
+  maxSubsPerOltPort: 64,
 };
 
 export interface PriceCatalog {

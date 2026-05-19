@@ -1,75 +1,53 @@
 import {
   Subscriber, ORK, TransitBox, OLT, Cable, District, ProjectSettings, DISTRICT_COLORS,
-  CABLE_FIBERS, selectCableType, CableType,
+  CABLE_FIBERS, CABLE_SIZES, CableType, SplitterRatio, OntBox,
 } from '@/types/network';
 import { kmeans, centroid, haversineM } from './KMeans';
 
 let cableIdCounter = 0;
 function newCableId() { return `cable-${++cableIdCounter}`; }
 
-// GPON fiber requirements (per logical hop):
-//   OLT → TB:  one fiber per ORK served (carries pre-splitter signal) + spare
-//   TB  → ORK: one fiber (входное волокно для L2-сплиттера) + 1 резерв = ОК-4 хватает всегда
-//   ORK → sub: один drop (ОК-4) до абонента; реально работают 1–2 волокна
-function trunkCableType(orkCount: number): CableType {
-  // 1 fiber per ORK + 100% spare, минимум ОК-4
-  const needed = Math.max(2, orkCount * 2);
-  return selectCableType(orkCount, 1) === 'ОК-4' && needed <= 4 ? 'ОК-4' : selectCableType(orkCount, 1);
+// Sergek GPON cascade:
+//   OLT (1 порт = 64 камеры)
+//   └─ ОМСП-муфта (L1: 1:4 или 1:8)
+//        └─ ОРКСП × L1-ratio (L2 такой что L1×L2 = 64)
+//             └─ ОНТ-бокс на столбе у каждой камеры (цепочкой по дороге)
+//                  └─ Камера
+//
+// Топология ДЕРЕВО, не звезда: камеры одного ОРКСП соединены цепочкой
+// бокс→бокс, а не каждая отдельным дропом от шкафа.
+
+const SPLITTER_RATIO_N: Record<SplitterRatio, number> = {
+  '1:2': 2, '1:4': 4, '1:8': 8, '1:16': 16, '1:32': 32, '1:64': 64,
+};
+
+// При L1×L2=64 выбор L2 однозначно следует из L1.
+function l2For(l1: SplitterRatio): SplitterRatio {
+  const total = 64;
+  const n = total / SPLITTER_RATIO_N[l1];
+  if (n === 2) return '1:2';
+  if (n === 4) return '1:4';
+  if (n === 8) return '1:8';
+  if (n === 16) return '1:16';
+  if (n === 32) return '1:32';
+  return '1:64';
 }
 
-// Choose ORK position on the boundary closest to the parent TB (so trunk
-// terminates at the road edge rather than deep in the cluster).
-function pickOrkAnchor(subs: Subscriber[]): { lat: number; lon: number } {
-  if (subs.length === 1) return { lat: subs[0].lat, lon: subs[0].lon };
-  // centroid is already a fine logical center; just return it
-  return centroid(subs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id })));
-}
-
-// Place TB at the median position of its ORKs projected toward the OLT axis.
-// This shifts the TB toward the magistral side, so OSRM doesn't have to make
-// long detours from a deep-in-cluster centroid back to the OLT road.
-function pickTbAnchor(
-  orks: { lat: number; lon: number }[],
-  oltLat: number, oltLon: number,
-): { lat: number; lon: number } {
-  if (orks.length === 0) return { lat: oltLat, lon: oltLon };
-  if (orks.length === 1) {
-    // Place TB ~30% of the way from ORK toward OLT, so trunk has somewhere to
-    // join and the тб-ORK link stays short.
-    return {
-      lat: orks[0].lat + (oltLat - orks[0].lat) * 0.30,
-      lon: orks[0].lon + (oltLon - orks[0].lon) * 0.30,
-    };
+// Минимальный стандартный кабель под N×2 волокон для участка, через который
+// проходит N камер ниже по течению.  1 камера → ОК-4 (drop); ≥2 — минимум
+// ОК-8 чтобы не плодить параллельные ОК-4 на одной улице.
+function cableForCount(downstreamCount: number): CableType {
+  if (downstreamCount <= 1) return 'ОК-4';
+  const fibers = Math.max(8, downstreamCount * 2);
+  for (const t of CABLE_SIZES) {
+    if (t === 'ОК-96') continue;
+    if (CABLE_FIBERS[t] >= fibers) return t;
   }
-  // Take ORK closest to OLT — that's the natural junction point on the trunk.
-  let best = orks[0];
-  let bestD = Infinity;
-  for (const o of orks) {
-    const d = haversineM(o.lat, o.lon, oltLat, oltLon);
-    if (d < bestD) { bestD = d; best = o; }
-  }
-  // Pull TB slightly off the closest ORK toward OLT so it sits between them
-  return {
-    lat: best.lat + (oltLat - best.lat) * 0.15,
-    lon: best.lon + (oltLon - best.lon) * 0.15,
-  };
+  return 'ОК-48';
 }
 
-// One district can have many OLTs.  When the user supplies N coords for a
-// district, subscribers are partitioned by nearest OLT (Voronoi) and each
-// partition becomes its own sub-network ("Туркестан-1", "Туркестан-2"…).
 export type OltLocationMap = Record<string, Array<{ lat: number; lon: number }>>;
 
-// Sanitize a district name into an ID-safe slug.  Critical: must preserve
-// uniqueness across districts — sub-districts after Voronoi split are named
-// like "Sheet1-10", "Sheet1-11", "Sheet1-12" and the old slice(0, 8) collapsed
-// all three to "Sheet1-1", producing duplicate OLT/TB/ORK ids.  When the
-// consolidation engine looked up cables by "${olt.id}::${tb.id}", it matched
-// across districts and emitted phantom 10+ km cables through the entire city.
-//
-// Now we keep the full name (just strip whitespace and a small list of
-// punctuation that's awkward in ids).  Cyrillic stays — Russian district
-// names need it; the rest of the codebase already handles unicode ids.
 function slugForId(districtName: string): string {
   return districtName
     .trim()
@@ -77,7 +55,34 @@ function slugForId(districtName: string): string {
     .replace(/[^\p{L}\p{N}_-]/gu, '');
 }
 
+// Greedy nearest-neighbour путь: начинаем от точки старта, на каждом шаге
+// идём к ближайшей непосещённой камере.  Это аппроксимация trekking-вдоль-
+// дороги без учёта геометрии (OSRM далее сгладит, но порядок камер уже
+// будет линейным, а не «звезда от шкафа»).
+function greedyChain(
+  start: { lat: number; lon: number },
+  pts: Subscriber[],
+): Subscriber[] {
+  const remaining = [...pts];
+  const out: Subscriber[] = [];
+  let cur = start;
+  while (remaining.length > 0) {
+    let bestI = 0;
+    let bestD = Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const d = haversineM(cur.lat, cur.lon, remaining[i].lat, remaining[i].lon);
+      if (d < bestD) { bestD = d; bestI = i; }
+    }
+    const next = remaining.splice(bestI, 1)[0];
+    out.push(next);
+    cur = next;
+  }
+  return out;
+}
+
 // Build the network rooted at a single OLT for one (sub-)district.
+// Subscribers are partitioned into groups of ≤ maxSubsPerOltPort (64 default);
+// each group gets its own L1-муфта + N×ОРКСП cascade.
 function buildSingleOlt(
   districtName: string,
   color: string,
@@ -86,6 +91,7 @@ function buildSingleOlt(
   oltSuffix: string,
   settings: ProjectSettings,
   cables: Cable[],
+  ontBoxes: OntBox[],
 ): District {
   const slug = slugForId(districtName);
   const olt: OLT = {
@@ -96,106 +102,145 @@ function buildSingleOlt(
     model: 'Huawei MA5800-X7',
     capacity: 64,
     transitBoxes: [],
-    l1Splitter: '1:4',
+    l1Splitter: settings.l1SplitterDefault ?? '1:4',
   };
 
-  // Cluster subscribers into ORKs
-  const kOrk = Math.max(1, Math.ceil(subs.length / settings.maxPerORK));
-  const { clusters: orkClusters } = kmeans(
-    subs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id })),
-    kOrk,
-  );
+  const maxPerPort = settings.maxSubsPerOltPort ?? 64;
+  const L1: SplitterRatio = settings.l1SplitterDefault ?? '1:4';
+  const L2: SplitterRatio = l2For(L1);
+  const orkspPerPort = SPLITTER_RATIO_N[L1];      // 4 или 8
+  const subsPerOrksp = SPLITTER_RATIO_N[L2];      // 16 или 8
 
-  const orks: ORK[] = [];
-  const updatedSubs: Subscriber[] = [];
-
-  for (let i = 0; i < orkClusters.length; i++) {
-    const cluster = orkClusters[i];
-    if (cluster.length === 0) continue;
-    const orkSubsRaw: Subscriber[] = cluster
-      .map((p) => subs.find((s) => s.id === p.id))
-      .filter(Boolean) as Subscriber[];
-    const orkAnchor = pickOrkAnchor(orkSubsRaw);
-    const orkId = `ORKSP-${slug}${oltSuffix}-${i + 1}`;
-    const splitter: '1:4' | '1:8' | '1:16' =
-      cluster.length <= 4 ? '1:4' : cluster.length <= 8 ? '1:8' : '1:16';
-
-    const updatedOrkSubs = orkSubsRaw.map((s) => ({ ...s, orkId }));
-    updatedSubs.push(...updatedOrkSubs);
-
-    const orkSubCount = updatedOrkSubs.length;
-    orks.push({
-      id: orkId,
-      lat: orkAnchor.lat,
-      lon: orkAnchor.lon,
-      district: districtName,
-      splitter,
-      tbId: '',
-      subscribers: updatedOrkSubs,
-      cableType: 'ОК-4',
-      boxType: orkSubCount <= 4 ? 'Бокс-8' : orkSubCount <= 8 ? 'Бокс-16' : 'ОРКСп-16',
-    });
+  // ── 1. Разбиваем абонентов на порты OLT по ≤64 ──
+  // kmeans по геопозиции — порты идут по компактным группам, не случайным.
+  const portCount = Math.max(1, Math.ceil(subs.length / maxPerPort));
+  const portGroups: Subscriber[][] = [];
+  if (portCount === 1) {
+    portGroups.push(subs);
+  } else {
+    const { clusters } = kmeans(
+      subs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id })),
+      portCount,
+    );
+    for (const cluster of clusters) {
+      const group = cluster
+        .map((p) => subs.find((s) => s.id === p.id))
+        .filter(Boolean) as Subscriber[];
+      if (group.length > 0) portGroups.push(group);
+    }
   }
 
-  // Cluster ORKs into Transit Boxes
-  const kTB = Math.max(1, Math.ceil(orks.length / settings.maxORKperTB));
-  const { clusters: tbClusters } = kmeans(
-    orks.map((o) => ({ lat: o.lat, lon: o.lon, id: o.id })),
-    kTB,
-  );
-
   const transitBoxes: TransitBox[] = [];
+  const allUpdatedSubs: Subscriber[] = [];
 
-  for (let i = 0; i < tbClusters.length; i++) {
-    const cluster = tbClusters[i];
-    if (cluster.length === 0) continue;
-    const tbId = `Муфта-${slug}${oltSuffix}-${i + 1}`;
+  for (let portIdx = 0; portIdx < portGroups.length; portIdx++) {
+    const portSubs = portGroups[portIdx];
+    if (portSubs.length === 0) continue;
 
-    const tbOrks = cluster
-      .map((p) => orks.find((o) => o.id === p.id))
-      .filter(Boolean) as ORK[];
-
-    const updatedTBOrks = tbOrks.map((o) => ({ ...o, tbId }));
-    for (const o of updatedTBOrks) {
-      const idx = orks.findIndex((x) => x.id === o.id);
-      if (idx >= 0) orks[idx] = o;
+    // ── 2. Муфта L1 — в точке, ближайшей к OLT по обходу группы ──
+    // Берём камеру группы, ближайшую к OLT, и муфту ставим вдоль линии
+    // OLT→первая камера: на 15% пути от первой камеры к OLT.
+    let nearest = portSubs[0];
+    let nearestD = haversineM(nearest.lat, nearest.lon, olt.lat, olt.lon);
+    for (const s of portSubs) {
+      const d = haversineM(s.lat, s.lon, olt.lat, olt.lon);
+      if (d < nearestD) { nearestD = d; nearest = s; }
     }
+    const tbLat = nearest.lat + (olt.lat - nearest.lat) * 0.15;
+    const tbLon = nearest.lon + (olt.lon - nearest.lon) * 0.15;
 
-    const tbAnchor = pickTbAnchor(
-      updatedTBOrks.map((o) => ({ lat: o.lat, lon: o.lon })),
-      olt.lat, olt.lon,
-    );
+    const tbId = `Муфта-${slug}${oltSuffix}-${portIdx + 1}`;
 
-    const trunkType = trunkCableType(updatedTBOrks.length);
-    const tbToOrkType: CableType = 'ОК-4';
+    // ── 3. Разбиваем камеры порта на orkspPerPort групп через kmeans ──
+    const orkClusterCount = Math.min(orkspPerPort, Math.max(1, Math.ceil(portSubs.length / subsPerOrksp)));
+    const { clusters: orkClusters } = orkClusterCount === 1
+      ? { clusters: [portSubs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id }))] }
+      : kmeans(portSubs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id })), orkClusterCount);
 
-    const tb: TransitBox = {
-      id: tbId,
-      lat: tbAnchor.lat,
-      lon: tbAnchor.lon,
-      district: districtName,
-      oltId: olt.id,
-      orks: updatedTBOrks,
-      inCable: trunkType,
-      outCable: tbToOrkType,
-      muftaType: 'МТОК-96А',
-    };
-    transitBoxes.push(tb);
+    const orks: ORK[] = [];
 
-    cables.push(makeCable(trunkType, olt.id, tbId, [
-      [olt.lat, olt.lon], [tb.lat, tb.lon],
-    ]));
+    for (let orkIdx = 0; orkIdx < orkClusters.length; orkIdx++) {
+      const cluster = orkClusters[orkIdx];
+      if (cluster.length === 0) continue;
+      const orkSubsRaw: Subscriber[] = cluster
+        .map((p) => portSubs.find((s) => s.id === p.id))
+        .filter(Boolean) as Subscriber[];
 
-    for (const ork of updatedTBOrks) {
-      cables.push(makeCable(tbToOrkType, tbId, ork.id, [
-        [tb.lat, tb.lon], [ork.lat, ork.lon],
+      // ── 4. Сортируем камеры жадным NN-обходом от муфты ──
+      // ОРКСП поставим на первую камеру цепочки (ближайшую к муфте по NN).
+      const chain = greedyChain({ lat: tbLat, lon: tbLon }, orkSubsRaw);
+      if (chain.length === 0) continue;
+      const orkAnchor = { lat: chain[0].lat, lon: chain[0].lon };
+
+      const orkId = `ОРКСП-${slug}${oltSuffix}-${portIdx + 1}-${orkIdx + 1}`;
+      const updatedChain = chain.map((s) => ({ ...s, orkId }));
+
+      orks.push({
+        id: orkId,
+        lat: orkAnchor.lat,
+        lon: orkAnchor.lon,
+        district: districtName,
+        splitter: L2,
+        tbId,
+        subscribers: updatedChain,
+        cableType: 'ОК-4',
+        boxType: subsPerOrksp >= 16 ? 'ОРКСп-16' : 'Бокс-16',
+      });
+      allUpdatedSubs.push(...updatedChain);
+
+      // ── 5. Кабель Муфта → ОРКСП (несёт все камеры этой ветки) ──
+      const orkTrunkType = cableForCount(updatedChain.length);
+      cables.push(makeCable(orkTrunkType, tbId, orkId, [
+        [tbLat, tbLon], [orkAnchor.lat, orkAnchor.lon],
       ]));
-      for (const sub of ork.subscribers) {
-        cables.push(makeCable('ОК-4', ork.id, sub.id, [
-          [ork.lat, ork.lon], [sub.lat, sub.lon],
-        ]));
+
+      // ── 6. Цепочка ОНТ-бокс→ОНТ-бокс вдоль камер ──
+      // На каждой камере — свой бокс (тех. сущность OntBox).
+      // Кабель между боксами несёт "вниз по течению" объём.
+      for (let i = 0; i < updatedChain.length; i++) {
+        const sub = updatedChain[i];
+        const boxId = `BOX-${slug}${oltSuffix}-${portIdx + 1}-${orkIdx + 1}-${i + 1}`;
+        ontBoxes.push({
+          id: boxId,
+          lat: sub.lat,
+          lon: sub.lon,
+          subscriberId: sub.id,
+          orkspId: orkId,
+        });
+
+        if (i === 0) {
+          // Первый бокс ко-локализован с ОРКСП — кабель ОРКСП→box несёт всю ветку.
+          cables.push(makeCable(orkTrunkType, orkId, boxId, [
+            [orkAnchor.lat, orkAnchor.lon], [sub.lat, sub.lon],
+          ]));
+        } else {
+          // Транзит box[i-1] → box[i]: камер начиная с i.
+          const prevSub = updatedChain[i - 1];
+          const prevBoxId = `BOX-${slug}${oltSuffix}-${portIdx + 1}-${orkIdx + 1}-${i}`;
+          const transitType = cableForCount(updatedChain.length - i);
+          cables.push(makeCable(transitType, prevBoxId, boxId, [
+            [prevSub.lat, prevSub.lon], [sub.lat, sub.lon],
+          ]));
+        }
       }
     }
+
+    transitBoxes.push({
+      id: tbId,
+      lat: tbLat,
+      lon: tbLon,
+      district: districtName,
+      oltId: olt.id,
+      orks,
+      inCable: cableForCount(portSubs.length),
+      outCable: 'ОК-4',
+      muftaType: 'МТОК-96А',
+    });
+
+    // ── 7. Магистральный кабель OLT → Муфта L1 (несёт все камеры порта) ──
+    cables.push(makeCable(cableForCount(portSubs.length), olt.id, tbId, [
+      [olt.lat, olt.lon], [tbLat, tbLon],
+    ]));
   }
 
   olt.transitBoxes = transitBoxes;
@@ -204,7 +249,7 @@ function buildSingleOlt(
     name: districtName,
     color,
     olt,
-    subscribers: updatedSubs,
+    subscribers: allUpdatedSubs,
   };
 }
 
@@ -212,7 +257,7 @@ export function buildNetwork(
   subscribers: Subscriber[],
   settings: ProjectSettings,
   oltLocations: OltLocationMap = {},
-): { districts: District[]; cables: Cable[] } {
+): { districts: District[]; cables: Cable[]; ontBoxes: OntBox[] } {
   cableIdCounter = 0;
 
   const byDistrict = new Map<string, Subscriber[]>();
@@ -223,6 +268,7 @@ export function buildNetwork(
 
   const districts: District[] = [];
   const cables: Cable[] = [];
+  const ontBoxes: OntBox[] = [];
   let colorIdx = 0;
 
   for (const [districtName, subs] of byDistrict.entries()) {
@@ -231,16 +277,13 @@ export function buildNetwork(
     colorIdx++;
 
     if (overrides.length <= 1) {
-      // Single OLT (override or auto-centroid). Same as before.
       const oltPos = overrides[0]
         ?? centroid(subs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id })));
-      districts.push(buildSingleOlt(districtName, baseColor, subs, oltPos, '', settings, cables));
+      districts.push(buildSingleOlt(districtName, baseColor, subs, oltPos, '', settings, cables, ontBoxes));
       continue;
     }
 
-    // Multiple OLTs: assign each subscriber to the nearest OLT (Voronoi),
-    // then build each partition as its own sub-network. Sub-districts get a
-    // numeric suffix so IDs stay unique.
+    // Multiple OLTs: Voronoi → sub-districts
     const groups: Subscriber[][] = overrides.map(() => []);
     for (const s of subs) {
       let best = 0;
@@ -265,12 +308,13 @@ export function buildNetwork(
         '',
         settings,
         cables,
+        ontBoxes,
       ));
     }
     colorIdx += overrides.length - 1;
   }
 
-  return { districts, cables };
+  return { districts, cables, ontBoxes };
 }
 
 function makeCable(

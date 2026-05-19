@@ -4,7 +4,7 @@ import {
   District, Cable, Subscriber, ProjectSettings, Materials, LayerVisibility,
   DEFAULT_SETTINGS, Project, MapAnnotation, ImportRecord, ValidationIssue,
   PriceCatalog, DEFAULT_PRICES, InlineJoint, OLT, TransitBox, ORK, CABLE_FIBERS, DISTRICT_COLORS,
-  ProjectStatus, ProjectSnapshot,
+  ProjectStatus, ProjectSnapshot, OntBox,
 } from '@/types/network';
 import { buildNetwork, OltLocationMap } from '@/components/Network/AutoBuild';
 import { calculateMaterials, validateNetwork } from '@/components/Network/MaterialCalc';
@@ -59,6 +59,7 @@ export function useNetwork() {
   const [districts, setDistricts] = useState<District[]>([]);
   const [cables, setCables] = useState<Cable[]>([]);
   const [joints, setJoints] = useState<InlineJoint[]>([]);
+  const [ontBoxes, setOntBoxes] = useState<OntBox[]>([]);
   const [annotations, setAnnotations] = useState<MapAnnotation[]>([]);
   const [importHistory, setImportHistory] = useState<ImportRecord[]>([]);
   const [allSubscribers, setAllSubscribers] = useState<Subscriber[]>([]);
@@ -259,7 +260,7 @@ export function useNetwork() {
 
     try {
       setStatus('clustering');
-      let { districts: newDistricts, cables: newCables } = buildNetwork(subs, settings, effectiveOlts);
+      let { districts: newDistricts, cables: newCables, ontBoxes: newOntBoxes } = buildNetwork(subs, settings, effectiveOlts);
 
       // Snap OLT/TB/ORK positions to the nearest road via OSRM nearest. Without
       // this they end up at k-means centroids — often on a roof or in a yard —
@@ -348,7 +349,7 @@ export function useNetwork() {
 
       // Глобальная консолидация: одна дорога — один кабель, размер по числу
       // абонентов, муфты в точках расхождения.
-      const { cables: consolidated, joints: newJoints } = consolidateCables(finalCables, newDistricts);
+      const { cables: consolidated, joints: newJoints } = consolidateCables(finalCables, newDistricts, settings.mergeCorridorM);
       finalCables = consolidated;
 
       setStatus('calculating');
@@ -357,6 +358,7 @@ export function useNetwork() {
 
       setCables(finalCables);
       setJoints(newJoints);
+      setOntBoxes(newOntBoxes);
       setMaterials(mats);
       setValidationIssues(issues);
       setStatus('done');
@@ -492,6 +494,7 @@ export function useNetwork() {
       const { cables: newConsolidated, joints: newJoints } = consolidateCables(
         routed.filter((c) => polylineTouchesPolygon(c.coords, poly)),
         scope.districts,
+        settings.mergeCorridorM,
       );
       setCables((prev) => [
         ...prev.filter((c) => !polylineTouchesPolygon(c.coords, poly)),
@@ -504,7 +507,7 @@ export function useNetwork() {
       setStatus('done');
       return;
     }
-    const { cables: consolidated, joints: newJoints } = consolidateCables(routed, districts);
+    const { cables: consolidated, joints: newJoints } = consolidateCables(routed, districts, settings.mergeCorridorM);
     setCables(consolidated);
     setJoints(newJoints);
     setMaterials(calculateMaterials(districts, consolidated, settings, newJoints.length));
@@ -593,7 +596,7 @@ export function useNetwork() {
         (cable) => setCables((prev) => patchCable(prev, cable)),
       );
       if (!controller.signal.aborted) {
-        const { cables: consolidated, joints: newJoints } = consolidateCables(routed, districts);
+        const { cables: consolidated, joints: newJoints } = consolidateCables(routed, districts, settings.mergeCorridorM);
         setCables(consolidated);
         setJoints(newJoints);
         setMaterials(calculateMaterials(districts, consolidated, settings, newJoints.length));
@@ -1386,7 +1389,7 @@ export function useNetwork() {
       status: status_,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
-      districts, cables, joints, annotations, importHistory, settings,
+      districts, cables, joints, ontBoxes, annotations, importHistory, settings,
       snapshots,
     };
     saveToLocalStorage(project);
@@ -1413,6 +1416,7 @@ export function useNetwork() {
     setDistricts(p.districts || []);
     setCables(ensureCableLengths(p.cables || []));
     setJoints(p.joints || []);
+    setOntBoxes(p.ontBoxes || []);
     setAnnotations(p.annotations || []);
     setImportHistory(p.importHistory || []);
     setSettings({ ...DEFAULT_SETTINGS, ...p.settings });
@@ -1475,7 +1479,7 @@ export function useNetwork() {
       id: projectId, name: projectName,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      districts, cables, joints, annotations, importHistory, settings,
+      districts, cables, joints, ontBoxes, annotations, importHistory, settings,
     };
     const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -1517,7 +1521,7 @@ export function useNetwork() {
 
   return {
     projectId, projectName, setProjectName,
-    districts, cables, joints, annotations, materials, settings, setSettings,
+    districts, cables, joints, ontBoxes, annotations, materials, settings, setSettings,
     prices, setPrices: setPricesAndStore,
     importHistory, allSubscribers,
     layers, toggleLayer,
