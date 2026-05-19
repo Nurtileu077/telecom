@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   District, Cable, LayerVisibility, MapAnnotation, AnnotationType,
   ANNOTATION_PRESETS, InlineJoint, CABLE_COLORS as CABLE_COLORS_MAP,
+  CAMERA_KIND_COLOR, CAMERA_KIND_LABEL, CAMERA_MIN_BANDWIDTH_MBPS,
 } from '@/types/network';
 import type { DrawingTool } from '@/components/Sidebar/NotesTab';
 
@@ -551,7 +552,13 @@ export default function LeafletMap(props: Props) {
               const budgetMap = propsRef.current.budgetMap;
               const colorByBudget = propsRef.current.budgetColoring;
               for (const sub of ork.subscribers) {
-                let fillColor = district.color;
+                // Camera colour by type — ЛУ amber, intersection red, ОВН sky
+                // blue — overrides the district colour so a viewer can tell
+                // АПК vs ОВН at a glance.  Budget colouring still wins when
+                // enabled (operations workflow).
+                const camKind = sub.kind ?? 'unknown';
+                let fillColor = CAMERA_KIND_COLOR[camKind] ?? district.color;
+                let radius = camKind === 'intersection' ? 5 : 4;
                 if (colorByBudget && budgetMap) {
                   const s = budgetMap.get(sub.id);
                   if (s === 'ok')   fillColor = '#34d399';
@@ -559,10 +566,12 @@ export default function LeafletMap(props: Props) {
                   if (s === 'fail') fillColor = '#f87171';
                 }
                 const c = L.circleMarker([sub.lat, sub.lon], {
-                  radius: 4, fillColor, fillOpacity: 0.85,
+                  radius, fillColor, fillOpacity: 0.9,
                   color: fillColor, weight: 1,
                 });
-                c.bindPopup(`<b>${sub.desc}</b><br/>ОРК: ${ork.id}<br/>Волокна: ${sub.fibers.working}+${sub.fibers.spare}${propsRef.current.editMode ? '<br/><button onclick="window.__deleteSub__(\'' + sub.id + '\')" style="margin-top:6px;padding:2px 8px;background:#f87171;color:#fff;border:none;border-radius:3px;font-size:10px;cursor:pointer">Удалить</button>' : ''}`);
+                const camLabel = CAMERA_KIND_LABEL[camKind];
+                const bw = sub.minBandwidthMbps ?? CAMERA_MIN_BANDWIDTH_MBPS[camKind];
+                c.bindPopup(`<b>${sub.desc}</b><br/>Тип: <b>${camLabel}</b> · ${bw} Мбит/с<br/>ОРК: ${ork.id}<br/>Волокна: ${sub.fibers.working}+${sub.fibers.spare}${propsRef.current.editMode ? '<br/><button onclick="window.__deleteSub__(\'' + sub.id + '\')" style="margin-top:6px;padding:2px 8px;background:#f87171;color:#fff;border:none;border-radius:3px;font-size:10px;cursor:pointer">Удалить</button>' : ''}`);
                 c.on('contextmenu', (e: any) => {
                   e.originalEvent.preventDefault();
                   if (propsRef.current.editMode && confirm(`Удалить абонента «${sub.desc}»?`)) {
@@ -588,16 +597,19 @@ export default function LeafletMap(props: Props) {
       const unassigned = (propsRef.current.unassignedSubscribers ?? [])
         .filter((s) => !assigned.has(s.id));
       if (layers.subscribers && unassigned.length > 0) {
-        const radius = zoom >= 16 ? 3.5 : zoom >= 13 ? 2.5 : 1.5;
+        const baseR = zoom >= 16 ? 3.5 : zoom >= 13 ? 2.5 : 1.5;
         for (const s of unassigned) {
+          const camKind = s.kind ?? 'unknown';
+          const color = CAMERA_KIND_COLOR[camKind] ?? '#94a3b8';
           const c = L.circleMarker([s.lat, s.lon], {
-            radius,
-            color: '#94a3b8',
-            fillColor: '#94a3b8',
-            fillOpacity: 0.6,
+            radius: camKind === 'intersection' ? baseR + 1 : baseR,
+            color,
+            fillColor: color,
+            fillOpacity: 0.7,
             weight: 1,
           });
-          c.bindTooltip(`<b>${s.desc}</b><br/>${s.district}<br/><i style="color:#64748b">не привязан — нажми «Построить»</i>`, { sticky: true, className: 'text-xs' });
+          const camLabel = CAMERA_KIND_LABEL[camKind];
+          c.bindTooltip(`<b>${s.desc}</b><br/>Тип: ${camLabel} · ${s.minBandwidthMbps ?? CAMERA_MIN_BANDWIDTH_MBPS[camKind]} Мбит/с<br/>${s.district}`, { sticky: true, className: 'text-xs' });
           group.addLayer(c);
         }
       }

@@ -100,7 +100,12 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
     districts: District[];
     cables: Cable[];
     radioLines: Array<{ coords: [number, number][]; name: string; district: string }>;
-    stats: { olt: number; tb: number; ork: number; sub: number; supports: number; joints: number; radio: number; cablesMatched: number; cablesOrphan: number };
+    stats: {
+      olt: number; tb: number; ork: number;
+      camLu: number; camIntersect: number; camOvn: number;
+      joints: number; radio: number;
+      cablesMatched: number; cablesOrphan: number;
+    };
   } | null>(null);
 
   const handleFiles = useCallback(async (rawFiles: FileList | File[]) => {
@@ -585,29 +590,37 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
                   📐 В файле найдено {rawLines.length} линий — покажу как нарисовано.
                 </p>
               )}
-              {structuredPreview && rawMode && (
+              {structuredPreview && rawMode && (() => {
+                const s = structuredPreview.stats;
+                const totalCams = s.camLu + s.camIntersect + s.camOvn;
+                return (
                 <div className="mt-2 p-2 bg-[#34d399]/10 border border-[#34d399]/40 rounded text-[10px] text-[#34d399] space-y-0.5">
                   <div>✓ Распознана структура сети:</div>
-                  <div className="grid grid-cols-5 gap-1 font-mono text-center mt-1">
-                    <div><b>{structuredPreview.stats.olt}</b> OLT</div>
-                    <div><b>{structuredPreview.stats.tb}</b> Муфт</div>
-                    <div><b>{structuredPreview.stats.ork}</b> ОРК</div>
-                    <div><b>{structuredPreview.stats.sub}</b> Аб.</div>
-                    <div><b>{structuredPreview.stats.cablesMatched}</b> кабелей</div>
+                  <div className="grid grid-cols-4 gap-1 font-mono text-center mt-1">
+                    <div><b>{s.olt}</b> OLT</div>
+                    <div><b>{s.tb}</b> Муфт-TB</div>
+                    <div><b>{s.ork}</b> ОРКСП</div>
+                    <div><b>{s.cablesMatched}</b> кабелей</div>
                   </div>
-                  {(structuredPreview.stats.supports > 0 || structuredPreview.stats.joints > 0 || structuredPreview.stats.radio > 0) && (
+                  <div className="grid grid-cols-3 gap-1 font-mono text-center mt-1 text-[#cbd5e1]">
+                    <div title="Линейный участок: 26 Мбит/с"><span className="text-[#fbbf24]">●</span> <b>{s.camLu}</b> ЛУ</div>
+                    <div title="Перекрёсток: 78 Мбит/с"><span className="text-[#f87171]">●</span> <b>{s.camIntersect}</b> Перекр</div>
+                    <div title="ОВН: 5 Мбит/с"><span className="text-[#38bdf8]">●</span> <b>{s.camOvn}</b> ОВН</div>
+                  </div>
+                  <div className="mt-1 text-[#94a3b8]">Всего камер: <b>{totalCams}</b>{totalCams > 512 ? ' (потребуется 2 OLT)' : ''}</div>
+                  {(s.joints > 0 || s.radio > 0) && (
                     <div className="mt-1 text-[#94a3b8]">
-                      Доп.: {structuredPreview.stats.supports} опор, {structuredPreview.stats.joints} узлов
-                      {structuredPreview.stats.radio > 0 ? `, ${structuredPreview.stats.radio} РРЛ` : ''} (точки крепления для кабелей)
+                      Доп.: {s.joints} сварных муфт{s.radio > 0 ? `, ${s.radio} РРЛ (игнор)` : ''}
                     </div>
                   )}
-                  {structuredPreview.stats.cablesOrphan > 0 && (
+                  {s.cablesOrphan > 0 && (
                     <div className="text-[#fbbf24] mt-1">
-                      ⚠️ {structuredPreview.stats.cablesOrphan} линий не привязалось к сущностям (расстояние &gt;75м)
+                      ⚠️ {s.cablesOrphan} линий не привязалось к сущностям (расстояние &gt;75м)
                     </div>
                   )}
                 </div>
-              )}
+                );
+              })()}
             </div>
           )}
 

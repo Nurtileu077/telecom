@@ -1,3 +1,38 @@
+// In the Sergek-cameras project a "subscriber" is one camera.  Three types
+// of cameras drive the design: ЛУ / Перекресток (both АПК side) and ОВН.
+// РРЛ is a radio link, not a fibre subscriber — handled as annotation.
+export type CameraKind = 'lu' | 'intersection' | 'ovn' | 'unknown';
+export type ProjectSide = 'apk' | 'ovn';
+
+// Minimum bandwidth per camera type, used to size GPON splitters.
+//   ЛУ           — baseline + speed             — 26 Мбит/с
+//   Перекресток  — full intersection rig         — 78 Мбит/с
+//   ОВН          — public surveillance, low rate —  5 Мбит/с
+export const CAMERA_MIN_BANDWIDTH_MBPS: Record<CameraKind, number> = {
+  lu: 26,
+  intersection: 78,
+  ovn: 5,
+  unknown: 26,
+};
+
+export function cameraKindToSide(kind: CameraKind): ProjectSide {
+  return kind === 'ovn' ? 'ovn' : 'apk';
+}
+
+export const CAMERA_KIND_LABEL: Record<CameraKind, string> = {
+  lu: 'ЛУ',
+  intersection: 'Перекресток',
+  ovn: 'ОВН',
+  unknown: 'Камера',
+};
+
+export const CAMERA_KIND_COLOR: Record<CameraKind, string> = {
+  lu: '#fbbf24',           // amber — baseline + speed
+  intersection: '#f87171', // red   — full intersection rig
+  ovn: '#38bdf8',          // sky   — public surveillance
+  unknown: '#94a3b8',      // slate — unclassified
+};
+
 export interface Subscriber {
   id: string;
   lat: number;
@@ -6,6 +41,15 @@ export interface Subscriber {
   district: string;
   orkId?: string;
   fibers: { working: number; spare: number };
+  // Camera type — drives bandwidth sizing + colouring.  Optional so existing
+  // saved projects (no kind field) still load; treated as 'unknown' on render.
+  kind?: CameraKind;
+  // АПК / ОВН — derived from kind by default but kept explicit so an Excel
+  // category column ("АПК" / "ОВН") can override even when the subtype is
+  // ambiguous.
+  side?: ProjectSide;
+  // Cached minimum bandwidth in Mbps — used by splitter-sizing logic.
+  minBandwidthMbps?: number;
 }
 
 export interface ORK {
