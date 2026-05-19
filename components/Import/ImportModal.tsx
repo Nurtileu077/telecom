@@ -1,6 +1,6 @@
 'use client';
-import { useState, useRef, useCallback, useMemo } from 'react';
-import { Subscriber, ProjectSettings, Project } from '@/types/network';
+import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
+import { Subscriber, ProjectSettings, Project, SplitterRatio } from '@/types/network';
 import { importExcel } from './ExcelImporter';
 import { importKmz, importKmzBatch, importKmzRaw, importKmzBatchRaw, type KmlRawLine } from './KmzImporter';
 import { buildStructured, type KmlPoint, type KmlLine } from './KmlStructured';
@@ -91,6 +91,11 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
   // Raw mode: load KML 1:1 (points + LineStrings) without running the build.
   const [rawMode, setRawMode] = useState(true);
   const [rawLines, setRawLines] = useState<KmlRawLine[]>([]);
+  // L2-сплиттер по умолчанию для всех новых ОРКСП в этом импорте.
+  // ЛУ (26 Мбит) и ОВН (5 Мбит) комфортно живут на 1:32 и 1:64; Перекрёсток
+  // (78 Мбит) требует 1:16 или меньше.  Пользователь выбирает на основании
+  // фактической нагрузки или политики оператора.
+  const [defaultSplitter, setDefaultSplitter] = useState<SplitterRatio>(currentSettings.defaultSplitter ?? '1:8');
   // Structured KML data — populated when the file has classifiable
   // folder structure (OLT/Муфта/ОРК/Кабель…).  When non-null and rawMode
   // is on, submitting builds a real District tree instead of dumping flat.
@@ -134,7 +139,7 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
         // Кабели-ОК-48.kml / Абоненты.kml) — without merging, cables from
         // one file can't snap to entities in another.
         const mergedName = files.length === 1 ? undefined : 'Сеть';
-        const preview = buildStructured(sp, sl, { mergeAll: true, mergedName });
+        const preview = buildStructured(sp, sl, { mergeAll: true, mergedName, defaultSplitter });
         if (preview.stats.olt + preview.stats.tb + preview.stats.ork > 0 || preview.stats.cablesMatched > 0) {
           setStructuredPreview(preview);
         }
@@ -157,7 +162,7 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
         setRawLines(lines);
         setStructuredPoints(sp);
         setStructuredLines(sl);
-        const preview = buildStructured(sp, sl);
+        const preview = buildStructured(sp, sl, { defaultSplitter });
         if (preview.stats.olt + preview.stats.tb + preview.stats.ork > 0 || preview.stats.cablesMatched > 0) {
           setStructuredPreview(preview);
         }
@@ -257,6 +262,22 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
   const oltOkCount = Object.values(parsedOlts).reduce((s, arr) => s + arr.length, 0);
   const districtCount = Object.keys(byDistrict).length;
   const districtsWithOlt = Object.keys(parsedOlts).length;
+
+  // Recompute the structured preview when the user switches splitter — keeps
+  // the «Распознана структура» card consistent with what will actually build.
+  useEffect(() => {
+    if (structuredPoints.length === 0 && structuredLines.length === 0) return;
+    const mergeAll = structuredPoints[0]?.fileDistrict !== fileName;
+    const preview = buildStructured(structuredPoints, structuredLines, {
+      mergeAll,
+      mergedName: 'Сеть',
+      defaultSplitter,
+    });
+    if (preview.stats.olt + preview.stats.tb + preview.stats.ork > 0 || preview.stats.cablesMatched > 0) {
+      setStructuredPreview(preview);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultSplitter]);
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
@@ -585,6 +606,26 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
                   <div className="text-[9px] text-[#64748b] mt-0.5">Кластеризация + кабели</div>
                 </button>
               </div>
+
+              {/* L2-сплиттер по умолчанию — применится к каждому ОРКСП в этом
+                  импорте.  Можно переопределить вручную на каждом ОРКСП после
+                  загрузки.  Подсказка справа показывает полосу на абонента. */}
+              <div className="mt-2 flex items-center gap-2">
+                <span className="text-[10px] text-[#64748b] w-24">L2-сплиттер ОРКСП:</span>
+                <select
+                  value={defaultSplitter}
+                  onChange={(e) => setDefaultSplitter(e.target.value as SplitterRatio)}
+                  className="flex-1 bg-[#0a0e1a] border border-[#1e3a5f] rounded px-2 py-1 text-[11px] text-[#e2e8f0] focus:outline-none focus:border-[#38bdf8]"
+                >
+                  <option value="1:2">1:2 — ~1250 Мбит/абон.</option>
+                  <option value="1:4">1:4 — ~625 Мбит/абон.</option>
+                  <option value="1:8">1:8 — ~312 Мбит/абон. (Перекр./ЛУ комфортно)</option>
+                  <option value="1:16">1:16 — ~156 Мбит/абон. (для Перекрёстков)</option>
+                  <option value="1:32">1:32 — ~78 Мбит/абон. (ЛУ норм)</option>
+                  <option value="1:64">1:64 — ~39 Мбит/абон. (ОВН / ЛУ ок)</option>
+                </select>
+              </div>
+
               {rawLines.length > 0 && rawMode && !structuredPreview && (
                 <p className="mt-2 text-[10px] text-[#fbbf24]">
                   📐 В файле найдено {rawLines.length} линий — покажу как нарисовано.
@@ -682,7 +723,9 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
                     onLoadRaw(subscribers, rawLines, fileName);
                   }
                 } else {
-                  onBuild(subscribers, settings, fileName, mode, parsedOlts);
+                  // Persist the chosen splitter into project settings so the
+                  // AutoBuild flow uses the same ratio when creating ORKs.
+                  onBuild(subscribers, { ...settings, defaultSplitter }, fileName, mode, parsedOlts);
                 }
               }}
               disabled={!subscribers}

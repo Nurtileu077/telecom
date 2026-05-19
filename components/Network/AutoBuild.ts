@@ -117,8 +117,15 @@ function buildSingleOlt(
       .filter(Boolean) as Subscriber[];
     const orkAnchor = pickOrkAnchor(orkSubsRaw);
     const orkId = `Бокс-${slug}${oltSuffix}-${i + 1}`;
-    const splitter: '1:4' | '1:8' | '1:16' =
+    // Default L2-сплиттер из настроек проекта (выбран пользователем на импорте);
+    // если он явно меньше чем нужно для кластера, поднимаем минимально.
+    const userSplitter = settings.defaultSplitter ?? '1:8';
+    const minByCluster: '1:4' | '1:8' | '1:16' =
       cluster.length <= 4 ? '1:4' : cluster.length <= 8 ? '1:8' : '1:16';
+    const order = ['1:2', '1:4', '1:8', '1:16', '1:32', '1:64'] as const;
+    const splitter = order.indexOf(userSplitter) > order.indexOf(minByCluster)
+      ? userSplitter
+      : minByCluster;
 
     const updatedOrkSubs = orkSubsRaw.map((s) => ({ ...s, orkId }));
     updatedSubs.push(...updatedOrkSubs);
@@ -229,6 +236,36 @@ export function buildNetwork(
     const overrides = oltLocations[districtName] ?? [];
     const baseColor = DISTRICT_COLORS[colorIdx % DISTRICT_COLORS.length];
     colorIdx++;
+
+    // Auto-2-OLT for large projects: when the user didn't override and the
+    // district has more cameras than one OLT can serve (~512), synthesise
+    // two OLT positions via kmeans so each subtree stays under the limit.
+    // Single OLT still wins when overrides explicitly specify one.
+    const MAX_PER_OLT = settings.maxCamerasPerOlt ?? 512;
+    if (overrides.length === 0 && subs.length > MAX_PER_OLT) {
+      const need = Math.ceil(subs.length / MAX_PER_OLT);
+      const points = subs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id }));
+      const { centers } = kmeans(points, need);
+      // Treat the kmeans centres as if the user supplied them.
+      const synth = centers.map((c) => ({ lat: c.lat, lon: c.lon }));
+      const groups: Subscriber[][] = synth.map(() => []);
+      for (const s of subs) {
+        let bi = 0, bd = Infinity;
+        for (let i = 0; i < synth.length; i++) {
+          const d = haversineM(s.lat, s.lon, synth[i].lat, synth[i].lon);
+          if (d < bd) { bd = d; bi = i; }
+        }
+        groups[bi].push(s);
+      }
+      for (let i = 0; i < synth.length; i++) {
+        if (groups[i].length === 0) continue;
+        const subDistrictName = `${districtName}-${i + 1}`;
+        const subColor = DISTRICT_COLORS[(colorIdx + i) % DISTRICT_COLORS.length];
+        districts.push(buildSingleOlt(subDistrictName, subColor, groups[i], synth[i], '', settings, cables));
+      }
+      colorIdx += synth.length - 1;
+      continue;
+    }
 
     if (overrides.length <= 1) {
       // Single OLT (override or auto-centroid). Same as before.

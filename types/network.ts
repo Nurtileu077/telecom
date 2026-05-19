@@ -215,6 +215,13 @@ export interface ProjectSettings {
   cableReserve: number;
   useOSRM: boolean;
   osrmDelay: number;
+  // Default L2-сплиттер для свежесозданных ОРКСП.  Меняется при импорте
+  // (диалог) и при ручной правке ОРК.  Не обязательно — старые сейвы без
+  // него грузятся со значением '1:8'.
+  defaultSplitter?: SplitterRatio;
+  // Камер на один OLT, при превышении сеть разбивается на N OLT через
+  // kmeans.  Vendor default — 512 (1×OLT GPON: 8 ports × 64 splitter).
+  maxCamerasPerOlt?: number;
 }
 
 export interface Materials {
@@ -308,6 +315,8 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
   cableReserve: 1.10,
   useOSRM: true,
   osrmDelay: 100,
+  defaultSplitter: '1:8',
+  maxCamerasPerOlt: 512,
 };
 
 export interface PriceCatalog {

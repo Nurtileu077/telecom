@@ -4,7 +4,7 @@
 // annotations and left the AI / consolidation / export systems blind to it.
 
 import {
-  District, Cable, OLT, TransitBox, ORK, Subscriber, CableType,
+  District, Cable, OLT, TransitBox, ORK, Subscriber, CableType, SplitterRatio,
   CABLE_FIBERS, DISTRICT_COLORS,
   CameraKind, ProjectSide, CAMERA_MIN_BANDWIDTH_MBPS, cameraKindToSide,
 } from '@/types/network';
@@ -199,7 +199,15 @@ function snapEndpoint(
 export function buildStructured(
   rawPoints: KmlPoint[],
   rawLines: KmlLine[],
-  opts: { snapMaxM?: number; mergeAll?: boolean; mergedName?: string } = {},
+  opts: {
+    snapMaxM?: number;
+    mergeAll?: boolean;
+    mergedName?: string;
+    // Default L2-splitter for every ORKSP created in this build.  When the
+    // user picked something other than 1:8 in the import dialog, we honour
+    // it here so the BoM / power budget reflect the real hardware choice.
+    defaultSplitter?: SplitterRatio;
+  } = {},
 ): BuildOutcome {
   const SNAP_M = opts.snapMaxM ?? 75; // endpoints often a few metres off the icon
   const stats = {
@@ -287,6 +295,57 @@ export function buildStructured(
       }];
     }
 
+    // ── 1a. Auto-2-OLT for large projects ──
+    // GPON OLT typical capacity = 8 ports × 64 subscribers/port = 512.  When
+    // the user's file has more cameras than that AND only one OLT was given,
+    // split the area into two kmeans-clusters and synthesise the second OLT.
+    // (Vendor practice: if >512 clients, install two OLTs side by side, both
+    // serving АПК and ОВН.)
+    const MAX_PER_OLT = 512;
+    if (oltPositions.length === 1 && b.cameras.length > MAX_PER_OLT) {
+      const pts = b.cameras.map((p) => ({ lat: p.lat, lon: p.lon }));
+      const need = Math.ceil(b.cameras.length / MAX_PER_OLT);
+      const centers: OltPos[] = [];
+      // simple farthest-first init for k centroids — deterministic given input
+      centers.push({ lat: pts[0].lat, lon: pts[0].lon, name: 'OLT-1' });
+      while (centers.length < need) {
+        let bestI = 0, bestD = -1;
+        for (let i = 0; i < pts.length; i++) {
+          let minD = Infinity;
+          for (const c of centers) {
+            const d = haversineM(pts[i].lat, pts[i].lon, c.lat, c.lon);
+            if (d < minD) minD = d;
+          }
+          if (minD > bestD) { bestD = minD; bestI = i; }
+        }
+        centers.push({ lat: pts[bestI].lat, lon: pts[bestI].lon, name: `OLT-${centers.length + 1}` });
+      }
+      // 5 iterations of Lloyd
+      for (let iter = 0; iter < 5; iter++) {
+        const sums = centers.map(() => ({ lat: 0, lon: 0, n: 0 }));
+        for (const p of pts) {
+          let bi = 0, bd = Infinity;
+          for (let i = 0; i < centers.length; i++) {
+            const d = haversineM(p.lat, p.lon, centers[i].lat, centers[i].lon);
+            if (d < bd) { bd = d; bi = i; }
+          }
+          sums[bi].lat += p.lat; sums[bi].lon += p.lon; sums[bi].n++;
+        }
+        for (let i = 0; i < centers.length; i++) {
+          if (sums[i].n > 0) {
+            centers[i] = { lat: sums[i].lat / sums[i].n, lon: sums[i].lon / sums[i].n, name: centers[i].name };
+          }
+        }
+      }
+      // Place the centres co-located with the original (single) OLT first if
+      // there was one, then add the rest as synthesised OLT-N entries.
+      const userOlt = oltPositions[0];
+      oltPositions = centers.map((c, i) => i === 0
+        ? { lat: userOlt.lat, lon: userOlt.lon, name: userOlt.name }
+        : c,
+      );
+    }
+
     // ── 2. Voronoi-assign every other entity to its nearest OLT ──
     const nearestOltIdx = (lat: number, lon: number): number => {
       let bestI = 0;
@@ -343,7 +402,7 @@ export function buildStructured(
           id: `ORK-${slug}-${i + 1}`,
           lat: o.lat, lon: o.lon,
           district: subName,
-          splitter: '1:8' as const,
+          splitter: (opts.defaultSplitter ?? '1:8'),
           tbId: nearest?.id ?? '',
           subscribers: [],
           cableType: 'ОК-4' as CableType,
