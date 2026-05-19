@@ -4,7 +4,6 @@ import {
 import {
   CABLE_L1_BRANCH,
   CABLE_OLT_FEEDER,
-  CABLE_ORK_DISTRIBUTION,
   pickOrkChainCableType,
 } from './SergekTopology';
 import { haversineM } from './KMeans';
@@ -78,11 +77,12 @@ export function rebuildCablesFromDistricts(
           const hopType = pickOrkChainCableType(remaining);
 
           if (i === 0) {
+            const orkHop = pickOrkChainCableType(orderedBoxes.length);
             const c3 = pickCoords(ork.id, box.id, [[ork.lat, ork.lon], [box.lat, box.lon]]);
             out.push({
               id: nextId(),
-              type: CABLE_ORK_DISTRIBUTION,
-              fibers: CABLE_FIBERS[CABLE_ORK_DISTRIBUTION],
+              type: orkHop,
+              fibers: CABLE_FIBERS[orkHop],
               fromId: ork.id,
               toId: box.id,
               coords: c3,

@@ -1,20 +1,33 @@
-import { CableType, SplitterRatio } from '@/types/network';
+import { CABLE_FIBERS, CABLE_SIZES, CableType, SplitterRatio } from '@/types/network';
 
 /**
- * Эталонная топология Sergek (схема заказчика):
- *   OLT ──16F──► L1 1:8 ──2F──► ×8 ОРКСП (внутри 1:8) ──16F──► до 8 ONT/камер
- *   8 × 8 = 64 камеры на порт OLT.
+ * Топология Sergek: от абонента к OLT жильность растёт (ОК-4 → ОК-8 → ОК-12 → ОК-16).
+ * На участке, где к OLT «текут» N камер, нужно N×2 волокон (раб+рез).
  */
 export const SERGEK_PORT_CAPACITY = 64;
 export const SERGEK_L1_DEFAULT: SplitterRatio = '1:8';
 export const SERGEK_L2_FOR_1X8: SplitterRatio = '1:8';
 
-/** OLT → муфта L1 (питание каскада 1), 16 волокон. */
 export const CABLE_OLT_FEEDER: CableType = 'ОК-16';
-/** Муфта L1 → ОРКСП: 2F (1 раб. + 1 рез.). */
+/** Муфта → ОРКСП: всегда 2F (ОК-4). */
 export const CABLE_L1_BRANCH: CableType = 'ОК-4';
-/** ОРКСП → группа ONT (до 8 на ветке), 16 волокон. */
+/** Макс. жильность на группу ОРК (метка; участки — по pickOrkChainCableType). */
 export const CABLE_ORK_DISTRIBUTION: CableType = 'ОК-16';
+
+const LADDER: CableType[] = ['ОК-4', 'ОК-8', 'ОК-12', 'ОК-16'];
+
+/**
+ * Сколько камер «ниже по течению» на этом участке (к OLT) — столько жильности.
+ * 1 камера → ОК-4, 2 → ОК-4 (4 вол.), 3 → ОК-8, 4 → ОК-8, 5 → ОК-12, …
+ */
+export function pickCableForDownstreamCount(downstreamCameras: number): CableType {
+  if (downstreamCameras <= 0) return 'ОК-4';
+  const fibersNeeded = downstreamCameras * 2;
+  for (const t of LADDER) {
+    if (CABLE_FIBERS[t] >= fibersNeeded) return t;
+  }
+  return 'ОК-16';
+}
 
 export type EntityRole = 'olt' | 'tb' | 'ork' | 'box' | 'sub' | 'joint' | 'other';
 
@@ -29,7 +42,7 @@ function inferRole(id: string, roles: Map<string, EntityRole>): EntityRole {
   return 'other';
 }
 
-/** Жильность сегмента 2-го прохода с учётом ролей концов (не везде ОК-16). */
+/** Тип кабеля на сегменте 2-го прохода. */
 export function pickSegmentCableType(
   subsCount: number,
   fromId: string,
@@ -40,26 +53,19 @@ export function pickSegmentCableType(
   const to = inferRole(toId, roles);
 
   if (from === 'olt' && to === 'tb') return CABLE_OLT_FEEDER;
-  if (from === 'tb' && to === 'ork') return CABLE_L1_BRANCH;
-  if (from === 'ork' && to === 'tb') return CABLE_L1_BRANCH;
-
-  if (subsCount <= 1) return 'ОК-4';
-  if (from === 'ork' || to === 'ork' || from === 'box' || to === 'box') {
-    return CABLE_ORK_DISTRIBUTION;
+  if ((from === 'tb' && to === 'ork') || (from === 'ork' && to === 'tb')) {
+    return CABLE_L1_BRANCH;
   }
-  if (subsCount <= 8) return CABLE_ORK_DISTRIBUTION;
-  return CABLE_OLT_FEEDER;
+
+  return pickCableForDownstreamCount(subsCount);
 }
 
-/** @deprecated use pickSegmentCableType */
+/** @deprecated */
 export function pickSergekSharedCableType(subsCount: number): CableType {
-  if (subsCount <= 1) return 'ОК-4';
-  if (subsCount <= 8) return CABLE_ORK_DISTRIBUTION;
-  return CABLE_OLT_FEEDER;
+  return pickCableForDownstreamCount(subsCount);
 }
 
-/** Участок цепочки бокс→бокс внутри одного ОРКСП. */
-export function pickOrkChainCableType(camerasRemaining: number): CableType {
-  if (camerasRemaining <= 1) return 'ОК-4';
-  return CABLE_ORK_DISTRIBUTION;
+/** Участок цепочки бокс→бокс: N камер ниже по направлению к OLT. */
+export function pickOrkChainCableType(downstreamCameras: number): CableType {
+  return pickCableForDownstreamCount(downstreamCameras);
 }

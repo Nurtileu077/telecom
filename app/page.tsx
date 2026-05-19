@@ -331,6 +331,11 @@ export default function HomePage() {
           {net.status === 'clustering' && (
             <span className="px-2 py-0.5 bg-[#f59e0b]/10 border border-[#f59e0b]/30 text-[#f59e0b] rounded-md animate-pulse">⚙ Кластеризация...</span>
           )}
+          {net.status === 'done' && net.cables.length > 0 && net.joints.length === 0 && (
+            <span className="px-2 py-0.5 bg-[#fbbf24]/10 border border-[#fbbf24]/30 text-[#fbbf24] rounded-md" title="Инструменты: ① OSRM, затем ② слияние">
+              ①→②
+            </span>
+          )}
           {net.lastSavedAt && net.status === 'done' && (
             <span className="px-2 py-0.5 bg-[#34d399]/10 border border-[#34d399]/30 text-[#34d399] rounded-md">💾 {new Date(net.lastSavedAt).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' })}</span>
           )}

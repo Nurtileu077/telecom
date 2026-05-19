@@ -15,6 +15,7 @@ import {
 } from '@/components/Network/Selection';
 import { consolidateCables } from '@/components/Network/Consolidation';
 import { rebuildCablesFromDistricts } from '@/components/Network/rebuildTopologyCables';
+import { mergeParallelCableGeometry } from '@/components/Network/mergeParallelRoutes';
 import { haversineM } from '@/components/Network/KMeans';
 import { ensureCableLengths, polylineLengthM } from '@/components/Network/pathLength';
 import { calculateSubscriberBudgets, budgetStats } from '@/components/Network/PowerBudget';
@@ -444,7 +445,11 @@ export function useNetwork() {
     try {
       setStatus('calculating');
       const existingCoords = buildExistingCoordsMap(cables);
-      const logical = rebuildCablesFromDistricts(districts, ontBoxes, existingCoords);
+      const corridorM = settings.mergeCorridorM ?? 12;
+      const logical = mergeParallelCableGeometry(
+        rebuildCablesFromDistricts(districts, ontBoxes, existingCoords),
+        Math.max(corridorM, 15),
+      );
 
       if (poly && poly.length >= 3) {
         const scope = filterByPolygon(districts, logical, joints, poly);

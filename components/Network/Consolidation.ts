@@ -418,11 +418,11 @@ export function consolidateCables(
       let branchOrigin = fromId;
       const isStartNode = nodeKey === oltKey;
       const totalBranches = segKeys.length;
+      const distinctGroups = groups.size;
       const needJoint =
         !isStartNode &&
-        // Уже не OLT/ORK/sub точка
-        !nodeId.has(nodeKey) &&
-        totalBranches >= 2;
+        totalBranches >= 2 &&
+        (distinctGroups >= 2 || !nodeId.has(nodeKey));
       if (needJoint) {
         const jid = nextJointId();
         const coord = nodeCoord.get(nodeKey)!;
