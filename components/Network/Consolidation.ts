@@ -1,5 +1,6 @@
-import { Cable, CABLE_FIBERS, CABLE_SIZES, CableType, District } from '@/types/network';
+import { Cable, CABLE_FIBERS, CableType, District } from '@/types/network';
 import { haversineM } from './KMeans';
+import { pickSergekSharedCableType } from './SergekTopology';
 
 // In-line муфта — точка, где трасса разветвляется или меняется жильность.
 // Рендерится как небольшой ⊕ маркер и учитывается в смете.
@@ -64,30 +65,9 @@ function pathLength(coords: [number, number][]): number {
   return len;
 }
 
-// Cap at ОК-48 per project requirement — never emit ОК-96.
-function pickCableType(fibers: number): CableType {
-  for (const t of CABLE_SIZES) {
-    if (t === 'ОК-96') continue;
-    if (CABLE_FIBERS[t] >= fibers) return t;
-  }
-  return 'ОК-48';
-}
-
-// Cable type for a segment shared by N subscribers.
-// - 1 subscriber  → ОК-4 (a normal drop)
-// - 2+ subscribers → ОК-8 minimum.  In practice 2×ОК-4 was being emitted
-//   for the shared run + 2 short ОК-4 drops after the splice, which looks
-//   like "two parallel ОК-4 along a road" to the user.  Using ОК-8 with a
-//   muffta-splice into 2 drops is the standard физический design and adds
-//   spare fibers for future subscribers along the same road.
+// Sergek: 1 камера → ОК-4; ветка до 8 → ОК-16; магистраль порта → ОК-16 (не ОК-48).
 function pickSharedCableType(subsCount: number): CableType {
-  if (subsCount <= 1) return 'ОК-4';
-  const fibers = Math.max(8, subsCount * 2);
-  for (const t of CABLE_SIZES) {
-    if (t === 'ОК-96') continue;
-    if (CABLE_FIBERS[t] >= fibers) return t;
-  }
-  return 'ОК-48';
+  return pickSergekSharedCableType(subsCount);
 }
 
 function concatPaths(

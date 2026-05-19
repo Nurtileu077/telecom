@@ -312,7 +312,7 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
   cableReserve: 1.10,
   useOSRM: true,
   osrmDelay: 100,
-  l1SplitterDefault: '1:4',
+  l1SplitterDefault: '1:8',
   mergeCorridorM: 12,
   maxSubsPerOltPort: 64,
 };

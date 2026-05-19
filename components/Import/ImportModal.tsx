@@ -637,7 +637,7 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
               <label className="block">
                 <span className="text-[10px] text-[#64748b] block mb-1">L1-сплиттер (на муфте)</span>
                 <select
-                  value={settings.l1SplitterDefault ?? '1:4'}
+                  value={settings.l1SplitterDefault ?? '1:8'}
                   onChange={(e) => setSettings((s) => ({ ...s, l1SplitterDefault: e.target.value as '1:4' | '1:8' }))}
                   className="w-full bg-[#0a0e1a] border border-[#1e3a5f] rounded px-2 py-1 text-xs text-[#e2e8f0] focus:outline-none focus:border-[#38bdf8]"
                 >
@@ -646,7 +646,7 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
                 </select>
               </label>
               <div className="text-[10px] text-[#475569] bg-[#0a0e1a] border border-[#1e3a5f]/40 rounded px-2 py-1.5">
-                ⚙ Каскад GPON: ≤64 камер на порт OLT. Камеры одного ОРКСП — цепочкой бокс→бокс по дороге.
+                ⚙ Схема Sergek: OLT—ОК-16—1:8—ОК-4—ОРКСП—ОК-16—8 камер. ≤64/порт.
               </div>
             </div>
           )}
