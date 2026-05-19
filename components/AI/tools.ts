@@ -196,6 +196,12 @@ export const AI_TOOLS: ToolDef[] = [
       'Run an automatic repair pass: (1) delete phantom cables (length over GPON cap for their type, cross-district short cables), (2) OSRM-route a drop cable for every subscriber that currently has no cable and has an ORK within 500 m. Returns a structured report of deletions / additions / orphans that need manual attention. Safe to call repeatedly.',
     input_schema: { type: 'object', properties: {} },
   },
+  {
+    name: 'bandwidth_report',
+    description:
+      'Get a per-OLT and per-ORKSP bandwidth-load report: how many camera ports are occupied, total Mbps required, overload flags.  Use this when the user asks "сколько камер на OLT-X" / "перегружен ли ОРК-Y" / "какой OLT нужно разгрузить".',
+    input_schema: { type: 'object', properties: {} },
+  },
 ];
 
 export type AITool =
@@ -216,4 +222,5 @@ export type AITool =
   | { name: 'inspect_entity'; input: { id: string } }
   | { name: 'delete_cable'; input: { id: string } }
   | { name: 'rebuild_network'; input: Record<string, never> }
-  | { name: 'auto_repair'; input: Record<string, never> };
+  | { name: 'auto_repair'; input: Record<string, never> }
+  | { name: 'bandwidth_report'; input: Record<string, never> };

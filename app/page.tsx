@@ -15,6 +15,7 @@ import EntityEditor, { EntitySelection } from '@/components/Map/EntityEditor';
 import CableEditor from '@/components/Map/CableEditor';
 import SplicePlan from '@/components/Map/SplicePlan';
 import ChatPanel from '@/components/AI/ChatPanel';
+import AddCamerasModal from '@/components/Import/AddCamerasModal';
 
 const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
   ssr: false,
@@ -52,6 +53,7 @@ export default function HomePage() {
   const [coordInput, setCoordInput] = useState<{ kind: 'sub' | 'olt' | 'tb' | 'ork' } | null>(null);
   const [coordText, setCoordText] = useState('');
   const [showChat, setShowChat] = useState(false);
+  const [showAddCameras, setShowAddCameras] = useState(false);
   // Two-click rectangle selection for "export only this area".
   // selectionStage='waiting-first' → next map click is the first corner.
   // selectionStage='waiting-second' → next click is the second corner.
@@ -453,6 +455,16 @@ export default function HomePage() {
                 : selectionStage === 'waiting-second'
                 ? '🔲 Кликни второй угол'
                 : '🔲 Выделить'}
+            </button>
+          )}
+          {/* Brownfield — add new cameras from Excel to existing network. */}
+          {net.districts.length > 0 && (
+            <button
+              onClick={() => setShowAddCameras(true)}
+              className="px-3 py-1 text-xs text-[#94a3b8] border border-[#1e3a5f] hover:text-[#e2e8f0] hover:border-[#38bdf8]/50 rounded-lg transition-colors"
+              title="Добавить новые камеры из Excel к существующей сети"
+            >
+              📷 Камеры
             </button>
           )}
           <button
@@ -875,6 +887,22 @@ A3: ...`}
             </div>
           </div>
         </div>
+      )}
+
+      {/* Brownfield Excel → add cameras to existing network */}
+      {showAddCameras && (
+        <AddCamerasModal
+          onClose={() => setShowAddCameras(false)}
+          onAdd={async (rows) => {
+            // Use existing addSubscriberAt — it finds the nearest ORK, attaches
+            // the camera with its kind/side/bandwidth, and OSRM-routes the
+            // drop cable.  Sequential so the public OSRM server doesn't 429.
+            const district = net.districts[0]?.name ?? 'Импорт';
+            for (const r of rows) {
+              await net.addSubscriberAt(r.lat, r.lon, district, r.desc, r.kind);
+            }
+          }}
+        />
       )}
 
       {/* AI assistant — floating button + side panel */}
