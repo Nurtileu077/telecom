@@ -125,3 +125,52 @@ export function kmeans(
 
   return { centers, clusters };
 }
+
+/**
+ * Делит k-means кластеры так, чтобы в каждом не больше maxSize точек
+ * (для ОРКСП: макс. 8 камер на сплиттер 1:8).
+ */
+export function splitClustersByMaxSize(
+  clusters: Point[][],
+  maxSize: number,
+): Point[][] {
+  if (maxSize < 1) return clusters;
+  const out: Point[][] = [];
+  const queue: Point[][] = [...clusters];
+
+  while (queue.length > 0) {
+    const cluster = queue.shift()!;
+    if (cluster.length <= maxSize) {
+      if (cluster.length > 0) out.push(cluster);
+      continue;
+    }
+    const subK = Math.min(cluster.length, Math.ceil(cluster.length / maxSize));
+    const { clusters: parts } = kmeans(cluster, subK);
+    for (const part of parts) {
+      if (part.length === 0) continue;
+      if (part.length > maxSize) queue.push(part);
+      else out.push(part);
+    }
+  }
+
+  return out;
+}
+
+/** Кластеризация абонентов под ОРКСП: не больше maxPerOrk в группе, до maxOrks групп. */
+export function clusterForOrkGroups(
+  subs: Point[],
+  maxPerOrk: number,
+  maxOrks: number,
+): Point[][] {
+  if (subs.length === 0) return [];
+  const k = Math.min(maxOrks, Math.max(1, Math.ceil(subs.length / maxPerOrk)));
+  const { clusters } = kmeans(subs, k);
+  let groups = splitClustersByMaxSize(clusters, maxPerOrk);
+  if (groups.length <= maxOrks) return groups;
+
+  // Нужно больше ОРК, чем слотов L1×1:8 на муфте — увеличиваем k и пересобираем.
+  const k2 = Math.min(subs.length, Math.max(k + 1, groups.length));
+  const { clusters: c2 } = kmeans(subs, k2);
+  groups = splitClustersByMaxSize(c2, maxPerOrk);
+  return groups;
+}

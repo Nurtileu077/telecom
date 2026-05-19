@@ -2,7 +2,7 @@ import {
   Subscriber, ORK, TransitBox, OLT, Cable, District, ProjectSettings, DISTRICT_COLORS,
   CABLE_FIBERS, CableType, SplitterRatio, OntBox,
 } from '@/types/network';
-import { kmeans, centroid, haversineM } from './KMeans';
+import { kmeans, centroid, haversineM, clusterForOrkGroups } from './KMeans';
 import {
   SERGEK_PORT_CAPACITY,
   CABLE_OLT_FEEDER,
@@ -119,13 +119,8 @@ function buildSingleOlt(
     const tbLon = nearest.lon + (olt.lon - nearest.lon) * 0.15;
     const tbId = `Муфта-${slug}${oltSuffix}-${portIdx + 1}`;
 
-    const orkClusterCount = Math.min(
-      orkspPerPort,
-      Math.max(1, Math.ceil(portSubs.length / subsPerOrksp)),
-    );
-    const { clusters: orkClusters } = orkClusterCount === 1
-      ? { clusters: [portSubs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id }))] }
-      : kmeans(portSubs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id })), orkClusterCount);
+    const portPoints = portSubs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id }));
+    const orkClusters = clusterForOrkGroups(portPoints, subsPerOrksp, orkspPerPort);
 
     const orks: ORK[] = [];
 
