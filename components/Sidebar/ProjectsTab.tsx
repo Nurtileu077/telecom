@@ -9,7 +9,7 @@ interface Props {
   lastSavedAt: string | null;
   autoSaveEnabled: boolean;
   setAutoSaveEnabled: (v: boolean) => void;
-  saveProject: () => Promise<Project> | void;
+  saveProject: () => Promise<{ message: string }> | void;
   loadProject: (p: Project) => Promise<void> | void;
   deleteProject: (id: string) => Promise<void> | void;
   newProject: () => void;
@@ -69,7 +69,14 @@ export default function ProjectsTab({
         </div>
 
         <div className="grid grid-cols-2 gap-1">
-          <button onClick={() => { saveProject(); refresh(); }} className="py-1.5 px-2 bg-[#38bdf8]/15 hover:bg-[#38bdf8]/25 text-[#38bdf8] text-[10px] rounded transition-colors">
+          <button
+            onClick={async () => {
+              const r = await saveProject();
+              if (r && 'message' in r) alert(r.message);
+              refresh();
+            }}
+            className="py-1.5 px-2 bg-[#38bdf8]/15 hover:bg-[#38bdf8]/25 text-[#38bdf8] text-[10px] rounded transition-colors"
+          >
             💾 Сохранить
           </button>
           <button onClick={newProject} className="py-1.5 px-2 border border-[#1e3a5f] text-[#94a3b8] hover:text-[#e2e8f0] text-[10px] rounded transition-colors">

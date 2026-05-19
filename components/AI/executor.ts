@@ -16,14 +16,14 @@ export interface NetForExecutor {
   addTBAt: (lat: number, lon: number, oltId?: string) => void;
   addORKAt: (lat: number, lon: number, tbId?: string) => void;
   addCableBetween: (fromId: string, toId: string, type?: Cable['type']) => Promise<void> | void;
-  reconsolidate: (bbox?: { latMin: number; lonMin: number; latMax: number; lonMax: number } | null) => Promise<void> | void;
+  reconsolidate: (poly?: [number, number][] | null) => Promise<void> | void;
   deleteSubscriber: (id: string) => void;
   deleteCable: (id: string) => void;
   rebuildFromCurrent: () => Promise<void> | void;
   // Active selection rectangle, if the user drew one.  Tools surface this
   // to the AI so it can scope operations without the user re-specifying.
-  selectionBBox?: { latMin: number; lonMin: number; latMax: number; lonMax: number } | null;
-  autoRepair: (bbox?: { latMin: number; lonMin: number; latMax: number; lonMax: number } | null) => Promise<{
+  selectionPolygon?: [number, number][] | null;
+  autoRepair: (poly?: [number, number][] | null) => Promise<{
     deletedCables: Array<{ id: string; reason: string; fromId: string; toId: string; lengthM: number }>;
     addedCables: Array<{ fromId: string; toId: string; lengthM: number }>;
     orphansWithoutOrk: Array<{ id: string; lat: number; lon: number; district: string }>;
@@ -121,8 +121,8 @@ export async function executeTool(
         return `Протянул кабель ${from_id} → ${to_id}${type ? ` (${type})` : ''} по дорогам через OSRM.`;
       }
       case 'reconsolidate': {
-        await net.reconsolidate(net.selectionBBox);
-        return net.selectionBBox
+        await net.reconsolidate(net.selectionPolygon);
+        return net.selectionPolygon
           ? 'Запустил консолидацию ТОЛЬКО в выделенной области (остальная сеть не тронута).'
           : 'Запустил консолидацию кабелей на общих дорогах.';
       }
@@ -316,9 +316,9 @@ export async function executeTool(
         return 'Пересобрал сеть из текущих абонентов + OLT-координат. Ручные правки кабелей могли быть утеряны — это ожидаемо.';
       }
       case 'auto_repair': {
-        const r = await net.autoRepair(net.selectionBBox);
+        const r = await net.autoRepair(net.selectionPolygon);
         return JSON.stringify({
-          scope: net.selectionBBox ? 'selection' : 'whole-network',
+          scope: net.selectionPolygon && net.selectionPolygon.length >= 3 ? 'selection' : 'whole-network',
           deletedCount: r.deletedCables.length,
           addedCount: r.addedCables.length,
           orphansLeft: r.orphansWithoutOrk.length,

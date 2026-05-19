@@ -10,13 +10,23 @@ import { buildNetwork, OltLocationMap } from '@/components/Network/AutoBuild';
 import { calculateMaterials, validateNetwork } from '@/components/Network/MaterialCalc';
 import { routeCables, getRoute, snapBatch } from '@/components/Network/OSRMRouter';
 import { planRepair, buildDropCable, type RepairReport } from '@/components/Network/NetworkRepair';
-import { filterByBBox, polylineTouchesBBox, pointInBBox, type BBox } from '@/components/Network/Selection';
+import {
+  filterByPolygon, polylineTouchesPolygon, pointInPolygon, type SelectionPolygon,
+} from '@/components/Network/Selection';
 import { consolidateCables } from '@/components/Network/Consolidation';
 import { haversineM } from '@/components/Network/KMeans';
 import { calculateSubscriberBudgets, budgetStats } from '@/components/Network/PowerBudget';
 import { dbListProjects, dbSaveProject, dbDeleteProject, dbLoadProject, supabase } from '@/lib/supabase';
 
 export type BuildStatus = 'idle' | 'importing' | 'clustering' | 'routing' | 'calculating' | 'done' | 'error';
+
+export type SaveProjectResult = {
+  project: Project;
+  ok: boolean;
+  cloud: boolean;
+  local: boolean;
+  message: string;
+};
 
 export interface OSRMProgress {
   done: number;
@@ -400,7 +410,7 @@ export function useNetwork() {
   // current district structure (preserving any existing routed coords for
   // direct entity-to-entity pairs), then consolidate. This works even after
   // previous consolidation (where trunk cables go through joint IDs).
-  const reconsolidate = useCallback(async (bbox?: BBox | null) => {
+  const reconsolidate = useCallback(async (poly?: SelectionPolygon | null) => {
     if (districts.length === 0) return;
 
     // Reconstruct OSRM-routed paths between direct entity pairs, EVEN when
@@ -475,20 +485,19 @@ export function useNetwork() {
       } catch { /* abort */ }
     }
 
-    // Consolidate (optionally only the subset that touches the bbox).
-    if (bbox) {
-      // Scope-limited consolidation: run consolidate over a filtered district
-      // set + filtered cables, then splice the result back into full state.
-      // Outside-bbox cables/joints are preserved.
-      const scope = filterByBBox(districts, routed, joints, bbox);
-      const { cables: newConsolidated, joints: newJoints } = consolidateCables(routed.filter((c) => polylineTouchesBBox(c.coords, bbox)), scope.districts);
-      // Replace bbox cables with the consolidated set; keep the rest untouched.
+    // Consolidate (optionally only the subset inside the selection polygon).
+    if (poly && poly.length >= 3) {
+      const scope = filterByPolygon(districts, routed, joints, poly);
+      const { cables: newConsolidated, joints: newJoints } = consolidateCables(
+        routed.filter((c) => polylineTouchesPolygon(c.coords, poly)),
+        scope.districts,
+      );
       setCables((prev) => [
-        ...prev.filter((c) => !polylineTouchesBBox(c.coords, bbox)),
+        ...prev.filter((c) => !polylineTouchesPolygon(c.coords, poly)),
         ...newConsolidated,
       ]);
       setJoints((prev) => [
-        ...prev.filter((j) => !pointInBBox(j.lat, j.lon, bbox)),
+        ...prev.filter((j) => !pointInPolygon(j.lat, j.lon, poly)),
         ...newJoints,
       ]);
       setStatus('done');
@@ -506,7 +515,7 @@ export function useNetwork() {
   // rectangle.  In that mode we route IN PLACE on the current cables —
   // works correctly even after consolidation (where cables go through
   // joints and don't have direct entity-pair ids).
-  const rerouteWithOSRM = useCallback(async (bbox?: BBox | null) => {
+  const rerouteWithOSRM = useCallback(async (poly?: SelectionPolygon | null) => {
     if (districts.length === 0 && cables.length === 0) return;
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
@@ -520,12 +529,9 @@ export function useNetwork() {
         return l;
       };
 
-      // ─── BBox mode: re-route ONLY cables that touch the rectangle ───
-      // No regeneration from districts; no consolidation.  Each affected
-      // cable's coords are replaced with the OSRM route between its current
-      // endpoints.  Anything outside the bbox is preserved as-is.
-      if (bbox) {
-        const affected = cables.filter((c) => polylineTouchesBBox(c.coords, bbox));
+      // ─── Selection polygon: re-route ONLY cables that touch the area ───
+      if (poly && poly.length >= 3) {
+        const affected = cables.filter((c) => polylineTouchesPolygon(c.coords, poly));
         if (affected.length === 0) {
           setStatus('done');
           return;
@@ -1165,15 +1171,16 @@ export function useNetwork() {
   const loadStructured = useCallback(async (
     newDistricts: District[],
     newCables: Cable[],
+    newJoints: InlineJoint[],
     source: string,
   ) => {
     setDistricts(newDistricts);
     setCables(newCables);
-    setJoints([]);
+    setJoints(newJoints);
     setAnnotations([]);
     const allSubs = newDistricts.flatMap((d) => d.subscribers);
     setAllSubscribers(allSubs);
-    const mats = calculateMaterials(newDistricts, newCables, settings, 0);
+    const mats = calculateMaterials(newDistricts, newCables, settings, newJoints.length);
     setMaterials(mats);
     setValidationIssues(validateNetwork(newDistricts, newCables));
     setImportHistory([{
@@ -1226,11 +1233,8 @@ export function useNetwork() {
   // routes drops for any subscriber that has no cable but a nearby ORK.
   // Returns a structured report — the AI can read it back via the tool
   // result and decide whether to do another pass.
-  const autoRepair = useCallback(async (bbox?: BBox | null): Promise<RepairReport> => {
-    // If a selection rectangle is active, only act on the subset inside it
-    // — but still resolve nearest-ORK lookups against the FULL district tree
-    // so an orphan sub at the bbox edge can attach to an ORK just outside.
-    const scope = bbox ? filterByBBox(districts, cables, joints, bbox) : null;
+  const autoRepair = useCallback(async (poly?: SelectionPolygon | null): Promise<RepairReport> => {
+    const scope = poly && poly.length >= 3 ? filterByPolygon(districts, cables, joints, poly) : null;
     const planSourceDistricts = scope ? scope.districts : districts;
     const planSourceCables = scope ? scope.cables : cables;
     const plan = planRepair(planSourceDistricts, planSourceCables);
@@ -1347,38 +1351,56 @@ export function useNetwork() {
   }
 
   const listProjects = useCallback(async (): Promise<Project[]> => {
-    if (supabase) {
-      try {
-        const rows = await dbListProjects();
-        return rows.map((r) => r.data);
-      } catch {}
+    const local = loadProjects();
+    if (!supabase) return local;
+    try {
+      const rows = await dbListProjects();
+      const cloud = rows.map((r) => r.data);
+      const byId = new Map<string, Project>();
+      for (const p of local) byId.set(p.id, p);
+      for (const p of cloud) {
+        const existing = byId.get(p.id);
+        if (!existing || new Date(p.updatedAt) > new Date(existing.updatedAt)) {
+          byId.set(p.id, p);
+        }
+      }
+      return Array.from(byId.values()).sort(
+        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+      );
+    } catch {
+      return local;
     }
-    return loadProjects();
   }, []);
 
-  const saveProject = useCallback(async () => {
+  const saveProject = useCallback(async (): Promise<SaveProjectResult> => {
+    const now = new Date().toISOString();
+    const existing = loadProjects().find((p) => p.id === projectId);
     const project: Project = {
       id: projectId,
       name: projectName,
       status: status_,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
       districts, cables, joints, annotations, importHistory, settings,
       snapshots,
     };
-    // Always save to localStorage as offline backup
     saveToLocalStorage(project);
-    // Save to Supabase if available
+    let cloud = false;
+    let message = supabase
+      ? 'Сохранено в этом браузере и в облаке — проект появится на других компьютерах после «Проекты» → обновить список.'
+      : 'Сохранено только в этом браузере. Чтобы видеть проекты на другом ПК, настройте Supabase (NEXT_PUBLIC_SUPABASE_URL и NEXT_PUBLIC_SUPABASE_ANON_KEY) или экспортируйте JSON.';
     if (supabase) {
       try {
         await dbSaveProject(project);
+        cloud = true;
       } catch (e) {
         console.warn('[DB] save failed, using localStorage only', e);
+        message = `Сохранено локально. Облако недоступно: ${e instanceof Error ? e.message : String(e)}`;
       }
     }
-    setLastSavedAt(new Date().toISOString());
-    return project;
-  }, [projectId, projectName, districts, cables, joints, annotations, importHistory, settings]);
+    setLastSavedAt(now);
+    return { project, ok: true, cloud, local: true, message };
+  }, [projectId, projectName, status_, districts, cables, joints, annotations, importHistory, settings, snapshots]);
 
   function loadProjectInternal(p: Project) {
     setProjectId(p.id);

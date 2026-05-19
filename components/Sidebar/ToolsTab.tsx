@@ -20,14 +20,14 @@ interface Props {
   onPrintMap: () => void;
   onRerouteOSRM: () => void;
   onReconsolidate: () => void;
-  selectionBBox?: { latMin: number; lonMin: number; latMax: number; lonMax: number } | null;
+  selectionPolygon?: [number, number][] | null;
   osrmStatus: 'idle' | 'routing' | 'done' | 'error' | string;
   hasCables: boolean;
   budgetColoring: boolean;
   onToggleBudgetColoring: () => void;
 }
 
-export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onRerouteOSRM, onReconsolidate, selectionBBox, osrmStatus, hasCables, budgetColoring, onToggleBudgetColoring }: Props) {
+export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onRerouteOSRM, onReconsolidate, selectionPolygon, osrmStatus, hasCables, budgetColoring, onToggleBudgetColoring }: Props) {
   const [inputs, setInputs] = useState<OpticalBudgetInputs>(DEFAULT_INPUTS);
   const result = useMemo(() => calculateOpticalBudget(inputs), [inputs]);
 
@@ -36,9 +36,9 @@ export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, o
       {/* OSRM routing */}
       <section>
         <h3 className="text-[10px] uppercase tracking-widest text-[#64748b] mb-2">Маршрутизация кабелей</h3>
-        {selectionBBox && (
+        {selectionPolygon && selectionPolygon.length >= 3 && (
           <div className="mb-2 p-1.5 bg-[#fbbf24]/10 border border-[#fbbf24]/40 rounded text-[10px] text-[#fbbf24]">
-            🔲 Операции применятся только в выделенной области.
+            🔷 Операции применятся только внутри выделенного полигона.
           </div>
         )}
         <button
@@ -48,13 +48,13 @@ export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, o
         >
           {osrmStatus === 'routing'
             ? '⏳ Маршрутизация...'
-            : selectionBBox
+            : selectionPolygon && selectionPolygon.length >= 3
               ? '🛣 Проложить (выделение)'
               : '🛣 Проложить по дорогам (OSRM)'}
         </button>
         <p className="text-[9px] text-[#64748b] mt-1">
-          {selectionBBox
-            ? 'Перемаршрутизирует только кабели, попадающие в выделенный прямоугольник.'
+          {selectionPolygon && selectionPolygon.length >= 3
+            ? 'Перемаршрутизирует только кабели, пересекающие выделенный полигон.'
             : 'Перестраивает все кабели по дорогам через router.project-osrm.org. Занимает 1–2 мин.'}
         </p>
         <button
@@ -62,11 +62,11 @@ export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, o
           disabled={!hasCables}
           className="mt-2 w-full py-2 px-3 text-xs font-semibold rounded-lg border transition-all disabled:opacity-40 bg-[#a78bfa]/10 border-[#a78bfa]/50 text-[#a78bfa] hover:bg-[#a78bfa]/20"
         >
-          {selectionBBox ? '🔁 Объединить (выделение)' : '🔁 Объединить кабели на общих дорогах'}
+          {selectionPolygon && selectionPolygon.length >= 3 ? '🔁 Объединить (выделение)' : '🔁 Объединить кабели на общих дорогах'}
         </button>
         <p className="text-[9px] text-[#64748b] mt-1">
-          {selectionBBox
-            ? 'Консолидация и муфты только в выбранной области, остальная сеть не трогается.'
+          {selectionPolygon && selectionPolygon.length >= 3
+            ? 'Консолидация и муфты только внутри полигона, остальная сеть не трогается.'
             : 'Снэп вершин к сетке 25м, объединение параллельных кабелей, муфты в развилках. Используй после ручных правок.'}
         </p>
       </section>

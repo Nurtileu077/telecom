@@ -16,13 +16,13 @@ import ToolsTab from './ToolsTab';
 import BudgetTab from './BudgetTab';
 import type { SubBudget, BudgetStats } from '@/components/Network/PowerBudget';
 import type { ProjectSnapshot, ProjectStatus, InlineJoint } from '@/types/network';
-import type { BBox } from '@/components/Network/Selection';
+import type { SelectionPolygon } from '@/components/Network/Selection';
 
 interface Props {
   districts: District[];
   cables: Cable[];
   joints?: InlineJoint[];
-  selectionBBox?: BBox | null;
+  selectionPolygon?: SelectionPolygon | null;
   cableReserve?: number;
   materials: Materials | null;
   layers: LayerVisibility;
@@ -43,7 +43,7 @@ interface Props {
   lastSavedAt: string | null;
   autoSaveEnabled: boolean;
   setAutoSaveEnabled: (v: boolean) => void;
-  saveProject: () => Promise<Project> | void;
+  saveProject: () => Promise<{ message: string; project?: Project }> | void;
   loadProject: (p: Project) => Promise<void> | void;
   deleteProject: (id: string) => Promise<void> | void;
   newProject: () => void;
@@ -141,7 +141,7 @@ export default function Sidebar(props: Props) {
           />
         )}
         {activeTab === 'materials' && (
-          <MaterialsTab materials={props.materials} districts={props.districts} cables={props.cables} joints={props.joints} selectionBBox={props.selectionBBox} cableReserve={props.cableReserve} />
+          <MaterialsTab materials={props.materials} districts={props.districts} cables={props.cables} joints={props.joints} selectionPolygon={props.selectionPolygon} cableReserve={props.cableReserve} />
         )}
         {activeTab === 'budget' && (
           <BudgetTab
@@ -171,7 +171,7 @@ export default function Sidebar(props: Props) {
             onPrintMap={props.onPrintMap}
             onRerouteOSRM={props.onRerouteOSRM}
             onReconsolidate={props.onReconsolidate}
-            selectionBBox={props.selectionBBox}
+            selectionPolygon={props.selectionPolygon}
             osrmStatus={props.osrmStatus}
             hasCables={props.cables.length > 0}
             budgetColoring={props.budgetColoring}

@@ -1,8 +1,9 @@
-// Geographic bounding-box selection — used by the "Export selection" flow
-// so the user can outline a region on the map and only that subset is sent
-// to KMZ/Excel/PDF/JSON exporters, instead of dumping the whole project.
+// Geographic selection — polygon or legacy bbox for export / scoped tools.
 
 import type { District, Cable, InlineJoint, Subscriber, ORK, TransitBox } from '@/types/network';
+
+/** [lat, lon] vertices; first edge closes to last automatically. */
+export type SelectionPolygon = [number, number][];
 
 export type BBox = { latMin: number; lonMin: number; latMax: number; lonMax: number };
 
@@ -15,13 +16,64 @@ export function normalizeBBox(a: [number, number], b: [number, number]): BBox {
   };
 }
 
+export function polygonToBBox(poly: SelectionPolygon): BBox {
+  let latMin = Infinity, latMax = -Infinity, lonMin = Infinity, lonMax = -Infinity;
+  for (const [lat, lon] of poly) {
+    if (lat < latMin) latMin = lat;
+    if (lat > latMax) latMax = lat;
+    if (lon < lonMin) lonMin = lon;
+    if (lon > lonMax) lonMax = lon;
+  }
+  return { latMin, latMax, lonMin, lonMax };
+}
+
+/** Ray-casting point-in-polygon (lat/lon treated as y/x). */
+export function pointInPolygon(lat: number, lon: number, poly: SelectionPolygon): boolean {
+  if (poly.length < 3) return false;
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [yi, xi] = poly[i];
+    const [yj, xj] = poly[j];
+    const intersect = ((yi > lat) !== (yj > lat)) &&
+      (lon < ((xj - xi) * (lat - yi)) / (yj - yi + 1e-15) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+function segIntersect(
+  a1: number, a2: number, b1: number, b2: number,
+  c1: number, c2: number, d1: number, d2: number,
+): boolean {
+  const det = (a2 - a1) * (d2 - c2) - (b2 - b1) * (d1 - c1);
+  if (Math.abs(det) < 1e-15) return false;
+  const t = ((c1 - a1) * (d2 - c2) - (c2 - a2) * (d1 - c1)) / det;
+  const u = ((c1 - a1) * (b2 - b1) - (c2 - a2) * (a2 - a1)) / det;
+  return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+}
+
+export function polylineTouchesPolygon(coords: [number, number][], poly: SelectionPolygon): boolean {
+  if (poly.length < 3) return false;
+  for (const [la, lo] of coords) {
+    if (pointInPolygon(la, lo, poly)) return true;
+  }
+  const n = poly.length;
+  for (let i = 1; i < coords.length; i++) {
+    const [aLat, aLon] = coords[i - 1];
+    const [bLat, bLon] = coords[i];
+    for (let j = 0; j < n; j++) {
+      const [cLat, cLon] = poly[j];
+      const [dLat, dLon] = poly[(j + 1) % n];
+      if (segIntersect(aLat, aLon, bLat, bLon, cLat, cLon, dLat, dLon)) return true;
+    }
+  }
+  return false;
+}
+
 export function pointInBBox(lat: number, lon: number, bb: BBox): boolean {
   return lat >= bb.latMin && lat <= bb.latMax && lon >= bb.lonMin && lon <= bb.lonMax;
 }
 
-// A polyline touches the bbox if any of its vertices is inside.  Good enough
-// for the user's "select what to export" intent — strictly checking segment
-// intersection is overkill and slow on dense paths.
 export function polylineTouchesBBox(coords: [number, number][], bb: BBox): boolean {
   for (const [la, lo] of coords) if (pointInBBox(la, lo, bb)) return true;
   return false;
@@ -36,33 +88,22 @@ export interface FilteredNetwork {
   };
 }
 
-// Return only the entities + cables + joints that fall inside the bbox.
-// - OLT/TB/ORK kept if their own coord is inside (children pruned to those inside).
-// - Subscribers kept if their coord is inside.
-// - Cables kept if their polyline touches the bbox at any vertex.
-// - Joints kept if their coord is inside.
-// Empty branches (OLT with no remaining TBs/orks/subs) are kept anyway so the
-// user can see the root node — better than silently dropping it.
-export function filterByBBox(
+function filterDistrictsByPoint(
   districts: District[],
-  cables: Cable[],
-  joints: InlineJoint[],
-  bb: BBox,
-): FilteredNetwork {
+  inside: (lat: number, lon: number) => boolean,
+): { districts: District[]; oltN: number; tbN: number; orkN: number; subN: number } {
   let oltN = 0, tbN = 0, orkN = 0, subN = 0;
-
   const filteredDistricts: District[] = [];
-  for (const d of districts) {
-    const oltInside = pointInBBox(d.olt.lat, d.olt.lon, bb);
 
-    // Filter TBs by their own coord, ORKs by theirs, subs by theirs.
+  for (const d of districts) {
+    const oltInside = inside(d.olt.lat, d.olt.lon);
     const filteredTBs: TransitBox[] = [];
     for (const tb of d.olt.transitBoxes) {
-      const tbInside = pointInBBox(tb.lat, tb.lon, bb);
+      const tbInside = inside(tb.lat, tb.lon);
       const filteredOrks: ORK[] = [];
       for (const ork of tb.orks) {
-        const orkInside = pointInBBox(ork.lat, ork.lon, bb);
-        const filteredSubs: Subscriber[] = ork.subscribers.filter((s) => pointInBBox(s.lat, s.lon, bb));
+        const orkInside = inside(ork.lat, ork.lon);
+        const filteredSubs: Subscriber[] = ork.subscribers.filter((s) => inside(s.lat, s.lon));
         if (orkInside || filteredSubs.length > 0) {
           filteredOrks.push({ ...ork, subscribers: filteredSubs });
           if (orkInside) orkN++;
@@ -74,9 +115,7 @@ export function filterByBBox(
         if (tbInside) tbN++;
       }
     }
-
-    const filteredSubsTop: Subscriber[] = d.subscribers.filter((s) => pointInBBox(s.lat, s.lon, bb));
-
+    const filteredSubsTop: Subscriber[] = d.subscribers.filter((s) => inside(s.lat, s.lon));
     if (oltInside || filteredTBs.length > 0 || filteredSubsTop.length > 0) {
       filteredDistricts.push({
         ...d,
@@ -86,14 +125,49 @@ export function filterByBBox(
       if (oltInside) oltN++;
     }
   }
+  return { districts: filteredDistricts, oltN, tbN, orkN, subN };
+}
 
-  const filteredCables = cables.filter((c) => polylineTouchesBBox(c.coords, bb));
-  const filteredJoints = joints.filter((j) => pointInBBox(j.lat, j.lon, bb));
-
+export function filterByPolygon(
+  districts: District[],
+  cables: Cable[],
+  joints: InlineJoint[],
+  poly: SelectionPolygon,
+): FilteredNetwork {
+  const inside = (lat: number, lon: number) => pointInPolygon(lat, lon, poly);
+  const { districts: filteredDistricts, oltN, tbN, orkN, subN } = filterDistrictsByPoint(districts, inside);
+  const filteredCables = cables.filter((c) => polylineTouchesPolygon(c.coords, poly));
+  const filteredJoints = joints.filter((j) => inside(j.lat, j.lon));
   return {
     districts: filteredDistricts,
     cables: filteredCables,
     joints: filteredJoints,
-    counts: { olt: oltN, tb: tbN, ork: orkN, sub: subN, cable: filteredCables.length, joint: filteredJoints.length },
+    counts: {
+      olt: oltN, tb: tbN, ork: orkN, sub: subN,
+      cable: filteredCables.length,
+      joint: filteredJoints.length,
+    },
+  };
+}
+
+export function filterByBBox(
+  districts: District[],
+  cables: Cable[],
+  joints: InlineJoint[],
+  bb: BBox,
+): FilteredNetwork {
+  const inside = (lat: number, lon: number) => pointInBBox(lat, lon, bb);
+  const { districts: filteredDistricts, oltN, tbN, orkN, subN } = filterDistrictsByPoint(districts, inside);
+  const filteredCables = cables.filter((c) => polylineTouchesBBox(c.coords, bb));
+  const filteredJoints = joints.filter((j) => inside(j.lat, j.lon));
+  return {
+    districts: filteredDistricts,
+    cables: filteredCables,
+    joints: filteredJoints,
+    counts: {
+      olt: oltN, tb: tbN, ork: orkN, sub: subN,
+      cable: filteredCables.length,
+      joint: filteredJoints.length,
+    },
   };
 }

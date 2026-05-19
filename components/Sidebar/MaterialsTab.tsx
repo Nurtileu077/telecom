@@ -12,7 +12,7 @@ import {
   type KmzExportLayers,
   type KmzPackageMode,
 } from '@/components/Export/ExportKMZ';
-import { filterByBBox, type BBox } from '@/components/Network/Selection';
+import { filterByPolygon, type SelectionPolygon } from '@/components/Network/Selection';
 import { calculateMaterials } from '@/components/Network/MaterialCalc';
 
 interface Props {
@@ -20,7 +20,7 @@ interface Props {
   districts: District[];
   cables: Cable[];
   joints?: InlineJoint[];
-  selectionBBox?: BBox | null;
+  selectionPolygon?: SelectionPolygon | null;
   cableReserve?: number;
 }
 
@@ -79,7 +79,7 @@ function LayerCheckbox({
   );
 }
 
-export default function MaterialsTab({ materials, districts, cables, joints, selectionBBox, cableReserve = 1.10 }: Props) {
+export default function MaterialsTab({ materials, districts, cables, joints, selectionPolygon, cableReserve = 1.10 }: Props) {
   const [kmzLayers, setKmzLayers] = useState<KmzExportLayers>(() => ({ ...DEFAULT_KMZ_LAYERS, cables: { ...DEFAULT_KMZ_LAYERS.cables } }));
   const [showKmzPanel, setShowKmzPanel] = useState(false);
   const [kmzBusy, setKmzBusy] = useState<string | null>(null);
@@ -93,25 +93,27 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
     );
   }
 
-  const exportSet = (): { districts: District[]; cables: Cable[]; materials: Materials } => {
-    if (!selectionBBox) return { districts, cables, materials: materials! };
-    const f = filterByBBox(districts, cables, joints ?? [], selectionBBox);
+  const exportSet = (): { districts: District[]; cables: Cable[]; joints: InlineJoint[]; materials: Materials } => {
+    if (!selectionPolygon || selectionPolygon.length < 3) {
+      return { districts, cables, joints: joints ?? [], materials: materials! };
+    }
+    const f = filterByPolygon(districts, cables, joints ?? [], selectionPolygon);
     const m = calculateMaterials(
       f.districts, f.cables,
       { maxPerORK: 8, maxORKperTB: 4, spareFiresPerSub: 1, cableReserve, useOSRM: true, osrmDelay: 100 },
       f.joints.length,
     );
-    return { districts: f.districts, cables: f.cables, materials: m };
+    return { districts: f.districts, cables: f.cables, joints: f.joints, materials: m };
   };
 
-  const filePrefix = selectionBBox ? 'gpon-выделение' : 'gpon-network';
+  const filePrefix = selectionPolygon && selectionPolygon.length >= 3 ? 'gpon-выделение' : 'gpon-network';
 
   const activeCableTypes = useMemo(() => {
     const { cables: c } = exportSet();
     return CABLE_SIZES.filter((t) => c.some((x) => x.type === t));
-  }, [districts, cables, selectionBBox, materials]);
+  }, [districts, cables, joints, selectionPolygon, materials]);
 
-  const setEntityLayer = (key: keyof Pick<KmzExportLayers, 'olt' | 'mufta' | 'ork' | 'subscribers' | 'summary'>, v: boolean) => {
+  const setEntityLayer = (key: keyof Pick<KmzExportLayers, 'olt' | 'mufta' | 'transitJoint' | 'ork' | 'subscribers' | 'summary'>, v: boolean) => {
     setKmzLayers((prev) => ({ ...prev, [key]: v }));
   };
 
@@ -124,7 +126,7 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
 
   const selectAllLayers = () => {
     setKmzLayers({
-      olt: true, mufta: true, ork: true, subscribers: true, summary: true,
+      olt: true, mufta: true, transitJoint: true, ork: true, subscribers: true, summary: true,
       cables: Object.fromEntries(CABLE_SIZES.map((t) => [t, true])) as Record<CableType, boolean>,
     });
   };
@@ -135,7 +137,7 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = selectionBBox ? 'gpon-materials-выделение.xlsx' : 'gpon-materials.xlsx';
+    a.download = selectionPolygon && selectionPolygon.length >= 3 ? 'gpon-materials-выделение.xlsx' : 'gpon-materials.xlsx';
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -159,21 +161,21 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
   };
 
   const handleKMZFull = () => runKmz('full', async () => {
-    const { districts: d, cables: c } = exportSet();
-    const blob = await exportKMZ(d, c, { layers: kmzLayers, flatCableFolders: true });
+    const { districts: d, cables: c, joints: j } = exportSet();
+    const blob = await exportKMZ(d, c, { layers: kmzLayers, joints: j, flatCableFolders: true });
     downloadBlob(blob, `${filePrefix}.kmz`);
   });
 
   const handleKMZZip = (mode: KmzPackageMode) => runKmz('zip', async () => {
-    const { districts: d, cables: c } = exportSet();
-    const blob = await exportKMZPackage(d, c, kmzLayers, mode);
+    const { districts: d, cables: c, joints: j } = exportSet();
+    const blob = await exportKMZPackage(d, c, j, kmzLayers, mode);
     const name = mode === 'split-by-type' ? `${filePrefix}-по-типам-ок.zip` : `${filePrefix}-полный+по-типам.zip`;
     downloadBlob(blob, name);
   });
 
   const handleKMZSplitObjects = () => runKmz('split-obj', async () => {
-    const { districts: d, cables: c } = exportSet();
-    await downloadKMZSplitByEntity(d, c, kmzLayers, filePrefix);
+    const { districts: d, cables: c, joints: j } = exportSet();
+    await downloadKMZSplitByEntity(d, c, j, kmzLayers, filePrefix);
   });
 
   const handleKMZSplitCables = () => runKmz('split-cab', async () => {
@@ -182,8 +184,8 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
   });
 
   const handleKMZSplitAll = () => runKmz('split-all', async () => {
-    const { districts: d, cables: c } = exportSet();
-    await downloadKMZSplitAll(d, c, kmzLayers, filePrefix);
+    const { districts: d, cables: c, joints: j } = exportSet();
+    await downloadKMZSplitAll(d, c, j, kmzLayers, filePrefix);
   });
 
   const cableRows: Row[] = CABLE_SIZES
@@ -233,11 +235,11 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
       </div>
 
       <div className="p-3 border-t border-[#1e3a5f] space-y-2">
-        {selectionBBox && (() => {
-          const f = filterByBBox(districts, cables, joints ?? [], selectionBBox);
+        {selectionPolygon && selectionPolygon.length >= 3 && (() => {
+          const f = filterByPolygon(districts, cables, joints ?? [], selectionPolygon);
           return (
             <div className="p-2 bg-[#fbbf24]/10 border border-[#fbbf24]/40 rounded text-[10px] text-[#fbbf24]">
-              🔲 Выделено: <b>{f.counts.olt}</b> OLT · <b>{f.counts.tb}</b> Муфт · <b>{f.counts.ork}</b> ОРК · <b>{f.counts.sub}</b> Аб. · <b>{f.counts.cable}</b> кабелей
+              🔷 Выделено: <b>{f.counts.olt}</b> OLT · <b>{f.counts.tb}</b> Муфт · <b>{f.counts.joint}</b> транзит. · <b>{f.counts.ork}</b> ОРК · <b>{f.counts.sub}</b> Аб. · <b>{f.counts.cable}</b> кабелей
             </div>
           );
         })()}
@@ -247,7 +249,7 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
           onClick={handleExcelExport}
           className="w-full py-2 px-3 bg-[#0d1b2a] hover:bg-[#1a2744] border border-[#1e3a5f] rounded-lg text-xs text-[#e2e8f0] transition-colors flex items-center gap-2"
         >
-          📊 {selectionBBox ? 'Excel (выделение)' : 'Экспорт в Excel'}
+          📊 {selectionPolygon && selectionPolygon.length >= 3 ? 'Excel (выделение)' : 'Экспорт в Excel'}
         </button>
 
         <button
@@ -272,6 +274,7 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
               <div className="text-[10px] text-[#64748b] mb-1">Объекты</div>
               <LayerCheckbox checked={kmzLayers.olt} onChange={(v) => setEntityLayer('olt', v)} label="📡 OLT" />
               <LayerCheckbox checked={kmzLayers.mufta} onChange={(v) => setEntityLayer('mufta', v)} label="🔷 Муфты МТОК — общий" />
+              <LayerCheckbox checked={kmzLayers.transitJoint} onChange={(v) => setEntityLayer('transitJoint', v)} label="⊕ Транзитные муфты — общий" />
               <LayerCheckbox checked={kmzLayers.ork} onChange={(v) => setEntityLayer('ork', v)} label="📦 ОРК / боксы — общий" />
               <LayerCheckbox checked={kmzLayers.subscribers} onChange={(v) => setEntityLayer('subscribers', v)} label="🏠 Абоненты — общий" />
               <LayerCheckbox checked={kmzLayers.summary} onChange={(v) => setEntityLayer('summary', v)} label="📋 Сводка (ОК-4 общий, ОК-8 общий…)" />

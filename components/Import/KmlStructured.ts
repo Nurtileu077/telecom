@@ -5,7 +5,7 @@
 
 import {
   District, Cable, OLT, TransitBox, ORK, Subscriber, CableType,
-  CABLE_FIBERS, DISTRICT_COLORS,
+  CABLE_FIBERS, DISTRICT_COLORS, InlineJoint,
 } from '@/types/network';
 import { haversineM } from '../Network/KMeans';
 
@@ -48,7 +48,9 @@ export type EntityKind = 'olt' | 'tb' | 'ork' | 'sub' | 'support' | 'joint' | 'r
 const NONL = '(?:^|[^а-яА-Яa-zA-Z0-9])';
 const NONR = '(?:[^а-яА-Яa-zA-Z0-9]|$)';
 const RE_OLT     = new RegExp(`${NONL}(?:olt|цод|амс|узел[\\s_-]*связ|data[\\s-]?center)${NONR}|magistral`, 'i');
-const RE_TB      = new RegExp(`муфт|${NONL}(?:tb|sleeve|транзит)${NONR}`, 'i');
+// Транзитные муфты МТОК — отдельно от «обычных» муфт на линии (стыки).
+const RE_TRANSIT_TB = new RegExp(`транзитн|мток|mtok|${NONL}tb${NONR}|sleeve|транзитная`, 'i');
+const RE_SPLICE     = new RegExp(`муфт|splice|стык|соединит`, 'i');
 const RE_ORK     = new RegExp(`${NONL}(?:орк|бокс|nap|шкаф)${NONR}|distribu`, 'i');
 const RE_SUPPORT = new RegExp(`${NONL}овн${NONR}|опора|столб|поддерж`, 'i');
 const RE_JOINT   = new RegExp(`линейн.+участок|перекрест|перекрёст|${NONL}joint${NONR}`, 'i');
@@ -70,12 +72,13 @@ export function classifyEntity(
   const t = joinText(folderPath, name, extData);
   // Order matters — support/joint/radio checked first so a folder name like
   // "Опора ОК-8" doesn't accidentally classify as a cable / subscriber.
-  if (RE_RADIO.test(t))   return 'radio';
-  if (RE_SUPPORT.test(t)) return 'support';
-  if (RE_JOINT.test(t))   return 'joint';
-  if (RE_OLT.test(t))     return 'olt';
-  if (RE_TB.test(t))      return 'tb';
-  if (RE_ORK.test(t))     return 'ork';
+  if (RE_RADIO.test(t))      return 'radio';
+  if (RE_SUPPORT.test(t))    return 'support';
+  if (RE_TRANSIT_TB.test(t)) return 'tb';
+  if (RE_JOINT.test(t))      return 'joint';
+  if (RE_OLT.test(t))        return 'olt';
+  if (RE_SPLICE.test(t))     return 'joint';
+  if (RE_ORK.test(t))        return 'ork';
   return 'sub';
 }
 
@@ -127,6 +130,8 @@ function slugForId(s: string): string {
 interface BuildOutcome {
   districts: District[];
   cables: Cable[];
+  /** Точки «транзитная муфта» / стыки из KML (не МТОК-96 на OLT). */
+  inlineJoints: InlineJoint[];
   // Lines that aren't fibre cables (РРЛ) — caller renders as annotations.
   radioLines: Array<{ coords: [number, number][]; name: string; district: string }>;
   stats: {
@@ -201,6 +206,7 @@ export function buildStructured(
 
   const outDistricts: District[] = [];
   const outCables: Cable[] = [];
+  const outInlineJoints: InlineJoint[] = [];
   let cableSeq = 0;
   let colorIdx = 0;
 
@@ -314,13 +320,26 @@ export function buildStructured(
     // Supports (опоры/столбы) and joints (перекрёстки) are added as snap
     // targets with synthetic ids so the cable still has named endpoints — the
     // alternative (orphan cable) loses the line completely.
+    const jointEntities: Array<{ id: string; lat: number; lon: number }> = [];
+    for (const [i, p] of b.joints.entries()) {
+      const jid = `J-kml-${slug}-${i + 1}`;
+      outInlineJoints.push({
+        id: jid,
+        lat: p.lat,
+        lon: p.lon,
+        parentId: oltId,
+        branchCount: 2,
+      });
+      jointEntities.push({ id: jid, lat: p.lat, lon: p.lon });
+    }
+
     const entityIndex = [
       { id: oltId, lat: olt.lat, lon: olt.lon },
       ...tbs.map((t) => ({ id: t.id, lat: t.lat, lon: t.lon })),
       ...orks.map((o) => ({ id: o.id, lat: o.lat, lon: o.lon })),
       ...subs.map((s) => ({ id: s.id, lat: s.lat, lon: s.lon })),
       ...b.supports.map((p, i) => ({ id: `pole-${slug}-${i + 1}`, lat: p.lat, lon: p.lon })),
-      ...b.joints.map((p, i) => ({ id: `J-${slug}-${i + 1}`,    lat: p.lat, lon: p.lon })),
+      ...jointEntities,
     ];
 
     for (const line of b.lines) {
@@ -362,5 +381,5 @@ export function buildStructured(
     }
   }
 
-  return { districts: outDistricts, cables: outCables, radioLines, stats };
+  return { districts: outDistricts, cables: outCables, inlineJoints: outInlineJoints, radioLines, stats };
 }

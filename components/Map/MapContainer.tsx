@@ -27,9 +27,10 @@ interface Props {
   // Edit mode
   editMode: boolean;
   placingMode?: boolean;
-  /** User activated "Выделить" — drag on the map to draw a rubber-band rectangle. */
+  /** User activated "Выделить" — click to add polygon vertices. */
   selectionDrawActive?: boolean;
-  onSelectionComplete?: (bbox: { latMin: number; lonMin: number; latMax: number; lonMax: number }) => void;
+  selectionVertices?: [number, number][];
+  selectionPolygon?: [number, number][] | null;
   onMapClick?: (lat: number, lon: number) => void;
   onMapContextMenu?: (lat: number, lon: number, screenX: number, screenY: number) => void;
   moveEntity?: (kind: 'tb' | 'ork' | 'olt', id: string, lat: number, lon: number) => void;
@@ -47,9 +48,6 @@ interface Props {
   setMeasureMode: (v: boolean) => void;
   // Heatmap
   heatmapEnabled: boolean;
-  // Bounding-box overlay for "export selection".  Drawn as a translucent
-  // amber rectangle so the user can see what's about to be exported.
-  selectionBBox?: { latMin: number; lonMin: number; latMax: number; lonMax: number } | null;
 }
 
 const CABLE_COLORS: Record<string, string> = CABLE_COLORS_MAP as Record<string, string>;
@@ -296,9 +294,11 @@ export default function LeafletMap(props: Props) {
           return;
         }
 
-        // Edit mode: add subscriber. Placement mode: place OLT/TB/ORK.
-        // Selection uses drag (mousedown/move/up), not clicks.
-        if (p.selectionDrawActive) return;
+        // Selection polygon: each click adds a vertex (handled in page.tsx).
+        if (p.selectionDrawActive && p.onMapClick) {
+          p.onMapClick(lat, lon);
+          return;
+        }
         if ((p.editMode || p.placingMode) && p.onMapClick) {
           p.onMapClick(lat, lon);
           return;
@@ -798,14 +798,8 @@ export default function LeafletMap(props: Props) {
   }, [props.editingCableId, props.cables]);
   useEffect(() => { renderAnnotations(); }, [props.annotations]);
 
-  // Selection rectangle: final bbox overlay + rubber-band drag while drawing.
+  // Selection polygon overlay (finished polygon + in-progress vertices).
   const selectionLayerRef = useRef<any>(null);
-  const selectionDragRef = useRef<{
-    start: { lat: number; lon: number };
-    rect: any;
-    onMove: (e: any) => void;
-    onUp: (e: any) => void;
-  } | null>(null);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -815,95 +809,41 @@ export default function LeafletMap(props: Props) {
         map.removeLayer(selectionLayerRef.current);
         selectionLayerRef.current = null;
       }
-      const bb = props.selectionBBox;
-      if (!bb) return;
-      const rect = L.rectangle(
-        [[bb.latMin, bb.lonMin], [bb.latMax, bb.lonMax]] as any,
-        { color: '#fbbf24', weight: 2, dashArray: '6,4', fillColor: '#fbbf24', fillOpacity: 0.08 } as any,
-      );
-      rect.addTo(map);
-      selectionLayerRef.current = rect;
+      const poly = props.selectionPolygon;
+      const verts = props.selectionVertices ?? [];
+      const drawPts = props.selectionDrawActive && verts.length > 0 ? verts : null;
+      const ring = poly && poly.length >= 3 ? poly : drawPts;
+      if (!ring || ring.length < 2) {
+        if (props.selectionDrawActive && map.getContainer()) {
+          map.getContainer().style.cursor = 'crosshair';
+        } else if (map.getContainer()) {
+          map.getContainer().style.cursor = '';
+        }
+        return;
+      }
+      const latlngs = ring.map(([la, lo]) => [la, lo] as [number, number]);
+      const isFinished = !!(poly && poly.length >= 3);
+      const group = L.featureGroup();
+      if (isFinished) {
+        group.addLayer(L.polygon(latlngs as any, {
+          color: '#fbbf24', weight: 2, dashArray: '6,4',
+          fillColor: '#fbbf24', fillOpacity: 0.1,
+        } as any));
+      } else {
+        group.addLayer(L.polyline(latlngs as any, {
+          color: '#fbbf24', weight: 2, dashArray: '4,6',
+        } as any));
+      }
+      for (const [la, lo] of verts) {
+        group.addLayer(L.circleMarker([la, lo], {
+          radius: 5, color: '#fbbf24', fillColor: '#fde68a', fillOpacity: 0.9, weight: 2,
+        } as any));
+      }
+      group.addTo(map);
+      selectionLayerRef.current = group;
+      if (map.getContainer()) map.getContainer().style.cursor = props.selectionDrawActive ? 'crosshair' : '';
     });
-  }, [props.selectionBBox]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-
-    const cleanupDrag = () => {
-      const d = selectionDragRef.current;
-      if (!d) return;
-      map.off('mousemove', d.onMove);
-      map.off('mouseup', d.onUp);
-      if (d.rect) map.removeLayer(d.rect);
-      selectionDragRef.current = null;
-      map.dragging.enable();
-      if (map.getContainer()) map.getContainer().style.cursor = '';
-    };
-
-    if (!props.selectionDrawActive) {
-      cleanupDrag();
-      return;
-    }
-
-    let cancelled = false;
-    let teardown: (() => void) | null = null;
-
-    import('leaflet').then((L) => {
-      if (cancelled || !mapRef.current) return;
-
-      const onDown = (e: any) => {
-        if (e.originalEvent.button !== 0) return;
-        L.DomEvent.stop(e);
-        cleanupDrag();
-        map.dragging.disable();
-        const start = { lat: e.latlng.lat, lon: e.latlng.lng };
-        const rect = L.rectangle(
-          [[start.lat, start.lon], [start.lat, start.lon]] as any,
-          { color: '#fbbf24', weight: 2, dashArray: '4,6', fillColor: '#fbbf24', fillOpacity: 0.12 } as any,
-        ).addTo(map);
-
-        const onMove = (ev: any) => {
-          const la = ev.latlng.lat;
-          const lo = ev.latlng.lng;
-          rect.setBounds([
-            [Math.min(start.lat, la), Math.min(start.lon, lo)],
-            [Math.max(start.lat, la), Math.max(start.lon, lo)],
-          ] as any);
-        };
-
-        const onUp = (ev: any) => {
-          L.DomEvent.stop(ev);
-          const la = ev.latlng.lat;
-          const lo = ev.latlng.lng;
-          const latMin = Math.min(start.lat, la);
-          const latMax = Math.max(start.lat, la);
-          const lonMin = Math.min(start.lon, lo);
-          const lonMax = Math.max(start.lon, lo);
-          cleanupDrag();
-          if (Math.abs(latMax - latMin) < 1e-5 && Math.abs(lonMax - lonMin) < 1e-5) return;
-          propsRef.current.onSelectionComplete?.({ latMin, lonMin, latMax, lonMax });
-        };
-
-        selectionDragRef.current = { start, rect, onMove, onUp };
-        map.on('mousemove', onMove);
-        map.on('mouseup', onUp);
-      };
-
-      map.on('mousedown', onDown);
-      map.getContainer().style.cursor = 'crosshair';
-      teardown = () => {
-        map.off('mousedown', onDown);
-        cleanupDrag();
-      };
-    });
-
-    return () => {
-      cancelled = true;
-      teardown?.();
-      cleanupDrag();
-    };
-  }, [props.selectionDrawActive]);
+  }, [props.selectionPolygon, props.selectionVertices, props.selectionDrawActive]);
 
   // Heatmap
   useEffect(() => {

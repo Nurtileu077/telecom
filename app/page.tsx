@@ -15,6 +15,7 @@ import EntityEditor, { EntitySelection } from '@/components/Map/EntityEditor';
 import CableEditor from '@/components/Map/CableEditor';
 import SplicePlan from '@/components/Map/SplicePlan';
 import ChatPanel from '@/components/AI/ChatPanel';
+import type { SelectionPolygon } from '@/components/Network/Selection';
 
 const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
   ssr: false,
@@ -52,9 +53,10 @@ export default function HomePage() {
   const [coordInput, setCoordInput] = useState<{ kind: 'sub' | 'olt' | 'tb' | 'ork' } | null>(null);
   const [coordText, setCoordText] = useState('');
   const [showChat, setShowChat] = useState(false);
-  // Drag on map to draw export/reroute bounding box (rubber-band rectangle).
+  // Click on map to build a polygon for export / scoped tools (right-click or «Готово» to finish).
   const [selectionDrawActive, setSelectionDrawActive] = useState(false);
-  const [selectionBBox, setSelectionBBox] = useState<{ latMin: number; lonMin: number; latMax: number; lonMax: number } | null>(null);
+  const [selectionVertices, setSelectionVertices] = useState<SelectionPolygon>([]);
+  const [selectionPolygon, setSelectionPolygon] = useState<SelectionPolygon | null>(null);
 
   const budgetMap = useRef<Map<string, 'ok' | 'warn' | 'fail'>>(new Map());
   useEffect(() => {
@@ -95,10 +97,11 @@ export default function HomePage() {
   const handleLoadStructured = useCallback(async (
     districts: import('@/types/network').District[],
     cables: import('@/types/network').Cable[],
+    joints: import('@/types/network').InlineJoint[],
     source: string,
   ) => {
     setShowImport(false);
-    await net.loadStructured(districts, cables, source);
+    await net.loadStructured(districts, cables, joints, source);
   }, [net]);
 
   // Drag-drop reassignment: when an ORK is dropped near a different TB (≤80m), reassign it.
@@ -145,8 +148,19 @@ export default function HomePage() {
     }
   }, [net]);
 
+  const finishSelectionPolygon = useCallback(() => {
+    if (selectionVertices.length >= 3) {
+      setSelectionPolygon([...selectionVertices]);
+      setSelectionVertices([]);
+      setSelectionDrawActive(false);
+    }
+  }, [selectionVertices]);
+
   const handleMapClickAddSub = useCallback((lat: number, lon: number) => {
-    if (selectionDrawActive) return;
+    if (selectionDrawActive) {
+      setSelectionVertices((v) => [...v, [lat, lon]]);
+      return;
+    }
     // Placement mode takes priority over add-subscriber
     if (placing === 'olt') {
       const name = window.prompt('Название района для нового OLT:', 'Новый район');
@@ -173,10 +187,10 @@ export default function HomePage() {
     if (existing.length === 1) setNewSubDistrict(existing[0]);
   }, [net, placing, selectionDrawActive]);
 
-  const handleSelectionComplete = useCallback((bbox: { latMin: number; lonMin: number; latMax: number; lonMax: number }) => {
-    setSelectionBBox(bbox);
-    setSelectionDrawActive(false);
-  }, []);
+  const handleSaveProject = useCallback(async () => {
+    const r = await net.saveProject();
+    alert(r.message);
+  }, [net]);
 
   // Drop a point of the requested kind at (lat, lon) — used by the right-click
   // context menu and by the manual-coordinate dialog.  Bypasses placing/edit mode.
@@ -235,7 +249,7 @@ export default function HomePage() {
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
 
       if (e.ctrlKey || e.metaKey) {
-        if (e.key === 's') { e.preventDefault(); net.saveProject(); }
+        if (e.key === 's') { e.preventDefault(); handleSaveProject(); }
         if (e.key === 'i') { e.preventDefault(); setShowImport(true); }
         if (e.key === 'n') { e.preventDefault(); if (confirm('Новый проект? Несохранённые данные пропадут.')) net.newProject(); }
         if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); net.undo(); }
@@ -253,12 +267,14 @@ export default function HomePage() {
           setEntitySelection(null);
           setSelectedCableId(null);
           setSelectionDrawActive(false);
+          setSelectionVertices([]);
+          setSelectionPolygon(null);
         }
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [net]);
+  }, [net, handleSaveProject]);
 
   const osrmPercent = net.osrmProgress.total > 0
     ? Math.round((net.osrmProgress.done / net.osrmProgress.total) * 100)
@@ -394,7 +410,7 @@ export default function HomePage() {
             {net.dbEnabled ? '☁' : '🗂'} Проекты
           </button>
           <button
-            onClick={() => net.saveProject()}
+            onClick={handleSaveProject}
             disabled={net.districts.length === 0 && net.annotations.length === 0}
             className="px-3 py-1 text-xs border border-[#1e3a5f] rounded-lg text-[#94a3b8] hover:text-[#e2e8f0] hover:border-[#38bdf8]/40 transition-colors disabled:opacity-40"
             title="Сохранить (Ctrl+S)"
@@ -412,29 +428,44 @@ export default function HomePage() {
               🔨 Построить
             </button>
           )}
-          {/* Selection rectangle: toggle drawing mode, or show "clear" pill when active. */}
-          {selectionBBox ? (
+          {/* Selection polygon: click vertices, right-click or «Готово» to finish. */}
+          {selectionPolygon && selectionPolygon.length >= 3 ? (
             <button
-              onClick={() => { setSelectionBBox(null); setSelectionDrawActive(false); }}
+              onClick={() => { setSelectionPolygon(null); setSelectionVertices([]); setSelectionDrawActive(false); }}
               className="px-2 py-1 text-[11px] bg-[#fbbf24]/20 border border-[#fbbf24]/60 text-[#fbbf24] font-mono rounded-lg transition-colors hover:bg-[#fbbf24]/30"
               title="Снять выделение"
             >
-              🔲 Выделено  ✕
+              🔷 Выделено ({selectionPolygon.length} точ.) ✕
             </button>
+          ) : selectionDrawActive ? (
+            <>
+              <button
+                onClick={finishSelectionPolygon}
+                disabled={selectionVertices.length < 3}
+                className="px-2 py-1 text-[11px] bg-[#34d399]/20 border border-[#34d399]/60 text-[#34d399] rounded-lg disabled:opacity-40"
+                title="Завершить полигон (или ПКМ на карте)"
+              >
+                ✓ Готово ({selectionVertices.length})
+              </button>
+              <button
+                onClick={() => { setSelectionDrawActive(false); setSelectionVertices([]); }}
+                className="px-2 py-1 text-[11px] text-[#94a3b8] border border-[#1e3a5f] rounded-lg"
+              >
+                Отмена
+              </button>
+            </>
           ) : (
             <button
               onClick={() => {
-                if (selectionDrawActive) setSelectionDrawActive(false);
-                else { setSelectionDrawActive(true); setPlacing(null); setCableDraw(null); }
+                setSelectionDrawActive(true);
+                setSelectionVertices([]);
+                setPlacing(null);
+                setCableDraw(null);
               }}
-              className={`px-2 py-1 text-[11px] rounded-lg transition-colors ${
-                selectionDrawActive
-                  ? 'bg-[#fbbf24]/30 border border-[#fbbf24] text-[#fbbf24]'
-                  : 'text-[#94a3b8] border border-[#1e3a5f] hover:text-[#e2e8f0] hover:border-[#fbbf24]/50'
-              }`}
-              title="Зажмите мышь на карте и потяните — выделить область"
+              className="px-2 py-1 text-[11px] rounded-lg transition-colors text-[#94a3b8] border border-[#1e3a5f] hover:text-[#e2e8f0] hover:border-[#fbbf24]/50"
+              title="Кликайте по карте — вершины полигона; ПКМ или «Готово» — завершить"
             >
-              {selectionDrawActive ? '🔲 Потяните область…' : '🔲 Выделить'}
+              🔷 Выделить
             </button>
           )}
           <button
@@ -452,7 +483,7 @@ export default function HomePage() {
           districts={net.districts}
           cables={net.cables}
           joints={net.joints}
-          selectionBBox={selectionBBox}
+          selectionPolygon={selectionPolygon}
           cableReserve={net.settings.cableReserve}
           materials={net.materials}
           layers={net.layers}
@@ -485,8 +516,8 @@ export default function HomePage() {
           setHeatmapEnabled={setHeatmapEnabled}
           onExportPDF={onExportPDF}
           onPrintMap={onPrintMap}
-          onRerouteOSRM={() => net.rerouteWithOSRM(selectionBBox)}
-          onReconsolidate={() => net.reconsolidate(selectionBBox)}
+          onRerouteOSRM={() => net.rerouteWithOSRM(selectionPolygon)}
+          onReconsolidate={() => net.reconsolidate(selectionPolygon)}
           osrmStatus={net.status}
           powerBudgets={net.powerBudgets}
           powerBudgetStats={net.powerBudgetStats}
@@ -518,10 +549,16 @@ export default function HomePage() {
             editMode={net.editMode}
             placingMode={!!placing}
             selectionDrawActive={selectionDrawActive}
-            onSelectionComplete={handleSelectionComplete}
+            selectionVertices={selectionVertices}
+            selectionPolygon={selectionPolygon}
             onMapClick={handleMapClickAddSub}
-            onMapContextMenu={(lat, lon, x, y) => setContextMenu({ lat, lon, x, y })}
-            selectionBBox={selectionBBox}
+            onMapContextMenu={(lat, lon, x, y) => {
+              if (selectionDrawActive && selectionVertices.length >= 3) {
+                finishSelectionPolygon();
+                return;
+              }
+              setContextMenu({ lat, lon, x, y });
+            }}
             moveEntity={handleMoveEntity}
             deleteSubscriber={net.deleteSubscriber}
             onEntityClick={(kind, id) => {
@@ -890,7 +927,7 @@ A3: ...`}
             deleteCable: net.deleteCable,
             rebuildFromCurrent: net.rebuildFromCurrent,
             autoRepair: net.autoRepair,
-            selectionBBox,
+            selectionPolygon,
           }}
           flyTo={flyToRef.current}
           onClose={() => setShowChat(false)}

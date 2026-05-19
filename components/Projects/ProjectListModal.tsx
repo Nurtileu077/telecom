@@ -53,7 +53,7 @@ export default function ProjectListModal({
           <div>
             <h2 className="text-white font-semibold text-base">Мои проекты</h2>
             <p className="text-[10px] text-[#64748b] mt-0.5">
-              {dbEnabled ? '☁ Supabase' : '💾 localStorage'}
+              {dbEnabled ? '☁ Облако + этот браузер' : '💾 Только этот браузер — для другого ПК настройте Supabase или JSON'}
             </p>
           </div>
           <div className="flex gap-2">

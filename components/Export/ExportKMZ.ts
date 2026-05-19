@@ -1,4 +1,4 @@
-import { District, Cable, CableType, CABLE_FIBERS, CABLE_SIZES } from '@/types/network';
+import { District, Cable, CableType, CABLE_FIBERS, CABLE_SIZES, InlineJoint } from '@/types/network';
 
 // KML colors are AABBGGRR (alpha, blue, green, red)
 const CABLE_STYLES: Record<CableType, { color: string; width: number; label: string }> = {
@@ -23,11 +23,13 @@ const CABLE_ROLE: Record<CableType, string> = {
   'ОК-96': 'Магистральный',
 };
 
-export type KmzEntityLayer = 'olt' | 'mufta' | 'ork' | 'subscribers' | 'summary';
+export type KmzEntityLayer = 'olt' | 'mufta' | 'transitJoint' | 'ork' | 'subscribers' | 'summary';
 
 export interface KmzExportLayers {
   olt: boolean;
   mufta: boolean;
+  /** Стыки / транзитные муфты на магистрали (из KML и консолидации). */
+  transitJoint: boolean;
   ork: boolean;
   subscribers: boolean;
   summary: boolean;
@@ -37,6 +39,7 @@ export interface KmzExportLayers {
 export const DEFAULT_KMZ_LAYERS: KmzExportLayers = {
   olt: true,
   mufta: true,
+  transitJoint: true,
   ork: true,
   subscribers: true,
   summary: true,
@@ -48,6 +51,8 @@ export const DEFAULT_KMZ_LAYERS: KmzExportLayers = {
 
 export interface KmzExportOptions {
   layers?: KmzExportLayers;
+  /** Транзитные муфты (InlineJoint + импорт KML). */
+  joints?: InlineJoint[];
   /** Один общий слой на тип ОК без подпапок по районам (по умолчанию да). */
   flatCableFolders?: boolean;
   documentName?: string;
@@ -279,6 +284,7 @@ export function layersForEntityOnly(entity: KmzEntityLayer): KmzExportLayers {
   return {
     olt: entity === 'olt',
     mufta: entity === 'mufta',
+    transitJoint: entity === 'transitJoint',
     ork: entity === 'ork',
     subscribers: entity === 'subscribers',
     summary: entity === 'summary',
@@ -288,22 +294,29 @@ export function layersForEntityOnly(entity: KmzEntityLayer): KmzExportLayers {
 
 const ENTITY_EXPORT: Record<KmzEntityLayer, { filename: string; title: string }> = {
   olt: { filename: 'olt', title: 'GPON — OLT — узлы связи' },
-  mufta: { filename: 'mufty', title: 'GPON — Муфты МТОК — общий' },
+  mufta: { filename: 'mufty-mtok', title: 'GPON — Муфты МТОК-96А' },
+  transitJoint: { filename: 'transit-mufty', title: 'GPON — Транзитные муфты (магистраль)' },
   ork: { filename: 'ork-boksy', title: 'GPON — ОРК и боксы — общий' },
   subscribers: { filename: 'abonenty', title: 'GPON — Абоненты — общий' },
   summary: { filename: 'svodka-kabely', title: 'GPON — Сводка по кабелям' },
 };
 
-export function entityLayerHasContent(districts: District[], cables: Cable[], entity: KmzEntityLayer): boolean {
+export function entityLayerHasContent(
+  districts: District[],
+  cables: Cable[],
+  entity: KmzEntityLayer,
+  joints: InlineJoint[] = [],
+): boolean {
   if (entity === 'olt') return districts.length > 0;
   if (entity === 'mufta') return districts.some((d) => d.olt.transitBoxes.length > 0);
+  if (entity === 'transitJoint') return joints.length > 0;
   if (entity === 'ork') return districts.some((d) => d.olt.transitBoxes.some((tb) => tb.orks.length > 0));
   if (entity === 'subscribers') return allSubscribers(districts).length > 0;
   if (entity === 'summary') return cables.length > 0;
   return false;
 }
 
-const ENTITY_LAYER_ORDER: KmzEntityLayer[] = ['olt', 'mufta', 'ork', 'subscribers', 'summary'];
+const ENTITY_LAYER_ORDER: KmzEntityLayer[] = ['olt', 'mufta', 'transitJoint', 'ork', 'subscribers', 'summary'];
 
 /** Собрать KML-документ по выбранным слоям. */
 export function buildKmlDocument(
@@ -312,6 +325,7 @@ export function buildKmlDocument(
   options: KmzExportOptions = {},
 ): string {
   const layers = options.layers ?? DEFAULT_KMZ_LAYERS;
+  const joints = options.joints ?? [];
   const flatCables = options.flatCableFolders !== false;
   const cableTypes = enabledCableTypes(layers, options.onlyCableTypes);
   const docName = options.documentName ?? `GPON Network — ${new Date().toLocaleDateString('ru')}`;
@@ -345,7 +359,7 @@ ${kmlStyles()}
 
   kml += `<description><![CDATA[
 <b>GPON — экспорт слоёв</b><br/>
-OLT: ${districts.length} · Муфты: ${totalTbs} · ОРК: ${totalOrks} · Абоненты: ${subs.length}<br/>
+OLT: ${districts.length} · Муфты МТОК: ${totalTbs} · Транзитные муфты: ${joints.length} · ОРК: ${totalOrks} · Абоненты: ${subs.length}<br/>
 Кабели в файле: ${filteredCables.length} уч. / ${fmtLen(totalCableM)}<br/>
 Дата: ${new Date().toLocaleString('ru')}
 ]]></description>\n`;
@@ -390,6 +404,24 @@ OLT: ${esc(d.olt.id)}<br/>
 ${html(SPECS.tb)}`;
         kml += pt(label, desc, tb.lat, tb.lon, 'tb');
       }
+    }
+    kml += `</Folder>\n`;
+  }
+
+  // ---- Транзитные муфты на магистрали (консолидация + KML) ----
+  if (layers.transitJoint && joints.length > 0) {
+    kml += `<Folder><name>⊕ Транзитные муфты — общий (${joints.length} шт.)</name>
+<description><![CDATA[Стыки и транзитные муфты на магистрали (не МТОК-96 у OLT). Создаются при консолидации или из KML.]]></description>\n`;
+    let tjN = 0;
+    for (const j of joints) {
+      tjN++;
+      const label = `Транзитная муфта ${tjN}`;
+      const desc = `<b>${esc(label)}</b><br/>
+ID: ${esc(j.id)}<br/>
+Ответвлений: ${j.branchCount}<br/>
+Родитель: ${esc(j.parentId || '—')}<br/>
+Тип: транзитная муфта на магистрали`;
+      kml += pt(label, desc, j.lat, j.lon, 'tb');
     }
     kml += `</Folder>\n`;
   }
@@ -520,6 +552,7 @@ export async function exportKMZForCableType(
   const cableLayers: KmzExportLayers = {
     olt: false,
     mufta: false,
+    transitJoint: false,
     ork: false,
     subscribers: false,
     summary: false,
@@ -537,11 +570,13 @@ export async function exportKMZForCableType(
 export async function exportKMZForEntityLayer(
   districts: District[],
   cables: Cable[],
+  joints: InlineJoint[],
   entity: KmzEntityLayer,
 ): Promise<Blob> {
   const meta = ENTITY_EXPORT[entity];
   return exportKMZ(districts, cables, {
     layers: layersForEntityOnly(entity),
+    joints,
     documentName: meta.title,
     flatCableFolders: true,
   });
@@ -558,6 +593,7 @@ async function addKmzToZip(zip: { file: (name: string, data: ArrayBuffer) => voi
 export async function exportKMZPackage(
   districts: District[],
   cables: Cable[],
+  joints: InlineJoint[],
   layers: KmzExportLayers,
   mode: KmzPackageMode,
 ): Promise<Blob> {
@@ -566,16 +602,17 @@ export async function exportKMZPackage(
   const types = enabledCableTypes(layers).filter((t) => cables.some((c) => c.type === t));
 
   if (mode === 'full-only' || mode === 'full-and-split') {
-    const fullKml = buildKmlDocument(districts, cables, { layers, flatCableFolders: true });
+    const fullKml = buildKmlDocument(districts, cables, { layers, joints, flatCableFolders: true });
     await addKmzToZip(zip, 'gpon-network.kmz', fullKml);
   }
 
   if (mode === 'split-by-type' || mode === 'full-and-split') {
     for (const entity of ENTITY_LAYER_ORDER) {
       if (!layers[entity]) continue;
-      if (!entityLayerHasContent(districts, cables, entity)) continue;
+      if (!entityLayerHasContent(districts, cables, entity, joints)) continue;
       const kml = buildKmlDocument(districts, cables, {
         layers: layersForEntityOnly(entity),
+        joints,
         documentName: ENTITY_EXPORT[entity].title,
         flatCableFolders: true,
       });
@@ -584,9 +621,10 @@ export async function exportKMZPackage(
     for (const type of types) {
       const kml = buildKmlDocument(districts, cables, {
         layers: {
-          olt: false, mufta: false, ork: false, subscribers: false, summary: false,
+          olt: false, mufta: false, transitJoint: false, ork: false, subscribers: false, summary: false,
           cables: { ...emptyCableLayers(), [type]: true },
         },
+        joints,
         onlyCableTypes: [type],
         documentName: `GPON — ${type}`,
         flatCableFolders: true,
@@ -612,13 +650,14 @@ async function triggerDownload(blob: Blob, filename: string) {
 export async function downloadKMZSplitByEntity(
   districts: District[],
   cables: Cable[],
+  joints: InlineJoint[],
   layers: KmzExportLayers,
   filenamePrefix: string,
 ): Promise<void> {
   for (const entity of ENTITY_LAYER_ORDER) {
     if (!layers[entity]) continue;
-    if (!entityLayerHasContent(districts, cables, entity)) continue;
-    const blob = await exportKMZForEntityLayer(districts, cables, entity);
+    if (!entityLayerHasContent(districts, cables, entity, joints)) continue;
+    const blob = await exportKMZForEntityLayer(districts, cables, joints, entity);
     await triggerDownload(blob, `${filenamePrefix}-${ENTITY_EXPORT[entity].filename}.kmz`);
   }
 }
@@ -641,9 +680,10 @@ export async function downloadKMZSplitByType(
 export async function downloadKMZSplitAll(
   districts: District[],
   cables: Cable[],
+  joints: InlineJoint[],
   layers: KmzExportLayers,
   filenamePrefix: string,
 ): Promise<void> {
-  await downloadKMZSplitByEntity(districts, cables, layers, filenamePrefix);
+  await downloadKMZSplitByEntity(districts, cables, joints, layers, filenamePrefix);
   await downloadKMZSplitByType(districts, cables, layers, filenamePrefix);
 }

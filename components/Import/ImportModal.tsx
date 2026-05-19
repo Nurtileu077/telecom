@@ -16,7 +16,7 @@ interface Props {
   onClose: () => void;
   onBuild: (subscribers: Subscriber[], settings: ProjectSettings, source: string, mode: ImportMode, oltLocations?: OltLocations) => void;
   onLoadRaw: (subs: Subscriber[], lines: KmlRawLine[], source: string) => void;
-  onLoadStructured: (districts: District[], cables: Cable[], source: string) => void;
+  onLoadStructured: (districts: District[], cables: Cable[], joints: import('@/types/network').InlineJoint[], source: string) => void;
   onImportNetwork: (project: Project, mode: NetworkImportMode) => void;
   currentSettings: ProjectSettings;
   hasExistingData: boolean;
@@ -96,12 +96,7 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
   // is on, submitting builds a real District tree instead of dumping flat.
   const [structuredPoints, setStructuredPoints] = useState<KmlPoint[]>([]);
   const [structuredLines, setStructuredLines] = useState<KmlLine[]>([]);
-  const [structuredPreview, setStructuredPreview] = useState<{
-    districts: District[];
-    cables: Cable[];
-    radioLines: Array<{ coords: [number, number][]; name: string; district: string }>;
-    stats: { olt: number; tb: number; ork: number; sub: number; supports: number; joints: number; radio: number; cablesMatched: number; cablesOrphan: number };
-  } | null>(null);
+  const [structuredPreview, setStructuredPreview] = useState<ReturnType<typeof buildStructured> | null>(null);
 
   const handleFiles = useCallback(async (rawFiles: FileList | File[]) => {
     const files = Array.from(rawFiles);
@@ -664,7 +659,7 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
                   // tree so the AI / consolidation / export systems see real
                   // OLT/TB/ORK/cables instead of a flat dump of gray dots.
                   if (structuredPreview) {
-                    onLoadStructured(structuredPreview.districts, structuredPreview.cables, fileName);
+                    onLoadStructured(structuredPreview.districts, structuredPreview.cables, structuredPreview.inlineJoints, fileName);
                   } else {
                     onLoadRaw(subscribers, rawLines, fileName);
                   }
