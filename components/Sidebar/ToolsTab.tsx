@@ -1,6 +1,6 @@
 'use client';
 import { useState, useMemo } from 'react';
-import { OpticalBudgetInputs } from '@/types/network';
+import { OpticalBudgetInputs, ProjectSettings } from '@/types/network';
 import { calculateOpticalBudget } from '@/components/Network/OpticalBudget';
 
 const DEFAULT_INPUTS: OpticalBudgetInputs = {
@@ -25,9 +25,15 @@ interface Props {
   hasCables: boolean;
   budgetColoring: boolean;
   onToggleBudgetColoring: () => void;
+  settings: ProjectSettings;
+  setSettings: React.Dispatch<React.SetStateAction<ProjectSettings>>;
 }
 
-export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onPass1, onPass2, selectionPolygon, osrmStatus, hasCables, budgetColoring, onToggleBudgetColoring }: Props) {
+export default function ToolsTab({
+  onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onPass1, onPass2,
+  selectionPolygon, osrmStatus, hasCables, budgetColoring, onToggleBudgetColoring,
+  settings, setSettings,
+}: Props) {
   const [inputs, setInputs] = useState<OpticalBudgetInputs>(DEFAULT_INPUTS);
   const result = useMemo(() => calculateOpticalBudget(inputs), [inputs]);
 
@@ -50,8 +56,40 @@ export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, o
             ? '⏳ Проход 1…'
             : '① Проход 1 — по дорогам (OSRM)'}
         </button>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <label className="block">
+            <span className="text-[9px] text-[#64748b] block mb-0.5">Сторона дороги</span>
+            <select
+              value={settings.roadSide ?? 'left'}
+              onChange={(e) => setSettings((s) => ({
+                ...s,
+                roadSide: e.target.value as 'center' | 'left' | 'right',
+              }))}
+              className="w-full bg-[#0a0e1a] border border-[#1e3a5f] rounded px-1.5 py-1 text-[10px] text-[#e2e8f0]"
+            >
+              <option value="left">Только слева</option>
+              <option value="right">Только справа</option>
+              <option value="center">По оси (как OSRM)</option>
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-[9px] text-[#64748b] block mb-0.5">Отступ от оси, м</span>
+            <input
+              type="number"
+              min={2}
+              max={12}
+              step={0.5}
+              value={settings.roadSideOffsetM ?? 4}
+              onChange={(e) => setSettings((s) => ({
+                ...s,
+                roadSideOffsetM: Math.max(2, Math.min(12, parseFloat(e.target.value) || 4)),
+              }))}
+              className="w-full bg-[#0a0e1a] border border-[#1e3a5f] rounded px-1.5 py-1 text-[10px] text-[#e2e8f0] font-mono"
+            />
+          </label>
+        </div>
         <p className="text-[9px] text-[#64748b] mt-1">
-          Тянет кабели по OSRM. После импорта/построения нажмите сначала это.
+          Проход 1: OSRM + одна сторона улицы. После смены стороны — снова ① и ②.
         </p>
         <button
           onClick={onPass2}

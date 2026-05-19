@@ -1,15 +1,35 @@
 import { Cable } from '@/types/network';
+import {
+  offsetPolylineToSide,
+  pickSnapOnRoadSide,
+  RoadSidePreference,
+} from './roadSideOffset';
 
-const OSRM_BASE = 'https://router.project-osrm.org/route/v1/driving';
+const OSRM_BASE = 'https://router.project-osrm.org';
 
 export type ProgressCallback = (done: number, total: number, current: string) => void;
+
+export interface OsrmRouteOptions {
+  roadSide?: RoadSidePreference;
+  /** Смещение от оси дороги, м (типично 3–6 м — край проезжей части / тротуар). */
+  roadSideOffsetM?: number;
+}
+
+const DEFAULT_OSRM_OPTS: Required<OsrmRouteOptions> = {
+  roadSide: 'center',
+  roadSideOffsetM: 4,
+};
+
+function resolveOpts(opts?: OsrmRouteOptions): Required<OsrmRouteOptions> {
+  return { ...DEFAULT_OSRM_OPTS, ...opts };
+}
 
 async function fetchRoute(
   lat1: number, lon1: number,
   lat2: number, lon2: number,
   signal: AbortSignal,
 ): Promise<[number, number][]> {
-  const url = `${OSRM_BASE}/${lon1},${lat1};${lon2},${lat2}?overview=full&geometries=geojson`;
+  const url = `${OSRM_BASE}/route/v1/driving/${lon1},${lat1};${lon2},${lat2}?overview=full&geometries=geojson`;
   const res = await fetch(url, { signal: AbortSignal.any
     ? AbortSignal.any([signal, AbortSignal.timeout(12000)])
     : signal,
@@ -22,14 +42,34 @@ async function fetchRoute(
   );
 }
 
+function applyRoadSide(
+  coords: [number, number][],
+  opts: Required<OsrmRouteOptions>,
+  endpoints?: { from: [number, number]; to: [number, number] },
+): [number, number][] {
+  if (opts.roadSide === 'center' || coords.length < 2) return coords;
+  const shifted = offsetPolylineToSide(coords, opts.roadSide, opts.roadSideOffsetM);
+  if (endpoints) {
+    shifted[0] = endpoints.from;
+    shifted[shifted.length - 1] = endpoints.to;
+  }
+  return shifted;
+}
+
 export async function getRoute(
   lat1: number, lon1: number,
   lat2: number, lon2: number,
+  opts?: OsrmRouteOptions,
 ): Promise<[number, number][]> {
+  const o = resolveOpts(opts);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 12000);
   try {
-    return await fetchRoute(lat1, lon1, lat2, lon2, ctrl.signal);
+    const coords = await fetchRoute(lat1, lon1, lat2, lon2, ctrl.signal);
+    return applyRoadSide(coords, o, {
+      from: [lat1, lon1],
+      to: [lat2, lon2],
+    });
   } catch {
     return [[lat1, lon1], [lat2, lon2]];
   } finally {
@@ -37,48 +77,64 @@ export async function getRoute(
   }
 }
 
-// Snap a point to the nearest road via OSRM `nearest`. Returns null when
-// no road is within maxDistM (likely off-grid e.g. middle of a field) — the
-// caller should fall back to the original point in that case.
 export async function snapToRoad(
   lat: number, lon: number,
   maxDistM = 60,
+  opts?: OsrmRouteOptions,
+  toward?: { lat: number; lon: number } | null,
 ): Promise<[number, number] | null> {
+  const o = resolveOpts(opts);
+  const number = o.roadSide === 'center' ? 1 : 5;
   try {
-    const url = `https://router.project-osrm.org/nearest/v1/driving/${lon},${lat}?number=1`;
+    const url = `${OSRM_BASE}/nearest/v1/driving/${lon},${lat}?number=${number}`;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 8000);
     const res = await fetch(url, { signal: ctrl.signal });
     clearTimeout(timer);
     if (!res.ok) return null;
     const data = await res.json();
-    if (data.code !== 'Ok' || !data.waypoints?.[0]) return null;
-    const [snLon, snLat] = data.waypoints[0].location;
-    // Bail if the snap is suspiciously far — preserve original placement.
+    if (data.code !== 'Ok' || !data.waypoints?.length) return null;
+
+    const candidates: [number, number][] = data.waypoints.map(
+      (w: { location: [number, number] }) => {
+        const [snLon, snLat] = w.location;
+        return [snLat, snLon] as [number, number];
+      },
+    );
+
     const R = 6371000;
-    const dLat = ((snLat - lat) * Math.PI) / 180;
-    const dLon = ((snLon - lon) * Math.PI) / 180;
-    const a = Math.sin(dLat / 2) ** 2 +
-      Math.cos((lat * Math.PI) / 180) * Math.cos((snLat * Math.PI) / 180) *
-      Math.sin(dLon / 2) ** 2;
-    const dist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    if (dist > maxDistM) return null;
-    return [snLat, snLon];
+    const distM = (a: [number, number]) => {
+      const dLat = ((a[0] - lat) * Math.PI) / 180;
+      const dLon = ((a[1] - lon) * Math.PI) / 180;
+      const x =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos((lat * Math.PI) / 180) * Math.cos((a[0] * Math.PI) / 180) *
+        Math.sin(dLon / 2) ** 2;
+      return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+    };
+
+    const inRange = candidates.filter((c) => distM(c) <= maxDistM);
+    if (inRange.length === 0) return null;
+
+    const picked = pickSnapOnRoadSide(
+      { lat, lon },
+      inRange,
+      toward ?? null,
+      o.roadSide,
+    );
+    return picked;
   } catch {
     return null;
   }
 }
 
-// Snap many points in parallel with a small concurrency limit so we don't
-// overwhelm the public OSRM demo. Returns a Map keyed by `${lat},${lon}`.
-// Deduplicates points first — multiple cables hitting the same entity coord
-// only spend one request.
 export async function snapBatch(
-  pts: { lat: number; lon: number }[],
+  pts: { lat: number; lon: number; toward?: { lat: number; lon: number } }[],
   maxDistM = 60,
   concurrency = 4,
+  opts?: OsrmRouteOptions,
 ): Promise<Map<string, [number, number]>> {
-  const seen = new Map<string, { lat: number; lon: number }>();
+  const seen = new Map<string, { lat: number; lon: number; toward?: { lat: number; lon: number } }>();
   for (const p of pts) seen.set(`${p.lat},${p.lon}`, p);
   const queue = Array.from(seen.values());
   const result = new Map<string, [number, number]>();
@@ -88,9 +144,8 @@ export async function snapBatch(
       const idx = i++;
       const p = queue[idx];
       const key = `${p.lat},${p.lon}`;
-      const snapped = await snapToRoad(p.lat, p.lon, maxDistM);
+      const snapped = await snapToRoad(p.lat, p.lon, maxDistM, opts, p.toward ?? null);
       if (snapped) result.set(key, snapped);
-      // jitter to dodge per-IP rate limits on the public OSRM demo
       await new Promise((r) => setTimeout(r, 80));
     }
   }
@@ -98,12 +153,8 @@ export async function snapBatch(
   return result;
 }
 
-// Douglas-Peucker line simplification — kills the ~8m densification artefacts
-// that OSRM leaves on straight roads. Tolerance is perpendicular distance
-// in metres; keep ≤5m so real road turns survive but colinear noise is gone.
 export function simplifyPath(coords: [number, number][], toleranceM = 5): [number, number][] {
   if (coords.length <= 2) return coords;
-  // Stack-based implementation to avoid recursion overflow on long paths.
   const keep = new Uint8Array(coords.length);
   keep[0] = 1;
   keep[coords.length - 1] = 1;
@@ -117,7 +168,6 @@ export function simplifyPath(coords: [number, number][], toleranceM = 5): [numbe
     const [by, bx] = coords[hi];
     for (let k = lo + 1; k < hi; k++) {
       const [py, px] = coords[k];
-      // approximate metres using equirectangular projection at the mid-latitude
       const latRad = ((ay + by) / 2) * Math.PI / 180;
       const M_LAT = 111320;
       const M_LON = 111320 * Math.cos(latRad);
@@ -165,9 +215,10 @@ export async function routeCables(
   routeDrops: boolean,
   onProgress: ProgressCallback,
   signal: AbortSignal,
-  /** Called after each cable is routed so the map can update live. */
   onCableRouted?: (cable: Cable) => void,
+  opts?: OsrmRouteOptions,
 ): Promise<Cable[]> {
+  const o = resolveOpts(opts);
   const priority: Cable['type'][] = ['ОК-96', 'ОК-48', 'ОК-32', 'ОК-24', 'ОК-16', 'ОК-12', 'ОК-8', 'ОК-4'];
   const toRoute = cables
     .filter((c) => routeDrops || c.type !== 'ОК-4')
@@ -185,13 +236,11 @@ export async function routeCables(
 
     let routedCoords: [number, number][] | null = null;
 
-    // Try up to 2 times
     for (let attempt = 0; attempt < 2; attempt++) {
       if (signal.aborted) break;
       try {
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 12000);
-        // combine with outer signal manually
         signal.addEventListener('abort', () => ctrl.abort(), { once: true });
         const coords = await fetchRoute(from[0], from[1], to[0], to[1], ctrl.signal);
         clearTimeout(timer);
@@ -199,30 +248,23 @@ export async function routeCables(
         break;
       } catch {
         if (attempt === 0 && !signal.aborted) {
-          // small pause before retry
           await new Promise((r) => setTimeout(r, 500));
         }
       }
     }
 
     if (routedCoords && routedCoords.length > 2) {
-      // Collapse OSRM's ~8m densification into just real road turns.
-      // 5m perpendicular tolerance keeps every real bend, removes colinear noise.
       const simplified = simplifyPath(routedCoords, 5);
-      // Preserve the exact endpoints (entity coords) regardless of simplification:
-      // OSRM may snap the first/last point to a node a few metres away.
-      simplified[0] = from;
-      simplified[simplified.length - 1] = to;
+      const shifted = applyRoadSide(simplified, o, { from, to });
       const updated: Cable = {
         ...cable,
-        coords: simplified,
-        lengthM: calcLength(simplified),
+        coords: shifted,
+        lengthM: calcLength(shifted),
         routedByOSRM: true,
       };
       result.set(cable.id, updated);
       onCableRouted?.(updated);
     }
-    // else: keep original straight-line coords
 
     done++;
     if (delay > 0 && !signal.aborted) await new Promise((r) => setTimeout(r, delay));
@@ -231,3 +273,5 @@ export async function routeCables(
   onProgress(toRoute.length, toRoute.length, '');
   return cables.map((c) => result.get(c.id) ?? c);
 }
+
+export type { RoadSidePreference };

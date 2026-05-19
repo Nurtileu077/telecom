@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import {
   District, Cable, Materials, LayerVisibility, ValidationIssue,
-  MapAnnotation, AnnotationType, Project, ImportRecord, PriceCatalog,
+  MapAnnotation, AnnotationType,   Project, ImportRecord, PriceCatalog, ProjectSettings,
 } from '@/types/network';
 import LayersTab from './LayersTab';
 import MaterialsTab from './MaterialsTab';
@@ -74,6 +74,9 @@ interface Props {
   takeSnapshot: (name: string) => ProjectSnapshot;
   restoreSnapshot: (id: string) => void;
   deleteSnapshot: (id: string) => void;
+
+  settings: ProjectSettings;
+  setSettings: React.Dispatch<React.SetStateAction<ProjectSettings>>;
 }
 
 type Tab = 'layers' | 'materials' | 'schema' | 'groups' | 'notes' | 'stats' | 'projects' | 'cost' | 'tools' | 'budget';
@@ -177,6 +180,8 @@ export default function Sidebar(props: Props) {
             hasCables={props.cables.length > 0}
             budgetColoring={props.budgetColoring}
             onToggleBudgetColoring={() => props.setBudgetColoring(!props.budgetColoring)}
+            settings={props.settings}
+            setSettings={props.setSettings}
           />
         )}
         {activeTab === 'projects' && (

@@ -8,7 +8,7 @@ import {
 } from '@/types/network';
 import { buildNetwork, OltLocationMap } from '@/components/Network/AutoBuild';
 import { calculateMaterials, validateNetwork } from '@/components/Network/MaterialCalc';
-import { routeCables, getRoute, snapBatch } from '@/components/Network/OSRMRouter';
+import { routeCables, getRoute, snapBatch, OsrmRouteOptions } from '@/components/Network/OSRMRouter';
 import { planRepair, buildDropCable, type RepairReport } from '@/components/Network/NetworkRepair';
 import {
   filterByPolygon, polylineTouchesPolygon, pointInPolygon, type SelectionPolygon,
@@ -35,6 +35,13 @@ export interface OSRMProgress {
   done: number;
   total: number;
   current: string;
+}
+
+function osrmOptsFromSettings(settings: ProjectSettings): OsrmRouteOptions {
+  return {
+    roadSide: settings.roadSide ?? 'left',
+    roadSideOffsetM: settings.roadSideOffsetM ?? 4,
+  };
 }
 
 const DEFAULT_LAYERS: LayerVisibility = {
@@ -270,18 +277,29 @@ export function useNetwork() {
       // centroid to the road and back, producing visible zigzags and loops.
       if (settings.useOSRM) {
         setOsrmProgress({ done: 0, total: 1, current: 'Привязка точек к дорогам…' });
-        const pts: { lat: number; lon: number }[] = [];
+        const osrmOpts = osrmOptsFromSettings(settings);
+        const pts: { lat: number; lon: number; toward?: { lat: number; lon: number } }[] = [];
         for (const d of newDistricts) {
-          pts.push({ lat: d.olt.lat, lon: d.olt.lon });
-          for (const tb of d.olt.transitBoxes) {
-            pts.push({ lat: tb.lat, lon: tb.lon });
-            for (const ork of tb.orks) pts.push({ lat: ork.lat, lon: ork.lon });
+          const olt = d.olt;
+          for (const tb of olt.transitBoxes) {
+            pts.push({ lat: tb.lat, lon: tb.lon, toward: { lat: olt.lat, lon: olt.lon } });
+            for (const ork of tb.orks) {
+              pts.push({ lat: ork.lat, lon: ork.lon, toward: { lat: tb.lat, lon: tb.lon } });
+            }
           }
         }
         for (const box of newOntBoxes) {
-          pts.push({ lat: box.lat, lon: box.lon });
+          let toward: { lat: number; lon: number } | undefined;
+          for (const d of newDistricts) {
+            for (const tb of d.olt.transitBoxes) {
+              const ork = tb.orks.find((o) => o.id === box.orkspId);
+              if (ork) { toward = { lat: ork.lat, lon: ork.lon }; break; }
+            }
+            if (toward) break;
+          }
+          pts.push({ lat: box.lat, lon: box.lon, toward });
         }
-        const snap = await snapBatch(pts, 60, 8);
+        const snap = await snapBatch(pts, 60, 8, osrmOpts);
         const remap = (lat: number, lon: number): [number, number] => {
           const s = snap.get(`${lat},${lon}`);
           return s ?? [lat, lon];
@@ -422,6 +440,7 @@ export function useNetwork() {
         (d, t, c) => setOsrmProgress({ done: d, total: t, current: c }),
         controller.signal,
         (cable) => setCables((prev) => patchCable(prev, cable)),
+        osrmOptsFromSettings(settings),
       );
       if (controller.signal.aborted) return;
       const byId = new Map(reRouted.map((c) => [c.id, c] as const));
@@ -626,7 +645,7 @@ export function useNetwork() {
     let routed = false;
     if (settings.useOSRM) {
       try {
-        const r = await getRoute(nearestOrk.lat, nearestOrk.lon, lat, lon);
+        const r = await getRoute(nearestOrk.lat, nearestOrk.lon, lat, lon, osrmOptsFromSettings(settings));
         if (r && r.length > 2) { coords = r; routed = true; }
       } catch { /* keep straight */ }
     }
@@ -715,7 +734,9 @@ export function useNetwork() {
     abortRef.current = controller;
     try {
       setStatus('routing');
-      const routed = await routeCables([cable], 0, true, () => {}, controller.signal);
+      const routed = await routeCables(
+        [cable], 0, true, () => {}, controller.signal, undefined, osrmOptsFromSettings(settings),
+      );
       if (!controller.signal.aborted && routed[0]) {
         setCables((prev) => prev.map((c) => c.id === id ? routed[0] : c));
         setStatus('done');
@@ -723,7 +744,7 @@ export function useNetwork() {
     } catch {
       if (!controller.signal.aborted) setStatus('done');
     }
-  }, [cables]);
+  }, [cables, settings]);
 
   const updateOLT = useCallback((id: string, patch: Partial<Omit<OLT, 'id' | 'lat' | 'lon' | 'transitBoxes'>>) => {
     setDistricts((prev) => prev.map((d) =>
@@ -950,7 +971,7 @@ export function useNetwork() {
     let routed = false;
     if (settings.useOSRM) {
       try {
-        const route = await getRoute(from[0], from[1], to[0], to[1]);
+        const route = await getRoute(from[0], from[1], to[0], to[1], osrmOptsFromSettings(settings));
         if (route && route.length > 2) {
           coords = route;
           routed = true;
@@ -1175,7 +1196,9 @@ export function useNetwork() {
     // OSRM-route the new drops sequentially with a small delay to avoid
     // hammering the public OSRM demo.
     for (const item of plan.toConnect) {
-      const cable = await buildDropCable(item.sub, item.orkId, item.orkLat, item.orkLon, settings.useOSRM);
+      const cable = await buildDropCable(
+        item.sub, item.orkId, item.orkLat, item.orkLon, settings.useOSRM, osrmOptsFromSettings(settings),
+      );
       setCables((prev) => [...prev, cable]);
       plan.report.addedCables.push({ fromId: cable.fromId, toId: cable.toId, lengthM: Math.round(cable.lengthM) });
       // tiny breather between OSRM calls

@@ -550,6 +550,8 @@ export default function HomePage() {
           takeSnapshot={net.takeSnapshot}
           restoreSnapshot={net.restoreSnapshot}
           deleteSnapshot={net.deleteSnapshot}
+          settings={net.settings}
+          setSettings={net.setSettings}
         />
 
         <main className="flex-1 relative overflow-hidden isolate">

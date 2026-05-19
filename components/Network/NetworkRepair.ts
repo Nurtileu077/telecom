@@ -9,7 +9,7 @@
 import type { District, Cable, Subscriber } from '@/types/network';
 import { CABLE_FIBERS } from '@/types/network';
 import { haversineM } from './KMeans';
-import { getRoute } from './OSRMRouter';
+import { getRoute, OsrmRouteOptions } from './OSRMRouter';
 
 // GPON-realistic length caps per cable type — anything longer is almost
 // always the result of an id collision after consolidation.
@@ -139,13 +139,14 @@ export async function buildDropCable(
   orkLat: number,
   orkLon: number,
   useOSRM: boolean,
+  osrmOpts?: OsrmRouteOptions,
 ): Promise<Cable> {
   let coords: [number, number][] = [[orkLat, orkLon], [sub.lat, sub.lon]];
   let routed = false;
   let lengthM = haversineM(orkLat, orkLon, sub.lat, sub.lon);
   if (useOSRM) {
     try {
-      const r = await getRoute(orkLat, orkLon, sub.lat, sub.lon);
+      const r = await getRoute(orkLat, orkLon, sub.lat, sub.lon, osrmOpts);
       if (r && r.length > 2) {
         coords = r;
         routed = true;

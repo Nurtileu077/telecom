@@ -216,6 +216,10 @@ export interface ProjectSettings {
   // По умолчанию 12 м: достаточно чтобы соседние OSRM-нити слились,
   // но не сольёт две параллельные улицы (как было при 40 м).
   mergeCorridorM?: number;
+  /** Протяжка OSRM: center = ось дороги; left/right = одна сторона проезжей части. */
+  roadSide?: 'center' | 'left' | 'right';
+  /** Смещение от оси дороги при left/right, метры (обычно 3–6). */
+  roadSideOffsetM?: number;
   // Жёсткий лимит камер на один порт OLT.  При превышении группа
   // разбивается на дополнительные порты / OLT.
   maxSubsPerOltPort?: number;
@@ -315,6 +319,8 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
   l1SplitterDefault: '1:8',
   mergeCorridorM: 12,
   maxSubsPerOltPort: 64,
+  roadSide: 'left',
+  roadSideOffsetM: 4,
 };
 
 export interface PriceCatalog {
