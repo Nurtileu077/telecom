@@ -552,33 +552,52 @@ export default function LeafletMap(props: Props) {
               const budgetMap = propsRef.current.budgetMap;
               const colorByBudget = propsRef.current.budgetColoring;
               for (const sub of ork.subscribers) {
-                // Camera colour by type — ЛУ amber, intersection red, ОВН sky
-                // blue — overrides the district colour so a viewer can tell
-                // АПК vs ОВН at a glance.  Budget colouring still wins when
-                // enabled (operations workflow).
+                // Camera + pole-mounted ONT box (Бокс на столбе): on the
+                // physical layout every camera has its own small box on
+                // the pole — the cable enters it, ONT lives inside, and
+                // 2 fibers (working + spare) feed up to the camera.  We
+                // render this as a small filled square with a coloured
+                // dot inside, where the colour = camera-type:
+                //   amber = ЛУ, red = Перекрёсток, sky = ОВН.
+                // If kind is missing (old project / build flow), we fall
+                // back to the district colour so the camera doesn't end
+                // up indistinguishable gray.
                 const camKind = sub.kind ?? 'unknown';
-                let fillColor = CAMERA_KIND_COLOR[camKind] ?? district.color;
-                let radius = camKind === 'intersection' ? 5 : 4;
+                let dotColor = camKind === 'unknown' ? district.color : CAMERA_KIND_COLOR[camKind];
                 if (colorByBudget && budgetMap) {
                   const s = budgetMap.get(sub.id);
-                  if (s === 'ok')   fillColor = '#34d399';
-                  if (s === 'warn') fillColor = '#f59e0b';
-                  if (s === 'fail') fillColor = '#f87171';
+                  if (s === 'ok')   dotColor = '#34d399';
+                  if (s === 'warn') dotColor = '#f59e0b';
+                  if (s === 'fail') dotColor = '#f87171';
                 }
-                const c = L.circleMarker([sub.lat, sub.lon], {
-                  radius, fillColor, fillOpacity: 0.9,
-                  color: fillColor, weight: 1,
-                });
+                // Larger box for intersection cameras so the busiest type
+                // pops on the map.
+                const boxPx = camKind === 'intersection' ? 12 : 10;
+                const dotPx = camKind === 'intersection' ? 5 : 4;
                 const camLabel = CAMERA_KIND_LABEL[camKind];
                 const bw = sub.minBandwidthMbps ?? CAMERA_MIN_BANDWIDTH_MBPS[camKind];
-                c.bindPopup(`<b>${sub.desc}</b><br/>Тип: <b>${camLabel}</b> · ${bw} Мбит/с<br/>ОРК: ${ork.id}<br/>Волокна: ${sub.fibers.working}+${sub.fibers.spare}${propsRef.current.editMode ? '<br/><button onclick="window.__deleteSub__(\'' + sub.id + '\')" style="margin-top:6px;padding:2px 8px;background:#f87171;color:#fff;border:none;border-radius:3px;font-size:10px;cursor:pointer">Удалить</button>' : ''}`);
-                c.on('contextmenu', (e: any) => {
+                const icon = L.divIcon({
+                  className: '',
+                  iconSize: [boxPx, boxPx],
+                  iconAnchor: [boxPx / 2, boxPx / 2],
+                  html: `<div style="
+                    width:${boxPx}px;height:${boxPx}px;
+                    background:#0d1b2a;
+                    border:1.5px solid ${dotColor};
+                    border-radius:2px;
+                    box-shadow:0 0 3px rgba(0,0,0,0.6);
+                    display:flex;align-items:center;justify-content:center
+                  "><div style="width:${dotPx}px;height:${dotPx}px;background:${dotColor};border-radius:50%"></div></div>`,
+                });
+                const m = L.marker([sub.lat, sub.lon], { icon });
+                m.bindPopup(`<b>${sub.desc}</b><br/>Тип: <b>${camLabel}</b> · ${bw} Мбит/с<br/>📦 Бокс на столбе → ОРК: ${ork.id}<br/>Волокна: ${sub.fibers.working}+${sub.fibers.spare}${propsRef.current.editMode ? '<br/><button onclick="window.__deleteSub__(\'' + sub.id + '\')" style="margin-top:6px;padding:2px 8px;background:#f87171;color:#fff;border:none;border-radius:3px;font-size:10px;cursor:pointer">Удалить</button>' : ''}`);
+                m.on('contextmenu', (e: any) => {
                   e.originalEvent.preventDefault();
                   if (propsRef.current.editMode && confirm(`Удалить абонента «${sub.desc}»?`)) {
                     propsRef.current.deleteSubscriber?.(sub.id);
                   }
                 });
-                group.addLayer(c);
+                group.addLayer(m);
               }
             }
           }
