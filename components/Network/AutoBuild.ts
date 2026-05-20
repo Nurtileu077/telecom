@@ -2,10 +2,38 @@ import {
   Subscriber, ORK, TransitBox, OLT, Cable, District, ProjectSettings, DISTRICT_COLORS,
   CABLE_FIBERS, selectCableType, CableType,
 } from '@/types/network';
-import { kmeans, centroid, haversineM } from './KMeans';
+import { kmeans, centroid, haversineM, Point } from './KMeans';
 
 let cableIdCounter = 0;
 function newCableId() { return `cable-${++cableIdCounter}`; }
+
+// k-means не ограничивает РАЗМЕР кластера: при неравномерной плотности один
+// кластер мог собрать 17–19 камер на ОРКСП (порты 8/16 → перегруз >100%), а
+// далёкие точки такого «рыхлого» кластера давали километровые дропы. Жёстко
+// режем любой кластер крупнее maxSize: дробим под-kmeans на ⌈len/maxSize⌉
+// частей и рекурсивно дочищаем; для вырожденного случая (совпавшие точки) —
+// гарантированная нарезка срезами.
+function capClusterSizes(clusters: Point[][], maxSize: number): Point[][] {
+  const out: Point[][] = [];
+  const split = (cluster: Point[]) => {
+    if (cluster.length <= maxSize) {
+      if (cluster.length > 0) out.push(cluster);
+      return;
+    }
+    const k = Math.ceil(cluster.length / maxSize);
+    const { clusters: sub } = kmeans(cluster, k);
+    const progressed = sub.some((sc) => sc.length > 0 && sc.length < cluster.length);
+    if (!progressed) {
+      for (let i = 0; i < cluster.length; i += maxSize) {
+        out.push(cluster.slice(i, i + maxSize));
+      }
+      return;
+    }
+    for (const sc of sub) split(sc);
+  };
+  for (const c of clusters) split(c);
+  return out;
+}
 
 // GPON fiber requirements (per logical hop):
 //   OLT → TB:  one fiber per ORK served (carries pre-splitter signal) + spare
@@ -99,12 +127,14 @@ function buildSingleOlt(
     l1Splitter: '1:4',
   };
 
-  // Cluster subscribers into ORKs
+  // Cluster subscribers into ORKs (с жёстким ограничением размера: ≤ maxPerORK
+  // камер на ОРКСП — иначе перегруз портов и длинные дропы).
   const kOrk = Math.max(1, Math.ceil(subs.length / settings.maxPerORK));
-  const { clusters: orkClusters } = kmeans(
+  const { clusters: orkClustersRaw } = kmeans(
     subs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id })),
     kOrk,
   );
+  const orkClusters = capClusterSizes(orkClustersRaw, settings.maxPerORK);
 
   const orks: ORK[] = [];
   const updatedSubs: Subscriber[] = [];
@@ -144,12 +174,13 @@ function buildSingleOlt(
     });
   }
 
-  // Cluster ORKs into Transit Boxes
+  // Cluster ORKs into Transit Boxes (≤ maxORKperTB ОРКСП на муфту).
   const kTB = Math.max(1, Math.ceil(orks.length / settings.maxORKperTB));
-  const { clusters: tbClusters } = kmeans(
+  const { clusters: tbClustersRaw } = kmeans(
     orks.map((o) => ({ lat: o.lat, lon: o.lon, id: o.id })),
     kTB,
   );
+  const tbClusters = capClusterSizes(tbClustersRaw, settings.maxORKperTB);
 
   const transitBoxes: TransitBox[] = [];
 

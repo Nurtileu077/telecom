@@ -230,11 +230,12 @@ export function validateNetwork(districts: District[], cables: Cable[]): Validat
   }
   for (const r of bw.orks) {
     if (r.overloaded) {
-      issues.push({
-        type: 'error',
-        message: `${r.id}: сплиттер ${r.splitter} (~${Math.round(r.capacityMbps)} Мбит/абон.) не тянет камеру ${r.maxCamBwMbps} Мбит/с — нужен меньший сплиттер (например 1:${Math.max(2, Math.floor(2500 / r.maxCamBwMbps))})`,
-        entityId: r.id,
-      });
+      const ports = Number(r.splitter.replace('1:', '')) || 0;
+      const portOverflow = ports > 0 && r.cameras > ports;
+      const message = portOverflow
+        ? `${r.id}: камер ${r.cameras} > портов сплиттера ${r.splitter} (${ports}) — добавь ОРКСП или разнеси камеры`
+        : `${r.id}: сплиттер ${r.splitter} (~${Math.round(r.capacityMbps)} Мбит/абон.) не тянет камеру ${r.maxCamBwMbps} Мбит/с — нужен меньший сплиттер (например 1:${Math.max(2, Math.floor(2500 / Math.max(1, r.maxCamBwMbps)))})`;
+      issues.push({ type: 'error', message, entityId: r.id });
     } else if (r.utilisation > 90) {
       issues.push({
         type: 'warning',
