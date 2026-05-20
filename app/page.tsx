@@ -288,7 +288,7 @@ export default function HomePage() {
       <header className="h-12 flex items-center px-3 gap-3 border-b border-[#1e3a5f] bg-[#0d1b2a] flex-shrink-0 z-10">
         <div className="flex items-center gap-2 flex-shrink-0">
           <span className="text-lg">📡</span>
-          <span className="text-sm font-bold text-[#38bdf8] font-mono tracking-wide">GPON</span>
+          <span className="text-sm font-bold text-[#38bdf8] font-mono tracking-wide">OPTIQ</span>
           <span className="text-[#1e3a5f]">|</span>
           <input
             type="text"
@@ -683,7 +683,7 @@ export default function HomePage() {
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <div className="text-center bg-[#0d1b2a]/90 backdrop-blur-sm border border-[#1e3a5f] rounded-2xl p-8 pointer-events-auto shadow-2xl">
                 <div className="text-5xl mb-4">📡</div>
-                <h2 className="text-lg font-semibold text-[#e2e8f0] mb-2">GPON Network Designer</h2>
+                <h2 className="text-lg font-semibold text-[#e2e8f0] mb-2">OPTIQ</h2>
                 <p className="text-sm text-[#94a3b8] mb-4 max-w-xs">
                   Загружайте Excel/KMZ файлы — карта будет накапливаться. Делайте заметки прямо на ней.
                 </p>

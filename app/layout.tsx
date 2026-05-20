@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'GPON Network Designer',
-  description: 'Professional GPON/FTTH optical network design tool',
+  title: 'OPTIQ',
+  description: 'OPTIQ — проектирование оптических сетей камер (GPON/FTTH)',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

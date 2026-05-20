@@ -55,7 +55,7 @@ function patchCable(prev: Cable[], updated: Cable): Cable[] {
 
 export function useNetwork() {
   const [projectId, setProjectId] = useState<string>(() => newId('proj'));
-  const [projectName, setProjectName] = useState('Новый проект');
+  const [projectName, setProjectName] = useState('OPTIQ');
   const [districts, setDistricts] = useState<District[]>([]);
   const [cables, setCables] = useState<Cable[]>([]);
   const [joints, setJoints] = useState<InlineJoint[]>([]);
@@ -1473,7 +1473,7 @@ export function useNetwork() {
 
   const newProject = useCallback(() => {
     setProjectId(newId('proj'));
-    setProjectName('Новый проект');
+    setProjectName('OPTIQ');
     setProjectStatus('draft');
     setSnapshots([]);
     setDistricts([]);
