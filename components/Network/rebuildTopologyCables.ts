@@ -3,8 +3,8 @@ import {
 } from '@/types/network';
 import {
   CABLE_L1_BRANCH,
-  CABLE_OLT_FEEDER,
   pickOrkChainHopCableType,
+  pickOltToMuftaCableType,
 } from './SergekTopology';
 import { haversineM } from './KMeans';
 
@@ -40,8 +40,8 @@ export function rebuildCablesFromDistricts(
       const c1 = pickCoords(olt.id, tb.id, [[olt.lat, olt.lon], [tb.lat, tb.lon]]);
       out.push({
         id: nextId(),
-        type: tb.inCable || CABLE_OLT_FEEDER,
-        fibers: CABLE_FIBERS[tb.inCable || CABLE_OLT_FEEDER],
+        type: tb.inCable || pickOltToMuftaCableType(tb.orks.length),
+        fibers: CABLE_FIBERS[tb.inCable || pickOltToMuftaCableType(tb.orks.length)],
         fromId: olt.id,
         toId: tb.id,
         coords: c1,
@@ -53,8 +53,8 @@ export function rebuildCablesFromDistricts(
         const c2 = pickCoords(tb.id, ork.id, [[tb.lat, tb.lon], [ork.lat, ork.lon]]);
         out.push({
           id: nextId(),
-          type: CABLE_L1_BRANCH,
-          fibers: CABLE_FIBERS[CABLE_L1_BRANCH],
+          type: ork.cableType || CABLE_L1_BRANCH,
+          fibers: CABLE_FIBERS[ork.cableType || CABLE_L1_BRANCH],
           fromId: tb.id,
           toId: ork.id,
           coords: c2,

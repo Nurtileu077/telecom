@@ -1139,6 +1139,34 @@ export function useNetwork() {
     if (allSubscribers.length > 0) await runBuild(allSubscribers);
   }, [allSubscribers, runBuild]);
 
+  /** Перестроить только кабели по текущим OLT/муфтам/ОРК (без k-means и без слияния). */
+  const rebuildCablesFromLayout = useCallback(() => {
+    if (districts.length === 0) return;
+    setStatus('calculating');
+    try {
+      const existingCoords = buildExistingCoordsMap(cables);
+      const logical = rebuildCablesFromDistricts(districts, ontBoxes, existingCoords);
+      const logicalPairs = new Set(
+        logical.flatMap((c) => [`${c.fromId}::${c.toId}`, `${c.toId}::${c.fromId}`]),
+      );
+      const supplement = cables.filter(
+        (c) =>
+          !c.fromId.startsWith('J-') &&
+          !c.toId.startsWith('J-') &&
+          !logicalPairs.has(`${c.fromId}::${c.toId}`),
+      );
+      const next = ensureCableLengths([...logical, ...supplement]);
+      setCables(next);
+      setJoints([]);
+      setMaterials(calculateMaterials(districts, next, settings, 0));
+      setValidationIssues(validateNetwork(districts, next));
+      setStatus('done');
+    } catch (err) {
+      setStatus('error');
+      console.error(err);
+    }
+  }, [districts, cables, ontBoxes, settings, buildExistingCoordsMap]);
+
   // Load a fully-built structure (districts + cables) directly into state.
   // Used by the smart-KML importer: vendor file already has OLT/TB/ORK/cables
   // drawn — we DON'T cluster, we just take it as the source of truth.
@@ -1499,7 +1527,7 @@ export function useNetwork() {
     autoSaveEnabled, setAutoSaveEnabled, lastSavedAt, dbEnabled,
     buildFromSubscribers, appendSubscribers,
     addAnnotation, updateAnnotation, deleteAnnotation,
-    addSubscriberAt, deleteSubscriber, moveEntity, rebuildFromCurrent, autoRepair, loadRaw, loadStructured,
+    addSubscriberAt, deleteSubscriber, moveEntity, rebuildFromCurrent, rebuildCablesFromLayout, autoRepair, loadRaw, loadStructured,
     saveProject, loadProject, deleteProject, listProjects, newProject,
     exportProjectJSON, importProjectJSON,
     totalSubscribers, totalCableKm, totalOrks,

@@ -22,9 +22,11 @@ interface Props {
   onDeleteORK: (id: string) => void;
   onReassignORK: (orkId: string, newTbId: string) => void;
   onOpenSplicePlan: (tbId: string) => void;
+  onRebuildCables?: () => void;
 }
 
 const SPLITTERS: SplitterRatio[] = ['1:2', '1:4', '1:8', '1:16', '1:32', '1:64'];
+const ORK_SPIDER_DEFAULT: SplitterRatio = '1:16';
 const MUFTA_TYPES: MuftaType[] = ['МТОК-96А', 'МТОК-48А', 'МТОК-32А', 'FOSC-400', 'ОМС-3В'];
 const OLT_MODELS: OLTModel[] = [
   'Huawei MA5800-X7', 'Huawei MA5800-X2', 'ZTE C610', 'ZTE C320', 'Eltex LTP-8X',
@@ -80,7 +82,13 @@ function Inp({ value, onChange }: { value: string; onChange: (v: string) => void
 }
 
 // ── OLT editor ────────────────────────────────────────────────────────────────
-function OLTEditor({ olt, onSave }: { olt: OLT; onSave: (patch: Partial<Omit<OLT, 'id' | 'lat' | 'lon' | 'transitBoxes'>>) => void }) {
+function OLTEditor({
+  olt, onSave, onRebuild,
+}: {
+  olt: OLT;
+  onSave: (patch: Partial<Omit<OLT, 'id' | 'lat' | 'lon' | 'transitBoxes'>>) => void;
+  onRebuild?: () => void;
+}) {
   const [model, setModel] = useState(olt.model);
   const [capacity, setCapacity] = useState(String(olt.capacity));
   const [splitter, setSplitter] = useState(olt.l1Splitter);
@@ -106,14 +114,29 @@ function OLTEditor({ olt, onSave }: { olt: OLT; onSave: (patch: Partial<Omit<OLT
         onClick={() => onSave({ model: model as OLTModel, capacity: Number(capacity) || olt.capacity, l1Splitter: splitter })}
         className="w-full py-1.5 bg-[#f59e0b]/15 hover:bg-[#f59e0b]/25 text-[#f59e0b] text-xs rounded transition-colors"
       >
-        Сохранить
+        Сохранить параметры
       </button>
+      {onRebuild && (
+        <button
+          type="button"
+          onClick={onRebuild}
+          className="w-full py-1.5 bg-[#f59e0b]/15 hover:bg-[#f59e0b]/25 text-[#f59e0b] text-xs rounded transition-colors"
+        >
+          Перестроить кабели
+        </button>
+      )}
     </div>
   );
 }
 
 // ── TB editor ─────────────────────────────────────────────────────────────────
-function TBEditor({ tb, onSave }: { tb: TransitBox; onSave: (patch: Partial<Omit<TransitBox, 'id' | 'lat' | 'lon' | 'orks'>>) => void }) {
+function TBEditor({
+  tb, onSave, onRebuild,
+}: {
+  tb: TransitBox;
+  onSave: (patch: Partial<Omit<TransitBox, 'id' | 'lat' | 'lon' | 'orks'>>) => void;
+  onRebuild?: () => void;
+}) {
   const [mufta, setMufta] = useState(tb.muftaType);
   const [inCable, setInCable] = useState(tb.inCable);
   const [outCable, setOutCable] = useState(tb.outCable);
@@ -129,10 +152,10 @@ function TBEditor({ tb, onSave }: { tb: TransitBox; onSave: (patch: Partial<Omit
           onChange={setMufta}
         />
       </Row>
-      <Row label="Вход (узел→муфта)">
+      <Row label="OLT → муфта">
         <Sel value={inCable} options={CABLE_SIZES} onChange={(v) => setInCable(v as typeof inCable)} />
       </Row>
-      <Row label="Выход (муфта→ОРКСП)">
+      <Row label="Развод к ОРК">
         <Sel value={outCable} options={CABLE_SIZES} onChange={(v) => setOutCable(v as typeof outCable)} />
       </Row>
       <div className="text-[10px] text-[#475569]">ОРКСП в этой муфте: {tb.orks.length}</div>
@@ -140,20 +163,30 @@ function TBEditor({ tb, onSave }: { tb: TransitBox; onSave: (patch: Partial<Omit
         onClick={() => onSave({ muftaType: mufta as MuftaType, inCable, outCable })}
         className="w-full py-1.5 bg-[#38bdf8]/15 hover:bg-[#38bdf8]/25 text-[#38bdf8] text-xs rounded transition-colors"
       >
-        Сохранить
+        Сохранить параметры
       </button>
+      {onRebuild && (
+        <button
+          type="button"
+          onClick={onRebuild}
+          className="w-full py-1.5 bg-[#f59e0b]/15 hover:bg-[#f59e0b]/25 text-[#f59e0b] text-xs rounded transition-colors"
+        >
+          Перестроить кабели
+        </button>
+      )}
     </div>
   );
 }
 
 // ── ORK editor ────────────────────────────────────────────────────────────────
 function ORKEditor({
-  ork, districts, onSave, onReassign,
+  ork, districts, onSave, onReassign, onRebuild,
 }: {
   ork: ORK;
   districts: District[];
   onSave: (patch: Partial<Omit<ORK, 'id' | 'lat' | 'lon' | 'subscribers'>>) => void;
   onReassign: (newTbId: string) => void;
+  onRebuild?: () => void;
 }) {
   const [splitter, setSplitter] = useState(ork.splitter);
   const [boxType, setBoxType] = useState(ork.boxType);
@@ -167,8 +200,12 @@ function ORKEditor({
 
   return (
     <div className="space-y-2.5">
-      <Row label="Сплиттер">
-        <Sel value={splitter} options={SPLITTERS} onChange={(v) => setSplitter(v as SplitterRatio)} />
+      <Row label="Паук (1:N)">
+        <Sel
+          value={splitter}
+          options={[ORK_SPIDER_DEFAULT, ...SPLITTERS].filter((v, i, a) => a.indexOf(v) === i)}
+          onChange={(v) => setSplitter(v as SplitterRatio)}
+        />
       </Row>
       <Row label="Тип ОРКСП">
         <Sel
@@ -177,7 +214,7 @@ function ORKEditor({
           onChange={setBoxType}
         />
       </Row>
-      <Row label="Кабель муфта→ОРКСП">
+      <Row label="Жила муфта→ОРК">
         <Sel value={cableType} options={CABLE_SIZES} onChange={(v) => setCableType(v as typeof cableType)} />
       </Row>
       <div className="text-[10px] text-[#475569]">Родительская Муфта: <span className="text-[#94a3b8]">{ork.tbId}</span> · Абонентов: {ork.subscribers.length}</div>
@@ -185,8 +222,17 @@ function ORKEditor({
         onClick={() => onSave({ splitter, boxType: boxType as BoxType, cableType })}
         className="w-full py-1.5 bg-[#f59e0b]/15 hover:bg-[#f59e0b]/25 text-[#f59e0b] text-xs rounded transition-colors"
       >
-        Сохранить
+        Сохранить параметры
       </button>
+      {onRebuild && (
+        <button
+          type="button"
+          onClick={onRebuild}
+          className="w-full py-1.5 bg-[#f59e0b]/15 hover:bg-[#f59e0b]/25 text-[#f59e0b] text-xs rounded transition-colors"
+        >
+          Перестроить кабели
+        </button>
+      )}
 
       {districtTBs.length > 1 && (
         <div className="border-t border-[#1e3a5f] pt-2">
@@ -220,7 +266,7 @@ export default function EntityEditor({
   selection, districts, onClose,
   onUpdateOLT, onUpdateTB, onUpdateORK,
   onDeleteOLT, onDeleteTB, onDeleteORK,
-  onReassignORK, onOpenSplicePlan,
+  onReassignORK, onOpenSplicePlan, onRebuildCables,
 }: Props) {
   if (!selection) return null;
 
@@ -236,7 +282,13 @@ export default function EntityEditor({
     const olt = findOLT(districts, selection.id);
     if (!olt) return null;
     title = olt.id;
-    content = <OLTEditor olt={olt} onSave={(patch) => { onUpdateOLT(olt.id, patch); onClose(); }} />;
+    content = (
+      <OLTEditor
+        olt={olt}
+        onSave={(patch) => { onUpdateOLT(olt.id, patch); }}
+        onRebuild={onRebuildCables ? () => { onRebuildCables(); } : undefined}
+      />
+    );
     const tbCount = olt.transitBoxes.length;
     const orkCount = olt.transitBoxes.reduce((s, tb) => s + tb.orks.length, 0);
     const subCount = olt.transitBoxes.reduce((s, tb) => s + tb.orks.reduce((ss, o) => ss + o.subscribers.length, 0), 0);
@@ -248,7 +300,11 @@ export default function EntityEditor({
     title = tb.id;
     content = (
       <div className="space-y-2">
-        <TBEditor tb={tb} onSave={(patch) => { onUpdateTB(tb.id, patch); onClose(); }} />
+        <TBEditor
+          tb={tb}
+          onSave={(patch) => { onUpdateTB(tb.id, patch); }}
+          onRebuild={onRebuildCables ? () => { onRebuildCables(); } : undefined}
+        />
         <button
           onClick={() => onOpenSplicePlan(tb.id)}
           className="w-full py-1.5 border border-[#38bdf8]/30 text-[#38bdf8] hover:bg-[#38bdf8]/10 text-[11px] rounded transition-colors"
@@ -268,8 +324,9 @@ export default function EntityEditor({
     content = <ORKEditor
       ork={ork}
       districts={districts}
-      onSave={(patch) => { onUpdateORK(ork.id, patch); onClose(); }}
+      onSave={(patch) => { onUpdateORK(ork.id, patch); }}
       onReassign={(newTbId) => { onReassignORK(ork.id, newTbId); onClose(); }}
+      onRebuild={onRebuildCables ? () => { onRebuildCables(); } : undefined}
     />;
     deleteWarn = `Удалит ОРК и ${ork.subscribers.length} абонентов`;
     onDelete = () => { onDeleteORK(ork.id); onClose(); };

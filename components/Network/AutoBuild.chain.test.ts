@@ -33,6 +33,6 @@ describe('ORK chain cable sizing (subscriber → ORK)', () => {
     expect(tbToOrk?.type).toBe('ОК-4');
 
     const oltToTb = cables.find((c) => c.fromId.startsWith('OLT-') && c.toId.startsWith('Муфта-'));
-    expect(oltToTb?.type).toBe('ОК-16');
+    expect(oltToTb?.type).toBe('ОК-4');
   });
 });

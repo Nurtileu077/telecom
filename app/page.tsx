@@ -433,9 +433,18 @@ export default function HomePage() {
             <button
               onClick={() => net.rebuildFromCurrent()}
               className="px-3 py-1 text-xs bg-[#fbbf24] hover:bg-[#fde68a] text-[#0a0e1a] font-semibold rounded-lg transition-colors animate-pulse"
-              title="Запустить авто-построение сети (kmeans → OSRM → консолидация)"
+              title="Запустить авто-построение сети (kmeans, без слияния)"
             >
               🔨 Построить
+            </button>
+          )}
+          {net.districts.length > 0 && (
+            <button
+              onClick={() => net.rebuildCablesFromLayout()}
+              className="px-3 py-1 text-xs border border-[#f59e0b]/50 text-[#f59e0b] hover:bg-[#f59e0b]/15 rounded-lg transition-colors"
+              title="Пересобрать кабели по муфтам/ОРК (без k-means и без слияния)"
+            >
+              ↻ Перестроить кабели
             </button>
           )}
           {/* Selection polygon: click vertices, right-click or «Готово» to finish. */}
@@ -620,6 +629,7 @@ export default function HomePage() {
             onDeleteORK={net.deleteORK}
             onReassignORK={net.reassignORK}
             onOpenSplicePlan={(tbId) => { setSplicePlanTbId(tbId); setEntitySelection(null); }}
+            onRebuildCables={() => net.rebuildCablesFromLayout()}
           />
 
           <SplicePlan

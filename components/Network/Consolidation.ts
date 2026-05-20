@@ -184,6 +184,12 @@ export function consolidateCables(
   const nextJointId = () => `J-${++jointSeq}`;
   const usedCableIds = new Set<string>();
   const entityRoles = buildEntityRoles(districts, ontBoxes);
+  const orkCountByTbId = new Map<string, number>();
+  for (const d of districts) {
+    for (const tb of d.olt.transitBoxes) {
+      orkCountByTbId.set(tb.id, tb.orks.length);
+    }
+  }
 
   for (const district of districts) {
     const olt = district.olt;
@@ -365,7 +371,7 @@ export function consolidateCables(
       routed: boolean,
     ) => {
       if (coords.length < 2) return;
-      const type = pickSegmentCableType(subsCount, fromId, toId, entityRoles);
+      const type = pickSegmentCableType(subsCount, fromId, toId, entityRoles, orkCountByTbId);
       outCables.push({
         id: nextCableId(),
         type,

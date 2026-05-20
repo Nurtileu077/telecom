@@ -5,11 +5,14 @@ import {
 import { kmeans, centroid, haversineM, clusterForOrkGroups } from './KMeans';
 import {
   SERGEK_PORT_CAPACITY,
-  CABLE_OLT_FEEDER,
+  SERGEK_MAX_CAMS_PER_ORK,
+  SERGEK_MAX_ORKS_PER_MUFTA,
+  SERGEK_L2_ORK_SPIDER,
   CABLE_L1_BRANCH,
   pickOrkChainHopCableType,
-  CABLE_ORK_LABEL,
   pickOrkBoxType,
+  pickOltToMuftaCableType,
+  inferL1SplitterForOrkCount,
 } from './SergekTopology';
 
 let cableIdCounter = 0;
@@ -18,16 +21,6 @@ function newCableId() { return `cable-${++cableIdCounter}`; }
 const SPLITTER_RATIO_N: Record<SplitterRatio, number> = {
   '1:2': 2, '1:4': 4, '1:8': 8, '1:16': 16, '1:32': 32, '1:64': 64,
 };
-
-function l2For(l1: SplitterRatio): SplitterRatio {
-  const n = SERGEK_PORT_CAPACITY / SPLITTER_RATIO_N[l1];
-  if (n === 2) return '1:2';
-  if (n === 4) return '1:4';
-  if (n === 8) return '1:8';
-  if (n === 16) return '1:16';
-  if (n === 32) return '1:32';
-  return '1:64';
-}
 
 export type OltLocationMap = Record<string, Array<{ lat: number; lon: number }>>;
 
@@ -70,10 +63,6 @@ function buildSingleOlt(
   ontBoxes: OntBox[],
 ): District {
   const slug = slugForId(districtName);
-  const L1: SplitterRatio = settings.l1SplitterDefault ?? '1:8';
-  const L2: SplitterRatio = l2For(L1);
-  const orkspPerPort = SPLITTER_RATIO_N[L1];
-  const subsPerOrksp = SPLITTER_RATIO_N[L2];
   const maxPerPort = settings.maxSubsPerOltPort ?? SERGEK_PORT_CAPACITY;
 
   const olt: OLT = {
@@ -84,7 +73,7 @@ function buildSingleOlt(
     model: 'Huawei MA5800-X7',
     capacity: SERGEK_PORT_CAPACITY,
     transitBoxes: [],
-    l1Splitter: L1,
+    l1Splitter: '1:8',
   };
 
   const portCount = Math.max(1, Math.ceil(subs.length / maxPerPort));
@@ -122,7 +111,11 @@ function buildSingleOlt(
     const tbId = `Муфта-${slug}${oltSuffix}-${portIdx + 1}`;
 
     const portPoints = portSubs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id }));
-    const orkClusters = clusterForOrkGroups(portPoints, subsPerOrksp, orkspPerPort);
+    const orkClusters = clusterForOrkGroups(
+      portPoints,
+      SERGEK_MAX_CAMS_PER_ORK,
+      SERGEK_MAX_ORKS_PER_MUFTA,
+    );
 
     const orks: ORK[] = [];
 
@@ -147,17 +140,13 @@ function buildSingleOlt(
         lat: orkAnchor.lat,
         lon: orkAnchor.lon,
         district: districtName,
-        splitter: L2,
+        splitter: SERGEK_L2_ORK_SPIDER,
         tbId,
         subscribers: updatedChain,
-        cableType: CABLE_ORK_LABEL,
+        cableType: CABLE_L1_BRANCH,
         boxType: pickOrkBoxType(updatedChain.length),
       });
       allUpdatedSubs.push(...updatedChain);
-
-      cables.push(makeCable(CABLE_L1_BRANCH, tbId, orkId, [
-        [tbLat, tbLon], [orkAnchor.lat, orkAnchor.lon],
-      ]));
 
       for (let i = 0; i < updatedChain.length; i++) {
         const sub = updatedChain[i];
@@ -186,6 +175,16 @@ function buildSingleOlt(
       }
     }
 
+    const orkCount = orks.length;
+    const feederType = pickOltToMuftaCableType(orkCount);
+    const l1 = inferL1SplitterForOrkCount(orkCount);
+
+    for (const ork of orks) {
+      cables.push(makeCable(ork.cableType, tbId, ork.id, [
+        [tbLat, tbLon], [ork.lat, ork.lon],
+      ]));
+    }
+
     transitBoxes.push({
       id: tbId,
       lat: tbLat,
@@ -193,14 +192,18 @@ function buildSingleOlt(
       district: districtName,
       oltId: olt.id,
       orks,
-      inCable: CABLE_OLT_FEEDER,
-      outCable: CABLE_L1_BRANCH,
+      inCable: feederType,
+      outCable: feederType,
       muftaType: 'МТОК-96А',
     });
 
-    cables.push(makeCable(CABLE_OLT_FEEDER, olt.id, tbId, [
+    cables.push(makeCable(feederType, olt.id, tbId, [
       [olt.lat, olt.lon], [tbLat, tbLon],
     ]));
+
+    if (SPLITTER_RATIO_N[l1] > SPLITTER_RATIO_N[olt.l1Splitter]) {
+      olt.l1Splitter = l1;
+    }
   }
 
   olt.transitBoxes = transitBoxes;
