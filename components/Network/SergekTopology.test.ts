@@ -15,6 +15,8 @@ describe('SergekTopology cable sizing', () => {
     expect(pickCableForDownstreamCount(3)).toBe('ОК-8');
     expect(pickCableForDownstreamCount(4)).toBe('ОК-8');
     expect(pickCableForDownstreamCount(5)).toBe('ОК-12');
+    expect(pickCableForDownstreamCount(6)).toBe('ОК-12');
+    expect(pickCableForDownstreamCount(7)).toBe('ОК-16');
     expect(pickCableForDownstreamCount(8)).toBe('ОК-16');
     expect(pickCableForDownstreamCount(64)).toBe('ОК-16');
   });

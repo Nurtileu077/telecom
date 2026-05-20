@@ -17,8 +17,8 @@ export const CABLE_ORK_DISTRIBUTION: CableType = 'ОК-16';
 const LADDER: CableType[] = ['ОК-4', 'ОК-8', 'ОК-12', 'ОК-16'];
 
 /**
- * Сколько камер «ниже по течению» на этом участке (к OLT) — столько жильности.
- * 1 камера → ОК-4, 2 → ОК-4 (4 вол.), 3 → ОК-8, 4 → ОК-8, 5 → ОК-12, …
+ * Жильность по числу камер ниже по направлению к OLT (рабочее + резервное = ×2 волокна):
+ * 1–2 кам → ОК-4, 3–4 → ОК-8, 5–6 → ОК-12, 7–8 → ОК-16 (макс. на участке).
  */
 export function pickCableForDownstreamCount(downstreamCameras: number): CableType {
   if (downstreamCameras <= 0) return 'ОК-4';

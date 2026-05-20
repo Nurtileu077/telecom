@@ -11,6 +11,14 @@ function bearingsClose(a: number, b: number, maxRad = 0.4): boolean {
   return d <= maxRad;
 }
 
+/** Одна улица: тот же азимут или противоположный (вверх/вниз по оси). */
+export function bearingsSameCorridor(a: number, b: number, maxRad = 0.4): boolean {
+  if (bearingsClose(a, b, maxRad)) return true;
+  let d = Math.abs(Math.abs(a - b) - Math.PI);
+  if (d > Math.PI) d = 2 * Math.PI - d;
+  return d <= maxRad;
+}
+
 function pathLengthM(coords: [number, number][]): number {
   let l = 0;
   for (let i = 1; i < coords.length; i++) {
@@ -50,24 +58,43 @@ export function polylinesShareCorridor(
 ): boolean {
   if (a.length < 2 || b.length < 2) return false;
 
-  const midA: [number, number] = a[Math.floor(a.length / 2)];
-  const midB: [number, number] = b[Math.floor(b.length / 2)];
+  const polylineMid = (p: [number, number][]): [number, number] => {
+    if (p.length === 2) {
+      return [(p[0][0] + p[1][0]) / 2, (p[0][1] + p[1][1]) / 2];
+    }
+    return p[Math.floor(p.length / 2)];
+  };
+  const midA = polylineMid(a);
+  const midB = polylineMid(b);
   if (haversineM(midA[0], midA[1], midB[0], midB[1]) > corridorM * 2) return false;
 
   const bearA = bearing(a[0], a[a.length - 1]);
   const bearB = bearing(b[0], b[b.length - 1]);
-  if (!bearingsClose(bearA, bearB)) return false;
+  if (!bearingsSameCorridor(bearA, bearB)) return false;
 
-  let near = 0;
-  const samples = a.length <= 6 ? a : a.filter((_, i) => i % Math.ceil(a.length / 6) === 0);
-  for (const p of samples) {
+  const distToPolyline = (p: [number, number], line: [number, number][]) => {
     let best = Infinity;
-    for (let i = 1; i < b.length; i++) {
-      best = Math.min(best, distPointToSegment(p, b[i - 1], b[i]));
+    for (let i = 1; i < line.length; i++) {
+      best = Math.min(best, distPointToSegment(p, line[i - 1], line[i]));
     }
-    if (best <= corridorM) near++;
+    return best;
+  };
+
+  const samples = a.length <= 6 ? a : a.filter((_, i) => i % Math.ceil(a.length / 6) === 0);
+  let near = 0;
+  for (const p of samples) {
+    if (distToPolyline(p, b) <= corridorM) near++;
   }
-  return near >= Math.max(1, Math.ceil(samples.length * 0.6));
+  const need = Math.max(1, Math.ceil(samples.length * 0.6));
+  if (near >= need) return true;
+
+  // Короткая линия / встречное направление: оба конца у соседней трассы.
+  if (bearingsSameCorridor(bearA, bearB)) {
+    const dStart = distToPolyline(a[0], b);
+    const dEnd = distToPolyline(a[a.length - 1], b);
+    if (dStart <= corridorM && dEnd <= corridorM) return true;
+  }
+  return false;
 }
 
 /**

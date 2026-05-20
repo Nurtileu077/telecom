@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { Cable } from '@/types/network';
-import { mergeParallelCableGeometry, polylinesShareCorridor } from './mergeParallelRoutes';
+import {
+  mergeParallelCableGeometry,
+  polylinesShareCorridor,
+  bearingsSameCorridor,
+} from './mergeParallelRoutes';
 
 describe('mergeParallelRoutes', () => {
   it('detects parallel OSRM offsets on same street', () => {
@@ -15,6 +19,16 @@ describe('mergeParallelRoutes', () => {
       [43.20201, 68.25202],
     ];
     expect(polylinesShareCorridor(a, b, 15)).toBe(true);
+  });
+
+  it('treats opposite direction on same street as one corridor', () => {
+    const forward: [number, number][] = [
+      [43.2, 68.25],
+      [43.202, 68.252],
+    ];
+    const backward: [number, number][] = [...forward].reverse();
+    expect(polylinesShareCorridor(forward, backward, 15)).toBe(true);
+    expect(bearingsSameCorridor(0, Math.PI)).toBe(true);
   });
 
   it('aligns parallel cables to one geometry', () => {

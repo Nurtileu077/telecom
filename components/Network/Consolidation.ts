@@ -77,6 +77,28 @@ function sameCoord(a: [number, number], b: [number, number]): boolean {
   return Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9;
 }
 
+function segBearing(a: [number, number], b: [number, number]): number {
+  return Math.atan2(b[1] - a[1], b[0] - a[0]);
+}
+
+/** Левая/правая нить или встречное направление по одной улице (коридор mergeCorridorM). */
+function segmentSharesCorridor(
+  a: [number, number],
+  b: [number, number],
+  cand: { coords: [[number, number], [number, number]] },
+  gridM: number,
+): boolean {
+  const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] as [number, number];
+  const c = cand.coords;
+  const midC = [(c[0][0] + c[1][0]) / 2, (c[0][1] + c[1][1]) / 2] as [number, number];
+  if (haversineM(mid[0], mid[1], midC[0], midC[1]) > gridM * 1.5) return false;
+  const b1 = segBearing(a, b);
+  const b2 = segBearing(c[0], c[1]);
+  let d = Math.abs(b1 - b2);
+  if (d > Math.PI) d = 2 * Math.PI - d;
+  return d < 0.4 || Math.abs(d - Math.PI) < 0.4;
+}
+
 /** Добавить геометрию сегмента вдоль обхода (не только конечную точку). */
 function appendSegmentGeometry(
   run: [number, number][],
@@ -186,6 +208,14 @@ export function consolidateCables(
       nodeCoord.set(bK, b);
       const key = aK < bK ? `${aK}|${bK}` : `${bK}|${aK}`;
       let s = segments.get(key);
+      if (!s) {
+        for (const cand of segments.values()) {
+          if (segmentSharesCorridor(a, b, cand, gridM)) {
+            s = cand;
+            break;
+          }
+        }
+      }
       if (!s) {
         s = {
           key,
