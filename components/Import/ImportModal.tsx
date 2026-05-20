@@ -6,6 +6,7 @@ import { importKmz, importKmzBatch, importKmzRaw, importKmzBatchRaw, type KmlRaw
 import { buildStructured, type KmlPoint, type KmlLine } from './KmlStructured';
 import type { District, Cable } from '@/types/network';
 import { importCsv, parseTabular } from './CsvImporter';
+import { APP_NAME } from '@/lib/branding';
 
 export type ImportMode = 'replace' | 'append';
 export type NetworkImportMode = 'replace' | 'merge';
@@ -179,7 +180,7 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
     try {
       const text = await file.text();
       const p = JSON.parse(text) as Project;
-      if (!p.districts || !Array.isArray(p.districts)) throw new Error('Не похоже на экспорт проекта GPON');
+      if (!p.districts || !Array.isArray(p.districts)) throw new Error(`Не похоже на экспорт проекта ${APP_NAME}`);
       setNetProject(p);
       setNetFileName(file.name);
     } catch (e: any) {

@@ -1,9 +1,10 @@
 import type { Metadata } from 'next';
+import { APP_DESCRIPTION, APP_NAME } from '@/lib/branding';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'GPON Network Designer',
-  description: 'Professional GPON/FTTH optical network design tool',
+  title: APP_NAME,
+  description: APP_DESCRIPTION,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

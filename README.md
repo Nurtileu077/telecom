@@ -1,6 +1,6 @@
-# GPON Network Designer
+# Weave
 
-Профессиональный браузерный инструмент для проектирования оптических сетей FTTH/GPON.
+Браузерный инструмент **Weave** для проектирования оптических сетей FTTH: OLT → муфта → ОРК → камера.
 Работает полностью локально — без backend, без облака.
 
 ## Возможности
@@ -64,8 +64,8 @@ EXPOSE 3000
 CMD ["npm", "run", "start"]
 ```
 ```bash
-docker build -t gpon-designer .
-docker run -p 3000:3000 gpon-designer
+docker build -t weave .
+docker run -p 3000:3000 weave
 ```
 
 ### Вариант 4: На своём VPS
@@ -76,7 +76,7 @@ npm install --legacy-peer-deps
 npm run build
 # Через PM2 для авто-перезапуска:
 npm install -g pm2
-pm2 start "npm run start" --name gpon
+pm2 start "npm run start" --name weave
 pm2 save
 pm2 startup
 ```

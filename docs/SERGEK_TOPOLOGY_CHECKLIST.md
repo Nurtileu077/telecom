@@ -1,4 +1,4 @@
-# Sergek GPON — чеклист топологии
+# Sergek topology — Weave checklist
 
 Обновлено при исправлении цепочки BOX + консолидации.
 

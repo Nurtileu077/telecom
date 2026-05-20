@@ -1,3 +1,4 @@
+import { APP_NAME } from '@/lib/branding';
 import { District, Cable, Materials } from '@/types/network';
 import { CostBreakdown, formatMoney } from '@/components/Network/CostCalc';
 
@@ -19,7 +20,7 @@ export async function exportPDF(
 
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(16);
-  pdf.text('GPON Network Design Report', margin, y);
+  pdf.text(`${APP_NAME} — Network Report`, margin, y);
   y += 6;
   pdf.setFontSize(11);
   pdf.setFont('helvetica', 'normal');

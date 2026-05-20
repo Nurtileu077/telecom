@@ -193,7 +193,7 @@ export const AI_TOOLS: ToolDef[] = [
   {
     name: 'auto_repair',
     description:
-      'Run an automatic repair pass: (1) delete phantom cables (length over GPON cap for their type, cross-district short cables), (2) OSRM-route a drop cable for every subscriber that currently has no cable and has an ORK within 500 m. Returns a structured report of deletions / additions / orphans that need manual attention. Safe to call repeatedly.',
+      'Run an automatic repair pass: (1) delete phantom cables (length over type cap, cross-district short cables), (2) OSRM-route a drop cable for every subscriber that currently has no cable and has an ORK within 500 m. Returns a structured report of deletions / additions / orphans that need manual attention. Safe to call repeatedly.',
     input_schema: { type: 'object', properties: {} },
   },
 ];

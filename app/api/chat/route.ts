@@ -1,10 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextRequest, NextResponse } from 'next/server';
+import { APP_NAME } from '@/lib/branding';
 import { AI_TOOLS } from '@/components/AI/tools';
 
 export const runtime = 'nodejs';
 
-const SYSTEM_PROMPT = `Ты — ассистент в редакторе GPON-сети.
+const SYSTEM_PROMPT = `Ты — ассистент в редакторе ${APP_NAME} (проектирование оптической сети).
 
 Карта показывает существующую сеть: OLT (узлы связи), Муфты-TB, ОРК-шкафы, абонентов и кабели по дорогам.  Пользователь пишет тебе на русском или казахском.
 

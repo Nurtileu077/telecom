@@ -1,4 +1,5 @@
 'use client';
+import { APP_NAME } from '@/lib/branding';
 import { useState, useMemo } from 'react';
 import { Materials, District, Cable, CABLE_SIZES, CableType, InlineJoint, OntBox } from '@/types/network';
 import { pointInPolygon } from '@/components/Network/Selection';
@@ -123,7 +124,7 @@ export default function MaterialsTab({ materials, districts, cables, ontBoxes = 
     };
   };
 
-  const filePrefix = selectionPolygon && selectionPolygon.length >= 3 ? 'gpon-выделение' : 'gpon-network';
+  const filePrefix = selectionPolygon && selectionPolygon.length >= 3 ? 'weave-selection' : 'weave-network';
 
   const activeCableTypes = useMemo(() => {
     const { cables: c } = exportSet();
@@ -154,7 +155,7 @@ export default function MaterialsTab({ materials, districts, cables, ontBoxes = 
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = selectionPolygon && selectionPolygon.length >= 3 ? 'gpon-materials-выделение.xlsx' : 'gpon-materials.xlsx';
+    a.download = selectionPolygon && selectionPolygon.length >= 3 ? 'weave-materials-selection.xlsx' : 'weave-materials.xlsx';
     a.click();
     URL.revokeObjectURL(url);
   };

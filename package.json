@@ -1,7 +1,7 @@
 {
   "name": "telecom",
   "version": "1.0.0",
-  "description": "",
+  "description": "Weave — fiber network design tool",
   "main": "index.js",
   "scripts": {
     "dev": "next dev",

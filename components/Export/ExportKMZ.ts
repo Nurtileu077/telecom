@@ -1,5 +1,6 @@
 import { District, Cable, CableType, CABLE_FIBERS, CABLE_SIZES, InlineJoint, OntBox } from '@/types/network';
 import { ENTITY_LABELS } from '@/lib/labels';
+import { APP_NAME } from '@/lib/branding';
 import { polylineLengthM } from '@/components/Network/pathLength';
 
 // KML colors are AABBGGRR (alpha, blue, green, red)
@@ -334,12 +335,12 @@ export function layersForEntityOnly(entity: KmzEntityLayer): KmzExportLayers {
 }
 
 const ENTITY_EXPORT: Record<KmzEntityLayer, { filename: string; title: string }> = {
-  olt: { filename: 'olt', title: 'GPON — OLT — узлы связи' },
-  mufta: { filename: 'mufty-mtok', title: 'GPON — Муфты МТОК-96А' },
-  transitJoint: { filename: 'transit-mufty', title: 'GPON — Транзитные муфты (магистраль)' },
-  ork: { filename: 'orksp', title: `GPON — ${ENTITY_LABELS.orksp} — общий` },
-  subscribers: { filename: 'abonenty', title: 'GPON — Абоненты — общий' },
-  summary: { filename: 'svodka-kabely', title: 'GPON — Сводка по кабелям' },
+  olt: { filename: 'olt', title: `${APP_NAME} — OLT — узлы связи` },
+  mufta: { filename: 'mufty-mtok', title: `${APP_NAME} — Муфты МТОК-96А` },
+  transitJoint: { filename: 'transit-mufty', title: `${APP_NAME} — Транзитные муфты (магистраль)` },
+  ork: { filename: 'orksp', title: `${APP_NAME} — ${ENTITY_LABELS.orksp} — общий` },
+  subscribers: { filename: 'abonenty', title: `${APP_NAME} — Абоненты — общий` },
+  summary: { filename: 'svodka-kabely', title: `${APP_NAME} — Сводка по кабелям` },
 };
 
 export function entityLayerHasContent(
@@ -370,7 +371,7 @@ export function buildKmlDocument(
   const ontBoxes = options.ontBoxes ?? [];
   const flatCables = options.flatCableFolders !== false;
   const cableTypes = enabledCableTypes(layers, options.onlyCableTypes);
-  const docName = options.documentName ?? `GPON Network — ${new Date().toLocaleDateString('ru')}`;
+  const docName = options.documentName ?? `${APP_NAME} — ${new Date().toLocaleDateString('ru')}`;
 
   const entityIndex = buildEntityIndex(districts, joints);
   const entityDistrict = new Map<string, string>();
@@ -403,7 +404,7 @@ ${kmlStyles()}
 `;
 
   kml += `<description><![CDATA[
-<b>GPON — экспорт слоёв</b><br/>
+<b>${APP_NAME} — экспорт слоёв</b><br/>
 ${ENTITY_LABELS.olt}: ${districts.length} · ${ENTITY_LABELS.transitMufta}: ${totalTbs} · Стыки: ${joints.length} · ${ENTITY_LABELS.orksp}: ${totalOrks} · ${ENTITY_LABELS.subscriber}: ${subs.length}<br/>
 Кабели в файле: ${filteredCables.length} уч. / ${fmtLen(totalCableM)}<br/>
 Дата: ${new Date().toLocaleString('ru')}
@@ -633,7 +634,7 @@ export async function exportKMZForCableType(
   return exportKMZ(districts, cables, {
     layers: cableLayers,
     onlyCableTypes: [type],
-    documentName: `GPON — ${type} — общий`,
+    documentName: `${APP_NAME} — ${type} — общий`,
     flatCableFolders: true,
   });
 }
@@ -678,7 +679,7 @@ export async function exportKMZPackage(
 
   if (mode === 'full-only' || mode === 'full-and-split') {
     const fullKml = buildKmlDocument(districts, cables, { layers, joints, ontBoxes, flatCableFolders: true });
-    await addKmzToZip(zip, 'gpon-network.kmz', fullKml);
+    await addKmzToZip(zip, 'weave-network.kmz', fullKml);
   }
 
   if (mode === 'split-by-type' || mode === 'full-and-split') {
@@ -692,7 +693,7 @@ export async function exportKMZPackage(
         documentName: ENTITY_EXPORT[entity].title,
         flatCableFolders: true,
       });
-      await addKmzToZip(zip, `objects/gpon-${ENTITY_EXPORT[entity].filename}.kmz`, kml);
+      await addKmzToZip(zip, `objects/weave-${ENTITY_EXPORT[entity].filename}.kmz`, kml);
     }
     for (const type of types) {
       const kml = buildKmlDocument(districts, cables, {
@@ -702,10 +703,10 @@ export async function exportKMZPackage(
         },
         joints,
         onlyCableTypes: [type],
-        documentName: `GPON — ${type}`,
+        documentName: `${APP_NAME} — ${type}`,
         flatCableFolders: true,
       });
-      await addKmzToZip(zip, `cables/gpon-${type.toLowerCase()}.kmz`, kml);
+      await addKmzToZip(zip, `cables/weave-${type.toLowerCase()}.kmz`, kml);
     }
   }
 
