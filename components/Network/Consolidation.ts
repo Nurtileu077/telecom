@@ -1,8 +1,8 @@
-import { Cable, CABLE_FIBERS, CABLE_SIZES, CableType, District } from '@/types/network';
+import { Cable, CABLE_FIBERS, CableType, District } from '@/types/network';
 import { haversineM } from './KMeans';
 
-// In-line муфта — точка, где трасса разветвляется или меняется жильность.
-// Рендерится как небольшой ⊕ маркер и учитывается в смете.
+// In-line муфта — точка, где трасса разветвляется (degree ≥ 3) или меняется
+// жильность.  Рендерится как небольшой ⊕ маркер и учитывается в смете.
 export interface InlineJoint {
   id: string;
   lat: number;
@@ -11,11 +11,9 @@ export interface InlineJoint {
   branchCount: number;
 }
 
-// Шаг квантования координат: точки ближе чем corridorM считаются одним
-// узлом графа.  По умолчанию 12 м — достаточно для слияния соседних
-// OSRM-нитей по одной улице (после snap-to-road OSRM возвращает узлы
-// road-graph с разбросом ~5-15 м), но не сольёт две параллельные улицы.
-// Меняется через settings.mergeCorridorM (см. consolidateCables).
+// Шаг квантования координат: точки ближе чем corridorM считаются одним узлом
+// графа.  По умолчанию 12 м — сливает соседние OSRM-нити одной улицы, но не
+// слепляет две параллельные улицы.  Меняется через settings.mergeCorridorM.
 const DEFAULT_GRID_M = 12;
 
 function makeQuantize(gridM: number) {
@@ -32,6 +30,8 @@ function makeSnap(gridM: number) {
     [Math.round(lat * fLat) / fLat, Math.round(lon * fLon) / fLon];
 }
 
+// Снэпает координаты кабеля к сетке (промежуточные — к центрам клеток,
+// концы — точные, чтобы кабель начинался/заканчивался у сущности).
 function makeSnapCablePath(gridM: number) {
   const quantize = makeQuantize(gridM);
   const snapCoord = makeSnap(gridM);
@@ -64,368 +64,197 @@ function pathLength(coords: [number, number][]): number {
   return len;
 }
 
-// Cap at ОК-48 per project requirement — never emit ОК-96.
-function pickCableType(fibers: number): CableType {
-  for (const t of CABLE_SIZES) {
-    if (t === 'ОК-96') continue;
-    if (CABLE_FIBERS[t] >= fibers) return t;
-  }
-  return 'ОК-48';
-}
-
-// Cable type for a segment shared by N subscribers.
-// - 1 subscriber  → ОК-4 (a normal drop)
-// - 2+ subscribers → ОК-8 minimum.  In practice 2×ОК-4 was being emitted
-//   for the shared run + 2 short ОК-4 drops after the splice, which looks
-//   like "two parallel ОК-4 along a road" to the user.  Using ОК-8 with a
-//   muffta-splice into 2 drops is the standard физический design and adds
-//   spare fibers for future subscribers along the same road.
-function pickSharedCableType(subsCount: number): CableType {
-  if (subsCount <= 1) return 'ОК-4';
-  const fibers = Math.max(8, subsCount * 2);
-  for (const t of CABLE_SIZES) {
-    if (t === 'ОК-96') continue;
-    if (CABLE_FIBERS[t] >= fibers) return t;
-  }
-  return 'ОК-48';
+function maxType(a: CableType, b: CableType): CableType {
+  return CABLE_FIBERS[a] >= CABLE_FIBERS[b] ? a : b;
 }
 
 /**
- * Глобальная консолидация: строит граф дорог из всех кабелей одного района,
- * для каждого сегмента считает уникальных абонентов, проходящих через него,
- * и эмитирует кабели так, чтобы по одной дороге шёл только один кабель нужной
- * жильности. В точках, где меняется счётчик абонентов или происходит развилка,
- * автоматически создаются in-line муфты.
+ * ГЕОМЕТРИЧЕСКАЯ консолидация (топология-агностик).
+ *
+ * Раньше алгоритм шёл по дереву OLT→TB→ORK→sub и ломался на новой
+ * daisy-chain топологии (ОРКСП→бокс→бокс→камера) — прямого кабеля
+ * `ork::sub` больше нет, поэтому ничего не сливалось.
+ *
+ * Новый подход работает на ЧИСТОЙ ГЕОМЕТРИИ кабелей:
+ *   1. Снэпаем вершины всех кабелей к сетке corridorM (концы точные).
+ *   2. Строим граф сегментов; на каждом сегменте копим макс. требуемую
+ *      жильность (самый толстый проходящий кабель) — две параллельные
+ *      нити одной улицы попадают в один сегмент → рисуются одной линией.
+ *   3. Узлы-«разрывы» = сущности (OLT/TB/ОРКСП/камера) ИЛИ degree ≠ 2.
+ *   4. Схлопываем degree-2 цепочки между разрывами в один кабель.
+ *   5. В неэнтити-разрывах degree ≥ 3 ставим муфту (InlineJoint).
+ *
+ * Это убирает параллельные синие линии на одной дороге (issues #1/#2):
+ * перекрывающиеся участки получают общую снэпленную геометрию и одну линию.
  */
 export function consolidateCables(
   cables: Cable[],
   districts?: District[],
-  /** Корпус слияния (м).  По умолчанию 12 — настраивается через
-   *  settings.mergeCorridorM.  Использовался жёстко 40 → слипал две
-   *  параллельные улицы; 12 м только сливает соседние OSRM-нити одной
-   *  дороги. */
   gridM: number = DEFAULT_GRID_M,
 ): { cables: Cable[]; joints: InlineJoint[] } {
-  if (!districts || districts.length === 0) {
+  if (!districts || districts.length === 0 || cables.length === 0) {
     return { cables, joints: [] };
   }
 
-  // Per-call quantize / snap, привязанные к выбранному коридору.
   const quantize = makeQuantize(gridM);
   const snapCablePath = makeSnapCablePath(gridM);
 
-  // Снэпаем промежуточные координаты всех кабелей к общему гриду, чтобы
-  // OSRM-маршруты по одной дороге сошлись к одинаковым узлам.
-  const snappedCables: Cable[] = cables.map((c) => ({
-    ...c,
-    coords: snapCablePath(c.coords),
-  }));
+  // ── 1. Карта: grid-узел → id сущности (для подписи концов кабелей) ──
+  // Регистрируем в порядке sub → ОРКСП → TB → OLT, чтобы при совпадении
+  // координат победил более «высокий» узел (ОРКСП важнее ко-локализованной
+  // камеры; OLT важнее всех).
+  const entityAt = new Map<string, string>();
+  const entityCoordById = new Map<string, [number, number]>();
+  const reg = (id: string, lat: number, lon: number) => {
+    entityAt.set(quantize(lat, lon), id);
+    entityCoordById.set(id, [lat, lon]);
+  };
+  for (const d of districts) {
+    for (const tb of d.olt.transitBoxes) {
+      for (const ork of tb.orks) {
+        for (const s of ork.subscribers) reg(s.id, s.lat, s.lon);
+      }
+    }
+  }
+  for (const d of districts) {
+    for (const tb of d.olt.transitBoxes) {
+      for (const ork of tb.orks) reg(ork.id, ork.lat, ork.lon);
+    }
+  }
+  for (const d of districts) {
+    for (const tb of d.olt.transitBoxes) reg(tb.id, tb.lat, tb.lon);
+  }
+  for (const d of districts) reg(d.olt.id, d.olt.lat, d.olt.lon);
 
-  // Карта кабелей по конечным точкам — для прохода вверх по иерархии.
-  const cableByEndpoint = new Map<string, Cable>();
-  for (const c of snappedCables) {
-    cableByEndpoint.set(`${c.fromId}::${c.toId}`, c);
+  // ── 2. Граф сегментов ──
+  interface Seg {
+    key: string;
+    a: string; b: string;
+    ca: [number, number]; cb: [number, number];
+    type: CableType;          // макс. жильность проходящих кабелей
+  }
+  const segs = new Map<string, Seg>();
+  const nodeCoord = new Map<string, [number, number]>();
+
+  const addSeg = (p: [number, number], q: [number, number], type: CableType) => {
+    const aK = quantize(p[0], p[1]);
+    const bK = quantize(q[0], q[1]);
+    if (aK === bK) return;
+    nodeCoord.set(aK, p);
+    nodeCoord.set(bK, q);
+    const key = aK < bK ? `${aK}|${bK}` : `${bK}|${aK}`;
+    const existing = segs.get(key);
+    if (existing) {
+      existing.type = maxType(existing.type, type);
+    } else {
+      segs.set(key, { key, a: aK, b: bK, ca: p, cb: q, type });
+    }
+  };
+
+  for (const c of cables) {
+    const snapped = snapCablePath(c.coords);
+    for (let i = 1; i < snapped.length; i++) {
+      addSeg(snapped[i - 1], snapped[i], c.type);
+    }
   }
 
+  // ── 3. Adjacency ──
+  const adj = new Map<string, string[]>();
+  for (const seg of segs.values()) {
+    if (!adj.has(seg.a)) adj.set(seg.a, []);
+    if (!adj.has(seg.b)) adj.set(seg.b, []);
+    adj.get(seg.a)!.push(seg.key);
+    adj.get(seg.b)!.push(seg.key);
+  }
+
+  // Узел-разрыв: сущность ИЛИ степень ≠ 2 (концы, развилки).
+  const isBreak = (node: string): boolean =>
+    entityAt.has(node) || (adj.get(node)?.length ?? 0) !== 2;
+
+  // ── 4. Схлопывание degree-2 цепочек ──
   const outCables: Cable[] = [];
   const outJoints: InlineJoint[] = [];
   let cableSeq = 0;
   let jointSeq = 0;
-  const nextCableId = () => `cable-g-${++cableSeq}`;
-  const nextJointId = () => `J-${++jointSeq}`;
-  const usedCableIds = new Set<string>();
+  const jointIdAt = new Map<string, string>();   // grid-узел → joint id
 
-  for (const district of districts) {
-    const olt = district.olt;
-
-    // === Шаг 1. Строим граф сегментов ===
-    type Segment = {
-      key: string;
-      fromKey: string;
-      toKey: string;
-      coords: [[number, number], [number, number]];
-      subs: Set<string>;       // уникальные абоненты, проходящие через сегмент
-      lengthM: number;
-    };
-    const segments = new Map<string, Segment>();
-    const nodeCoord = new Map<string, [number, number]>();
-
-    const addSeg = (a: [number, number], b: [number, number], subId: string) => {
-      const aK = quantize(a[0], a[1]);
-      const bK = quantize(b[0], b[1]);
-      if (aK === bK) return;
-      nodeCoord.set(aK, a);
-      nodeCoord.set(bK, b);
-      const key = aK < bK ? `${aK}|${bK}` : `${bK}|${aK}`;
-      let s = segments.get(key);
-      if (!s) {
-        s = {
-          key,
-          fromKey: aK,
-          toKey: bK,
-          coords: [a, b],
-          subs: new Set(),
-          lengthM: haversineM(a[0], a[1], b[0], b[1]),
-        };
-        segments.set(key, s);
-      }
-      s.subs.add(subId);
-    };
-
-    // Фактическая позиция узла в графе дорог после OSRM-снэппинга.
-    // OLT/ТМ/ОРК/абонент часто стоят не на дороге, OSRM сдвигает старт/конец
-    // к ближайшему road-node. Эта снэпленная точка и есть узел графа —
-    // именно она должна использоваться для BFS и для распознавания терминалов.
-    const effectivePos = new Map<string, [number, number]>();
-
-    // Для каждого абонента склеиваем полный путь OLT→TB→ORK→sub и
-    // регистрируем его прохождение по каждому сегменту.
-    let hasAnyPath = false;
-    for (const tb of olt.transitBoxes) {
-      const oltTb = cableByEndpoint.get(`${olt.id}::${tb.id}`);
-      if (!oltTb) continue;
-      if (oltTb.coords.length >= 2) {
-        if (!effectivePos.has(olt.id)) effectivePos.set(olt.id, oltTb.coords[0]);
-        effectivePos.set(tb.id, oltTb.coords[oltTb.coords.length - 1]);
-      }
-      for (const ork of tb.orks) {
-        const tbOrk = cableByEndpoint.get(`${tb.id}::${ork.id}`);
-        if (!tbOrk) continue;
-        if (tbOrk.coords.length >= 2) {
-          effectivePos.set(ork.id, tbOrk.coords[tbOrk.coords.length - 1]);
-        }
-        for (const sub of ork.subscribers) {
-          const orkSub = cableByEndpoint.get(`${ork.id}::${sub.id}`);
-          if (!orkSub) continue;
-          if (orkSub.coords.length >= 2) {
-            effectivePos.set(sub.id, orkSub.coords[orkSub.coords.length - 1]);
-          }
-          usedCableIds.add(oltTb.id);
-          usedCableIds.add(tbOrk.id);
-          usedCableIds.add(orkSub.id);
-          const path: [number, number][] = [
-            ...oltTb.coords,
-            ...tbOrk.coords.slice(1),
-            ...orkSub.coords.slice(1),
-          ];
-          for (let i = 1; i < path.length; i++) {
-            addSeg(path[i - 1], path[i], sub.id);
-          }
-          hasAnyPath = true;
-        }
-      }
+  const idForNode = (node: string, parentId: string, degree: number): string => {
+    const ent = entityAt.get(node);
+    if (ent) return ent;
+    let jid = jointIdAt.get(node);
+    if (!jid) {
+      jid = `J-${++jointSeq}`;
+      jointIdAt.set(node, jid);
+      const co = nodeCoord.get(node)!;
+      outJoints.push({ id: jid, lat: co[0], lon: co[1], parentId, branchCount: degree });
     }
-    if (!hasAnyPath) continue;
+    return jid;
+  };
 
-    // OLT-узел в графе — это снэпленная позиция (начало OLT→TB кабеля).
-    // Иначе BFS стартует в пустой клетке и ничего не находит.
-    const oltCoord = effectivePos.get(olt.id) ?? [olt.lat, olt.lon];
-    const oltKey = quantize(oltCoord[0], oltCoord[1]);
-    nodeCoord.set(oltKey, oltCoord);
+  const otherEnd = (seg: Seg, node: string) => (seg.a === node ? seg.b : seg.a);
+  const usedSeg = new Set<string>();
 
-    // === Шаг 2. Adjacency: для каждого узла — список сегментов. ===
-    const adj = new Map<string, string[]>();
-    for (const seg of segments.values()) {
-      if (!adj.has(seg.fromKey)) adj.set(seg.fromKey, []);
-      if (!adj.has(seg.toKey)) adj.set(seg.toKey, []);
-      adj.get(seg.fromKey)!.push(seg.key);
-      adj.get(seg.toKey)!.push(seg.key);
-    }
+  const breakNodes = Array.from(adj.keys()).filter(isBreak);
 
-    // === Шаг 3. Обход от OLT и эмиссия кабелей ===
-    const usedSeg = new Set<string>();
+  for (const start of breakNodes) {
+    for (const firstKey of adj.get(start) ?? []) {
+      if (usedSeg.has(firstKey)) continue;
 
-    // Для каждого узла храним: какой ID представляет эту точку (OLT/joint/ORK-id/sub-id).
-    // Используем СНЭПЛЕННЫЕ позиции (фактический узел графа дорог), а не
-    // исходные координаты сущности — иначе BFS не распознает терминал.
-    const nodeId = new Map<string, string>();
-    nodeId.set(oltKey, olt.id);
-    for (const tb of olt.transitBoxes) {
-      const tbCoord = effectivePos.get(tb.id) ?? [tb.lat, tb.lon];
-      nodeId.set(quantize(tbCoord[0], tbCoord[1]), tb.id);
-      for (const ork of tb.orks) {
-        const orkCoord = effectivePos.get(ork.id) ?? [ork.lat, ork.lon];
-        nodeId.set(quantize(orkCoord[0], orkCoord[1]), ork.id);
-        for (const sub of ork.subscribers) {
-          const subCoord = effectivePos.get(sub.id) ?? [sub.lat, sub.lon];
-          nodeId.set(quantize(subCoord[0], subCoord[1]), sub.id);
-        }
+      // Идём по цепочке от start через degree-2 узлы до следующего разрыва.
+      const coords: [number, number][] = [nodeCoord.get(start)!];
+      let chainType: CableType = 'ОК-4';
+      let cur = start;
+      let segKey: string | undefined = firstKey;
+
+      while (segKey) {
+        if (usedSeg.has(segKey)) break;
+        usedSeg.add(segKey);
+        const seg = segs.get(segKey)!;
+        const next = otherEnd(seg, cur);
+        coords.push(nodeCoord.get(next)!);
+        chainType = maxType(chainType, seg.type);
+        cur = next;
+        if (isBreak(cur)) break;
+        // продолжаем по единственному свободному сегменту
+        const cont = (adj.get(cur) ?? []).filter((k) => k !== segKey && !usedSeg.has(k));
+        segKey = cont.length === 1 ? cont[0] : undefined;
       }
-    }
 
-    // Размер кабеля: одна точка → ОК-4 (одиночный дроп).
-    // 2+ абонента через сегмент → минимум ОК-8 (общий магистральный с
-    // муфтой-разветвителем, а не два параллельных ОК-4).
-    const segCableType = (s: Segment): CableType =>
-      pickSharedCableType(s.subs.size);
+      if (coords.length < 2) continue;
 
-    // Получить «соседа» (другой конец сегмента, не равный nodeKey).
-    const otherEnd = (s: Segment, nodeKey: string): string =>
-      s.fromKey === nodeKey ? s.toKey : s.fromKey;
+      const startDeg = adj.get(start)?.length ?? 0;
+      const endDeg = adj.get(cur)?.length ?? 0;
+      const fromId = idForNode(start, '', startDeg);
+      const toId = idForNode(cur, fromId, endDeg);
+      if (fromId === toId) continue;
 
-    // Получить координату «другого конца».
-    const otherCoord = (s: Segment, nodeKey: string): [number, number] => {
-      const aK = quantize(s.coords[0][0], s.coords[0][1]);
-      return aK === nodeKey ? s.coords[1] : s.coords[0];
-    };
-
-    // Эмитим кабель.
-    const emitCable = (
-      coords: [number, number][],
-      subsCount: number,
-      fromId: string,
-      toId: string,
-      routed: boolean,
-    ) => {
-      if (coords.length < 2) return;
-      const type = pickSharedCableType(subsCount);
       outCables.push({
-        id: nextCableId(),
-        type,
-        fibers: CABLE_FIBERS[type],
+        id: `cable-g-${++cableSeq}`,
+        type: chainType,
+        fibers: CABLE_FIBERS[chainType],
         fromId,
         toId,
         coords,
         lengthM: pathLength(coords),
-        routedByOSRM: routed,
+        routedByOSRM: true,
       });
-    };
-
-    // BFS-обход: используем очередь стартовых точек (узел + откуда-id).
-    type Start = { nodeKey: string; fromId: string };
-    const queue: Start[] = [{ nodeKey: oltKey, fromId: olt.id }];
-
-    while (queue.length > 0) {
-      const { nodeKey, fromId } = queue.shift()!;
-      // Берём все свободные сегменты, начинающиеся в этой точке.
-      const segKeys = (adj.get(nodeKey) || []).filter((k) => !usedSeg.has(k));
-      if (segKeys.length === 0) continue;
-
-      // Группируем по subscriber-set: сегменты с одним и тем же набором
-      // абонентов формируют одну цепочку (магистраль).
-      const groups = new Map<string, string[]>();
-      for (const k of segKeys) {
-        const s = segments.get(k)!;
-        const groupKey = [...s.subs].sort().join(',');
-        if (!groups.has(groupKey)) groups.set(groupKey, []);
-        groups.get(groupKey)!.push(k);
-      }
-
-      // Если из одной точки выходит несколько разных «групп» кабелей или
-      // несколько сегментов в одной группе — нужна муфта на этой точке.
-      // Если только одна цепочка с одним сегментом — продолжаем без муфты.
-      let branchOrigin = fromId;
-      const isStartNode = nodeKey === oltKey;
-      const totalBranches = segKeys.length;
-      const needJoint =
-        !isStartNode &&
-        // Уже не OLT/ORK/sub точка
-        !nodeId.has(nodeKey) &&
-        totalBranches >= 2;
-      if (needJoint) {
-        const jid = nextJointId();
-        const coord = nodeCoord.get(nodeKey)!;
-        outJoints.push({
-          id: jid,
-          lat: coord[0],
-          lon: coord[1],
-          parentId: fromId,
-          branchCount: totalBranches,
-        });
-        branchOrigin = jid;
-      } else if (nodeId.has(nodeKey) && nodeKey !== oltKey) {
-        // Точка совпадает с существующим объектом (TB/ORK/sub) — используем её id.
-        branchOrigin = nodeId.get(nodeKey)!;
-      }
-
-      // Для каждой цепочки идём по графу пока subs не меняется и нет развилки.
-      for (const [, segs] of groups) {
-        // У группы один и тот же subscriber-set. Если в группе сразу 2+
-        // сегмента из одной точки — это «звезда» из одной точки (редко). Тогда
-        // мы уже создали joint выше; каждый из них становится отдельной ветвью.
-        for (const startSegKey of segs) {
-          if (usedSeg.has(startSegKey)) continue;
-          // Идём по цепочке.
-          let curNode = nodeKey;
-          let curSeg = segments.get(startSegKey)!;
-          const runCoords: [number, number][] = [nodeCoord.get(curNode)!];
-          let runSubsRef = curSeg.subs;
-          while (true) {
-            usedSeg.add(curSeg.key);
-            const next = otherEnd(curSeg, curNode);
-            runCoords.push(otherCoord(curSeg, curNode));
-            // Условия остановки: соседний узел — это OLT/ORK/sub/TB; или там
-            // есть развилка; или меняется subs-set.
-            const isTerminalNode = nodeId.has(next);
-            const nextAdjFree = (adj.get(next) || []).filter((k) => !usedSeg.has(k));
-            // Сегменты с тем же subs-set, исходящие из next.
-            const continuingSegs = nextAdjFree.filter((k) => {
-              const ss = segments.get(k)!;
-              if (ss.subs.size !== runSubsRef.size) return false;
-              for (const x of ss.subs) if (!runSubsRef.has(x)) return false;
-              return true;
-            });
-            const otherSegs = nextAdjFree.filter((k) => !continuingSegs.includes(k));
-            // Если впереди ровно одна продолжающая цепочка И нет других веток
-            // И это не terminal — продолжаем без муфты.
-            if (
-              !isTerminalNode &&
-              continuingSegs.length === 1 &&
-              otherSegs.length === 0
-            ) {
-              curNode = next;
-              curSeg = segments.get(continuingSegs[0])!;
-              continue;
-            }
-            // Иначе — обрываем кабель здесь.
-            let toId: string;
-            if (isTerminalNode) {
-              toId = nodeId.get(next)!;
-            } else if (nextAdjFree.length === 0) {
-              // Тупик без terminal — редкий случай, делаем синтетический joint.
-              toId = nextJointId();
-              outJoints.push({
-                id: toId,
-                lat: nodeCoord.get(next)![0],
-                lon: nodeCoord.get(next)![1],
-                parentId: branchOrigin,
-                branchCount: 0,
-              });
-            } else {
-              // Развилка или смена subs-set — ставим муфту здесь.
-              toId = nextJointId();
-              outJoints.push({
-                id: toId,
-                lat: nodeCoord.get(next)![0],
-                lon: nodeCoord.get(next)![1],
-                parentId: branchOrigin,
-                branchCount: nextAdjFree.length,
-              });
-            }
-            emitCable(runCoords, runSubsRef.size, branchOrigin, toId, true);
-            // Записываем id для next, чтобы следующая итерация знала его.
-            if (!nodeId.has(next)) nodeId.set(next, toId);
-            // Запускаем продолжение обхода от next.
-            queue.push({ nodeKey: next, fromId: toId });
-            break;
-          }
-        }
-      }
     }
-  }
-
-  // Кабели, которые НЕ были покрыты глобальной консолидацией (например, если
-  // нет соответствующего OLT→TB→ORK→sub звена), оставляем как есть (со снэпом).
-  let passthrough = 0;
-  for (const c of snappedCables) {
-    if (!usedCableIds.has(c.id)) { outCables.push(c); passthrough++; }
   }
 
   if (typeof console !== 'undefined') {
     console.log(
-      `[Consolidation] in=${cables.length} → out=${outCables.length} ` +
-      `(consolidated=${cableSeq}, joints=${outJoints.length}, passthrough=${passthrough})`,
+      `[Consolidation/geo] in=${cables.length} → out=${outCables.length} ` +
+      `(segments=${segs.size}, joints=${outJoints.length}, corridor=${gridM}m)`,
     );
+  }
+
+  // Если по какой-то причине ничего не схлопнулось — возвращаем исходные
+  // кабели (со снэпом), чтобы не потерять сеть.
+  if (outCables.length === 0) {
+    return {
+      cables: cables.map((c) => ({ ...c, coords: snapCablePath(c.coords) })),
+      joints: [],
+    };
   }
 
   return { cables: outCables, joints: outJoints };
