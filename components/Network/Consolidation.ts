@@ -1,6 +1,7 @@
 import { Cable, CABLE_FIBERS, CableType, District, OntBox } from '@/types/network';
 import { haversineM } from './KMeans';
 import { EntityRole, pickSegmentCableType } from './SergekTopology';
+import { mergeCorridorSegments, segmentSharesCorridor } from './mergeCorridorSegments';
 
 // In-line муфта — точка, где трасса разветвляется или меняется жильность.
 // Рендерится как небольшой ⊕ маркер и учитывается в смете.
@@ -77,26 +78,27 @@ function sameCoord(a: [number, number], b: [number, number]): boolean {
   return Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9;
 }
 
-function segBearing(a: [number, number], b: [number, number]): number {
-  return Math.atan2(b[1] - a[1], b[0] - a[0]);
-}
-
-/** Левая/правая нить или встречное направление по одной улице (коридор mergeCorridorM). */
-function segmentSharesCorridor(
-  a: [number, number],
-  b: [number, number],
-  cand: { coords: [[number, number], [number, number]] },
-  gridM: number,
-): boolean {
-  const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] as [number, number];
-  const c = cand.coords;
-  const midC = [(c[0][0] + c[1][0]) / 2, (c[0][1] + c[1][1]) / 2] as [number, number];
-  if (haversineM(mid[0], mid[1], midC[0], midC[1]) > gridM * 1.5) return false;
-  const b1 = segBearing(a, b);
-  const b2 = segBearing(c[0], c[1]);
-  let d = Math.abs(b1 - b2);
-  if (d > Math.PI) d = 2 * Math.PI - d;
-  return d < 0.4 || Math.abs(d - Math.PI) < 0.4;
+function buildBoxHopIndex(
+  districts: District[],
+  cableByEndpoint: Map<string, Cable>,
+): Map<string, number> {
+  const hopByEntity = new Map<string, number>();
+  for (const d of districts) {
+    for (const tb of d.olt.transitBoxes) {
+      for (const ork of tb.orks) {
+        const chain = walkOrkBoxChain(ork.id, cableByEndpoint);
+        for (let i = 0; i < chain.length; i++) {
+          hopByEntity.set(chain[i].toId, i);
+        }
+        for (const sub of ork.subscribers) {
+          if (cableByEndpoint.has(`${ork.id}::${sub.id}`)) {
+            hopByEntity.set(sub.id, 0);
+          }
+        }
+      }
+    }
+  }
+  return hopByEntity;
 }
 
 /** Добавить геометрию сегмента вдоль обхода (не только конечную точку). */
@@ -203,7 +205,7 @@ export function consolidateCables(
       subs: Set<string>;       // уникальные абоненты, проходящие через сегмент
       lengthM: number;
     };
-    const segments = new Map<string, Segment>();
+    let segments = new Map<string, Segment>();
     const nodeCoord = new Map<string, [number, number]>();
 
     const addSeg = (a: [number, number], b: [number, number], subId: string) => {
@@ -312,6 +314,10 @@ export function consolidateCables(
     }
     if (!hasAnyPath) continue;
 
+    const boxHopIndex = buildBoxHopIndex([district], cableByEndpoint);
+    const corridorMerged = mergeCorridorSegments(segments, gridM);
+    segments = corridorMerged.segments;
+
     // OLT-узел в графе — это снэпленная позиция (начало OLT→TB кабеля).
     // Иначе BFS стартует в пустой клетке и ничего не находит.
     const oltCoord = effectivePos.get(olt.id) ?? [olt.lat, olt.lon];
@@ -371,7 +377,15 @@ export function consolidateCables(
       routed: boolean,
     ) => {
       if (coords.length < 2) return;
-      const type = pickSegmentCableType(subsCount, fromId, toId, entityRoles, orkCountByTbId);
+      const hopIdx = boxHopIndex.has(toId) ? boxHopIndex.get(toId)! : null;
+      const type = pickSegmentCableType(
+        subsCount,
+        fromId,
+        toId,
+        entityRoles,
+        orkCountByTbId,
+        hopIdx,
+      );
       outCables.push({
         id: nextCableId(),
         type,

@@ -98,41 +98,51 @@ export function polylinesShareCorridor(
 }
 
 /**
- * Проход 1.5: выровнять параллельные OSRM-трассы к одной линии по центру улицы,
- * чтобы проход 2 не оставлял «левый» и «правый» кабель.
+ * Проход 1.5: выровнять параллельные OSRM-трассы к одной линии.
+ * Транзитивное слияние: A∥B и B∥C → одна геометрия для всех.
  */
 export function mergeParallelCableGeometry(
   cables: Cable[],
   corridorM = 15,
 ): Cable[] {
-  const used = new Set<string>();
-  const out: Cable[] = [];
+  if (cables.length < 2) return cables;
+
+  const uf = new Array(cables.length).fill(0).map((_, i) => i);
+  const find = (x: number): number => {
+    if (uf[x] !== x) uf[x] = find(uf[x]);
+    return uf[x];
+  };
+  const union = (a: number, b: number) => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) uf[rb] = ra;
+  };
 
   for (let i = 0; i < cables.length; i++) {
-    const c = cables[i];
-    if (used.has(c.id)) continue;
-
-    const cluster: Cable[] = [c];
-    used.add(c.id);
-
     for (let j = i + 1; j < cables.length; j++) {
-      const o = cables[j];
-      if (used.has(o.id)) continue;
-      if (polylinesShareCorridor(c.coords, o.coords, corridorM)) {
-        cluster.push(o);
-        used.add(o.id);
+      if (polylinesShareCorridor(cables[i].coords, cables[j].coords, corridorM)) {
+        union(i, j);
       }
     }
+  }
 
-    if (cluster.length === 1) {
-      out.push(c);
+  const clusters = new Map<number, number[]>();
+  for (let i = 0; i < cables.length; i++) {
+    const r = find(i);
+    if (!clusters.has(r)) clusters.set(r, []);
+    clusters.get(r)!.push(i);
+  }
+
+  const out: Cable[] = [];
+  for (const idxs of clusters.values()) {
+    if (idxs.length === 1) {
+      out.push(cables[idxs[0]]);
       continue;
     }
-
+    const cluster = idxs.map((i) => cables[i]);
     const ref = cluster.reduce((best, cur) =>
       pathLengthM(cur.coords) > pathLengthM(best.coords) ? cur : best,
     );
-
     for (const member of cluster) {
       out.push({
         ...member,
@@ -144,10 +154,10 @@ export function mergeParallelCableGeometry(
   }
 
   if (typeof console !== 'undefined' && cables.length > 0) {
-    const merged = cables.length - out.length;
-    if (merged !== 0) {
+    const multi = [...clusters.values()].filter((c) => c.length > 1).length;
+    if (multi > 0) {
       console.log(
-        `[mergeParallel] aligned ${cables.length} cables → ${out.length} unique corridors (corridor=${corridorM}m)`,
+        `[mergeParallel] aligned ${cables.length} cables, ${multi} corridor cluster(s) (corridor=${corridorM}m)`,
       );
     }
   }

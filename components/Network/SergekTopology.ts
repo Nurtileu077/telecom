@@ -70,6 +70,13 @@ function inferRole(id: string, roles: Map<string, EntityRole>): EntityRole {
   return 'other';
 }
 
+/** Камер на участке «от абонента к OLT» для ребра ork/box→box/sub. */
+export function hopCamCountForChainEdge(
+  hopIndexFromOrk: number,
+): number {
+  return Math.max(1, hopIndexFromOrk + 1);
+}
+
 /** Тип кабеля на сегменте 2-го прохода. */
 export function pickSegmentCableType(
   subsCount: number,
@@ -77,6 +84,7 @@ export function pickSegmentCableType(
   toId: string,
   roles: Map<string, EntityRole>,
   orkCountByTbId?: Map<string, number>,
+  hopIndexFromOrk?: number | null,
 ): CableType {
   const from = inferRole(fromId, roles);
   const to = inferRole(toId, roles);
@@ -87,6 +95,15 @@ export function pickSegmentCableType(
   }
   if ((from === 'tb' && to === 'ork') || (from === 'ork' && to === 'tb')) {
     return CABLE_L1_BRANCH;
+  }
+
+  if (hopIndexFromOrk != null && hopIndexFromOrk >= 0) {
+    if (
+      (from === 'ork' && (to === 'box' || to === 'sub')) ||
+      (from === 'box' && (to === 'box' || to === 'sub'))
+    ) {
+      return pickOrkChainHopCableType(hopIndexFromOrk);
+    }
   }
 
   return pickCableForDownstreamCount(subsCount);
