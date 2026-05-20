@@ -11,46 +11,87 @@ export interface InlineJoint {
   branchCount: number;
 }
 
-// Шаг квантования координат: точки ближе ≈40 м считаются одним узлом графа.
-// Подняли с 25 до 40, потому что после OSRM-snap-to-road и Voronoi-split на
-// несколько OLT на одной улице соседние трассы расходятся по road-нодам в
-// пределах 10–30 м. Грид 25 м не сливал их → параллельные кабели на одной
-// дороге. 40 м объединяет такие соседние нити в один сегмент.
-const GRID_M = 40;
+// Радиус слияния узлов графа дорог. Точки ближе MERGE_RADIUS_M считаются одним
+// узлом — это сливает параллельные нити одной дороги. OSRM «не умный»: правую и
+// левую сторону одной улицы он тянет отдельными полилиниями со сдвигом ~10–20 м
+// и они не видят друг друга → две синие линии на одной дороге. Гриди-снэп по
+// радиусу (в отличие от фиксированной сетки) фазонезависим: он объединяет такие
+// полосы независимо от того, как легли вершины.
+//
+// 30 м надёжно сливает полосы одной улицы, но НЕ склеивает соседние параллельные
+// улицы (обычно ≥40 м между осями).
+const MERGE_RADIUS_M = 30;
 
-function quantize(lat: number, lon: number): string {
-  const fLat = 1 / (GRID_M / 111320);
-  const fLon = 1 / (GRID_M / 81400);
-  return `${Math.round(lat * fLat)}_${Math.round(lon * fLon)}`;
+interface SnapNode { lat: number; lon: number; key: string }
+
+// Гриди-снэппер узлов. Привязывает каждую дорожную вершину к ближайшему уже
+// существующему узлу в радиусе R, иначе создаёт новый. В отличие от фиксированной
+// сетки нет жёстких границ ячеек — две точки в 15 м всегда сливаются, даже если
+// лежат по разные стороны воображаемой клетки.
+//
+// ВАЖНО: сущности (OLT/муфта/ОРКСП/камера) регистрируются как ЯКОРЯ (addAnchor)
+// и НИКОГДА не сливаются друг с другом. Поэтому близко стоящие камеры (даже <30 м)
+// остаются отдельными точками с отдельными дропами — радиус влияет только на
+// промежуточные дорожные вершины, а не на положение оборудования.
+function makeSnapper(R: number) {
+  const buckets = new Map<string, SnapNode[]>();
+  const fLat = 1 / (R / 111320);
+  const fLon = 1 / (R / 81400);
+  let seq = 0;
+  const bucketKey = (lat: number, lon: number) =>
+    `${Math.round(lat * fLat)}_${Math.round(lon * fLon)}`;
+  const put = (n: SnapNode) => {
+    const k = bucketKey(n.lat, n.lon);
+    let arr = buckets.get(k);
+    if (!arr) { arr = []; buckets.set(k, arr); }
+    arr.push(n);
+  };
+  const nearest = (lat: number, lon: number): SnapNode | null => {
+    const ci = Math.round(lat * fLat), cj = Math.round(lon * fLon);
+    let best: SnapNode | null = null;
+    let bd = R;
+    for (let di = -1; di <= 1; di++) {
+      for (let dj = -1; dj <= 1; dj++) {
+        const arr = buckets.get(`${ci + di}_${cj + dj}`);
+        if (!arr) continue;
+        for (const n of arr) {
+          const d = haversineM(lat, lon, n.lat, n.lon);
+          if (d < bd) { bd = d; best = n; }
+        }
+      }
+    }
+    return best;
+  };
+  return {
+    // Защищённый узел сущности — никогда не сливается с другими.
+    addAnchor(lat: number, lon: number): string {
+      const n: SnapNode = { lat, lon, key: `a${seq++}` };
+      put(n);
+      return n.key;
+    },
+    // Дорожная вершина — привязка к ближайшему узлу в радиусе R или новый узел.
+    snap(lat: number, lon: number): string {
+      const f = nearest(lat, lon);
+      if (f) return f.key;
+      const n: SnapNode = { lat, lon, key: `q${seq++}` };
+      put(n);
+      return n.key;
+    },
+  };
 }
 
-// Снэп координаты к центру сетки. Используем для приведения всех
-// кабельных вершин к общему набору узлов перед консолидацией.
-function snapCoord(lat: number, lon: number): [number, number] {
-  const fLat = 1 / (GRID_M / 111320);
-  const fLon = 1 / (GRID_M / 81400);
-  return [Math.round(lat * fLat) / fLat, Math.round(lon * fLon) / fLon];
-}
-
-// Снэпает все координаты кабеля к сетке (кроме первой и последней —
-// они остаются точными, чтобы кабель начинался/заканчивался у entity).
-function snapCablePath(coords: [number, number][]): [number, number][] {
-  if (coords.length < 2) return coords;
+// Лёгкое упрощение полилинии: выкидываем промежуточные точки ближе ~5 м к
+// предыдущей сохранённой (концы всегда остаются). Снижает шум вершин перед
+// гриди-снэпом, не теряя геометрию дороги.
+function simplifyPath(coords: [number, number][]): [number, number][] {
+  if (coords.length < 3) return coords;
   const out: [number, number][] = [coords[0]];
-  let lastKey = quantize(coords[0][0], coords[0][1]);
   for (let i = 1; i < coords.length - 1; i++) {
     const [la, lo] = coords[i];
-    const snapped = snapCoord(la, lo);
-    const k = quantize(snapped[0], snapped[1]);
-    if (k !== lastKey) {
-      out.push(snapped);
-      lastKey = k;
-    }
+    const prev = out[out.length - 1];
+    if (haversineM(prev[0], prev[1], la, lo) >= 5) out.push([la, lo]);
   }
-  const last = coords[coords.length - 1];
-  const lastK = quantize(last[0], last[1]);
-  if (lastK !== lastKey) out.push(last);
-  else out[out.length - 1] = last;
+  out.push(coords[coords.length - 1]);
   return out;
 }
 
@@ -103,11 +144,11 @@ export function consolidateCables(
     return { cables, joints: [] };
   }
 
-  // Снэпаем промежуточные координаты всех кабелей к общему гриду, чтобы
-  // OSRM-маршруты по одной дороге сошлись к одинаковым узлам.
+  // Лёгкое упрощение геометрии всех кабелей (слияние узлов делает гриди-снэппер
+  // внутри района, фазонезависимо).
   const snappedCables: Cable[] = cables.map((c) => ({
     ...c,
-    coords: snapCablePath(c.coords),
+    coords: simplifyPath(c.coords),
   }));
 
   // Карта кабелей по конечным точкам — для прохода вверх по иерархии.
@@ -126,6 +167,10 @@ export function consolidateCables(
 
   for (const district of districts) {
     const olt = district.olt;
+
+    // Свой снэппер узлов на район (OLT). quantize() = привязка точки к узлу.
+    const snapper = makeSnapper(MERGE_RADIUS_M);
+    const quantize = (lat: number, lon: number) => snapper.snap(lat, lon);
 
     // === Шаг 1. Строим граф сегментов ===
     type Segment = {
@@ -167,28 +212,44 @@ export function consolidateCables(
     // именно она должна использоваться для BFS и для распознавания терминалов.
     const effectivePos = new Map<string, [number, number]>();
 
-    // Для каждого абонента склеиваем полный путь OLT→TB→ORK→sub и
-    // регистрируем его прохождение по каждому сегменту.
-    let hasAnyPath = false;
+    // === Пре-пасс: позиции сущностей + регистрация ЯКОРЕЙ ===
+    // Сначала вычисляем эффективную (OSRM-снэпнутую) позицию каждого OLT/муфты/
+    // ОРКСП/камеры и регистрируем их как защищённые якоря — ДО построения графа.
+    // Иначе две близко стоящие камеры могли бы слиться в один дорожный узел и
+    // одна из них потеряла бы свой дроп.
     for (const tb of olt.transitBoxes) {
       const oltTb = cableByEndpoint.get(`${olt.id}::${tb.id}`);
-      if (!oltTb) continue;
-      if (oltTb.coords.length >= 2) {
-        if (!effectivePos.has(olt.id)) effectivePos.set(olt.id, oltTb.coords[0]);
-        effectivePos.set(tb.id, oltTb.coords[oltTb.coords.length - 1]);
-      }
+      if (!oltTb || oltTb.coords.length < 2) continue;
+      if (!effectivePos.has(olt.id)) effectivePos.set(olt.id, oltTb.coords[0]);
+      effectivePos.set(tb.id, oltTb.coords[oltTb.coords.length - 1]);
       for (const ork of tb.orks) {
         const tbOrk = cableByEndpoint.get(`${tb.id}::${ork.id}`);
-        if (!tbOrk) continue;
-        if (tbOrk.coords.length >= 2) {
+        if (tbOrk && tbOrk.coords.length >= 2) {
           effectivePos.set(ork.id, tbOrk.coords[tbOrk.coords.length - 1]);
         }
         for (const sub of ork.subscribers) {
           const orkSub = cableByEndpoint.get(`${ork.id}::${sub.id}`);
-          if (!orkSub) continue;
-          if (orkSub.coords.length >= 2) {
+          if (orkSub && orkSub.coords.length >= 2) {
             effectivePos.set(sub.id, orkSub.coords[orkSub.coords.length - 1]);
           }
+        }
+      }
+    }
+    for (const [, co] of effectivePos) snapper.addAnchor(co[0], co[1]);
+
+    // === Регистрируем прохождение каждого абонента по сегментам ===
+    // Для каждого абонента склеиваем полный путь OLT→TB→ORK→sub и копим его на
+    // каждом сегменте графа (узлы уже привязываются гриди-снэппером к радиусу).
+    let hasAnyPath = false;
+    for (const tb of olt.transitBoxes) {
+      const oltTb = cableByEndpoint.get(`${olt.id}::${tb.id}`);
+      if (!oltTb || oltTb.coords.length < 2) continue;
+      for (const ork of tb.orks) {
+        const tbOrk = cableByEndpoint.get(`${tb.id}::${ork.id}`);
+        if (!tbOrk || tbOrk.coords.length < 2) continue;
+        for (const sub of ork.subscribers) {
+          const orkSub = cableByEndpoint.get(`${ork.id}::${sub.id}`);
+          if (!orkSub || orkSub.coords.length < 2) continue;
           usedCableIds.add(oltTb.id);
           usedCableIds.add(tbOrk.id);
           usedCableIds.add(orkSub.id);
