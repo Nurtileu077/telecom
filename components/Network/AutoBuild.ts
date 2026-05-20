@@ -7,7 +7,9 @@ import {
   SERGEK_PORT_CAPACITY,
   CABLE_OLT_FEEDER,
   CABLE_L1_BRANCH,
-  pickOrkChainCableType,
+  pickOrkChainHopCableType,
+  CABLE_ORK_LABEL,
+  pickOrkBoxType,
 } from './SergekTopology';
 
 let cableIdCounter = 0;
@@ -148,8 +150,8 @@ function buildSingleOlt(
         splitter: L2,
         tbId,
         subscribers: updatedChain,
-        cableType: pickOrkChainCableType(updatedChain.length),
-        boxType: subsPerOrksp >= 16 ? 'ОРКСп-16' : 'Бокс-16',
+        cableType: CABLE_ORK_LABEL,
+        boxType: pickOrkBoxType(updatedChain.length),
       });
       allUpdatedSubs.push(...updatedChain);
 
@@ -168,11 +170,10 @@ function buildSingleOlt(
           orkspId: orkId,
         });
 
-        const remaining = updatedChain.length - i;
-        const hopType = pickOrkChainCableType(remaining);
+        const hopType = pickOrkChainHopCableType(i);
 
         if (i === 0) {
-          cables.push(makeCable(pickOrkChainCableType(updatedChain.length), orkId, boxId, [
+          cables.push(makeCable(pickOrkChainHopCableType(0), orkId, boxId, [
             [orkAnchor.lat, orkAnchor.lon], [sub.lat, sub.lon],
           ]));
         } else {
