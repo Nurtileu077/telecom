@@ -17,7 +17,17 @@ const jetbrains = JetBrains_Mono({
 export const metadata: Metadata = {
   title: 'OPTIQ — проектирование оптики',
   description: 'OPTIQ — OLT, муфты, ОРК, маршрут по дорогам, смета и KMZ',
-  appleWebApp: { capable: true, statusBarStyle: 'black-translucent', title: 'OPTIQ' },
+  applicationName: 'OPTIQ',
+  manifest: '/manifest.webmanifest',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'OPTIQ',
+  },
+  icons: {
+    icon: [{ url: '/icon', type: 'image/png', sizes: '32x32' }],
+    apple: [{ url: '/apple-icon', type: 'image/png', sizes: '180x180' }],
+  },
 };
 
 export const viewport = {

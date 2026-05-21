@@ -1,44 +1,32 @@
 'use client';
-import { Menu, Pencil, Upload, Layers, Sparkles } from 'lucide-react';
+import { Home, LayoutGrid, Plus, Share2 } from 'lucide-react';
 
 interface Props {
   menuOpen: boolean;
-  editMode: boolean;
-  chatOpen?: boolean;
+  onHome: () => void;
   onMenu: () => void;
-  onToggleEdit: () => void;
-  onImport: () => void;
-  onLayers: () => void;
-  onChat?: () => void;
+  onAdd: () => void;
+  onShare: () => void;
 }
 
-export default function MobileDock({
-  menuOpen, editMode, chatOpen, onMenu, onToggleEdit, onImport, onLayers, onChat,
-}: Props) {
+export default function MobileDock({ menuOpen, onHome, onMenu, onAdd, onShare }: Props) {
   return (
-    <nav className="mobile-dock md:hidden" aria-label="Быстрые действия">
-      <button type="button" data-active={menuOpen} onClick={onMenu} aria-label="Меню">
-        <Menu size={20} />
+    <nav className="mobile-dock md:hidden" aria-label="Навигация">
+      <button type="button" onClick={onHome} aria-label="Домой — карта">
+        <Home size={22} strokeWidth={2} />
+        <span>Домой</span>
+      </button>
+      <button type="button" data-active={menuOpen} onClick={onMenu} aria-label="Меню и слои">
+        <LayoutGrid size={22} strokeWidth={2} />
         <span>Меню</span>
       </button>
-      <button type="button" data-active={editMode} onClick={onToggleEdit} aria-label="Редактирование">
-        <Pencil size={20} />
-        <span>Редакт.</span>
+      <button type="button" className="mobile-dock-fab" onClick={onAdd} aria-label="Добавить">
+        <Plus size={26} strokeWidth={2.5} />
       </button>
-      <button type="button" onClick={onLayers} aria-label="Слои и инструменты">
-        <Layers size={20} />
-        <span>Слои</span>
+      <button type="button" onClick={onShare} aria-label="Поделиться">
+        <Share2 size={22} strokeWidth={2} />
+        <span>Поделиться</span>
       </button>
-      <button type="button" onClick={onImport} aria-label="Импорт">
-        <Upload size={20} />
-        <span>Импорт</span>
-      </button>
-      {onChat && (
-        <button type="button" data-active={chatOpen} onClick={onChat} aria-label="AI помощник">
-          <Sparkles size={20} />
-          <span>AI</span>
-        </button>
-      )}
     </nav>
   );
 }

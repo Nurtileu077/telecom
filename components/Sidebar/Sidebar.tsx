@@ -101,9 +101,11 @@ interface Props {
   deleteSnapshot: (id: string) => void;
   hasNetwork: boolean;
   onMobileClose?: () => void;
+  /** Не закрывать drawer при переключении вкладок (мобилка). */
+  mobilePersist?: boolean;
 }
 
-export default function Sidebar({ onMobileClose, ...props }: Props) {
+export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Props) {
   const [group, setGroup] = useState<Group>('map');
   const [activeTab, setActiveTab] = useState<Tab>('layers');
 
@@ -113,12 +115,12 @@ export default function Sidebar({ onMobileClose, ...props }: Props) {
     setGroup(g);
     const first = GROUPS.find((x) => x.id === g)!.tabs[0].id;
     setActiveTab(first);
-    onMobileClose?.();
+    if (!mobilePersist) onMobileClose?.();
   };
 
   const selectTab = (id: Tab) => {
     setActiveTab(id);
-    onMobileClose?.();
+    if (!mobilePersist) onMobileClose?.();
   };
 
   const pipelineStep = props.hasNetwork ? (props.osrmStatus === 'routing' ? 2 : 3) : props.materials ? 1 : 0;
@@ -207,7 +209,7 @@ export default function Sidebar({ onMobileClose, ...props }: Props) {
           <GeocodeSearch flyTo={props.flyTo} className="relative block w-full" />
         </div>
 
-        <div className="flex-1 overflow-hidden min-h-0">
+        <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
           {activeTab === 'layers' && <LayersTab districts={props.districts} layers={props.layers} toggleLayer={props.toggleLayer} />}
           {activeTab === 'notes' && (
             <NotesTab
@@ -268,6 +270,18 @@ export default function Sidebar({ onMobileClose, ...props }: Props) {
             />
           )}
         </div>
+
+        {mobilePersist && onMobileClose && (
+          <div className="md:hidden shrink-0 p-3 border-t border-[var(--border)] bg-[var(--bg-canvas)]">
+            <button
+              type="button"
+              onClick={onMobileClose}
+              className="w-full py-2.5 rounded-xl bg-[var(--accent)] text-[#041016] text-sm font-semibold"
+            >
+              ← На карту
+            </button>
+          </div>
+        )}
       </div>
     </aside>
   );

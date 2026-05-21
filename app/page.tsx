@@ -25,6 +25,8 @@ import { validateForExport, formatValidationSummary } from '@/components/Network
 import type { CableLinkEnd } from '@/hooks/useNetwork';
 import MuftaInterior from '@/components/Map/MuftaInterior';
 import MobileDock from '@/components/Layout/MobileDock';
+import MobileActionSheet from '@/components/Layout/MobileActionSheet';
+import PwaInstallBanner from '@/components/Layout/PwaInstallBanner';
 
 const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
   ssr: false,
@@ -55,6 +57,7 @@ export default function HomePage() {
   const [moveEntityTarget, setMoveEntityTarget] = useState<{ kind: 'olt' | 'tb' | 'ork'; id: string } | null>(null);
   const [snapHighlightId, setSnapHighlightId] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
   const [selectedCableId, setSelectedCableId] = useState<string | null>(null);
   const [editingCableId, setEditingCableId] = useState<string | null>(null);
   const [placing, setPlacing] = useState<'olt' | 'tb' | 'ork' | null>(null);
@@ -247,7 +250,49 @@ export default function HomePage() {
     }
   }, [net]);
 
+  const goHomeMobile = useCallback(() => {
+    setMobileMenuOpen(false);
+    setMobileSheetOpen(false);
+    setEntitySelection(null);
+    setSelectedCableId(null);
+    setEditingCableId(null);
+    setMuftaInteriorId(null);
+    setSplicePlanTbId(null);
+    setShowChat(false);
+    setConnectMode(false);
+    setConnectCableId(null);
+    setCableLink(null);
+    setPlacing(null);
+    setBranchSel(null);
+    setMoveEntityTarget(null);
+    setPendingCable(null);
+  }, []);
+
+  const shareProject = useCallback(async () => {
+    const title = net.projectName || 'OPTIQ';
+    const text = `${title} · ${net.totalSubscribers} аб. · ${net.totalCableKm} км`;
+    const url = window.location.href;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title, text, url });
+        return;
+      }
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') return;
+    }
+    try {
+      await navigator.clipboard.writeText(`${title}\n${url}`);
+      alert('Ссылка скопирована');
+    } catch {
+      prompt('Ссылка на проект:', url);
+    }
+  }, [net.projectName, net.totalSubscribers, net.totalCableKm]);
+
   const handleMapClickAddSub = useCallback((lat: number, lon: number) => {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      setMobileMenuOpen(false);
+      setMobileSheetOpen(false);
+    }
     // Лассо-выделение: каждый клик — вершина полигона (замыкаем кнопкой «Готово»).
     if (selecting) {
       setSelectionPoints((pts) => [...pts, [lat, lon]]);
@@ -382,11 +427,9 @@ export default function HomePage() {
     return () => window.clearTimeout(t);
   }, [mobileMenuOpen]);
 
-  const openMobileMenu = useCallback((tab?: 'layers' | 'tools') => {
+  const openMobileMenu = useCallback(() => {
+    setMobileSheetOpen(false);
     setMobileMenuOpen(true);
-    if (tab === 'tools') {
-      /* Sidebar opens on map group by default; user can switch — or we could pass initial tab later */
-    }
   }, []);
 
   return (
@@ -468,7 +511,8 @@ export default function HomePage() {
         )}
         <div className={`sidebar-drawer shrink-0 h-full md:relative md:translate-x-0 ${mobileMenuOpen ? 'is-open' : ''}`}>
         <Sidebar
-          onMobileClose={() => setMobileMenuOpen(false)}
+          onMobileClose={goHomeMobile}
+          mobilePersist
           districts={net.districts}
           cables={net.cables}
           joints={net.joints}
@@ -1004,15 +1048,33 @@ A3: ...`}
         />
       )}
 
+      <PwaInstallBanner />
+
+      <MobileActionSheet
+        open={mobileSheetOpen}
+        onClose={() => setMobileSheetOpen(false)}
+        actions={[
+          { id: 'import', label: 'Импорт', icon: '📥', onClick: () => setShowImport(true) },
+          { id: 'olt', label: 'OLT', icon: '📡', onClick: () => { setPlacing('olt'); net.setEditMode(true); } },
+          { id: 'tb', label: 'Муфта', icon: '🔷', onClick: () => { setPlacing('tb'); net.setEditMode(true); } },
+          { id: 'ork', label: 'ОРК', icon: '📦', onClick: () => { setPlacing('ork'); net.setEditMode(true); } },
+          { id: 'cable', label: 'Кабель', icon: '〰', onClick: () => { setCableLink({ allowMap: false }); setConnectMode(false); } },
+          { id: 'ab', label: 'A→B', icon: '✏️', onClick: () => { setCableLink({ allowMap: true }); setConnectMode(false); } },
+        ]}
+      />
+
       <MobileDock
         menuOpen={mobileMenuOpen}
-        editMode={net.editMode}
-        chatOpen={showChat}
-        onMenu={() => setMobileMenuOpen((v) => !v)}
-        onToggleEdit={() => net.setEditMode(!net.editMode)}
-        onImport={() => setShowImport(true)}
-        onLayers={() => openMobileMenu('layers')}
-        onChat={() => setShowChat((v) => !v)}
+        onHome={goHomeMobile}
+        onMenu={() => {
+          setMobileSheetOpen(false);
+          setMobileMenuOpen((v) => !v);
+        }}
+        onAdd={() => {
+          setMobileMenuOpen(false);
+          setMobileSheetOpen(true);
+        }}
+        onShare={shareProject}
       />
 
       {showChat && (
