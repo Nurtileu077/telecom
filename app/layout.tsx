@@ -25,8 +25,14 @@ export const metadata: Metadata = {
     title: 'OPTIQ',
   },
   icons: {
-    icon: [{ url: '/icon', type: 'image/png', sizes: '32x32' }],
-    apple: [{ url: '/apple-icon', type: 'image/png', sizes: '180x180' }],
+    icon: [
+      { url: '/favicon-32.png', type: 'image/png', sizes: '32x32' },
+      { url: '/icon', type: 'image/png', sizes: '32x32' },
+    ],
+    apple: [
+      { url: '/apple-touch-icon.png', type: 'image/png', sizes: '180x180' },
+      { url: '/apple-icon', type: 'image/png', sizes: '180x180' },
+    ],
   },
 };
 
@@ -45,6 +51,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=3" sizes="180x180" />
+        <link rel="apple-touch-icon-precomposed" href="/apple-touch-icon.png?v=3" />
+        <link rel="icon" href="/favicon-32.png?v=3" type="image/png" sizes="32x32" />
         <link
           rel="stylesheet"
           href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"

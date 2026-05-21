@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "node scripts/generate-pwa-icons.mjs && next build",
+    "icons": "node scripts/generate-pwa-icons.mjs",
     "start": "next start"
   },
   "repository": {
@@ -41,6 +42,7 @@
     "@tailwindcss/postcss": "^4.3.0",
     "autoprefixer": "^10.5.0",
     "postcss": "^8.5.14",
-    "tailwindcss": "^4.3.0"
+    "tailwindcss": "^4.3.0",
+    "sharp": "^0.34.2"
   }
 }
