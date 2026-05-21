@@ -40,8 +40,6 @@
 
 html {
   height: 100%;
-  height: 100dvh;
-  height: -webkit-fill-available;
 }
 
 body {
@@ -49,9 +47,10 @@ body {
   color: var(--text);
   font-family: var(--font-jakarta), system-ui, sans-serif;
   overflow: hidden;
-  min-height: 100%;
+  height: 100%;
   min-height: 100dvh;
-  min-height: -webkit-fill-available;
+  display: flex;
+  flex-direction: column;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
@@ -60,9 +59,8 @@ body {
 .app-shell {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  height: 100dvh;
-  height: -webkit-fill-available;
+  flex: 1 1 auto;
+  width: 100%;
   min-height: 0;
   padding-top: var(--sat);
   padding-left: var(--sal);
@@ -70,8 +68,63 @@ body {
   box-sizing: border-box;
 }
 
+@media (display-mode: standalone) {
+  body {
+    min-height: 100dvh;
+    min-height: -webkit-fill-available;
+  }
+}
+
 .app-header {
   flex-shrink: 0;
+}
+
+/* Прогресс OSRM / построение — поверх карты и дока на телефоне */
+.routing-overlay {
+  position: fixed;
+  z-index: 620;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+  padding: 0 12px;
+  display: flex;
+  justify-content: center;
+}
+
+.routing-overlay__card {
+  pointer-events: auto;
+  width: 100%;
+  max-width: 420px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+}
+
+.routing-overlay__indeterminate {
+  background: linear-gradient(90deg, var(--accent), var(--accent-2), var(--accent));
+  animation: routing-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes routing-indeterminate {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(380%); }
+}
+
+@media (max-width: 767px) {
+  .routing-overlay {
+    bottom: calc(var(--mobile-dock-h) + var(--sab) + 12px);
+    top: auto;
+  }
+  .routing-overlay__card {
+    max-width: none;
+  }
+}
+
+@media (min-width: 768px) {
+  .routing-overlay {
+    bottom: 28px;
+    top: auto;
+  }
 }
 
 .leaflet-container { background: var(--bg-canvas) !important; }

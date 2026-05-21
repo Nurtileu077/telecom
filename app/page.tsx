@@ -28,6 +28,7 @@ import { findEntityCoords, findSubscriber } from '@/components/Network/entityInt
 import MobileDock from '@/components/Layout/MobileDock';
 import MobileActionSheet from '@/components/Layout/MobileActionSheet';
 import PwaInstallBanner from '@/components/Layout/PwaInstallBanner';
+import RoutingProgressOverlay from '@/components/Layout/RoutingProgressOverlay';
 
 const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
   ssr: false,
@@ -814,39 +815,20 @@ export default function HomePage() {
             </div>
           )}
 
-          {net.status === 'routing' && (
-            <div className="absolute inset-x-0 bottom-8 flex justify-center z-[500] pointer-events-none px-4">
-              <div className="glass rounded-2xl p-5 min-w-[340px] max-w-[420px] w-full pointer-events-auto animate-fade-in">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-5 h-5 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin shrink-0" />
-                  <div>
-                    <p className="text-sm font-semibold text-[var(--text)]">Прокладка по дорогам</p>
-                    <p className="text-[11px] text-[var(--text-muted)]">OSRM · Night Fiber</p>
-                  </div>
-                </div>
-                {net.osrmProgress.total > 0 && (
-                  <>
-                    <div className="flex justify-between mb-1.5 text-[11px]">
-                      <span className="text-[var(--text-2)] truncate mr-2">{net.osrmProgress.current || '…'}</span>
-                      <span className="font-mono text-[var(--accent)]">{net.osrmProgress.done}/{net.osrmProgress.total}</span>
-                    </div>
-                    <div className="h-2 bg-[var(--bg-canvas)] rounded-full overflow-hidden mb-3">
-                      <div className="progress-bar h-full" style={{ width: `${osrmPercent}%` }} />
-                    </div>
-                  </>
-                )}
-                <button type="button" className="btn btn-ghost text-[var(--danger)] border-[color-mix(in_srgb,var(--danger)_30%,transparent)]" onClick={net.stopOSRM}>
-                  Остановить
-                </button>
-              </div>
-            </div>
-          )}
-
           {net.districts.length === 0 && net.annotations.length === 0 && net.status === 'idle' && (
             <EmptyState onImport={() => setShowImport(true)} onHelp={() => setShowHelp(true)} />
           )}
         </main>
       </div>
+
+      {(net.status === 'routing' || net.status === 'clustering' || net.status === 'importing' || net.status === 'calculating') && (
+        <RoutingProgressOverlay
+          status={net.status}
+          progress={net.osrmProgress}
+          percent={osrmPercent}
+          onStop={net.status === 'routing' ? net.stopOSRM : undefined}
+        />
+      )}
 
       {showImport && (
         <ImportModal
