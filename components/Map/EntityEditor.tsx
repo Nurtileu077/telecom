@@ -22,6 +22,7 @@ interface Props {
   onDeleteORK: (id: string) => void;
   onReassignORK: (orkId: string, newTbId: string) => void;
   onOpenSplicePlan: (tbId: string) => void;
+  onShowBranch?: (kind: 'olt' | 'tb' | 'ork', id: string) => void;
 }
 
 const SPLITTERS: SplitterRatio[] = ['1:2', '1:4', '1:8', '1:16', '1:32', '1:64'];
@@ -217,7 +218,7 @@ function ORKEditor({
 
 // ── Main panel ────────────────────────────────────────────────────────────────
 export default function EntityEditor({
-  selection, districts, onClose,
+  selection, districts, onClose, onShowBranch,
   onUpdateOLT, onUpdateTB, onUpdateORK,
   onDeleteOLT, onDeleteTB, onDeleteORK,
   onReassignORK, onOpenSplicePlan,
@@ -295,6 +296,18 @@ export default function EntityEditor({
       <div className="p-3">
         {content}
       </div>
+
+      {/* Show-branch */}
+      {onShowBranch && (
+        <div className="px-3 pb-2">
+          <button
+            onClick={() => onShowBranch(selection.kind, selection.id)}
+            className="w-full py-1.5 text-[11px] text-[#38bdf8] hover:bg-[#38bdf8]/10 border border-[#38bdf8]/30 rounded transition-colors"
+          >
+            🌿 Показать ветку
+          </button>
+        </div>
+      )}
 
       {/* Delete footer */}
       {onDelete && (

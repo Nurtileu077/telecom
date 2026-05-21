@@ -1,10 +1,10 @@
 'use client';
 import dynamic from 'next/dynamic';
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useNetwork } from '@/hooks/useNetwork';
 import Sidebar from '@/components/Sidebar/Sidebar';
 import ImportModal, { ImportMode, NetworkImportMode, OltLocations } from '@/components/Import/ImportModal';
-import { Subscriber, ProjectSettings, AnnotationType, Project, ProjectStatus, PROJECT_STATUS_LABELS } from '@/types/network';
+import { Subscriber, ProjectSettings, AnnotationType, Project, ProjectStatus, PROJECT_STATUS_LABELS, CABLE_SIZES, CableType } from '@/types/network';
 import type { DrawingTool } from '@/components/Sidebar/NotesTab';
 import GeocodeSearch from '@/components/Geocoding/GeocodeSearch';
 import { exportPDF } from '@/components/Export/ExportPDF';
@@ -17,6 +17,7 @@ import SplicePlan from '@/components/Map/SplicePlan';
 import ChatPanel from '@/components/AI/ChatPanel';
 import AddCamerasModal from '@/components/Import/AddCamerasModal';
 import { bboxOfPolygon } from '@/components/Network/Selection';
+import { computeBranchCables } from '@/components/Network/Branch';
 
 const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
   ssr: false,
@@ -48,6 +49,11 @@ export default function HomePage() {
   const [editingCableId, setEditingCableId] = useState<string | null>(null);
   const [placing, setPlacing] = useState<'olt' | 'tb' | 'ork' | null>(null);
   const [cableDraw, setCableDraw] = useState<{ stage: 'from' | 'to'; fromId?: string } | null>(null);
+  // Ручной кабель A→B по точкам карты + выбор типа ОК.
+  const [pointCable, setPointCable] = useState<{ a?: [number, number] } | null>(null);
+  const [pendingCable, setPendingCable] = useState<
+    { a: [number, number]; b: [number, number] } | { fromId: string; toId: string } | null
+  >(null);
   const [budgetColoring, setBudgetColoring] = useState(false);
   const [splicePlanTbId, setSplicePlanTbId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ lat: number; lon: number; x: number; y: number } | null>(null);
@@ -80,6 +86,13 @@ export default function HomePage() {
     setSelectionPoly(null);
     setSelectionBBox(null);
   }, []);
+
+  // «Показать ветку»: подсветить кабели выбранного OLT/муфты/ОРКСП/камеры.
+  const [branchSel, setBranchSel] = useState<{ kind: 'olt' | 'tb' | 'ork' | 'sub'; id: string } | null>(null);
+  const highlightCableIds = useMemo(
+    () => (branchSel ? computeBranchCables(net.cables, net.districts, branchSel.kind, branchSel.id) : null),
+    [branchSel, net.cables, net.districts],
+  );
 
   const budgetMap = useRef<Map<string, 'ok' | 'warn' | 'fail'>>(new Map());
   useEffect(() => {
@@ -176,6 +189,12 @@ export default function HomePage() {
       setSelectionPoints((pts) => [...pts, [lat, lon]]);
       return;
     }
+    // Ручной кабель A→B: первый клик — точка A, второй — B → выбор типа ОК.
+    if (pointCable) {
+      if (!pointCable.a) setPointCable({ a: [lat, lon] });
+      else { setPendingCable({ a: pointCable.a, b: [lat, lon] }); setPointCable(null); }
+      return;
+    }
     // Placement mode takes priority over add-subscriber
     if (placing === 'olt') {
       const name = window.prompt('Название района для нового OLT:', 'Новый район');
@@ -200,7 +219,7 @@ export default function HomePage() {
     setShowAddSub({ lat, lon });
     const existing = Array.from(new Set(net.districts.map((d) => d.name)));
     if (existing.length === 1) setNewSubDistrict(existing[0]);
-  }, [net, placing, selecting]);
+  }, [net, placing, selecting, pointCable]);
 
   // Drop a point of the requested kind at (lat, lon) — used by the right-click
   // context menu and by the manual-coordinate dialog.  Bypasses placing/edit mode.
@@ -277,6 +296,9 @@ export default function HomePage() {
           setEntitySelection(null);
           setSelectedCableId(null);
           clearSelection();
+          setBranchSel(null);
+          setPointCable(null);
+          setPendingCable(null);
         }
       }
     };
@@ -395,11 +417,18 @@ export default function HomePage() {
               +ОРК
             </button>
             <button
-              onClick={() => { setCableDraw(cableDraw ? null : { stage: 'from' }); setPlacing(null); }}
+              onClick={() => { setCableDraw(cableDraw ? null : { stage: 'from' }); setPointCable(null); setPlacing(null); }}
               className={`px-2 py-0.5 text-[11px] rounded transition-colors ${cableDraw ? 'bg-[#34d399]/20 text-[#34d399]' : 'text-[#94a3b8] hover:text-[#e2e8f0]'}`}
-              title="Нарисовать кабель: клик по первой точке, потом по второй"
+              title="Кабель между объектами: клик по первому, потом по второму, затем выбор типа ОК"
             >
               +Кабель
+            </button>
+            <button
+              onClick={() => { setPointCable(pointCable ? null : {}); setCableDraw(null); setPlacing(null); }}
+              className={`px-2 py-0.5 text-[11px] rounded transition-colors ${pointCable ? 'bg-[#34d399]/20 text-[#34d399]' : 'text-[#94a3b8] hover:text-[#e2e8f0]'}`}
+              title="Кабель A→B по точкам карты (OSRM), затем выбор типа ОК"
+            >
+              +Кабель A→B
             </button>
           </div>
           <button
@@ -434,6 +463,16 @@ export default function HomePage() {
               title="Запустить авто-построение сети (kmeans → OSRM → консолидация)"
             >
               🔨 Построить
+            </button>
+          )}
+          {/* Подсветка ветки активна → кнопка снять. */}
+          {branchSel && (
+            <button
+              onClick={() => setBranchSel(null)}
+              className="px-2 py-1 text-[11px] bg-[#38bdf8]/20 border border-[#38bdf8]/60 text-[#38bdf8] rounded-lg transition-colors hover:bg-[#38bdf8]/30"
+              title="Показать все кабели"
+            >
+              🌿 Ветка  ✕
             </button>
           )}
           {/* Лассо-выделение: вкл → клики ставят вершины → «Готово» замыкает. */}
@@ -563,12 +602,14 @@ export default function HomePage() {
             deleteAnnotation={net.deleteAnnotation}
             editMode={net.editMode}
             placingMode={!!placing}
-            selectingMode={selecting}
+            selectingMode={selecting || !!pointCable}
             onMapClick={handleMapClickAddSub}
             onMapContextMenu={(lat, lon, x, y) => setContextMenu({ lat, lon, x, y })}
             selectionBBox={selectionBBox}
             selectionPoints={selectionPoints}
             selectionPoly={selectionPoly}
+            highlightCableIds={highlightCableIds}
+            onShowBranchSub={(id) => setBranchSel({ kind: 'sub', id })}
             moveEntity={handleMoveEntity}
             deleteSubscriber={net.deleteSubscriber}
             onEntityClick={(kind, id) => {
@@ -577,7 +618,7 @@ export default function HomePage() {
                 if (cableDraw.stage === 'from') {
                   setCableDraw({ stage: 'to', fromId: id });
                 } else if (cableDraw.stage === 'to' && cableDraw.fromId) {
-                  if (cableDraw.fromId !== id) net.addCableBetween(cableDraw.fromId, id);
+                  if (cableDraw.fromId !== id) setPendingCable({ fromId: cableDraw.fromId, toId: id });
                   setCableDraw(null);
                 }
                 return;
@@ -607,6 +648,7 @@ export default function HomePage() {
             onDeleteORK={net.deleteORK}
             onReassignORK={net.reassignORK}
             onOpenSplicePlan={(tbId) => { setSplicePlanTbId(tbId); setEntitySelection(null); }}
+            onShowBranch={(kind, id) => setBranchSel({ kind, id })}
           />
 
           <SplicePlan
@@ -642,6 +684,35 @@ export default function HomePage() {
                     : 'Клик на второй точке — кабель будет создан'}
               </span>
               <button onClick={() => setCableDraw(null)} className="text-[#94a3b8] hover:text-white border border-[#34d399]/30 rounded px-1.5 py-0.5 text-[10px]">Esc</button>
+            </div>
+          )}
+
+          {pointCable && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#34d399]/50 rounded-lg px-3 py-1.5 text-xs text-[#34d399] shadow-2xl flex items-center gap-2 animate-fade-in">
+              <span>✏️ {pointCable.a ? 'Клик на точке B — кабель потянется по дороге' : 'Клик на точке A на карте'}</span>
+              <button onClick={() => setPointCable(null)} className="text-[#94a3b8] hover:text-white border border-[#34d399]/30 rounded px-1.5 py-0.5 text-[10px]">Esc</button>
+            </div>
+          )}
+
+          {pendingCable && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[600] bg-[#0d1b2a]/98 border border-[#38bdf8]/50 rounded-xl px-4 py-3 shadow-2xl animate-fade-in">
+              <div className="text-xs text-[#e2e8f0] mb-2 text-center">Выбери тип кабеля ОК</div>
+              <div className="flex flex-wrap gap-1.5 max-w-[320px] justify-center">
+                {CABLE_SIZES.filter((t) => t !== 'ОК-96').map((t: CableType) => (
+                  <button
+                    key={t}
+                    onClick={() => {
+                      if ('fromId' in pendingCable) net.addCableBetween(pendingCable.fromId, pendingCable.toId, t);
+                      else net.addCableByPoints(pendingCable.a, pendingCable.b, t);
+                      setPendingCable(null);
+                    }}
+                    className="px-2.5 py-1 text-[11px] rounded-lg border border-[#1e3a5f] text-[#e2e8f0] hover:bg-[#38bdf8]/20 hover:border-[#38bdf8]/50 transition-colors"
+                  >
+                    {t}
+                  </button>
+                ))}
+                <button onClick={() => setPendingCable(null)} className="px-2.5 py-1 text-[11px] rounded-lg text-[#94a3b8] hover:text-white">Отмена</button>
+              </div>
             </div>
           )}
 

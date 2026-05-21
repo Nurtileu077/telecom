@@ -1040,6 +1040,36 @@ export function useNetwork() {
     setCables((prev) => [...prev, cable]);
   }, [findEntityCoords, inferCableType, settings.useOSRM]);
 
+  // Ручной кабель между двумя ПРОИЗВОЛЬНЫМИ точками карты (A→B) по OSRM, тип
+  // выбирает пользователь. Концы — синтетические id (не сущности).
+  const addCableByPoints = useCallback(async (
+    a: [number, number], b: [number, number], type: Cable['type'],
+  ) => {
+    let coords: [number, number][] = [a, b];
+    let routed = false;
+    if (settings.useOSRM) {
+      try {
+        const route = await getRoute(a[0], a[1], b[0], b[1]);
+        if (route && route.length > 2) { coords = route; routed = true; }
+      } catch { /* fall back to straight line */ }
+    }
+    const lengthM = coords.slice(1).reduce(
+      (acc, c, i) => acc + haversineM(coords[i][0], coords[i][1], c[0], c[1]), 0,
+    );
+    const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const cable: Cable = {
+      id: `cable-man-${stamp}`,
+      type,
+      fibers: CABLE_FIBERS[type],
+      fromId: `pt-${stamp}-a`,
+      toId: `pt-${stamp}-b`,
+      coords,
+      lengthM,
+      routedByOSRM: routed,
+    };
+    setCables((prev) => [...prev, cable]);
+  }, [settings.useOSRM]);
+
   // Manual placement of entities ----------------------------------------------
 
   const addOLTAt = useCallback((lat: number, lon: number, districtName: string) => {
@@ -1506,7 +1536,7 @@ export function useNetwork() {
     updateOLT, updateTB, updateORK,
     updateCable, rerouteSingleCable,
     deleteOLT, deleteTB, deleteORK, deleteCable,
-    addOLTAt, addTBAt, addORKAt, addCableBetween,
+    addOLTAt, addTBAt, addORKAt, addCableBetween, addCableByPoints,
     reassignORK, reassignSubscriber,
     undo, redo, canUndo, canRedo,
     takeSnapshot, restoreSnapshot, deleteSnapshot, snapshots,

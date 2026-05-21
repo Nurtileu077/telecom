@@ -55,6 +55,9 @@ interface Props {
   // Лассо-выделение: вершины в процессе рисования и финальный полигон.
   selectionPoints?: [number, number][];
   selectionPoly?: [number, number][] | null;
+  // «Показать ветку»: id кабелей выбранной ветки. Остальные кабели приглушаются.
+  highlightCableIds?: Set<string> | null;
+  onShowBranchSub?: (id: string) => void;
 }
 
 const CABLE_COLORS: Record<string, string> = CABLE_COLORS_MAP as Record<string, string>;
@@ -441,6 +444,9 @@ export default function LeafletMap(props: Props) {
           if (cable.type === 'ОК-4' && zoom < 14) continue;
 
           const isEditing = propsRef.current.editingCableId === cable.id;
+          const hl = propsRef.current.highlightCableIds;
+          const dimmed = !!hl && !hl.has(cable.id);
+          const inBranch = !!hl && hl.has(cable.id);
           const lane = lanes.get(cable.id) ?? 0;
           // 0.6 m между параллельными «полосами» — компактно, помещается в ширину
           // полосы дороги.  Знакочередование вокруг центра, кап на 4 полосе.
@@ -452,9 +458,11 @@ export default function LeafletMap(props: Props) {
           const drawnCoords = offsetM === 0 ? cable.coords : offsetPolyline(cable.coords, offsetM);
 
           const poly = L.polyline(drawnCoords, {
-            color: isEditing ? '#c4b5fd' : (CABLE_COLORS[cable.type] || '#888'),
-            weight: isEditing ? (CABLE_WEIGHTS[cable.type] || 2) + 2 : (CABLE_WEIGHTS[cable.type] || 2),
-            opacity: cable.type === 'ОК-4' ? 0.6 : 0.85,
+            color: dimmed ? '#334155' : isEditing ? '#c4b5fd' : (CABLE_COLORS[cable.type] || '#888'),
+            weight: dimmed
+              ? 1
+              : (CABLE_WEIGHTS[cable.type] || 2) + (isEditing ? 2 : inBranch ? 1 : 0),
+            opacity: dimmed ? 0.12 : inBranch ? 1 : (cable.type === 'ОК-4' ? 0.6 : 0.85),
           });
           poly.bindTooltip(
             `<b>${cable.type}</b><br/>${cable.fromId} → ${cable.toId}<br/>Длина: ${Math.round(cable.lengthM)} м${lane > 0 ? `<br/><i style=\"color:#94a3b8\">полоса ${lane}</i>` : ''}`,
@@ -595,7 +603,9 @@ export default function LeafletMap(props: Props) {
                   "><div style="width:${dotPx}px;height:${dotPx}px;background:${dotColor};border-radius:50%"></div></div>`,
                 });
                 const m = L.marker([sub.lat, sub.lon], { icon });
-                m.bindPopup(`<b>${sub.desc}</b><br/>Тип: <b>${camLabel}</b> · ${bw} Мбит/с<br/>📦 Бокс на столбе → ОРК: ${ork.id}<br/>Волокна: ${sub.fibers.working}+${sub.fibers.spare}${propsRef.current.editMode ? '<br/><button onclick="window.__deleteSub__(\'' + sub.id + '\')" style="margin-top:6px;padding:2px 8px;background:#f87171;color:#fff;border:none;border-radius:3px;font-size:10px;cursor:pointer">Удалить</button>' : ''}`);
+                const branchBtn = `<button onclick="window.__showBranchSub__('${sub.id}')" style="margin-top:6px;padding:2px 8px;background:#38bdf8;color:#0a0e1a;border:none;border-radius:3px;font-size:10px;cursor:pointer;font-weight:600">🌿 Показать ветку</button>`;
+                const delBtn = propsRef.current.editMode ? '<br/><button onclick="window.__deleteSub__(\'' + sub.id + '\')" style="margin-top:6px;padding:2px 8px;background:#f87171;color:#fff;border:none;border-radius:3px;font-size:10px;cursor:pointer">Удалить</button>' : '';
+                m.bindPopup(`<b>${sub.desc}</b><br/>Тип: <b>${camLabel}</b> · ${bw} Мбит/с<br/>📦 Бокс на столбе → ОРК: ${ork.id}<br/>Волокна: ${sub.fibers.working}+${sub.fibers.spare}<br/>${branchBtn}${delBtn}`);
                 m.on('contextmenu', (e: any) => {
                   e.originalEvent.preventDefault();
                   if (propsRef.current.editMode && confirm(`Удалить абонента «${sub.desc}»?`)) {
@@ -790,7 +800,7 @@ export default function LeafletMap(props: Props) {
   }
 
   // Re-render whenever data changes
-  useEffect(() => { renderData(); }, [props.districts, props.cables, props.joints, props.layers, props.editMode, props.editingCableId, props.budgetColoring, props.budgetMap]);
+  useEffect(() => { renderData(); }, [props.districts, props.cables, props.joints, props.layers, props.editMode, props.editingCableId, props.budgetColoring, props.budgetMap, props.highlightCableIds]);
 
   // Waypoint editing: show draggable handles for the selected cable
   useEffect(() => {
@@ -902,7 +912,8 @@ export default function LeafletMap(props: Props) {
   // Expose delete subscriber to window for popup buttons
   useEffect(() => {
     (window as any).__deleteSub__ = (id: string) => propsRef.current.deleteSubscriber?.(id);
-    return () => { delete (window as any).__deleteSub__; };
+    (window as any).__showBranchSub__ = (id: string) => propsRef.current.onShowBranchSub?.(id);
+    return () => { delete (window as any).__deleteSub__; delete (window as any).__showBranchSub__; };
   }, []);
 
   return (
