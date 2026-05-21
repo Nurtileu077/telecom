@@ -313,12 +313,6 @@ export function consolidateCables(
     const otherEnd = (s: Segment, nodeKey: string): string =>
       s.fromKey === nodeKey ? s.toKey : s.fromKey;
 
-    // Получить координату «другого конца».
-    const otherCoord = (s: Segment, nodeKey: string): [number, number] => {
-      const aK = quantize(s.coords[0][0], s.coords[0][1]);
-      return aK === nodeKey ? s.coords[1] : s.coords[0];
-    };
-
     // Эмитим кабель.
     const emitCable = (
       coords: [number, number][],
@@ -403,7 +397,10 @@ export function consolidateCables(
           while (true) {
             usedSeg.add(curSeg.key);
             const next = otherEnd(curSeg, curNode);
-            runCoords.push(otherCoord(curSeg, curNode));
+            // Каноническая координата узла (а не локальная копия сегмента): иначе
+            // кабели, сходящиеся в один снэпнутый узел, заканчиваются в разных
+            // физических точках (до ~радиуса слияния) → визуальные разрывы.
+            runCoords.push(nodeCoord.get(next)!);
             // Условия остановки: соседний узел — это OLT/ORK/sub/TB; или там
             // есть развилка; или меняется subs-set.
             const isTerminalNode = nodeId.has(next);
