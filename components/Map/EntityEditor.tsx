@@ -277,7 +277,7 @@ export default function EntityEditor({
   }
 
   return (
-    <div className="absolute top-3 right-3 z-[500] w-64 bg-[#0d1b2a]/97 border border-[#1e3a5f] rounded-xl shadow-2xl backdrop-blur-sm animate-fade-in">
+    <div className="inspector animate-fade-in">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2.5 border-b border-[#1e3a5f]">
         <div>
@@ -293,7 +293,7 @@ export default function EntityEditor({
       </div>
 
       {/* Body */}
-      <div className="p-3">
+      <div className="p-3 flex-1 overflow-y-auto min-h-0">
         {content}
       </div>
 

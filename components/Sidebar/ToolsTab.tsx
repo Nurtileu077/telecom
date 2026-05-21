@@ -1,5 +1,6 @@
 'use client';
 import { useState, useMemo } from 'react';
+import { Route, Merge, Flame, Activity, Printer, FileDown } from 'lucide-react';
 import { OpticalBudgetInputs } from '@/types/network';
 import { calculateOpticalBudget } from '@/components/Network/OpticalBudget';
 
@@ -35,22 +36,24 @@ export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, o
     <div className="overflow-y-auto h-full p-3 space-y-4">
       {/* OSRM routing */}
       <section>
-        <h3 className="text-[10px] uppercase tracking-widest text-[#64748b] mb-2">Маршрутизация кабелей</h3>
+        <h3 className="section-title mb-2">Маршрутизация кабелей</h3>
         {selectionBBox && (
           <div className="mb-2 p-1.5 bg-[#fbbf24]/10 border border-[#fbbf24]/40 rounded text-[10px] text-[#fbbf24]">
             🔲 Операции применятся только в выделенной области.
           </div>
         )}
         <button
+          type="button"
           onClick={onRerouteOSRM}
           disabled={!hasCables || osrmStatus === 'routing'}
-          className="w-full py-2 px-3 text-xs font-semibold rounded-lg border transition-all disabled:opacity-40 disabled:cursor-not-allowed bg-[#38bdf8]/10 border-[#38bdf8]/50 text-[#38bdf8] hover:bg-[#38bdf8]/20"
+          className="btn btn-secondary w-full"
         >
+          <Route size={14} />
           {osrmStatus === 'routing'
-            ? '⏳ Маршрутизация...'
+            ? 'Маршрутизация…'
             : selectionBBox
-              ? '🛣 Проложить (выделение)'
-              : '🛣 Проложить по дорогам (OSRM)'}
+              ? 'Проложить (выделение)'
+              : 'Проложить по дорогам (OSRM)'}
         </button>
         <p className="text-[9px] text-[#64748b] mt-1">
           {selectionBBox
@@ -58,11 +61,13 @@ export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, o
             : 'Перестраивает все кабели по дорогам через router.project-osrm.org. Занимает 1–2 мин.'}
         </p>
         <button
+          type="button"
           onClick={onReconsolidate}
           disabled={!hasCables}
-          className="mt-2 w-full py-2 px-3 text-xs font-semibold rounded-lg border transition-all disabled:opacity-40 bg-[#a78bfa]/10 border-[#a78bfa]/50 text-[#a78bfa] hover:bg-[#a78bfa]/20"
+          className="btn btn-secondary w-full mt-2 text-[var(--accent-2)]"
         >
-          {selectionBBox ? '🔁 Объединить (выделение)' : '🔁 Объединить кабели на общих дорогах'}
+          <Merge size={14} />
+          {selectionBBox ? 'Объединить (выделение)' : 'Объединить на общих дорогах'}
         </button>
         <p className="text-[9px] text-[#64748b] mt-1">
           {selectionBBox

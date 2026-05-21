@@ -1,14 +1,27 @@
 import type { Metadata } from 'next';
+import { Plus_Jakarta_Sans, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 
+const jakarta = Plus_Jakarta_Sans({
+  subsets: ['latin', 'latin-ext', 'cyrillic-ext'],
+  variable: '--font-jakarta',
+  display: 'swap',
+});
+
+const jetbrains = JetBrains_Mono({
+  subsets: ['latin', 'cyrillic'],
+  variable: '--font-mono-jb',
+  display: 'swap',
+});
+
 export const metadata: Metadata = {
-  title: 'OPTIQ',
-  description: 'OPTIQ — проектирование оптических сетей камер (GPON/FTTH)',
+  title: 'OPTIQ — проектирование оптики',
+  description: 'OPTIQ — OLT, муфты, ОРК, маршрут по дорогам, смета и KMZ',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="ru">
+    <html lang="ru" className={`${jakarta.variable} ${jetbrains.variable}`}>
       <head>
         <link
           rel="stylesheet"
@@ -16,7 +29,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           crossOrigin=""
         />
       </head>
-      <body>{children}</body>
+      <body className={jakarta.className}>{children}</body>
     </html>
   );
 }

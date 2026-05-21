@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
+import { Search } from 'lucide-react';
 import { geocode, GeocodeResult } from './Geocoder';
 
 interface Props {
@@ -50,32 +51,30 @@ export default function GeocodeSearch({ flyTo }: Props) {
   };
 
   return (
-    <div ref={containerRef} className="relative">
-      <div className="flex items-center bg-[#0a0e1a] border border-[#1e3a5f] rounded-lg pl-2 pr-1 py-1 focus-within:border-[#38bdf8] transition-colors w-64">
-        <span className="text-[#64748b] text-xs">🔍</span>
+    <div ref={containerRef} className="relative hidden md:block">
+      <div className="search-pill">
+        <Search size={14} className="text-[var(--text-muted)] shrink-0" />
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => results.length && setOpen(true)}
           onKeyDown={handleKey}
-          placeholder="Поиск адреса / места..."
-          className="flex-1 bg-transparent border-none outline-none text-xs text-[#e2e8f0] placeholder-[#64748b] px-1.5"
+          placeholder="Адрес или место…"
+          className="flex-1 bg-transparent border-none outline-none text-xs text-[var(--text)] placeholder-[var(--text-muted)] min-w-0"
         />
-        {loading && <span className="text-[10px] text-[#64748b]">...</span>}
-        {query && !loading && (
-          <button onClick={() => { setQuery(''); setResults([]); setOpen(false); }} className="text-[#64748b] hover:text-[#e2e8f0] text-xs px-1">×</button>
-        )}
+        {loading && <span className="text-[10px] text-[var(--text-muted)]">…</span>}
       </div>
       {open && results.length > 0 && (
-        <div className="absolute top-full left-0 right-0 mt-1 bg-[#0d1b2a] border border-[#1e3a5f] rounded-lg shadow-2xl max-h-72 overflow-y-auto z-[1000]">
+        <div className="absolute top-full left-0 right-0 mt-1 panel max-h-72 overflow-y-auto z-[1000]">
           {results.map((r, i) => (
             <button
               key={i}
+              type="button"
               onClick={() => handlePick(r)}
-              className="w-full text-left px-3 py-2 hover:bg-[#1a2744] border-b border-[#1e3a5f]/40 last:border-b-0 transition-colors"
+              className="w-full text-left px-3 py-2 hover:bg-[var(--bg-hover)] border-b border-[var(--border)] last:border-b-0"
             >
-              <div className="text-xs text-[#e2e8f0] truncate">{r.displayName}</div>
-              <div className="text-[9px] text-[#64748b] font-mono">{r.lat.toFixed(5)}, {r.lon.toFixed(5)} · {r.type}</div>
+              <div className="text-xs text-[var(--text)] truncate">{r.displayName}</div>
+              <div className="text-[10px] text-[var(--text-muted)] font-mono">{r.lat.toFixed(5)}, {r.lon.toFixed(5)}</div>
             </button>
           ))}
         </div>

@@ -6,7 +6,8 @@ import Sidebar from '@/components/Sidebar/Sidebar';
 import ImportModal, { ImportMode, NetworkImportMode, OltLocations } from '@/components/Import/ImportModal';
 import { Subscriber, ProjectSettings, AnnotationType, Project, ProjectStatus, PROJECT_STATUS_LABELS, CABLE_SIZES, CableType } from '@/types/network';
 import type { DrawingTool } from '@/components/Sidebar/NotesTab';
-import GeocodeSearch from '@/components/Geocoding/GeocodeSearch';
+import AppHeader from '@/components/Layout/AppHeader';
+import EmptyState from '@/components/Layout/EmptyState';
 import { exportPDF } from '@/components/Export/ExportPDF';
 import { calculateCost } from '@/components/Network/CostCalc';
 import ProjectListModal from '@/components/Projects/ProjectListModal';
@@ -22,10 +23,10 @@ import { computeBranchCables } from '@/components/Network/Branch';
 const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
   ssr: false,
   loading: () => (
-    <div className="w-full h-full flex items-center justify-center bg-[#0a0e1a]">
+    <div className="w-full h-full flex items-center justify-center bg-[var(--bg-canvas)]">
       <div className="text-center">
-        <div className="w-8 h-8 border-2 border-[#38bdf8] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-        <p className="text-xs text-[#64748b]">Загрузка карты...</p>
+        <div className="w-8 h-8 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+        <p className="text-xs text-[var(--text-muted)]">Загрузка карты...</p>
       </div>
     </div>
   ),
@@ -312,224 +313,53 @@ export default function HomePage() {
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">
-      {/* Header */}
-      <header className="h-12 flex items-center px-3 gap-3 border-b border-[#1e3a5f] bg-[#0d1b2a] flex-shrink-0 z-10">
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <span className="text-lg">📡</span>
-          <span className="text-sm font-bold text-[#38bdf8] font-mono tracking-wide">OPTIQ</span>
-          <span className="text-[#1e3a5f]">|</span>
-          <input
-            type="text"
-            value={net.projectName}
-            onChange={(e) => net.setProjectName(e.target.value)}
-            className="bg-transparent text-sm text-[#e2e8f0] border-none outline-none w-44 focus:text-[#38bdf8] transition-colors"
-          />
-          <select
-            value={net.projectStatus}
-            onChange={(e) => net.setProjectStatus(e.target.value as ProjectStatus)}
-            className="bg-transparent text-[10px] font-medium border rounded px-1.5 py-0.5 cursor-pointer focus:outline-none"
-            style={{
-              color: PROJECT_STATUS_LABELS[net.projectStatus].color,
-              borderColor: `${PROJECT_STATUS_LABELS[net.projectStatus].color}55`,
-              background: `${PROJECT_STATUS_LABELS[net.projectStatus].color}10`,
-            }}
-            title="Статус проекта"
-          >
-            {(Object.keys(PROJECT_STATUS_LABELS) as ProjectStatus[]).map((s) => (
-              <option key={s} value={s} className="bg-[#0d1b2a] text-[#e2e8f0]">
-                {PROJECT_STATUS_LABELS[s].icon} {PROJECT_STATUS_LABELS[s].label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <GeocodeSearch flyTo={flyToRef.current} />
-
-        <div className="flex items-center gap-1.5 text-[10px] font-mono">
-          <span className="px-2 py-0.5 bg-[#38bdf8]/10 border border-[#38bdf8]/30 text-[#38bdf8] rounded-md">👥 {net.totalSubscribers}</span>
-          <span className="px-2 py-0.5 bg-[#34d399]/10 border border-[#34d399]/30 text-[#34d399] rounded-md">〰 {net.totalCableKm} км</span>
-          <span className="px-2 py-0.5 bg-[#f59e0b]/10 border border-[#f59e0b]/30 text-[#f59e0b] rounded-md">📦 {net.totalOrks}</span>
-          <span className="px-2 py-0.5 bg-[#a78bfa]/10 border border-[#a78bfa]/30 text-[#a78bfa] rounded-md">📝 {net.annotations.length}</span>
-          {net.status === 'routing' && (
-            <span className="px-2 py-0.5 bg-[#a78bfa]/10 border border-[#a78bfa]/30 text-[#a78bfa] rounded-md animate-pulse">🛣 OSRM {osrmPercent}%</span>
-          )}
-          {net.status === 'clustering' && (
-            <span className="px-2 py-0.5 bg-[#f59e0b]/10 border border-[#f59e0b]/30 text-[#f59e0b] rounded-md animate-pulse">⚙ Кластеризация...</span>
-          )}
-          {net.lastSavedAt && net.status === 'done' && (
-            <span className="px-2 py-0.5 bg-[#34d399]/10 border border-[#34d399]/30 text-[#34d399] rounded-md">💾 {new Date(net.lastSavedAt).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' })}</span>
-          )}
-        </div>
-
-        <div className="ml-auto flex items-center gap-1.5">
-          <button
-            onClick={() => net.setEditMode(!net.editMode)}
-            className={`px-2 py-1 text-xs rounded-lg transition-colors ${net.editMode ? 'bg-[#34d399]/15 border border-[#34d399]/50 text-[#34d399]' : 'border border-[#1e3a5f] text-[#94a3b8] hover:text-[#e2e8f0]'}`}
-            title="Режим редактирования (E)"
-          >
-            🛠 {net.editMode ? 'Ред.' : 'Просм.'}
-          </button>
-          <button
-            onClick={() => setShowHelp(true)}
-            className="px-2 py-1 text-xs border border-[#1e3a5f] rounded-lg text-[#94a3b8] hover:text-[#e2e8f0] transition-colors"
-            title="Справка (?)"
-          >
-            ?
-          </button>
-          <div className="flex items-center gap-0.5 border border-[#1e3a5f] rounded-lg px-0.5 py-0.5">
-            <button
-              onClick={() => net.undo()}
-              disabled={!net.canUndo}
-              className="px-2 py-0.5 text-[11px] rounded text-[#94a3b8] hover:text-[#e2e8f0] disabled:opacity-30"
-              title="Отмена (Ctrl+Z)"
-            >
-              ↶
-            </button>
-            <button
-              onClick={() => net.redo()}
-              disabled={!net.canRedo}
-              className="px-2 py-0.5 text-[11px] rounded text-[#94a3b8] hover:text-[#e2e8f0] disabled:opacity-30"
-              title="Повтор (Ctrl+Shift+Z)"
-            >
-              ↷
-            </button>
-          </div>
-          <div className="flex items-center gap-0.5 border border-[#1e3a5f] rounded-lg px-0.5 py-0.5">
-            <button
-              onClick={() => setPlacing(placing === 'olt' ? null : 'olt')}
-              className={`px-2 py-0.5 text-[11px] rounded transition-colors ${placing === 'olt' ? 'bg-[#f59e0b]/20 text-[#f59e0b]' : 'text-[#94a3b8] hover:text-[#e2e8f0]'}`}
-              title="Поставить OLT по клику"
-            >
-              +OLT
-            </button>
-            <button
-              onClick={() => setPlacing(placing === 'tb' ? null : 'tb')}
-              className={`px-2 py-0.5 text-[11px] rounded transition-colors ${placing === 'tb' ? 'bg-[#38bdf8]/20 text-[#38bdf8]' : 'text-[#94a3b8] hover:text-[#e2e8f0]'}`}
-              title="Поставить Муфту (TB) — подключится к ближайшему OLT"
-            >
-              +Муфта
-            </button>
-            <button
-              onClick={() => setPlacing(placing === 'ork' ? null : 'ork')}
-              className={`px-2 py-0.5 text-[11px] rounded transition-colors ${placing === 'ork' ? 'bg-[#f59e0b]/20 text-[#f59e0b]' : 'text-[#94a3b8] hover:text-[#e2e8f0]'}`}
-              title="Поставить ОРК — подключится к ближайшей Муфте"
-            >
-              +ОРК
-            </button>
-            <button
-              onClick={() => { setCableDraw(cableDraw ? null : { stage: 'from' }); setPointCable(null); setPlacing(null); }}
-              className={`px-2 py-0.5 text-[11px] rounded transition-colors ${cableDraw ? 'bg-[#34d399]/20 text-[#34d399]' : 'text-[#94a3b8] hover:text-[#e2e8f0]'}`}
-              title="Кабель между объектами: клик по первому, потом по второму, затем выбор типа ОК"
-            >
-              +Кабель
-            </button>
-            <button
-              onClick={() => { setPointCable(pointCable ? null : {}); setCableDraw(null); setPlacing(null); }}
-              className={`px-2 py-0.5 text-[11px] rounded transition-colors ${pointCable ? 'bg-[#34d399]/20 text-[#34d399]' : 'text-[#94a3b8] hover:text-[#e2e8f0]'}`}
-              title="Кабель A→B по точкам карты (OSRM), затем выбор типа ОК"
-            >
-              +Кабель A→B
-            </button>
-          </div>
-          <button
-            onClick={() => setShowCatalog(true)}
-            disabled={!net.dbEnabled}
-            className="px-2 py-1 text-xs border border-[#1e3a5f] rounded-lg text-[#94a3b8] hover:text-[#e2e8f0] hover:border-[#38bdf8]/40 transition-colors disabled:opacity-30"
-            title="Каталог оборудования"
-          >
-            📦 Каталог
-          </button>
-          <button
-            onClick={() => setShowProjects(true)}
-            className="px-2 py-1 text-xs border border-[#1e3a5f] rounded-lg text-[#94a3b8] hover:text-[#e2e8f0] hover:border-[#38bdf8]/40 transition-colors"
-            title="Список проектов"
-          >
-            {net.dbEnabled ? '☁' : '🗂'} Проекты
-          </button>
-          <button
-            onClick={() => net.saveProject()}
-            disabled={net.districts.length === 0 && net.annotations.length === 0}
-            className="px-3 py-1 text-xs border border-[#1e3a5f] rounded-lg text-[#94a3b8] hover:text-[#e2e8f0] hover:border-[#38bdf8]/40 transition-colors disabled:opacity-40"
-            title="Сохранить (Ctrl+S)"
-          >
-            💾 Сохранить
-          </button>
-          {/* «Построить» — кластеризация подгруженных абонентов в OLT/Муфты/ОРК.
-              Видимо только когда есть «сырые» подписчики без сети (raw-import). */}
-          {net.allSubscribers.length > 0 && net.districts.length === 0 && (
-            <button
-              onClick={() => net.rebuildFromCurrent()}
-              className="px-3 py-1 text-xs bg-[#fbbf24] hover:bg-[#fde68a] text-[#0a0e1a] font-semibold rounded-lg transition-colors animate-pulse"
-              title="Запустить авто-построение сети (kmeans → OSRM → консолидация)"
-            >
-              🔨 Построить
-            </button>
-          )}
-          {/* Подсветка ветки активна → кнопка снять. */}
-          {branchSel && (
-            <button
-              onClick={() => setBranchSel(null)}
-              className="px-2 py-1 text-[11px] bg-[#38bdf8]/20 border border-[#38bdf8]/60 text-[#38bdf8] rounded-lg transition-colors hover:bg-[#38bdf8]/30"
-              title="Показать все кабели"
-            >
-              🌿 Ветка  ✕
-            </button>
-          )}
-          {/* Лассо-выделение: вкл → клики ставят вершины → «Готово» замыкает. */}
-          {selectionPoly ? (
-            <button
-              onClick={clearSelection}
-              className="px-2 py-1 text-[11px] bg-[#fbbf24]/20 border border-[#fbbf24]/60 text-[#fbbf24] font-mono rounded-lg transition-colors hover:bg-[#fbbf24]/30"
-              title="Снять выделение"
-            >
-              🔷 Выделено  ✕
-            </button>
-          ) : selecting ? (
-            <>
-              <button
-                onClick={finishSelection}
-                disabled={selectionPoints.length < 3}
-                className="px-2 py-1 text-[11px] bg-[#34d399]/20 border border-[#34d399]/60 text-[#34d399] rounded-lg transition-colors hover:bg-[#34d399]/30 disabled:opacity-40"
-                title="Замкнуть полигон выделения"
-              >
-                ✓ Готово ({selectionPoints.length})
-              </button>
-              <button
-                onClick={clearSelection}
-                className="px-2 py-1 text-[11px] text-[#94a3b8] border border-[#1e3a5f] rounded-lg hover:text-[#e2e8f0]"
-                title="Отмена"
-              >
-                ✕
-              </button>
-            </>
-          ) : (
-            <button
-              onClick={() => { setSelecting(true); setSelectionPoints([]); setPlacing(null); setCableDraw(null); }}
-              className="px-2 py-1 text-[11px] rounded-lg transition-colors text-[#94a3b8] border border-[#1e3a5f] hover:text-[#e2e8f0] hover:border-[#fbbf24]/50"
-              title="Лассо: кликай вершины области, затем «Готово»"
-            >
-              🔷 Выделить (лассо)
-            </button>
-          )}
-          {/* Brownfield — add new cameras from Excel to existing network. */}
-          {net.districts.length > 0 && (
-            <button
-              onClick={() => setShowAddCameras(true)}
-              className="px-3 py-1 text-xs text-[#94a3b8] border border-[#1e3a5f] hover:text-[#e2e8f0] hover:border-[#38bdf8]/50 rounded-lg transition-colors"
-              title="Добавить новые камеры из Excel к существующей сети"
-            >
-              📷 Камеры
-            </button>
-          )}
-          <button
-            onClick={() => setShowImport(true)}
-            className="px-3 py-1 text-xs bg-[#38bdf8] hover:bg-[#7dd3fc] text-[#0a0e1a] font-semibold rounded-lg transition-colors"
-            title="Импорт (Ctrl+I)"
-          >
-            📂 Импорт
-          </button>
-        </div>
-      </header>
+      <AppHeader
+        projectName={net.projectName}
+        onProjectNameChange={net.setProjectName}
+        projectStatus={net.projectStatus}
+        onProjectStatusChange={net.setProjectStatus}
+        flyTo={flyToRef.current}
+        totalSubscribers={net.totalSubscribers}
+        totalCableKm={net.totalCableKm}
+        totalOrks={net.totalOrks}
+        annotationsCount={net.annotations.length}
+        status={net.status}
+        osrmPercent={osrmPercent}
+        lastSavedAt={net.lastSavedAt}
+        editMode={net.editMode}
+        onToggleEditMode={() => net.setEditMode(!net.editMode)}
+        canUndo={net.canUndo}
+        canRedo={net.canRedo}
+        onUndo={() => net.undo()}
+        onRedo={() => net.redo()}
+        placing={placing}
+        onSetPlacing={setPlacing}
+        cableDrawActive={!!cableDraw}
+        pointCableActive={!!pointCable}
+        onToggleCableDraw={() => { setCableDraw(cableDraw ? null : { stage: 'from' }); setPointCable(null); setPlacing(null); }}
+        onTogglePointCable={() => { setPointCable(pointCable ? null : {}); setCableDraw(null); setPlacing(null); }}
+        dbEnabled={net.dbEnabled}
+        onCatalog={() => setShowCatalog(true)}
+        onProjects={() => setShowProjects(true)}
+        onSave={() => net.saveProject()}
+        canSave={net.districts.length > 0 || net.annotations.length > 0}
+        showBuild={net.allSubscribers.length > 0 && net.districts.length === 0}
+        onBuild={() => net.rebuildFromCurrent()}
+        branchActive={!!branchSel}
+        onClearBranch={() => setBranchSel(null)}
+        selectionPoly={!!selectionPoly}
+        selecting={selecting}
+        selectionCount={selectionPoints.length}
+        onStartSelection={() => { setSelecting(true); setSelectionPoints([]); setPlacing(null); setCableDraw(null); }}
+        onFinishSelection={finishSelection}
+        onClearSelection={clearSelection}
+        showAddCameras={net.districts.length > 0}
+        onAddCameras={() => setShowAddCameras(true)}
+        onImport={() => setShowImport(true)}
+        onHelp={() => setShowHelp(true)}
+        chatOpen={showChat}
+        onToggleChat={() => setShowChat((v) => !v)}
+      />
 
       <div className="flex flex-1 overflow-hidden">
         <Sidebar
@@ -583,6 +413,7 @@ export default function HomePage() {
           takeSnapshot={net.takeSnapshot}
           restoreSnapshot={net.restoreSnapshot}
           deleteSnapshot={net.deleteSnapshot}
+          hasNetwork={net.districts.length > 0}
         />
 
         <main className="flex-1 relative overflow-hidden isolate">
@@ -717,51 +548,35 @@ export default function HomePage() {
           )}
 
           {net.status === 'routing' && (
-            <div className="absolute inset-0 flex items-end justify-center pb-8 z-[500] pointer-events-none">
-              <div className="bg-[#0d1b2a]/98 border border-[#38bdf8]/40 rounded-2xl p-5 shadow-2xl min-w-[340px] max-w-[420px] pointer-events-auto animate-fade-in">
+            <div className="absolute inset-x-0 bottom-8 flex justify-center z-[500] pointer-events-none px-4">
+              <div className="glass rounded-2xl p-5 min-w-[340px] max-w-[420px] w-full pointer-events-auto animate-fade-in">
                 <div className="flex items-center gap-3 mb-3">
-                  <div className="w-5 h-5 border-2 border-[#38bdf8] border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                  <span className="text-sm font-semibold text-[#e2e8f0]">Прокладка кабелей по дорогам</span>
+                  <div className="w-5 h-5 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin shrink-0" />
+                  <div>
+                    <p className="text-sm font-semibold text-[var(--text)]">Прокладка по дорогам</p>
+                    <p className="text-[11px] text-[var(--text-muted)]">OSRM · Night Fiber</p>
+                  </div>
                 </div>
                 {net.osrmProgress.total > 0 && (
                   <>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-[11px] text-[#94a3b8] truncate mr-3">{net.osrmProgress.current || 'Запрос к OSRM...'}</span>
-                      <span className="text-xs font-mono text-[#38bdf8] flex-shrink-0">{net.osrmProgress.done} / {net.osrmProgress.total}</span>
+                    <div className="flex justify-between mb-1.5 text-[11px]">
+                      <span className="text-[var(--text-2)] truncate mr-2">{net.osrmProgress.current || '…'}</span>
+                      <span className="font-mono text-[var(--accent)]">{net.osrmProgress.done}/{net.osrmProgress.total}</span>
                     </div>
-                    <div className="h-2 bg-[#1e3a5f] rounded-full overflow-hidden mb-2">
+                    <div className="h-2 bg-[var(--bg-canvas)] rounded-full overflow-hidden mb-3">
                       <div className="progress-bar h-full" style={{ width: `${osrmPercent}%` }} />
                     </div>
                   </>
                 )}
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] text-[#64748b]">router.project-osrm.org — бесплатный сервер</span>
-                  <button onClick={net.stopOSRM} className="text-xs text-[#f87171] hover:text-[#fca5a5] transition-colors border border-[#f87171]/30 rounded px-2 py-0.5 ml-3">
-                    ✕ Стоп
-                  </button>
-                </div>
+                <button type="button" className="btn btn-ghost text-[var(--danger)] border-[color-mix(in_srgb,var(--danger)_30%,transparent)]" onClick={net.stopOSRM}>
+                  Остановить
+                </button>
               </div>
             </div>
           )}
 
           {net.districts.length === 0 && net.annotations.length === 0 && net.status === 'idle' && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="text-center bg-[#0d1b2a]/90 backdrop-blur-sm border border-[#1e3a5f] rounded-2xl p-8 pointer-events-auto shadow-2xl">
-                <div className="text-5xl mb-4">📡</div>
-                <h2 className="text-lg font-semibold text-[#e2e8f0] mb-2">GPON Network Designer</h2>
-                <p className="text-sm text-[#94a3b8] mb-4 max-w-xs">
-                  Загружайте Excel/KMZ файлы — карта будет накапливаться. Делайте заметки прямо на ней.
-                </p>
-                <div className="flex gap-2 justify-center">
-                  <button onClick={() => setShowImport(true)} className="px-5 py-2 bg-[#38bdf8] hover:bg-[#7dd3fc] text-[#0a0e1a] font-semibold rounded-xl text-sm transition-colors">
-                    📂 Импорт
-                  </button>
-                  <button onClick={() => setShowHelp(true)} className="px-5 py-2 border border-[#1e3a5f] hover:border-[#38bdf8] text-[#94a3b8] hover:text-[#e2e8f0] rounded-xl text-sm transition-colors">
-                    ? Справка
-                  </button>
-                </div>
-              </div>
-            </div>
+            <EmptyState onImport={() => setShowImport(true)} onHelp={() => setShowHelp(true)} />
           )}
         </main>
       </div>
@@ -994,16 +809,6 @@ A3: ...`}
         />
       )}
 
-      {/* AI assistant — floating button + side panel */}
-      {!showChat && (
-        <button
-          onClick={() => setShowChat(true)}
-          className="fixed right-4 bottom-4 z-[8999] w-12 h-12 rounded-full bg-[#38bdf8] hover:bg-[#7dd3fc] text-[#0a0e1a] text-xl font-bold shadow-2xl flex items-center justify-center transition-colors"
-          title="ИИ-ассистент"
-        >
-          🤖
-        </button>
-      )}
       {showChat && (
         <ChatPanel
           net={{

@@ -117,12 +117,11 @@ export default function ChatPanel({ net, flyTo, onClose }: Props) {
   }, [input, busy, messages, runConversation]);
 
   return (
-    <div className="fixed right-3 top-16 bottom-3 w-[380px] z-[9000] flex flex-col bg-[#0d1b2a] border border-[#1e3a5f] rounded-xl shadow-2xl overflow-hidden">
-      <div className="flex items-center justify-between p-3 border-b border-[#1e3a5f] flex-shrink-0">
+    <div className="fixed right-4 top-[72px] bottom-4 w-[400px] z-[9000] flex flex-col inspector max-w-[calc(100vw-2rem)]">
+      <div className="flex items-center justify-between p-3 border-b border-[var(--border)] shrink-0">
         <div className="flex items-center gap-2">
-          <span className="text-base">🤖</span>
-          <h2 className="text-sm font-semibold text-[#e2e8f0]">Ассистент</h2>
-          <span className="text-[10px] text-[#64748b] font-mono">claude-sonnet-4-6</span>
+          <h2 className="text-sm font-semibold text-[var(--text)]">Ассистент OPTIQ</h2>
+          <span className="text-[10px] text-[var(--text-muted)] font-mono">claude-sonnet-4-6</span>
         </div>
         <div className="flex items-center gap-1">
           <button
