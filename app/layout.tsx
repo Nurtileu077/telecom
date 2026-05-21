@@ -17,6 +17,15 @@ const jetbrains = JetBrains_Mono({
 export const metadata: Metadata = {
   title: 'OPTIQ — проектирование оптики',
   description: 'OPTIQ — OLT, муфты, ОРК, маршрут по дорогам, смета и KMZ',
+  appleWebApp: { capable: true, statusBarStyle: 'black-translucent', title: 'OPTIQ' },
+};
+
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 5,
+  viewportFit: 'cover',
+  themeColor: '#06080f',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

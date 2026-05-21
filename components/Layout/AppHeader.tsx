@@ -1,7 +1,7 @@
 'use client';
 import {
   Upload, Save, FolderOpen, HelpCircle, Undo2, Redo2, Plus, Camera,
-  Pencil, Eye, Sparkles, Hammer, GitBranch, Lasso, X, Package,
+  Pencil, Eye, Sparkles, Hammer, GitBranch, Lasso, X, Package, Menu,
 } from 'lucide-react';
 import Logo from '@/components/Brand/Logo';
 import GeocodeSearch from '@/components/Geocoding/GeocodeSearch';
@@ -58,23 +58,35 @@ interface Props {
   onHelp: () => void;
   chatOpen: boolean;
   onToggleChat: () => void;
+  onMenuToggle?: () => void;
+  mobileMenuOpen?: boolean;
 }
 
 export default function AppHeader(p: Props) {
   return (
-    <header className="h-14 flex items-center gap-2 px-3 border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0 z-20">
-      <Logo />
-      <div className="h-8 w-px bg-[var(--border)] hidden sm:block" />
+    <header className="min-h-12 md:h-14 flex flex-wrap items-center gap-1.5 md:gap-2 px-2 md:px-3 py-1.5 md:py-0 border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0 z-20">
+      {p.onMenuToggle && (
+        <button
+          type="button"
+          className="btn btn-ghost btn-icon md:hidden shrink-0"
+          onClick={p.onMenuToggle}
+          aria-label="Открыть меню"
+          aria-expanded={p.mobileMenuOpen}
+        >
+          <Menu size={18} />
+        </button>
+      )}
+      <Logo compact />
       <input
         type="text"
         value={p.projectName}
         onChange={(e) => p.onProjectNameChange(e.target.value)}
-        className="input-optiq h-9 px-2.5 max-w-[140px] font-medium bg-transparent border-transparent hover:border-[var(--border-strong)]"
+        className="input-optiq h-8 md:h-9 px-2 flex-1 min-w-0 max-w-[120px] sm:max-w-[140px] text-xs md:text-sm font-medium bg-transparent border-transparent hover:border-[var(--border-strong)]"
       />
       <select
         value={p.projectStatus}
         onChange={(e) => p.onProjectStatusChange(e.target.value as ProjectStatus)}
-        className="input-optiq h-8 text-[11px] font-semibold px-2 cursor-pointer"
+        className="input-optiq h-8 text-[10px] md:text-[11px] font-semibold px-1.5 md:px-2 cursor-pointer shrink-0 max-w-[100px] md:max-w-none"
         style={{
           color: PROJECT_STATUS_LABELS[p.projectStatus].color,
           borderColor: `${PROJECT_STATUS_LABELS[p.projectStatus].color}44`,
@@ -154,7 +166,9 @@ export default function AppHeader(p: Props) {
         <button type="button" className="btn btn-ghost btn-icon hidden sm:flex" onClick={p.onCatalog} disabled={!p.dbEnabled} title="Каталог"><Package size={16} /></button>
         <button type="button" className="btn btn-ghost text-[11px] hidden sm:flex" onClick={p.onProjects}><FolderOpen size={14} />Проекты</button>
         <button type="button" className="btn btn-ghost text-[11px] hidden sm:flex" onClick={p.onSave} disabled={!p.canSave}><Save size={14} />Сохранить</button>
-        <button type="button" className="btn btn-primary" onClick={p.onImport}><Upload size={16} />Импорт</button>
+        <button type="button" className="btn btn-primary shrink-0" onClick={p.onImport}>
+          <Upload size={16} /><span className="hidden sm:inline">Импорт</span>
+        </button>
         <button type="button" className="btn btn-ghost btn-icon" onClick={p.onHelp}><HelpCircle size={16} /></button>
         <button type="button" className={`btn btn-icon ${p.chatOpen ? 'btn-secondary' : 'btn-ghost'}`} onClick={p.onToggleChat} title="AI"><Sparkles size={16} className="text-[var(--accent-2)]" /></button>
       </div>

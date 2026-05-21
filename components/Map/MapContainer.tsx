@@ -283,7 +283,9 @@ export default function LeafletMap(props: Props) {
 
       // Force Leaflet to recalculate container size after layout settles
       setTimeout(() => { map.invalidateSize(); }, 100);
-      setTimeout(() => { map.invalidateSize(); }, 500);
+
+      const onResize = () => { map.invalidateSize(); };
+      window.addEventListener('resize', onResize);
 
       if (propsRef.current.flyToRef) {
         propsRef.current.flyToRef.current = (lat, lon, zoom = 16) => {
@@ -369,7 +371,11 @@ export default function LeafletMap(props: Props) {
       }, 200);
     });
 
+    const onResize = () => mapRef.current?.invalidateSize();
+    window.addEventListener('resize', onResize);
+
     return () => {
+      window.removeEventListener('resize', onResize);
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
@@ -989,7 +995,7 @@ export default function LeafletMap(props: Props) {
       <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'absolute', inset: 0 }} />
 
       {/* Basemap switcher */}
-      <div className="absolute top-3 right-3 flex flex-col gap-1 z-[400]">
+      <div className="absolute bottom-[calc(58px+env(safe-area-inset-bottom))] md:bottom-auto md:top-3 right-2 md:right-3 flex flex-col gap-1 z-[400]">
         <div className="bg-[#0d1b2a] border border-[#1e3a5f] rounded-lg p-1 flex gap-0.5 shadow-xl">
           {(['dark', 'light', 'satellite', 'hybrid'] as BaseMap[]).map((bm) => (
             <button
@@ -1005,7 +1011,7 @@ export default function LeafletMap(props: Props) {
       </div>
 
       {/* Measure / Edit mode indicator */}
-      <div className="absolute top-3 left-3 z-[400] flex flex-col gap-1">
+      <div className="absolute top-2 left-2 md:top-3 md:left-3 z-[400] flex flex-col gap-1 max-md:max-w-[140px]">
         <button
           onClick={() => {
             const next = !props.measureMode;

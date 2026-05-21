@@ -5,9 +5,10 @@ import { geocode, GeocodeResult } from './Geocoder';
 
 interface Props {
   flyTo: ((lat: number, lon: number, zoom?: number) => void) | null;
+  className?: string;
 }
 
-export default function GeocodeSearch({ flyTo }: Props) {
+export default function GeocodeSearch({ flyTo, className }: Props) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<GeocodeResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -51,8 +52,8 @@ export default function GeocodeSearch({ flyTo }: Props) {
   };
 
   return (
-    <div ref={containerRef} className="relative hidden md:block">
-      <div className="search-pill">
+    <div ref={containerRef} className={className ?? 'relative hidden md:block'}>
+      <div className="search-pill max-md:min-w-0 max-md:w-full">
         <Search size={14} className="text-[var(--text-muted)] shrink-0" />
         <input
           value={query}

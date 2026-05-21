@@ -17,6 +17,7 @@ import StatsTab from './StatsTab';
 import ProjectsTab from './ProjectsTab';
 import CostTab from './CostTab';
 import ToolsTab from './ToolsTab';
+import GeocodeSearch from '@/components/Geocoding/GeocodeSearch';
 import BudgetTab from './BudgetTab';
 import type { SubBudget, BudgetStats } from '@/components/Network/PowerBudget';
 import type { ProjectSnapshot, ProjectStatus, InlineJoint } from '@/types/network';
@@ -99,9 +100,10 @@ interface Props {
   restoreSnapshot: (id: string) => void;
   deleteSnapshot: (id: string) => void;
   hasNetwork: boolean;
+  onMobileClose?: () => void;
 }
 
-export default function Sidebar(props: Props) {
+export default function Sidebar({ onMobileClose, ...props }: Props) {
   const [group, setGroup] = useState<Group>('map');
   const [activeTab, setActiveTab] = useState<Tab>('layers');
 
@@ -111,13 +113,19 @@ export default function Sidebar(props: Props) {
     setGroup(g);
     const first = GROUPS.find((x) => x.id === g)!.tabs[0].id;
     setActiveTab(first);
+    onMobileClose?.();
+  };
+
+  const selectTab = (id: Tab) => {
+    setActiveTab(id);
+    onMobileClose?.();
   };
 
   const pipelineStep = props.hasNetwork ? (props.osrmStatus === 'routing' ? 2 : 3) : props.materials ? 1 : 0;
 
   return (
-    <aside className="flex shrink-0 h-full border-r border-[var(--border)] bg-[var(--bg-surface)]">
-      <nav className="w-12 flex flex-col items-center py-2 gap-1 border-r border-[var(--border)] bg-[var(--bg-canvas)]">
+    <aside className="flex shrink-0 h-full border-r border-[var(--border)] bg-[var(--bg-surface)] max-md:h-[100dvh]">
+      <nav className="w-11 md:w-12 flex flex-col items-center py-2 gap-1 border-r border-[var(--border)] bg-[var(--bg-canvas)] shrink-0">
         {GROUPS.map((g) => {
           const Icon = g.icon;
           const active = group === g.id;
@@ -138,15 +146,16 @@ export default function Sidebar(props: Props) {
         })}
       </nav>
 
-      <div className="w-[268px] flex flex-col min-w-0">
-        <div className="px-3 py-2 border-b border-[var(--border)]">
+      <div className="w-[min(268px,calc(100vw-44px))] md:w-[268px] flex flex-col min-w-0 flex-1">
+        <div className="px-3 py-2 border-b border-[var(--border)] flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
           <p className="section-title">{currentGroup.label}</p>
           <div className="flex flex-wrap gap-1 mt-2">
             {currentGroup.tabs.map((t) => (
               <button
                 key={t.id}
                 type="button"
-                onClick={() => setActiveTab(t.id)}
+                onClick={() => selectTab(t.id)}
                 className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition-colors ${
                   activeTab === t.id
                     ? 'bg-[var(--accent-dim)] text-[var(--accent)]'
@@ -157,6 +166,17 @@ export default function Sidebar(props: Props) {
               </button>
             ))}
           </div>
+          </div>
+          {onMobileClose && (
+            <button
+              type="button"
+              onClick={onMobileClose}
+              className="md:hidden shrink-0 w-8 h-8 rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)]"
+              aria-label="Закрыть меню"
+            >
+              ×
+            </button>
+          )}
         </div>
 
         {group === 'workflow' && (
@@ -182,6 +202,10 @@ export default function Sidebar(props: Props) {
             {props.validationIssues.length} предупреждений →
           </button>
         )}
+
+        <div className="md:hidden px-3 py-2 border-b border-[var(--border)]">
+          <GeocodeSearch flyTo={props.flyTo} className="relative block w-full" />
+        </div>
 
         <div className="flex-1 overflow-hidden min-h-0">
           {activeTab === 'layers' && <LayersTab districts={props.districts} layers={props.layers} toggleLayer={props.toggleLayer} />}

@@ -315,7 +315,7 @@ export default function EntityEditor({
   }
 
   return (
-    <div className="inspector animate-fade-in">
+    <div className="inspector inspector--stack animate-fade-in max-md:z-[520]">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2.5 border-b border-[#1e3a5f]">
         <div>

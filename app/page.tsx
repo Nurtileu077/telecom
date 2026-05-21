@@ -24,6 +24,7 @@ import { compatibleTargetsForCable } from '@/components/Network/SnapConnect';
 import { validateForExport, formatValidationSummary } from '@/components/Network/ExportValidation';
 import type { CableLinkEnd } from '@/hooks/useNetwork';
 import MuftaInterior from '@/components/Map/MuftaInterior';
+import MobileDock from '@/components/Layout/MobileDock';
 
 const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
   ssr: false,
@@ -53,6 +54,7 @@ export default function HomePage() {
   const [entitySelection, setEntitySelection] = useState<EntitySelection | null>(null);
   const [moveEntityTarget, setMoveEntityTarget] = useState<{ kind: 'olt' | 'tb' | 'ork'; id: string } | null>(null);
   const [snapHighlightId, setSnapHighlightId] = useState<string | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [selectedCableId, setSelectedCableId] = useState<string | null>(null);
   const [editingCableId, setEditingCableId] = useState<string | null>(null);
   const [placing, setPlacing] = useState<'olt' | 'tb' | 'ork' | null>(null);
@@ -375,8 +377,20 @@ export default function HomePage() {
     ? Math.round((net.osrmProgress.done / net.osrmProgress.total) * 100)
     : 0;
 
+  useEffect(() => {
+    const t = window.setTimeout(() => window.dispatchEvent(new Event('resize')), 320);
+    return () => window.clearTimeout(t);
+  }, [mobileMenuOpen]);
+
+  const openMobileMenu = useCallback((tab?: 'layers' | 'tools') => {
+    setMobileMenuOpen(true);
+    if (tab === 'tools') {
+      /* Sidebar opens on map group by default; user can switch — or we could pass initial tab later */
+    }
+  }, []);
+
   return (
-    <div className="flex flex-col h-screen overflow-hidden">
+    <div className="app-shell flex flex-col overflow-hidden">
       <AppHeader
         projectName={net.projectName}
         onProjectNameChange={net.setProjectName}
@@ -439,10 +453,22 @@ export default function HomePage() {
         onHelp={() => setShowHelp(true)}
         chatOpen={showChat}
         onToggleChat={() => setShowChat((v) => !v)}
+        onMenuToggle={() => setMobileMenuOpen((v) => !v)}
+        mobileMenuOpen={mobileMenuOpen}
       />
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden relative min-h-0">
+        {mobileMenuOpen && (
+          <button
+            type="button"
+            className="drawer-backdrop md:hidden"
+            aria-label="Закрыть меню"
+            onClick={() => setMobileMenuOpen(false)}
+          />
+        )}
+        <div className={`sidebar-drawer shrink-0 h-full md:relative md:translate-x-0 ${mobileMenuOpen ? 'is-open' : ''}`}>
         <Sidebar
+          onMobileClose={() => setMobileMenuOpen(false)}
           districts={net.districts}
           cables={net.cables}
           joints={net.joints}
@@ -495,8 +521,9 @@ export default function HomePage() {
           deleteSnapshot={net.deleteSnapshot}
           hasNetwork={net.districts.length > 0}
         />
+        </div>
 
-        <main className="flex-1 relative overflow-hidden isolate">
+        <main className="flex-1 relative overflow-hidden isolate min-w-0 pb-[calc(52px+env(safe-area-inset-bottom))] md:pb-0">
           <LeafletMap
             districts={net.districts}
             cables={net.cables}
@@ -577,7 +604,7 @@ export default function HomePage() {
           />
 
           {moveEntityTarget && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#a78bfa]/50 rounded-lg px-3 py-1.5 text-xs text-[#a78bfa] shadow-2xl flex items-center gap-2 animate-fade-in">
+            <div className="map-hint absolute top-2 md:top-3 left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#a78bfa]/50 rounded-lg px-3 py-1.5 text-xs text-[#a78bfa] shadow-2xl flex items-center gap-2 animate-fade-in max-w-none md:max-w-lg">
               <span>
                 ↔ Перетащите {moveEntityTarget.kind === 'olt' ? 'OLT' : moveEntityTarget.kind === 'tb' ? 'муфту' : 'ОРК'} на карте
                 <span className="text-[#64748b] ml-1">({moveEntityTarget.id})</span>
@@ -650,7 +677,7 @@ export default function HomePage() {
           />
 
           {placing && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#a78bfa]/50 rounded-lg px-3 py-1.5 text-xs text-[#a78bfa] shadow-2xl flex items-center gap-2 animate-fade-in">
+            <div className="map-hint absolute top-2 md:top-3 left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#a78bfa]/50 rounded-lg px-2 py-1.5 text-[11px] md:text-xs text-[#a78bfa] shadow-2xl flex items-center gap-2 animate-fade-in">
               <span>
                 🎯 {placing === 'tb'
                   ? 'Муфта на перекрёстке — клик по кабелю (магнит ~35 м), без автокабеля к OLT'
@@ -661,7 +688,7 @@ export default function HomePage() {
           )}
 
           {connectMode && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#34d399]/50 rounded-lg px-3 py-1.5 text-xs text-[#34d399] shadow-2xl flex items-center gap-2 animate-fade-in">
+            <div className="map-hint absolute top-2 md:top-3 left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#34d399]/50 rounded-lg px-2 py-1.5 text-[11px] md:text-xs text-[#34d399] shadow-2xl flex items-center gap-2 animate-fade-in">
               <span>
                 🔗 {connectCableId
                   ? 'Клик по OLT / муфте / ОРК — привязать конец (зелёная подсветка)'
@@ -672,7 +699,7 @@ export default function HomePage() {
           )}
 
           {cableLink && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#34d399]/50 rounded-lg px-3 py-1.5 text-xs text-[#34d399] shadow-2xl flex items-center gap-2 animate-fade-in">
+            <div className="map-hint absolute top-2 md:top-3 left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#34d399]/50 rounded-lg px-2 py-1.5 text-[11px] md:text-xs text-[#34d399] shadow-2xl flex items-center gap-2 animate-fade-in">
               <span>
                 〰 {!cableLink.from
                   ? (cableLink.allowMap
@@ -687,7 +714,7 @@ export default function HomePage() {
           )}
 
           {pendingCable && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[600] bg-[#0d1b2a]/98 border border-[#38bdf8]/50 rounded-xl px-4 py-3 shadow-2xl animate-fade-in">
+            <div className="map-hint absolute top-2 md:top-3 left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 z-[600] bg-[#0d1b2a]/98 border border-[#38bdf8]/50 rounded-xl px-3 md:px-4 py-3 shadow-2xl animate-fade-in max-h-[50vh] overflow-y-auto">
               <div className="text-xs text-[#e2e8f0] mb-2 text-center">Выбери тип кабеля ОК</div>
               <div className="flex flex-wrap gap-1.5 max-w-[320px] justify-center">
                 {CABLE_SIZES.filter((t) => t !== 'ОК-96').map((t: CableType) => (
@@ -976,6 +1003,17 @@ A3: ...`}
           }}
         />
       )}
+
+      <MobileDock
+        menuOpen={mobileMenuOpen}
+        editMode={net.editMode}
+        chatOpen={showChat}
+        onMenu={() => setMobileMenuOpen((v) => !v)}
+        onToggleEdit={() => net.setEditMode(!net.editMode)}
+        onImport={() => setShowImport(true)}
+        onLayers={() => openMobileMenu('layers')}
+        onChat={() => setShowChat((v) => !v)}
+      />
 
       {showChat && (
         <ChatPanel

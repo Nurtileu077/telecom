@@ -59,7 +59,7 @@ export default function AddCamerasModal({ onClose, onAdd }: Props) {
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm">
-      <div className="bg-[#0d1b2a] border border-[#1e3a5f] rounded-xl shadow-2xl w-[640px] max-h-[90vh] flex flex-col">
+      <div className="modal-sheet bg-[#0d1b2a] border border-[#1e3a5f] rounded-xl shadow-2xl w-[640px] max-h-[90vh] flex flex-col mx-2">
         <div className="flex items-center justify-between p-3 border-b border-[#1e3a5f]">
           <h2 className="text-sm font-semibold text-[#e2e8f0]">📷 Добавить камеры из Excel</h2>
           <button onClick={onClose} className="text-[#64748b] hover:text-[#e2e8f0]">✕</button>

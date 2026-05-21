@@ -37,7 +37,7 @@ export default function SplicePlan({ tbId, districts, cables, onClose }: Props) 
   const totalInputFibers = incoming.reduce((s, c) => s + c.fibers, 0);
 
   return (
-    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[600] w-[480px] max-h-[80vh] overflow-y-auto bg-[#0d1b2a]/98 border border-[#1e3a5f] rounded-xl shadow-2xl backdrop-blur-sm animate-fade-in">
+    <div className="absolute top-2 md:top-3 left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 z-[600] md:w-[480px] max-h-[min(75dvh,80vh)] overflow-y-auto bg-[#0d1b2a]/98 border border-[#1e3a5f] rounded-xl shadow-2xl backdrop-blur-sm animate-fade-in">
       <div className="sticky top-0 bg-[#0d1b2a]/98 backdrop-blur flex items-center justify-between px-3 py-2.5 border-b border-[#1e3a5f]">
         <div>
           <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#38bdf8]/20 text-[#38bdf8]">Сплайс-план</span>

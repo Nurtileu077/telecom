@@ -281,7 +281,7 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
-      <div className="bg-[#0d1b2a] border border-[#1e3a5f] rounded-xl shadow-2xl w-[500px] max-h-[90vh] overflow-y-auto">
+      <div className="modal-sheet bg-[#0d1b2a] border border-[#1e3a5f] rounded-xl shadow-2xl w-[500px] max-h-[90vh] overflow-y-auto mx-2">
         <div className="flex items-center justify-between p-4 border-b border-[#1e3a5f]">
           <h2 className="text-sm font-semibold text-[#e2e8f0]">Импорт данных</h2>
           <button onClick={onClose} className="text-[#64748b] hover:text-[#e2e8f0] transition-colors">✕</button>

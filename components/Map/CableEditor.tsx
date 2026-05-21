@@ -37,7 +37,7 @@ export default function CableEditor({
   const isRouting = rerouteStatus === 'routing';
 
   return (
-    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[500] w-80 bg-[#0d1b2a]/97 border border-[#1e3a5f] rounded-xl shadow-2xl backdrop-blur-sm animate-fade-in">
+    <div className="absolute z-[510] left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 bottom-[calc(58px+env(safe-area-inset-bottom))] md:bottom-6 w-auto md:w-80 max-w-lg mx-auto bg-[#0d1b2a]/97 border border-[#1e3a5f] rounded-xl shadow-2xl backdrop-blur-sm animate-fade-in max-h-[45dvh] overflow-y-auto">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2.5 border-b border-[#1e3a5f]">
         <div className="flex items-center gap-2">

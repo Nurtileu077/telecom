@@ -117,7 +117,7 @@ export default function ChatPanel({ net, flyTo, onClose }: Props) {
   }, [input, busy, messages, runConversation]);
 
   return (
-    <div className="fixed right-4 top-[72px] bottom-4 w-[400px] z-[9000] flex flex-col inspector max-w-[calc(100vw-2rem)]">
+    <div className="fixed inset-0 md:inset-auto md:right-4 md:top-14 md:bottom-4 md:w-[400px] z-[9000] flex flex-col inspector max-md:rounded-none md:max-w-[calc(100vw-2rem)]">
       <div className="flex items-center justify-between p-3 border-b border-[var(--border)] shrink-0">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold text-[var(--text)]">Ассистент OPTIQ</h2>
