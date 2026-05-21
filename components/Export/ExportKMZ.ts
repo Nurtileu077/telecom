@@ -90,7 +90,24 @@ function fmtLen(m: number): string {
   return m >= 1000 ? `${(m / 1000).toFixed(3)} км` : `${Math.round(m)} м`;
 }
 
-export async function exportKMZ(districts: District[], cables: Cable[]): Promise<Blob> {
+// Слои экспорта — пользователь может выбрать какие включать и одним файлом или
+// по отдельности (каждый слой = свой .kmz внутри zip).
+export type KmzLayer = 'olt' | 'tb' | 'ork' | 'sub' | 'cables';
+export const ALL_LAYERS: KmzLayer[] = ['olt', 'tb', 'ork', 'sub', 'cables'];
+export const LAYER_LABEL: Record<KmzLayer, string> = {
+  olt: 'OLT', tb: 'Муфты', ork: 'ОРКСП', sub: 'Камеры', cables: 'Кабели',
+};
+// ASCII-имена для файлов внутри zip — кириллица в именах архива бьётся на Windows.
+const LAYER_FILE: Record<KmzLayer, string> = {
+  olt: 'OLT', tb: 'mufty', ork: 'orksp', sub: 'kamery', cables: 'kabeli',
+};
+
+export interface KmzExportOpts {
+  layers?: KmzLayer[];   // какие слои включать (по умолчанию все)
+  separate?: boolean;    // true → zip из отдельных .kmz по слоям
+}
+
+export async function exportKMZ(districts: District[], cables: Cable[], opts?: KmzExportOpts): Promise<Blob> {
   const JSZip = (await import('jszip')).default;
 
   // ---- Styles ----
@@ -130,14 +147,6 @@ ${Object.entries(CABLE_STYLES).map(([t, s]) =>
 ).join('\n')}
 `.trim();
 
-  // ---- KML body ----
-  let kml = `<?xml version="1.0" encoding="UTF-8"?>
-<kml xmlns="http://www.opengis.net/kml/2.2">
-<Document>
-<name>OPTIQ — ${new Date().toLocaleDateString('ru')}</name>
-${styles}
-`;
-
   // Summary stats
   const totalSubs = districts.reduce((s, d) => s + d.subscribers.length, 0);
   const totalOrks = districts.reduce((s, d) => s + d.olt.transitBoxes.reduce((t, tb) => t + tb.orks.length, 0), 0);
@@ -145,114 +154,119 @@ ${styles}
   const totalCableM = cables.reduce((s, c) => s + c.lengthM, 0);
   const routedCount = cables.filter((c) => c.routedByOSRM).length;
 
-  kml += `<description><![CDATA[
+  const summaryCDATA = `<description><![CDATA[
 <b>OPTIQ — проект сети</b><br/>
 Районов: ${districts.length}<br/>
 Абонентов: ${totalSubs}<br/>
 OLT: ${districts.length}<br/>
-Транзитных муфт МТОК-96А: ${totalTbs}<br/>
+Транзитных муфт: ${totalTbs}<br/>
 ОРК шкафов: ${totalOrks}<br/>
 Кабелей всего: ${cables.length} сегм. / ${fmtLen(totalCableM)}<br/>
 Проложено по дороге: ${routedCount} из ${cables.length} сегм.<br/>
 Дата: ${new Date().toLocaleString('ru')}
 ]]></description>\n`;
 
-  // ---- OLT ----
-  kml += `<Folder><name>📡 OLT — Узлы связи (${districts.length} шт.)</name>\n`;
-  for (const d of districts) {
-    const desc = `<b>${esc(d.olt.id)}</b><br/>
+  // ---- Per-layer folder builders (so export can be combined / by-layer) ----
+  const buildOlt = (): string => {
+    let s = `<Folder><name>📡 OLT — Узлы связи (${districts.length} шт.)</name>\n`;
+    for (const d of districts) {
+      const desc = `<b>${esc(d.olt.id)}</b><br/>
 Район: ${esc(d.name)}<br/>
 ${html(SPECS.olt)}<br/>
 <br/>
 <b>Статистика:</b><br/>
 Транзитных муфт: ${d.olt.transitBoxes.length}<br/>
-ОРК шкафов: ${d.olt.transitBoxes.reduce((s, tb) => s + tb.orks.length, 0)}<br/>
+ОРК шкафов: ${d.olt.transitBoxes.reduce((a, tb) => a + tb.orks.length, 0)}<br/>
 Абонентов: ${d.subscribers.length}`;
-    kml += pt(d.olt.id, desc, d.olt.lat, d.olt.lon, 'olt', {
-      'Тип': 'OLT',
-      'Район': d.name,
-      'Муфт': d.olt.transitBoxes.length,
-      'ОРКСП': d.olt.transitBoxes.reduce((s, tb) => s + tb.orks.length, 0),
-      'Камер': d.subscribers.length,
-    });
-  }
-  kml += `</Folder>\n`;
+      s += pt(d.olt.id, desc, d.olt.lat, d.olt.lon, 'olt', {
+        'Тип': 'OLT',
+        'Район': d.name,
+        'Муфт': d.olt.transitBoxes.length,
+        'ОРКСП': d.olt.transitBoxes.reduce((a, tb) => a + tb.orks.length, 0),
+        'Камер': d.subscribers.length,
+      });
+    }
+    return s + `</Folder>\n`;
+  };
 
-  // ---- Transit Boxes ----
-  kml += `<Folder><name>🔷 Транзитные муфты МТОК-96А (${totalTbs} шт.)</name>\n`;
-  for (const d of districts) {
-    if (d.olt.transitBoxes.length === 0) continue;
-    kml += `<Folder><name>${esc(d.name)}</name>\n`;
-    for (const tb of d.olt.transitBoxes) {
-      const desc = `<b>${esc(tb.id)}</b><br/>
+  const buildTb = (): string => {
+    let s = `<Folder><name>🔷 Транзитные муфты (${totalTbs} шт.)</name>\n`;
+    for (const d of districts) {
+      if (d.olt.transitBoxes.length === 0) continue;
+      s += `<Folder><name>${esc(d.name)}</name>\n`;
+      for (const tb of d.olt.transitBoxes) {
+        const desc = `<b>${esc(tb.id)}</b><br/>
 Район: ${esc(d.name)}<br/>
 OLT: ${esc(d.olt.id)}<br/>
 Муфта: ${esc(tb.muftaType)}<br/>
 ОРК подключено: ${tb.orks.length}<br/>
 <br/>
 ${html(SPECS.tb)}`;
-      kml += pt(tb.id, desc, tb.lat, tb.lon, 'tb', {
-        'Тип': 'Транзитная муфта',
-        'Район': d.name,
-        'OLT': d.olt.id,
-        'Муфта': tb.muftaType,
-        'ОРКСП': tb.orks.length,
-      });
+        s += pt(tb.id, desc, tb.lat, tb.lon, 'tb', {
+          'Тип': 'Транзитная муфта',
+          'Район': d.name,
+          'OLT': d.olt.id,
+          'Муфта': tb.muftaType,
+          'ОРКСП': tb.orks.length,
+        });
+      }
+      s += `</Folder>\n`;
     }
-    kml += `</Folder>\n`;
-  }
-  kml += `</Folder>\n`;
+    return s + `</Folder>\n`;
+  };
 
-  // ---- ORK ----
-  kml += `<Folder><name>📦 ОРК шкафы (${totalOrks} шт.)</name>\n`;
-  for (const d of districts) {
-    kml += `<Folder><name>${esc(d.name)}</name>\n`;
-    for (const tb of d.olt.transitBoxes) {
-      for (const ork of tb.orks) {
-        const desc = `<b>${esc(ork.id)}</b><br/>
+  const buildOrk = (): string => {
+    let s = `<Folder><name>📦 ОРКСП шкафы (${totalOrks} шт.)</name>\n`;
+    for (const d of districts) {
+      s += `<Folder><name>${esc(d.name)}</name>\n`;
+      for (const tb of d.olt.transitBoxes) {
+        for (const ork of tb.orks) {
+          const desc = `<b>${esc(ork.id)}</b><br/>
 Район: ${esc(d.name)}<br/>
 Транзитная муфта: ${esc(tb.id)}<br/>
 Сплиттер: PLC ${esc(ork.splitter)}<br/>
 Абонентов: ${ork.subscribers.length}<br/>
 <br/>
 ${html(SPECS.ork)}`;
-        kml += pt(ork.id, desc, ork.lat, ork.lon, 'ork', {
-          'Тип': 'ОРКСП',
-          'Район': d.name,
-          'Муфта': tb.id,
-          'Сплиттер': ork.splitter,
-          'Камер': ork.subscribers.length,
-        });
+          s += pt(ork.id, desc, ork.lat, ork.lon, 'ork', {
+            'Тип': 'ОРКСП',
+            'Район': d.name,
+            'Муфта': tb.id,
+            'Сплиттер': ork.splitter,
+            'Камер': ork.subscribers.length,
+          });
+        }
       }
+      s += `</Folder>\n`;
     }
-    kml += `</Folder>\n`;
-  }
-  kml += `</Folder>\n`;
+    return s + `</Folder>\n`;
+  };
 
-  // ---- Subscribers ----
-  kml += `<Folder><name>🏠 Абоненты (${totalSubs} або.)</name>\n`;
-  for (const d of districts) {
-    kml += `<Folder><name>${esc(d.name)} (${d.subscribers.length} або.)</name>\n`;
-    for (const sub of d.subscribers) {
-      const ork = d.olt.transitBoxes.flatMap((tb) => tb.orks).find((o) => o.id === sub.orkId);
-      const desc = `<b>${esc(sub.desc)}</b><br/>
+  const buildSub = (): string => {
+    let s = `<Folder><name>🏠 Камеры (${totalSubs} шт.)</name>\n`;
+    for (const d of districts) {
+      s += `<Folder><name>${esc(d.name)} (${d.subscribers.length} шт.)</name>\n`;
+      for (const sub of d.subscribers) {
+        const ork = d.olt.transitBoxes.flatMap((tb) => tb.orks).find((o) => o.id === sub.orkId);
+        const desc = `<b>${esc(sub.desc)}</b><br/>
 Район: ${esc(d.name)}<br/>
 ОРК: ${esc(sub.orkId || '—')}<br/>
 Сплиттер: ${ork ? esc(ork.splitter) : '—'}<br/>
 Волокна: ${sub.fibers.working} раб. + ${sub.fibers.spare} зап.<br/>
 <br/>
 ${html(SPECS.sub)}`;
-      kml += pt(`${sub.desc}`, desc, sub.lat, sub.lon, 'sub', {
-        'Тип': 'Камера',
-        'Район': d.name,
-        'ОРКСП': sub.orkId || '',
-        'Сплиттер': ork ? ork.splitter : '',
-        'Волокна': `${sub.fibers.working}+${sub.fibers.spare}`,
-      });
+        s += pt(`${sub.desc}`, desc, sub.lat, sub.lon, 'sub', {
+          'Тип': 'Камера',
+          'Район': d.name,
+          'ОРКСП': sub.orkId || '',
+          'Сплиттер': ork ? ork.splitter : '',
+          'Волокна': `${sub.fibers.working}+${sub.fibers.spare}`,
+        });
+      }
+      s += `</Folder>\n`;
     }
-    kml += `</Folder>\n`;
-  }
-  kml += `</Folder>\n`;
+    return s + `</Folder>\n`;
+  };
 
   // ---- Cables — split by type then by district  ----
   // Google My Maps imposes 2000 features per layer; each <Folder> at top level
@@ -279,59 +293,88 @@ ${html(SPECS.sub)}`;
   const cableDistrict = (c: Cable): string =>
     entityDistrict.get(c.fromId) ?? entityDistrict.get(c.toId) ?? 'Без района';
 
-  let skippedCables = 0;
-  for (const type of cableTypeOrder) {
-    const typeCables = cables.filter((c) => c.type === type);
-    if (typeCables.length === 0) continue;
-    const styleInfo = CABLE_STYLES[type];
-    const totalTypeM = typeCables.reduce((s, c) => s + c.lengthM, 0);
+  const buildCables = (): string => {
+    let s = '';
+    let skippedCables = 0;
+    for (const type of cableTypeOrder) {
+      const typeCables = cables.filter((c) => c.type === type);
+      if (typeCables.length === 0) continue;
+      const styleInfo = CABLE_STYLES[type];
+      const totalTypeM = typeCables.reduce((a, c) => a + c.lengthM, 0);
 
-    // Group by district
-    const byDist = new Map<string, Cable[]>();
-    for (const c of typeCables) {
-      const dn = cableDistrict(c);
-      if (!byDist.has(dn)) byDist.set(dn, []);
-      byDist.get(dn)!.push(c);
-    }
+      const byDist = new Map<string, Cable[]>();
+      for (const c of typeCables) {
+        const dn = cableDistrict(c);
+        if (!byDist.has(dn)) byDist.set(dn, []);
+        byDist.get(dn)!.push(c);
+      }
 
-    kml += `<Folder><name>${styleInfo.label} — ${typeCables.length} уч. / ${fmtLen(totalTypeM)}</name>\n`;
-    for (const [distName, distCables] of byDist.entries()) {
-      kml += `<Folder><name>${esc(distName)} (${distCables.length} уч.)</name>\n`;
-      for (const cable of distCables) {
-        const routed = cable.routedByOSRM ? '✅ по дороге (OSRM)' : '⚠️ прямая линия';
-        const lenM = Math.round(cable.lengthM);
-        const desc = `<b>${esc(cable.fromId)} → ${esc(cable.toId)}</b><br/>
+      s += `<Folder><name>${styleInfo.label} — ${typeCables.length} уч. / ${fmtLen(totalTypeM)}</name>\n`;
+      for (const [distName, distCables] of byDist.entries()) {
+        s += `<Folder><name>${esc(distName)} (${distCables.length} уч.)</name>\n`;
+        for (const cable of distCables) {
+          const routed = cable.routedByOSRM ? '✅ по дороге (OSRM)' : '⚠️ прямая линия';
+          const lenM = Math.round(cable.lengthM);
+          const desc = `<b>${esc(cable.fromId)} → ${esc(cable.toId)}</b><br/>
 Тип: ${esc(cable.type)}<br/>
 Длина: ${fmtLen(cable.lengthM)}<br/>
 Маршрут: ${routed}<br/>
 Точек: ${cable.coords.length}`;
-        // Метраж в НАЗВАНИЕ + в ExtendedData, чтобы он был виден сразу при
-        // загрузке (а не только в описании после редактирования).
-        const cableName = `${cable.type} · ${fmtLen(cable.lengthM)} · ${cable.fromId}→${cable.toId}`;
-        const ext = {
-          'Тип': cable.type,
-          'Длина_м': lenM,
-          'Длина': fmtLen(cable.lengthM),
-          'Жил': cable.fibers,
-          'От': cable.fromId,
-          'До': cable.toId,
-          'Маршрут': cable.routedByOSRM ? 'OSRM' : 'прямая',
-        };
-        const placemark = line(cableName, cable.coords, `cable-${type}`, desc, ext);
-        if (!placemark) { skippedCables++; continue; }
-        kml += placemark;
+          // Метраж в НАЗВАНИЕ + в ExtendedData, чтобы он был виден сразу при
+          // загрузке (а не только в описании после редактирования).
+          const cableName = `${cable.type} · ${fmtLen(cable.lengthM)} · ${cable.fromId}→${cable.toId}`;
+          const ext = {
+            'Тип': cable.type,
+            'Длина_м': lenM,
+            'Длина': fmtLen(cable.lengthM),
+            'Жил': cable.fibers,
+            'От': cable.fromId,
+            'До': cable.toId,
+            'Маршрут': cable.routedByOSRM ? 'OSRM' : 'прямая',
+          };
+          const placemark = line(cableName, cable.coords, `cable-${type}`, desc, ext);
+          if (!placemark) { skippedCables++; continue; }
+          s += placemark;
+        }
+        s += `</Folder>\n`;
       }
-      kml += `</Folder>\n`;
+      s += `</Folder>\n`;
     }
-    kml += `</Folder>\n`;
+    if (skippedCables > 0) console.warn(`[KMZ] Пропущено ${skippedCables} кабелей с битыми координатами`);
+    return s;
+  };
+
+  // ---- Assemble document(s) per options ----
+  const builders: Record<KmzLayer, () => string> = {
+    olt: buildOlt, tb: buildTb, ork: buildOrk, sub: buildSub, cables: buildCables,
+  };
+  const want = opts?.layers && opts.layers.length ? opts.layers : ALL_LAYERS;
+  const selected = ALL_LAYERS.filter((l) => want.includes(l));
+
+  const wrapDoc = (title: string, body: string, withSummary: boolean): string =>
+    `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+<name>${esc(title)}</name>
+${styles}
+${withSummary ? summaryCDATA : ''}${body}</Document></kml>`;
+
+  const date = new Date().toLocaleDateString('ru');
+
+  if (opts?.separate) {
+    // Каждый слой — отдельный .kmz внутри одного .zip (готово к раздаче).
+    const outer = new JSZip();
+    for (const layer of selected) {
+      const kml = wrapDoc(`OPTIQ — ${LAYER_LABEL[layer]} (${date})`, builders[layer](), false);
+      const inner = new JSZip();
+      inner.file('doc.kml', kml);
+      const kmz = await inner.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 9 } });
+      outer.file(`OPTIQ-${LAYER_FILE[layer]}.kmz`, kmz);
+    }
+    return outer.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 9 } });
   }
 
-  if (skippedCables > 0) {
-    console.warn(`[KMZ] Пропущено ${skippedCables} кабелей с битыми координатами`);
-  }
-
-  kml += `</Document></kml>`;
-
+  const kml = wrapDoc(`OPTIQ — ${date}`, selected.map((l) => builders[l]()).join(''), true);
   const zip = new JSZip();
   zip.file('doc.kml', kml);
   return zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 9 } });
