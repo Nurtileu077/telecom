@@ -64,7 +64,7 @@ interface Props {
 
 export default function AppHeader(p: Props) {
   return (
-    <header className="min-h-12 md:h-14 flex flex-wrap items-center gap-1.5 md:gap-2 px-2 md:px-3 py-1.5 md:py-0 border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0 z-20">
+    <header className="app-header min-h-12 md:h-14 flex flex-nowrap items-center gap-1.5 md:gap-2 px-2 md:px-3 py-1.5 md:py-0 border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0 z-30 overflow-hidden">
       {p.onMenuToggle && (
         <button
           type="button"
@@ -112,7 +112,7 @@ export default function AppHeader(p: Props) {
         )}
       </div>
 
-      <div className="ml-auto flex items-center gap-1 flex-wrap justify-end">
+      <div className="ml-auto app-header-toolbar flex items-center gap-1 justify-end shrink min-w-0">
         <div className="seg hidden xl:flex">
           <button type="button" data-active={!p.editMode} onClick={() => p.editMode && p.onToggleEditMode()}>
             <Eye size={12} className="inline mr-1" />Просмотр

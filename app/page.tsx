@@ -23,8 +23,8 @@ import { recalcLengthM } from '@/components/Network/cableWaypoints';
 import { compatibleTargetsForCable } from '@/components/Network/SnapConnect';
 import { validateForExport, formatValidationSummary } from '@/components/Network/ExportValidation';
 import type { CableLinkEnd } from '@/hooks/useNetwork';
-import NetworkInterior from '@/components/Map/NetworkInterior';
 import type { InteriorView } from '@/components/Network/entityInterior';
+import { findEntityCoords, findSubscriber } from '@/components/Network/entityInterior';
 import MobileDock from '@/components/Layout/MobileDock';
 import MobileActionSheet from '@/components/Layout/MobileActionSheet';
 import PwaInstallBanner from '@/components/Layout/PwaInstallBanner';
@@ -433,6 +433,36 @@ export default function HomePage() {
     setMobileMenuOpen(true);
   }, []);
 
+  const handleNavigateInterior = useCallback((kind: InteriorView['kind'], id: string) => {
+    let k = kind;
+    let i = id;
+    if (kind === 'tb' && !net.districts.some((d) => d.olt.transitBoxes.some((t) => t.id === id))) {
+      if (net.joints.some((j) => j.id === id)) {
+        k = 'joint';
+      }
+    }
+    setInteriorView({ kind: k, id: i });
+    setEntitySelection(k === 'joint' ? { kind: 'joint', id: i } : { kind: k as 'olt' | 'tb' | 'ork', id: i });
+    setSelectedCableId(null);
+  }, [net.districts, net.joints]);
+
+  const handleFlyToEntity = useCallback((kind: InteriorView['kind'], id: string) => {
+    const c = findEntityCoords(kind, id, net.districts, net.joints);
+    if (c && flyToRef.current) flyToRef.current(c.lat, c.lon, 17);
+  }, [net.districts, net.joints]);
+
+  const handleFlyToSubscriber = useCallback((subId: string) => {
+    const sub = findSubscriber(subId, net.districts);
+    if (sub && flyToRef.current) flyToRef.current(sub.lat, sub.lon, 19);
+  }, [net.districts]);
+
+  const handleJointClick = useCallback((jointId: string) => {
+    setInteriorView({ kind: 'joint', id: jointId });
+    setEntitySelection({ kind: 'joint', id: jointId });
+    setSelectedCableId(null);
+    handleFlyToEntity('joint', jointId);
+  }, [handleFlyToEntity]);
+
   return (
     <div className="app-shell flex flex-col overflow-hidden">
       <AppHeader
@@ -568,7 +598,7 @@ export default function HomePage() {
         />
         </div>
 
-        <main className="flex-1 relative overflow-hidden isolate min-w-0 pb-[calc(52px+env(safe-area-inset-bottom))] md:pb-0">
+        <main className={`flex-1 relative overflow-hidden isolate min-w-0 pb-[calc(52px+env(safe-area-inset-bottom))] md:pb-0 ${(entitySelection || interiorView) ? 'md:pr-[min(400px,42vw)]' : ''}`}>
           <LeafletMap
             districts={net.districts}
             cables={net.cables}
@@ -597,13 +627,13 @@ export default function HomePage() {
             deleteSubscriber={net.deleteSubscriber}
             moveEntityTarget={moveEntityTarget}
             onEntityDoubleClick={(kind, id) => {
-              setInteriorView({ kind, id });
-              setEntitySelection({ kind, id });
+              handleNavigateInterior(kind, id);
               setSelectedCableId(null);
               setMoveEntityTarget((prev) =>
                 prev?.kind === kind && prev.id === id ? null : { kind, id },
               );
             }}
+            onJointClick={handleJointClick}
             onEntityClick={(kind, id) => {
               if (connectMode && connectCableId) {
                 net.recordAction('Соединить кабель');
@@ -617,9 +647,8 @@ export default function HomePage() {
                 else finishCableLink(cableLink.from, end);
                 return;
               }
-              setInteriorView({ kind, id });
-              setEntitySelection({ kind, id } as EntitySelection);
-              setSelectedCableId(null);
+              handleNavigateInterior(kind, id);
+              handleFlyToEntity(kind, id);
             }}
             onCableClick={(id) => {
               if (connectMode) {
@@ -661,9 +690,19 @@ export default function HomePage() {
 
           <EntityEditor
             selection={entitySelection}
+            interiorView={interiorView}
             districts={net.districts}
             cables={net.cables}
-            onClose={() => { setEntitySelection(null); setMoveEntityTarget(null); }}
+            joints={net.joints}
+            powerBudgets={net.powerBudgets}
+            onClose={() => {
+              setEntitySelection(null);
+              setInteriorView(null);
+              setMoveEntityTarget(null);
+            }}
+            onNavigateInterior={handleNavigateInterior}
+            onFlyToEntity={handleFlyToEntity}
+            onFlyToSubscriber={handleFlyToSubscriber}
             moveActive={
               !!moveEntityTarget
               && !!entitySelection
@@ -671,7 +710,7 @@ export default function HomePage() {
               && moveEntityTarget.id === entitySelection.id
             }
             onStartMove={() => {
-              if (!entitySelection) return;
+              if (!entitySelection || entitySelection.kind === 'joint') return;
               setMoveEntityTarget({ kind: entitySelection.kind, id: entitySelection.id });
             }}
             onStopMove={() => setMoveEntityTarget(null)}
@@ -682,18 +721,8 @@ export default function HomePage() {
             onDeleteTB={net.deleteTB}
             onDeleteORK={net.deleteORK}
             onReassignORK={net.reassignORK}
-            onOpenSplicePlan={(tbId) => { setSplicePlanTbId(tbId); setEntitySelection(null); }}
-            onOpenInterior={(kind, id) => { setInteriorView({ kind, id }); }}
+            onOpenSplicePlan={(tbId) => { setSplicePlanTbId(tbId); }}
             onShowBranch={(kind, id) => setBranchSel({ kind, id })}
-          />
-
-          <NetworkInterior
-            view={interiorView}
-            districts={net.districts}
-            cables={net.cables}
-            powerBudgets={net.powerBudgets}
-            onClose={() => setInteriorView(null)}
-            onOpenEntity={(kind, id) => setInteriorView({ kind, id })}
           />
 
           <SplicePlan

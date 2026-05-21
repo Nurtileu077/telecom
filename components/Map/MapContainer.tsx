@@ -6,6 +6,7 @@ import {
   CAMERA_KIND_COLOR, CAMERA_KIND_LABEL, CAMERA_MIN_BANDWIDTH_MBPS,
 } from '@/types/network';
 import type { DrawingTool } from '@/components/Sidebar/NotesTab';
+import { nearestTbToJoint } from '@/components/Network/entityInterior';
 
 interface Props {
   districts: District[];
@@ -38,6 +39,7 @@ interface Props {
   deleteSubscriber?: (id: string) => void;
   onEntityClick?: (kind: 'olt' | 'tb' | 'ork', id: string) => void;
   onEntityDoubleClick?: (kind: 'olt' | 'tb' | 'ork', id: string) => void;
+  onJointClick?: (jointId: string) => void;
   /** Узел в режиме перетаскивания (двойной клик или кнопка в инспекторе). */
   moveEntityTarget?: { kind: 'olt' | 'tb' | 'ork'; id: string } | null;
   onCableClick?: (id: string) => void;
@@ -532,15 +534,20 @@ export default function LeafletMap(props: Props) {
       // In-line муфты — точки расхождения магистрали (создаются консолидацией)
       if (layers.tb && joints && zoom >= 13) {
         for (const j of joints) {
+          if (nearestTbToJoint(j, districts, 8)) continue;
           const icon = L.divIcon({
             html: `<div style="width:14px;height:14px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;background:#0d1b2a;border:1.5px solid #38bdf8;border-radius:50%;color:#38bdf8;box-shadow:0 0 4px rgba(56,189,248,0.6)">⊕</div>`,
             className: '', iconSize: [14, 14], iconAnchor: [7, 7],
           });
           const m = L.marker([j.lat, j.lon], { icon });
           m.bindTooltip(
-            `<b>Транзитная муфта</b><br/>${j.id}<br/>Ответвлений: ${j.branchCount}`,
+            `<b>Транзитная муфта</b><br/>${j.id}<br/>Ответвлений: ${j.branchCount}<br/><i style="font-size:10px;color:#94a3b8">Клик — что внутри</i>`,
             { sticky: true, className: 'text-xs' },
           );
+          m.on('click', (e: any) => {
+            e.originalEvent?.stopPropagation?.();
+            propsRef.current.onJointClick?.(j.id);
+          });
           group.addLayer(m);
         }
       }

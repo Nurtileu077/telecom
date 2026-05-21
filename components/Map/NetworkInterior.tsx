@@ -16,27 +16,45 @@ import {
 import { TIA_598_COLORS } from '@/components/Network/FiberColors';
 import { SAFE_LOSS_DB } from '@/components/Network/PowerBudget';
 
-interface Props {
+import type { InlineJoint } from '@/types/network';
+
+export interface InteriorNavHandlers {
+  onNavigate?: (kind: InteriorView['kind'], id: string) => void;
+  onFlyToEntity?: (kind: InteriorView['kind'], id: string) => void;
+  onFlyToSubscriber?: (subId: string) => void;
+}
+
+interface Props extends InteriorNavHandlers {
   view: InteriorView | null;
   districts: District[];
   cables: Cable[];
+  joints?: InlineJoint[];
   powerBudgets: SubBudget[];
-  onClose: () => void;
-  onOpenEntity?: (kind: InteriorView['kind'], id: string) => void;
 }
 
 const KIND_THEME: Record<InteriorView['kind'], { accent: string; label: string }> = {
   olt: { accent: '#f59e0b', label: 'Внутри OLT' },
   tb: { accent: '#38bdf8', label: 'Внутри муфты' },
   ork: { accent: '#a78bfa', label: 'Внутри ОРК' },
+  joint: { accent: '#38bdf8', label: 'Транзитная муфта' },
 };
 
-export default function NetworkInterior({
-  view, districts, cables, powerBudgets, onClose, onOpenEntity,
+function navKind(pk: string): InteriorView['kind'] | null {
+  if (pk === 'olt' || pk === 'tb' || pk === 'ork' || pk === 'joint') return pk;
+  return null;
+}
+
+export default function NetworkInterior(props: Props) {
+  return <NetworkInteriorEmbed {...props} />;
+}
+
+export function NetworkInteriorEmbed({
+  view, districts, cables, joints = [], powerBudgets,
+  onNavigate, onFlyToEntity, onFlyToSubscriber,
 }: Props) {
   const data = useMemo(
-    () => (view ? resolveInterior(view, districts, cables, powerBudgets) : null),
-    [view, districts, cables, powerBudgets],
+    () => (view ? resolveInterior(view, districts, cables, powerBudgets, joints) : null),
+    [view, districts, cables, powerBudgets, joints],
   );
   const [selectedPort, setSelectedPort] = useState<number | null>(null);
 
@@ -44,89 +62,70 @@ export default function NetworkInterior({
     setSelectedPort(null);
   }, [view?.kind, view?.id]);
 
-  if (!view || !data) return null;
+  if (!view || !data) {
+    return (
+      <div className="object-inspector__inside-empty">
+        <p className="text-[11px] text-[var(--text-muted)] text-center py-8">
+          Выберите OLT, муфту или ОРК на карте — здесь появится схема внутри узла
+        </p>
+      </div>
+    );
+  }
 
   const theme = KIND_THEME[data.kind];
+  const subtitle =
+    data.kind === 'olt'
+      ? `${data.district} · ${data.olt.model}`
+      : data.kind === 'tb'
+        ? `${data.tb.muftaType} · ${data.tb.district}`
+        : data.kind === 'ork'
+          ? `${data.ork.boxType} · ${data.ork.splitter}`
+          : `ответвлений: ${data.joint.branchCount}`;
+
+  const handleOpen = (kind: InteriorView['kind'], id: string, fly = true) => {
+    onNavigate?.(kind, id);
+    if (fly) onFlyToEntity?.(kind, id);
+  };
 
   return (
-    <div className="absolute inset-0 z-[650] flex items-center justify-center bg-black/75 backdrop-blur-sm animate-fade-in p-3 md:p-4">
-      <div
-        className="w-full max-w-xl max-h-[92dvh] overflow-y-auto rounded-2xl border-2 shadow-2xl"
-        style={{
-          borderColor: `${theme.accent}66`,
-          background: 'linear-gradient(180deg, #0f172a 0%, #0a0e1a 100%)',
-          boxShadow: `0 0 40px ${theme.accent}22`,
-        }}
-      >
-        <Header
-          theme={theme}
-          title={data.kind === 'olt' ? data.olt.id : data.kind === 'tb' ? data.tb.id : data.ork.id}
-          subtitle={
-            data.kind === 'olt'
-              ? `${data.district} · ${data.olt.model}`
-              : data.kind === 'tb'
-                ? `${data.tb.muftaType} · ${data.tb.district}`
-                : `${data.ork.boxType} · сплиттер ${data.ork.splitter}`
-          }
-          onClose={onClose}
-        />
-
-        <ComplexityCard badge={data.complexity} />
-
-        <div className="p-4 space-y-4">
-          {data.kind === 'olt' && (
-            <OltBody data={data} onOpenEntity={onOpenEntity} />
-          )}
-          {data.kind === 'tb' && (
-            <TbBody data={data} onOpenEntity={onOpenEntity} />
-          )}
-          {data.kind === 'ork' && (
-            <OrkBody
-              data={data}
-              selectedPort={selectedPort}
-              onSelectPort={setSelectedPort}
-            />
-          )}
-        </div>
+    <div className="object-inspector__inside space-y-3">
+      <div className="text-[10px] uppercase tracking-widest font-semibold" style={{ color: theme.accent }}>
+        {theme.label}
       </div>
+      <div className="text-[11px] font-mono text-[var(--text-muted)]">{subtitle}</div>
+
+      <ComplexityCard badge={data.complexity} compact />
+
+      {data.kind === 'olt' && (
+        <OltBody data={data} onOpenEntity={handleOpen} />
+      )}
+      {data.kind === 'tb' && (
+        <TbBody data={data} onOpenEntity={handleOpen} />
+      )}
+      {data.kind === 'joint' && (
+        <JointBody data={data} onOpenEntity={handleOpen} />
+      )}
+      {data.kind === 'ork' && (
+        <OrkBody
+          data={data}
+          selectedPort={selectedPort}
+          onSelectPort={setSelectedPort}
+          onFlyToSubscriber={onFlyToSubscriber}
+          onOpenEntity={handleOpen}
+        />
+      )}
     </div>
   );
 }
 
-function Header({
-  theme, title, subtitle, onClose,
+function ComplexityCard({
+  badge, compact,
 }: {
-  theme: { accent: string; label: string };
-  title: string;
-  subtitle: string;
-  onClose: () => void;
+  badge: import('@/components/Network/entityInterior').ComplexityBadge;
+  compact?: boolean;
 }) {
   return (
-    <div
-      className="sticky top-0 flex items-center justify-between px-4 py-3 border-b bg-[#0d1b2a]/95"
-      style={{ borderColor: '#1e3a5f' }}
-    >
-      <div>
-        <div className="text-[10px] uppercase tracking-widest" style={{ color: theme.accent }}>
-          {theme.label}
-        </div>
-        <div className="text-sm font-bold text-[#e2e8f0] font-mono">{title}</div>
-        <div className="text-[10px] text-[#64748b]">{subtitle}</div>
-      </div>
-      <button
-        type="button"
-        onClick={onClose}
-        className="w-8 h-8 rounded-lg border border-[#1e3a5f] text-[#94a3b8] hover:text-white"
-      >
-        ×
-      </button>
-    </div>
-  );
-}
-
-function ComplexityCard({ badge }: { badge: import('@/components/Network/entityInterior').ComplexityBadge }) {
-  return (
-    <div className="mx-4 mt-3 rounded-xl border border-[#1e3a5f] bg-[#050810]/90 p-3">
+    <div className={`rounded-xl border border-[#1e3a5f] bg-[#050810]/90 ${compact ? 'p-2' : 'mx-4 mt-3 p-3'}`}>
       <div className="flex items-center justify-between gap-2 mb-2">
         <div>
           <div className="text-xs font-bold" style={{ color: badge.color }}>{badge.title}</div>
@@ -261,14 +260,56 @@ function TbBody({
   );
 }
 
+function JointBody({
+  data,
+  onOpenEntity,
+}: {
+  data: import('@/components/Network/entityInterior').JointInteriorData;
+  onOpenEntity?: (kind: InteriorView['kind'], id: string) => void;
+}) {
+  const inLinks = data.links.filter((l) => l.direction === 'in');
+  const outLinks = data.links.filter((l) => l.direction === 'out');
+  return (
+    <>
+      <p className="text-[10px] text-amber-400/90">
+        Авто-муфта на развилке кабеля (не МТОК-бокс). Сварки по трассам ниже.
+      </p>
+      {data.nearestTbId && onOpenEntity && (
+        <button
+          type="button"
+          className="text-[10px] text-[#38bdf8] hover:underline font-mono"
+          onClick={() => onOpenEntity('tb', data.nearestTbId!)}
+        >
+          → Ближайшая муфта {data.nearestTbId}
+        </button>
+      )}
+      <div className="grid grid-cols-3 gap-2 text-center">
+        <MiniStat label="Вход" value={inLinks.length} color="#38bdf8" />
+        <MiniStat label="Выход" value={outLinks.length} color="#34d399" />
+        <MiniStat label="Сварки" value={data.splices.length} color="#a78bfa" />
+      </div>
+      <LinkList title="Кабели" links={data.links} onOpenEntity={onOpenEntity} />
+      {data.splices.length > 0 && (
+        <div className="rounded-lg border border-[#1e3a5f] bg-[#0a0e1a]/80 max-h-40 overflow-y-auto">
+          <SpliceTable splices={data.splices} onOpenTarget={onOpenEntity} />
+        </div>
+      )}
+    </>
+  );
+}
+
 function OrkBody({
   data,
   selectedPort,
   onSelectPort,
+  onFlyToSubscriber,
+  onOpenEntity,
 }: {
   data: import('@/components/Network/entityInterior').OrkInteriorData;
   selectedPort: number | null;
   onSelectPort: (n: number | null) => void;
+  onFlyToSubscriber?: (subId: string) => void;
+  onOpenEntity?: (kind: InteriorView['kind'], id: string) => void;
 }) {
   const active = selectedPort != null
     ? data.ports.find((p) => p.index === selectedPort)
@@ -278,7 +319,13 @@ function OrkBody({
     <>
       {data.uplink && (
         <div className="text-[10px] text-[#94a3b8] border border-[#1e3a5f] rounded px-2 py-1.5 font-mono">
-          ↑ от муфты {data.tb?.id ?? '—'}: {data.uplink.type} · {Math.round(data.uplink.lengthM)} м
+          ↑ от{' '}
+          {data.tb && onOpenEntity ? (
+            <button type="button" className="text-[#38bdf8] hover:underline" onClick={() => onOpenEntity('tb', data.tb!.id)}>
+              {data.tb.id}
+            </button>
+          ) : (data.tb?.id ?? '—')}
+          : {data.uplink.type} · {Math.round(data.uplink.lengthM)} м
         </div>
       )}
       {!data.uplink && <EmptyHint text="Нет входящего кабеля от муфты" />}
@@ -295,7 +342,11 @@ function OrkBody({
               key={port.index}
               port={port}
               selected={selectedPort === port.index}
-              onClick={() => onSelectPort(selectedPort === port.index ? null : port.index)}
+              onClick={() => {
+                const next = selectedPort === port.index ? null : port.index;
+                onSelectPort(next);
+                if (port.subscriber && onFlyToSubscriber) onFlyToSubscriber(port.subscriber.id);
+              }}
             />
           ))}
         </div>
@@ -303,7 +354,14 @@ function OrkBody({
           Нажмите на пост — увидите камеру и затухание
         </p>
       </div>
-      {active && <PortDetail port={active} />}
+      {active && (
+        <PortDetail
+          port={active}
+          onShowOnMap={active.subscriber && onFlyToSubscriber
+            ? () => onFlyToSubscriber(active.subscriber!.id)
+            : undefined}
+        />
+      )}
     </>
   );
 }
@@ -358,14 +416,20 @@ function PortTile({
   );
 }
 
-function PortDetail({ port }: { port: OrkPort }) {
+function PortDetail({ port, onShowOnMap }: { port: OrkPort; onShowOnMap?: () => void }) {
   if (!port.subscriber) return null;
   const sub = port.subscriber;
   const b = port.budget;
   return (
     <div className="rounded-xl border border-[#a78bfa]/50 bg-[#0a0e1a] p-3 space-y-2 animate-fade-in">
       <div className="text-[10px] uppercase tracking-wider text-[#a78bfa]">Камера на посту {port.index}</div>
-      <div className="text-sm font-semibold text-[#e2e8f0]">{cameraLabel(sub)}</div>
+      {onShowOnMap ? (
+        <button type="button" onClick={onShowOnMap} className="text-sm font-semibold text-[#38bdf8] hover:underline text-left">
+          📍 {cameraLabel(sub)}
+        </button>
+      ) : (
+        <div className="text-sm font-semibold text-[#e2e8f0]">{cameraLabel(sub)}</div>
+      )}
       <div className="text-[10px] font-mono text-[#64748b]">{sub.id}</div>
       {b ? (
         <div className="grid grid-cols-2 gap-2 text-[10px]">
@@ -422,7 +486,7 @@ function LinkList({
               type="button"
               className="text-[#38bdf8] hover:underline shrink-0"
               onClick={() => {
-                const k = l.peerKind === 'olt' ? 'olt' : l.peerKind === 'tb' ? 'tb' : l.peerKind === 'ork' ? 'ork' : null;
+                const k = navKind(l.peerKind);
                 if (k && onOpenEntity) onOpenEntity(k, l.peerId);
               }}
               disabled={l.peerKind === 'sub' || l.peerKind === 'unknown'}
@@ -473,9 +537,8 @@ function SpliceTable({
                   type="button"
                   className="text-[#a78bfa] hover:underline truncate max-w-[100px]"
                   onClick={() => {
-                    if (s.targetKind === 'ork' || s.targetKind === 'tb' || s.targetKind === 'olt') {
-                      onOpenTarget?.(s.targetKind, s.targetId);
-                    }
+                    const k = navKind(s.targetKind);
+                    if (k) onOpenTarget?.(k, s.targetId);
                   }}
                   disabled={s.targetKind === 'sub' || s.targetKind === 'unknown'}
                 >
