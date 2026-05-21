@@ -765,6 +765,13 @@ export function useNetwork() {
       if (c.id !== id) return c;
       const updated = { ...c, ...patch };
       if (patch.type) updated.fibers = CABLE_FIBERS[patch.type];
+      if (patch.coords && patch.lengthM == null) {
+        let len = 0;
+        for (let i = 1; i < patch.coords.length; i++) {
+          len += haversineM(patch.coords[i - 1][0], patch.coords[i - 1][1], patch.coords[i][0], patch.coords[i][1]);
+        }
+        updated.lengthM = len;
+      }
       return updated;
     }));
   }, []);

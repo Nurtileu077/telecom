@@ -114,7 +114,9 @@ export default function CableEditor({
               : 'border-[#1e3a5f] text-[#64748b] hover:text-[#e2e8f0] hover:border-[#a78bfa]/40'
           }`}
         >
-          {waypointEditing ? '✓ Редактирование точек активно — тяни маркеры' : '✎ Редактировать точки маршрута'}
+          {waypointEditing
+            ? '✓ Точки каждые 25% — тяни или кликни для плавности'
+            : '✎ Редактировать точки (25% + сглаживание)'}
         </button>
 
         {/* Fiber color map (TIA-598) */}

@@ -802,7 +802,7 @@ export default function LeafletMap(props: Props) {
   // Re-render whenever data changes
   useEffect(() => { renderData(); }, [props.districts, props.cables, props.joints, props.layers, props.editMode, props.editingCableId, props.budgetColoring, props.budgetMap, props.highlightCableIds]);
 
-  // Waypoint editing: show draggable handles for the selected cable
+  // Waypoint editing: draggable handles every ~25% + smooth inserts on drag
   useEffect(() => {
     const group = waypointGroupRef.current;
     if (!group) return;
@@ -811,35 +811,53 @@ export default function LeafletMap(props: Props) {
     if (!editingCableId || !onUpdateCableCoords) return;
     const cable = cables.find((c) => c.id === editingCableId);
     if (!cable) return;
+
     import('leaflet').then((L) => {
-      const coords: [number, number][] = cable.coords.map((c) => [c[0], c[1]]);
-      const icon = L.divIcon({
-        html: '<div style="width:10px;height:10px;background:#a78bfa;border:2px solid #fff;border-radius:50%;cursor:grab"></div>',
-        className: '', iconSize: [10, 10], iconAnchor: [5, 5],
-      });
-      const markers: any[] = coords.map((coord, idx) => {
-        const m = L.marker(coord, { icon, draggable: true });
-        m.on('dragend', () => {
-          const ll = m.getLatLng();
-          coords[idx] = [ll.lat, ll.lng];
-          const newCoords: [number, number][] = coords.map((c) => [c[0], c[1]]);
-          // recalc length
-          let len = 0;
-          const R = 6371000;
-          for (let i = 1; i < newCoords.length; i++) {
-            const [la, lo] = newCoords[i - 1];
-            const [lb, lob] = newCoords[i];
-            const dLat = ((lb - la) * Math.PI) / 180;
-            const dLon = ((lob - lo) * Math.PI) / 180;
-            const a = Math.sin(dLat / 2) ** 2 + Math.cos((la * Math.PI) / 180) * Math.cos((lb * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
-            len += R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-          }
+      import('@/components/Network/cableWaypoints').then(({ insertSmoothPointsNearIndex, recalcLengthM }) => {
+        const coords: [number, number][] = cable.coords.map((c) => [c[0], c[1]] as [number, number]);
+        const n = coords.length;
+
+        const makeIcon = (kind: 'end' | 'mid') =>
+          L.divIcon({
+            html: kind === 'end'
+              ? '<div style="width:12px;height:12px;background:#2dd4bf;border:2px solid #fff;border-radius:2px;cursor:grab;box-shadow:0 0 8px rgba(45,212,191,0.5)"></div>'
+              : '<div style="width:10px;height:10px;background:#a78bfa;border:2px solid #fff;border-radius:50%;cursor:grab"></div>',
+            className: '',
+            iconSize: kind === 'end' ? [12, 12] : [10, 10],
+            iconAnchor: kind === 'end' ? [6, 6] : [5, 5],
+          });
+
+        const applyCoords = (newCoords: [number, number][]) => {
+          const len = recalcLengthM(newCoords);
           propsRef.current.onUpdateCableCoords?.(editingCableId, newCoords);
-          // update marker position in coords array for subsequent drags
-          markers[idx].setLatLng([ll.lat, ll.lng]);
+          const c = propsRef.current.cables.find((x) => x.id === editingCableId);
+          if (c) {
+            c.coords = newCoords;
+            c.lengthM = len;
+          }
+        };
+
+        const refineAt = (idx: number, lat: number, lon: number) => {
+          let next = coords.map((c) => [...c] as [number, number]);
+          next[idx] = [lat, lon];
+          if (idx > 0 && idx < next.length - 1) {
+            next = insertSmoothPointsNearIndex(next, idx);
+          }
+          applyCoords(next);
+        };
+
+        coords.forEach((coord, idx) => {
+          const kind = idx === 0 || idx === n - 1 ? 'end' : 'mid';
+          const m = L.marker(coord, { icon: makeIcon(kind), draggable: true });
+          m.on('dragend', () => {
+            const ll = m.getLatLng();
+            refineAt(idx, ll.lat, ll.lng);
+          });
+          m.on('click', () => {
+            refineAt(idx, coord[0], coord[1]);
+          });
+          group.addLayer(m);
         });
-        group.addLayer(m);
-        return m;
       });
     });
   }, [props.editingCableId, props.cables]);

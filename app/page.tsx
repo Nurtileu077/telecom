@@ -19,6 +19,7 @@ import ChatPanel from '@/components/AI/ChatPanel';
 import AddCamerasModal from '@/components/Import/AddCamerasModal';
 import { bboxOfPolygon } from '@/components/Network/Selection';
 import { computeBranchCables } from '@/components/Network/Branch';
+import { densifyByFraction, recalcLengthM } from '@/components/Network/cableWaypoints';
 
 const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
   ssr: false,
@@ -459,7 +460,7 @@ export default function HomePage() {
             }}
             onCableClick={(id) => { setSelectedCableId(id); setEntitySelection(null); }}
             editingCableId={editingCableId}
-            onUpdateCableCoords={(id, coords) => net.updateCable(id, { coords })}
+            onUpdateCableCoords={(id, coords) => net.updateCable(id, { coords, lengthM: recalcLengthM(coords) })}
             measureMode={measureMode}
             setMeasureMode={setMeasureMode}
             heatmapEnabled={heatmapEnabled}
@@ -494,7 +495,18 @@ export default function HomePage() {
             onClose={() => { setSelectedCableId(null); setEditingCableId(null); }}
             onUpdateType={(id, type) => net.updateCable(id, { type })}
             onRerouteOSRM={(id) => net.rerouteSingleCable(id)}
-            onToggleWaypoints={(id) => setEditingCableId(id)}
+            onToggleWaypoints={(id) => {
+              if (id) {
+                const cable = net.cables.find((c) => c.id === id);
+                if (cable && cable.coords.length >= 2) {
+                  const dense = densifyByFraction(cable.coords, 0.25);
+                  if (dense.length > cable.coords.length) {
+                    net.updateCable(id, { coords: dense });
+                  }
+                }
+              }
+              setEditingCableId(id);
+            }}
             onDelete={net.deleteCable}
             waypointEditing={editingCableId === selectedCableId && !!editingCableId}
             rerouteStatus={net.status}
