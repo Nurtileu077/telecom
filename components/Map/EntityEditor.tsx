@@ -24,7 +24,7 @@ interface Props {
   onDeleteORK: (id: string) => void;
   onReassignORK: (orkId: string, newTbId: string) => void;
   onOpenSplicePlan: (tbId: string) => void;
-  onOpenInterior?: (tbId: string) => void;
+  onOpenInterior?: (kind: 'olt' | 'tb' | 'ork', id: string) => void;
   onShowBranch?: (kind: 'olt' | 'tb' | 'ork', id: string) => void;
   moveActive?: boolean;
   onStartMove?: () => void;
@@ -265,7 +265,20 @@ export default function EntityEditor({
     const olt = findOLT(districts, selection.id);
     if (!olt) return null;
     title = olt.id;
-    content = <OLTEditor olt={olt} onSave={(patch) => { onUpdateOLT(olt.id, patch); onClose(); }} />;
+    content = (
+      <div className="space-y-2">
+        <OLTEditor olt={olt} onSave={(patch) => { onUpdateOLT(olt.id, patch); onClose(); }} />
+        {onOpenInterior && (
+          <button
+            type="button"
+            onClick={() => onOpenInterior('olt', olt.id)}
+            className="w-full py-1.5 border border-[#f59e0b]/40 text-[#f59e0b] hover:bg-[#f59e0b]/10 text-[11px] rounded transition-colors"
+          >
+            🔬 Что внутри OLT
+          </button>
+        )}
+      </div>
+    );
     const tbCount = olt.transitBoxes.length;
     const orkCount = olt.transitBoxes.reduce((s, tb) => s + tb.orks.length, 0);
     const subCount = olt.transitBoxes.reduce((s, tb) => s + tb.orks.reduce((ss, o) => ss + o.subscribers.length, 0), 0);
@@ -281,7 +294,7 @@ export default function EntityEditor({
         {onOpenInterior && (
           <button
             type="button"
-            onClick={() => onOpenInterior(tb.id)}
+            onClick={() => onOpenInterior('tb', tb.id)}
             className="w-full py-1.5 border border-[#a78bfa]/40 text-[#a78bfa] hover:bg-[#a78bfa]/10 text-[11px] rounded transition-colors"
           >
             🔬 Что внутри муфты
@@ -304,12 +317,25 @@ export default function EntityEditor({
     const ork = findORK(districts, selection.id);
     if (!ork) return null;
     title = ork.id;
-    content = <ORKEditor
-      ork={ork}
-      districts={districts}
-      onSave={(patch) => { onUpdateORK(ork.id, patch); onClose(); }}
-      onReassign={(newTbId) => { onReassignORK(ork.id, newTbId); onClose(); }}
-    />;
+    content = (
+      <div className="space-y-2">
+        <ORKEditor
+          ork={ork}
+          districts={districts}
+          onSave={(patch) => { onUpdateORK(ork.id, patch); onClose(); }}
+          onReassign={(newTbId) => { onReassignORK(ork.id, newTbId); onClose(); }}
+        />
+        {onOpenInterior && (
+          <button
+            type="button"
+            onClick={() => onOpenInterior('ork', ork.id)}
+            className="w-full py-1.5 border border-[#a78bfa]/40 text-[#a78bfa] hover:bg-[#a78bfa]/10 text-[11px] rounded transition-colors"
+          >
+            🔬 Посты и камеры в ОРК
+          </button>
+        )}
+      </div>
+    );
     deleteWarn = `Удалит ОРК и ${ork.subscribers.length} абонентов`;
     onDelete = () => { onDeleteORK(ork.id); onClose(); };
   }

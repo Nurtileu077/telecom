@@ -23,7 +23,8 @@ import { recalcLengthM } from '@/components/Network/cableWaypoints';
 import { compatibleTargetsForCable } from '@/components/Network/SnapConnect';
 import { validateForExport, formatValidationSummary } from '@/components/Network/ExportValidation';
 import type { CableLinkEnd } from '@/hooks/useNetwork';
-import MuftaInterior from '@/components/Map/MuftaInterior';
+import NetworkInterior from '@/components/Map/NetworkInterior';
+import type { InteriorView } from '@/components/Network/entityInterior';
 import MobileDock from '@/components/Layout/MobileDock';
 import MobileActionSheet from '@/components/Layout/MobileActionSheet';
 import PwaInstallBanner from '@/components/Layout/PwaInstallBanner';
@@ -65,7 +66,7 @@ export default function HomePage() {
   const [cableLink, setCableLink] = useState<{ allowMap: boolean; from?: CableLinkEnd } | null>(null);
   const [connectMode, setConnectMode] = useState(false);
   const [connectCableId, setConnectCableId] = useState<string | null>(null);
-  const [muftaInteriorId, setMuftaInteriorId] = useState<string | null>(null);
+  const [interiorView, setInteriorView] = useState<InteriorView | null>(null);
   const [pendingCable, setPendingCable] = useState<
     | { a: [number, number]; b: [number, number] }
     | { fromId: string; toId: string }
@@ -256,7 +257,7 @@ export default function HomePage() {
     setEntitySelection(null);
     setSelectedCableId(null);
     setEditingCableId(null);
-    setMuftaInteriorId(null);
+    setInteriorView(null);
     setSplicePlanTbId(null);
     setShowChat(false);
     setConnectMode(false);
@@ -596,6 +597,7 @@ export default function HomePage() {
             deleteSubscriber={net.deleteSubscriber}
             moveEntityTarget={moveEntityTarget}
             onEntityDoubleClick={(kind, id) => {
+              setInteriorView({ kind, id });
               setEntitySelection({ kind, id });
               setSelectedCableId(null);
               setMoveEntityTarget((prev) =>
@@ -615,12 +617,7 @@ export default function HomePage() {
                 else finishCableLink(cableLink.from, end);
                 return;
               }
-              if (kind === 'tb') {
-                setMuftaInteriorId(id);
-                setEntitySelection({ kind, id });
-                setSelectedCableId(null);
-                return;
-              }
+              setInteriorView({ kind, id });
               setEntitySelection({ kind, id } as EntitySelection);
               setSelectedCableId(null);
             }}
@@ -686,15 +683,17 @@ export default function HomePage() {
             onDeleteORK={net.deleteORK}
             onReassignORK={net.reassignORK}
             onOpenSplicePlan={(tbId) => { setSplicePlanTbId(tbId); setEntitySelection(null); }}
-            onOpenInterior={(tbId) => { setMuftaInteriorId(tbId); }}
+            onOpenInterior={(kind, id) => { setInteriorView({ kind, id }); }}
             onShowBranch={(kind, id) => setBranchSel({ kind, id })}
           />
 
-          <MuftaInterior
-            tbId={muftaInteriorId}
+          <NetworkInterior
+            view={interiorView}
             districts={net.districts}
             cables={net.cables}
-            onClose={() => setMuftaInteriorId(null)}
+            powerBudgets={net.powerBudgets}
+            onClose={() => setInteriorView(null)}
+            onOpenEntity={(kind, id) => setInteriorView({ kind, id })}
           />
 
           <SplicePlan
