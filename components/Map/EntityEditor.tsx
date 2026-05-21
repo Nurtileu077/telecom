@@ -23,6 +23,9 @@ interface Props {
   onReassignORK: (orkId: string, newTbId: string) => void;
   onOpenSplicePlan: (tbId: string) => void;
   onShowBranch?: (kind: 'olt' | 'tb' | 'ork', id: string) => void;
+  moveActive?: boolean;
+  onStartMove?: () => void;
+  onStopMove?: () => void;
 }
 
 const SPLITTERS: SplitterRatio[] = ['1:2', '1:4', '1:8', '1:16', '1:32', '1:64'];
@@ -219,6 +222,7 @@ function ORKEditor({
 // ── Main panel ────────────────────────────────────────────────────────────────
 export default function EntityEditor({
   selection, districts, onClose, onShowBranch,
+  moveActive, onStartMove, onStopMove,
   onUpdateOLT, onUpdateTB, onUpdateORK,
   onDeleteOLT, onDeleteTB, onDeleteORK,
   onReassignORK, onOpenSplicePlan,
@@ -297,15 +301,29 @@ export default function EntityEditor({
         {content}
       </div>
 
-      {/* Show-branch */}
-      {onShowBranch && (
-        <div className="px-3 pb-2">
-          <button
-            onClick={() => onShowBranch(selection.kind, selection.id)}
-            className="w-full py-1.5 text-[11px] text-[#38bdf8] hover:bg-[#38bdf8]/10 border border-[#38bdf8]/30 rounded transition-colors"
-          >
-            🌿 Показать ветку
-          </button>
+      {(onShowBranch || onStartMove) && (
+        <div className="px-3 pb-2 space-y-1.5">
+          {onShowBranch && (
+            <button
+              onClick={() => onShowBranch(selection.kind, selection.id)}
+              className="w-full py-1.5 text-[11px] text-[#38bdf8] hover:bg-[#38bdf8]/10 border border-[#38bdf8]/30 rounded transition-colors"
+            >
+              🌿 Показать ветку
+            </button>
+          )}
+          {onStartMove && (
+            <button
+              onClick={() => (moveActive ? onStopMove?.() : onStartMove())}
+              className={`w-full py-1.5 text-[11px] rounded transition-colors border ${
+                moveActive
+                  ? 'bg-[#a78bfa]/15 border-[#a78bfa]/50 text-[#a78bfa]'
+                  : 'text-[#e2e8f0] hover:bg-[#a78bfa]/10 border-[#a78bfa]/30'
+              }`}
+            >
+              {moveActive ? '✓ Перетащите узел на карте' : '↔ Переместить на карте'}
+            </button>
+          )}
+          <p className="text-[10px] text-[#64748b] leading-snug">Или дважды кликните по узлу на карте</p>
         </div>
       )}
 

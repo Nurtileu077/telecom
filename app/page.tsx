@@ -47,6 +47,7 @@ export default function HomePage() {
   const [measureMode, setMeasureMode] = useState(false);
   const [heatmapEnabled, setHeatmapEnabled] = useState(false);
   const [entitySelection, setEntitySelection] = useState<EntitySelection | null>(null);
+  const [moveEntityTarget, setMoveEntityTarget] = useState<{ kind: 'olt' | 'tb' | 'ork'; id: string } | null>(null);
   const [selectedCableId, setSelectedCableId] = useState<string | null>(null);
   const [editingCableId, setEditingCableId] = useState<string | null>(null);
   const [placing, setPlacing] = useState<'olt' | 'tb' | 'ork' | null>(null);
@@ -444,6 +445,14 @@ export default function HomePage() {
             onShowBranchSub={(id) => setBranchSel({ kind: 'sub', id })}
             moveEntity={handleMoveEntity}
             deleteSubscriber={net.deleteSubscriber}
+            moveEntityTarget={moveEntityTarget}
+            onEntityDoubleClick={(kind, id) => {
+              setEntitySelection({ kind, id });
+              setSelectedCableId(null);
+              setMoveEntityTarget((prev) =>
+                prev?.kind === kind && prev.id === id ? null : { kind, id },
+              );
+            }}
             onEntityClick={(kind, id) => {
               // Cable-drawing flow takes priority
               if (cableDraw) {
@@ -468,10 +477,36 @@ export default function HomePage() {
             budgetColoring={budgetColoring}
           />
 
+          {moveEntityTarget && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#a78bfa]/50 rounded-lg px-3 py-1.5 text-xs text-[#a78bfa] shadow-2xl flex items-center gap-2 animate-fade-in">
+              <span>
+                ↔ Перетащите {moveEntityTarget.kind === 'olt' ? 'OLT' : moveEntityTarget.kind === 'tb' ? 'муфту' : 'ОРК'} на карте
+                <span className="text-[#64748b] ml-1">({moveEntityTarget.id})</span>
+              </span>
+              <button
+                onClick={() => setMoveEntityTarget(null)}
+                className="text-[#94a3b8] hover:text-white border border-[#a78bfa]/30 rounded px-1.5 py-0.5 text-[10px]"
+              >
+                Готово
+              </button>
+            </div>
+          )}
+
           <EntityEditor
             selection={entitySelection}
             districts={net.districts}
-            onClose={() => setEntitySelection(null)}
+            onClose={() => { setEntitySelection(null); setMoveEntityTarget(null); }}
+            moveActive={
+              !!moveEntityTarget
+              && !!entitySelection
+              && moveEntityTarget.kind === entitySelection.kind
+              && moveEntityTarget.id === entitySelection.id
+            }
+            onStartMove={() => {
+              if (!entitySelection) return;
+              setMoveEntityTarget({ kind: entitySelection.kind, id: entitySelection.id });
+            }}
+            onStopMove={() => setMoveEntityTarget(null)}
             onUpdateOLT={net.updateOLT}
             onUpdateTB={net.updateTB}
             onUpdateORK={net.updateORK}
@@ -498,10 +533,10 @@ export default function HomePage() {
             onToggleWaypoints={(id) => {
               if (id) {
                 const cable = net.cables.find((c) => c.id === id);
-                if (cable && cable.coords.length >= 2) {
+                if (cable?.coords.length === 2) {
                   const dense = densifyByFraction(cable.coords, 0.25);
                   if (dense.length > cable.coords.length) {
-                    net.updateCable(id, { coords: dense });
+                    net.updateCable(id, { coords: dense, lengthM: recalcLengthM(dense) });
                   }
                 }
               }

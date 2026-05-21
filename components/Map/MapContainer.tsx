@@ -37,6 +37,9 @@ interface Props {
   moveEntity?: (kind: 'tb' | 'ork' | 'olt', id: string, lat: number, lon: number) => void;
   deleteSubscriber?: (id: string) => void;
   onEntityClick?: (kind: 'olt' | 'tb' | 'ork', id: string) => void;
+  onEntityDoubleClick?: (kind: 'olt' | 'tb' | 'ork', id: string) => void;
+  /** Узел в режиме перетаскивания (двойной клик или кнопка в инспекторе). */
+  moveEntityTarget?: { kind: 'olt' | 'tb' | 'ork'; id: string } | null;
   onCableClick?: (id: string) => void;
   editingCableId?: string | null;
   onUpdateCableCoords?: (id: string, coords: [number, number][]) => void;
@@ -238,6 +241,7 @@ export default function LeafletMap(props: Props) {
   const drawStateRef = useRef<{ coords: [number, number][]; tempLayer?: any }>({ coords: [] });
   const measureStateRef = useRef<{ coords: [number, number][]; layer?: any; total: number }>({ coords: [], total: 0 });
   const waypointGroupRef = useRef<any>(null);
+  const entityDragRef = useRef(false);
 
   const [baseMap, setBaseMap] = useState<BaseMap>('dark');
 
@@ -419,13 +423,49 @@ export default function LeafletMap(props: Props) {
     }
   }, [props.activeTool, props.editMode, props.measureMode, props.placingMode, props.selectingMode]);
 
+  function entityDraggable(kind: 'olt' | 'tb' | 'ork', id: string): boolean {
+    const p = propsRef.current;
+    const t = p.moveEntityTarget;
+    if (t?.kind === kind && t.id === id) return true;
+    return !!p.editMode;
+  }
+
+  function wireEntityMarker(marker: any, kind: 'olt' | 'tb' | 'ork', id: string) {
+    let dragged = false;
+    marker.on('dragstart', () => {
+      dragged = true;
+      entityDragRef.current = true;
+    });
+    marker.on('dragend', (e: any) => {
+      const ll = e.target.getLatLng();
+      propsRef.current.moveEntity?.(kind, id, ll.lat, ll.lng);
+      window.setTimeout(() => {
+        dragged = false;
+        entityDragRef.current = false;
+      }, 50);
+    });
+    marker.on('dblclick', (e: any) => {
+      e.originalEvent?.stopPropagation?.();
+      propsRef.current.onEntityDoubleClick?.(kind, id);
+    });
+    marker.on('click', (e: any) => {
+      if (dragged || entityDragRef.current) return;
+      e.originalEvent?.stopPropagation?.();
+      propsRef.current.onEntityClick?.(kind, id);
+    });
+    marker.on('contextmenu', (e: any) => {
+      e.originalEvent?.preventDefault?.();
+      propsRef.current.onEntityClick?.(kind, id);
+    });
+  }
+
   function renderData() {
     const map = mapRef.current;
     const group = dataGroupRef.current;
     if (!map || !group) return;
     import('leaflet').then((L) => {
       group.clearLayers();
-      const { districts, cables, layers, joints } = propsRef.current;
+      const { districts, cables, layers, joints, moveEntityTarget } = propsRef.current;
       const zoom = map.getZoom();
 
       if (layers.cables) {
@@ -495,70 +535,41 @@ export default function LeafletMap(props: Props) {
       for (const district of districts) {
         const { olt } = district;
         if (layers.olt) {
+          const moveHere = moveEntityTarget?.kind === 'olt' && moveEntityTarget.id === olt.id;
           const icon = L.divIcon({
-            html: `<div style="width:40px;height:22px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;font-family:monospace;background:linear-gradient(135deg,#f59e0b,#fbbf24);border:2px solid #f59e0b;border-radius:4px;color:#0a0e1a;box-shadow:0 2px 8px rgba(0,0,0,0.5)">OLT</div>`,
+            html: `<div style="width:40px;height:22px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;font-family:monospace;background:linear-gradient(135deg,#f59e0b,#fbbf24);border:2px solid ${moveHere ? '#a78bfa' : '#f59e0b'};border-radius:4px;color:#0a0e1a;box-shadow:0 ${moveHere ? '0 12px' : '2px 8px'} rgba(${moveHere ? '167,139,250' : '0,0,0'},0.5)">OLT</div>`,
             className: '', iconSize: [40, 22], iconAnchor: [20, 11],
           });
-          const draggable = !!propsRef.current.editMode;
-          const m = L.marker([olt.lat, olt.lon], { icon, draggable });
-          m.bindPopup(`<b>${olt.id}</b><br/>${olt.model}<br/>Район: ${district.name}<br/>Ёмкость: ${olt.capacity}<br/>TB: ${olt.transitBoxes.length}`);
-          m.on('click', () => { propsRef.current.onEntityClick?.('olt', olt.id); });
-          m.on('contextmenu', (e: any) => {
-            e.originalEvent.preventDefault();
-            propsRef.current.onEntityClick?.('olt', olt.id);
-          });
-          if (draggable) {
-            m.on('dragend', (e: any) => {
-              const ll = e.target.getLatLng();
-              propsRef.current.moveEntity?.('olt', olt.id, ll.lat, ll.lng);
-            });
-          }
+          const canDrag = entityDraggable('olt', olt.id);
+          const m = L.marker([olt.lat, olt.lon], { icon, draggable: canDrag });
+          m.bindPopup(`<b>${olt.id}</b><br/>${olt.model}<br/>Район: ${district.name}<br/>Ёмкость: ${olt.capacity}<br/>TB: ${olt.transitBoxes.length}<br/><i style="font-size:10px;color:#94a3b8">Двойной клик — режим перемещения</i>`);
+          wireEntityMarker(m, 'olt', olt.id);
           group.addLayer(m);
         }
         for (const tb of olt.transitBoxes) {
           if (layers.tb) {
-            // Транзитная муфта — обычная круглая универсальная муфта (как in-line
-            // муфты на развилках), а не отдельный «TB»-бокс. Ставится на трассе.
-            const icon = L.divIcon({
-              html: `<div style="width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:#0d1b2a;border:2px solid #38bdf8;border-radius:50%;color:#38bdf8;box-shadow:0 0 5px rgba(56,189,248,0.7)">⊕</div>`,
+            const moveHere = moveEntityTarget?.kind === 'tb' && moveEntityTarget.id === tb.id;
+            const canDrag = entityDraggable('tb', tb.id);
+            const iconTb = L.divIcon({
+              html: `<div style="width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:#0d1b2a;border:2px solid ${moveHere ? '#a78bfa' : '#38bdf8'};border-radius:50%;color:#38bdf8;box-shadow:0 0 ${moveHere ? '10px' : '5px'} rgba(56,189,248,0.7)">⊕</div>`,
               className: '', iconSize: [18, 18], iconAnchor: [9, 9],
             });
-            const draggable = !!propsRef.current.editMode;
-            const m = L.marker([tb.lat, tb.lon], { icon, draggable });
-            m.bindPopup(`<b>${tb.id}</b><br/>OLT: ${olt.id}<br/>ОРК: ${tb.orks.length}<br/>Муфта: ${tb.muftaType}${draggable ? '<br/><i style="color:#64748b;font-size:10px">Перетащи для перемещения</i>' : ''}`);
-            m.on('click', () => { propsRef.current.onEntityClick?.('tb', tb.id); });
-            m.on('contextmenu', (e: any) => {
-              e.originalEvent.preventDefault();
-              propsRef.current.onEntityClick?.('tb', tb.id);
-            });
-            if (draggable) {
-              m.on('dragend', (e: any) => {
-                const ll = e.target.getLatLng();
-                propsRef.current.moveEntity?.('tb', tb.id, ll.lat, ll.lng);
-              });
-            }
+            const m = L.marker([tb.lat, tb.lon], { icon: iconTb, draggable: canDrag });
+            m.bindPopup(`<b>${tb.id}</b><br/>OLT: ${olt.id}<br/>ОРК: ${tb.orks.length}<br/>Муфта: ${tb.muftaType}<br/><i style="color:#64748b;font-size:10px">Двойной клик — переместить</i>`);
+            wireEntityMarker(m, 'tb', tb.id);
             group.addLayer(m);
           }
           for (const ork of tb.orks) {
             if (layers.ork) {
-              const icon = L.divIcon({
-                html: `<div style="width:32px;height:18px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;font-family:monospace;background:#1a2744;border:2px solid #f59e0b;border-radius:3px;color:#f59e0b;box-shadow:0 1px 4px rgba(0,0,0,0.4)">ОРК</div>`,
+              const moveHere = moveEntityTarget?.kind === 'ork' && moveEntityTarget.id === ork.id;
+              const canDrag = entityDraggable('ork', ork.id);
+              const iconOrk = L.divIcon({
+                html: `<div style="width:32px;height:18px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;font-family:monospace;background:#1a2744;border:2px solid ${moveHere ? '#a78bfa' : '#f59e0b'};border-radius:3px;color:#f59e0b;box-shadow:0 1px 4px rgba(0,0,0,0.4)">ОРК</div>`,
                 className: '', iconSize: [32, 18], iconAnchor: [16, 9],
               });
-              const draggable = !!propsRef.current.editMode;
-              const m = L.marker([ork.lat, ork.lon], { icon, draggable });
-              m.bindPopup(`<b>${ork.id}</b><br/>Сплиттер: ${ork.splitter}<br/>Або.: ${ork.subscribers.length}<br/>Муфта: ${tb.id}${draggable ? '<br/><i style="color:#64748b;font-size:10px">Перетащи для перемещения</i>' : ''}`);
-              m.on('click', () => { propsRef.current.onEntityClick?.('ork', ork.id); });
-              m.on('contextmenu', (e: any) => {
-                e.originalEvent.preventDefault();
-                propsRef.current.onEntityClick?.('ork', ork.id);
-              });
-              if (draggable) {
-                m.on('dragend', (e: any) => {
-                  const ll = e.target.getLatLng();
-                  propsRef.current.moveEntity?.('ork', ork.id, ll.lat, ll.lng);
-                });
-              }
+              const m = L.marker([ork.lat, ork.lon], { icon: iconOrk, draggable: canDrag });
+              m.bindPopup(`<b>${ork.id}</b><br/>Сплиттер: ${ork.splitter}<br/>Або.: ${ork.subscribers.length}<br/>Муфта: ${tb.id}<br/><i style="color:#64748b;font-size:10px">Двойной клик — переместить</i>`);
+              wireEntityMarker(m, 'ork', ork.id);
               group.addLayer(m);
             }
             if (layers.subscribers && zoom >= 13) {
@@ -800,22 +811,27 @@ export default function LeafletMap(props: Props) {
   }
 
   // Re-render whenever data changes
-  useEffect(() => { renderData(); }, [props.districts, props.cables, props.joints, props.layers, props.editMode, props.editingCableId, props.budgetColoring, props.budgetMap, props.highlightCableIds]);
+  useEffect(() => {
+    renderData();
+  }, [props.districts, props.cables, props.joints, props.layers, props.editMode, props.editingCableId, props.budgetColoring, props.budgetMap, props.highlightCableIds, props.moveEntityTarget]);
 
-  // Waypoint editing: draggable handles every ~25% + smooth inserts on drag
+  // Waypoint editing: drag moves one vertex (no perpendicular inserts)
   useEffect(() => {
     const group = waypointGroupRef.current;
     if (!group) return;
     group.clearLayers();
-    const { editingCableId, cables, onUpdateCableCoords } = propsRef.current;
+    const { editingCableId, onUpdateCableCoords } = propsRef.current;
     if (!editingCableId || !onUpdateCableCoords) return;
-    const cable = cables.find((c) => c.id === editingCableId);
-    if (!cable) return;
 
     import('leaflet').then((L) => {
-      import('@/components/Network/cableWaypoints').then(({ insertSmoothPointsNearIndex, recalcLengthM }) => {
-        const coords: [number, number][] = cable.coords.map((c) => [c[0], c[1]] as [number, number]);
-        const n = coords.length;
+      import('@/components/Network/cableWaypoints').then(({ updateWaypointAt, recalcLengthM }) => {
+        const readCoords = (): [number, number][] => {
+          const c = propsRef.current.cables.find((x) => x.id === editingCableId);
+          return c ? c.coords.map((p) => [p[0], p[1]] as [number, number]) : [];
+        };
+
+        const coords = readCoords();
+        if (coords.length < 2) return;
 
         const makeIcon = (kind: 'end' | 'mid') =>
           L.divIcon({
@@ -830,31 +846,17 @@ export default function LeafletMap(props: Props) {
         const applyCoords = (newCoords: [number, number][]) => {
           const len = recalcLengthM(newCoords);
           propsRef.current.onUpdateCableCoords?.(editingCableId, newCoords);
-          const c = propsRef.current.cables.find((x) => x.id === editingCableId);
-          if (c) {
-            c.coords = newCoords;
-            c.lengthM = len;
-          }
         };
 
-        const refineAt = (idx: number, lat: number, lon: number) => {
-          let next = coords.map((c) => [...c] as [number, number]);
-          next[idx] = [lat, lon];
-          if (idx > 0 && idx < next.length - 1) {
-            next = insertSmoothPointsNearIndex(next, idx);
-          }
-          applyCoords(next);
-        };
-
+        const n = coords.length;
         coords.forEach((coord, idx) => {
           const kind = idx === 0 || idx === n - 1 ? 'end' : 'mid';
           const m = L.marker(coord, { icon: makeIcon(kind), draggable: true });
           m.on('dragend', () => {
             const ll = m.getLatLng();
-            refineAt(idx, ll.lat, ll.lng);
-          });
-          m.on('click', () => {
-            refineAt(idx, coord[0], coord[1]);
+            const latest = readCoords();
+            if (idx < 0 || idx >= latest.length) return;
+            applyCoords(updateWaypointAt(latest, idx, ll.lat, ll.lng));
           });
           group.addLayer(m);
         });
