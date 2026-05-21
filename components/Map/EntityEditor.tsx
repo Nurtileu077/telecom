@@ -1,9 +1,10 @@
 'use client';
 import { useState, useEffect } from 'react';
 import {
-  District, OLT, TransitBox, ORK,
+  District, OLT, TransitBox, ORK, Cable,
   CABLE_SIZES, SplitterRatio, MuftaType, OLTModel, BoxType,
 } from '@/types/network';
+import { cablesForEntity } from '@/components/Network/SnapConnect';
 
 export type EntitySelection =
   | { kind: 'olt'; id: string }
@@ -13,6 +14,7 @@ export type EntitySelection =
 interface Props {
   selection: EntitySelection | null;
   districts: District[];
+  cables?: Cable[];
   onClose: () => void;
   onUpdateOLT: (id: string, patch: Partial<Omit<OLT, 'id' | 'lat' | 'lon' | 'transitBoxes'>>) => void;
   onUpdateTB:  (id: string, patch: Partial<Omit<TransitBox, 'id' | 'lat' | 'lon' | 'orks'>>) => void;
@@ -220,8 +222,29 @@ function ORKEditor({
 }
 
 // ── Main panel ────────────────────────────────────────────────────────────────
+function ConnectedCables({ entityId, cables }: { entityId: string; cables: Cable[] }) {
+  const linked = cablesForEntity(cables, entityId);
+  if (linked.length === 0) {
+    return (
+      <p className="text-[10px] text-[#64748b] border border-[#1e3a5f] rounded px-2 py-1.5">
+        Нет подключённых кабелей — протяните вручную или поставьте муфту на трассу
+      </p>
+    );
+  }
+  return (
+    <ul className="text-[10px] text-[#94a3b8] space-y-1 max-h-24 overflow-y-auto border border-[#1e3a5f] rounded px-2 py-1.5">
+      {linked.map((c) => (
+        <li key={c.id} className="font-mono truncate">
+          {c.type} · {c.fromId} → {c.toId}
+          <span className="text-[#64748b]"> ({Math.round(c.lengthM)} м)</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export default function EntityEditor({
-  selection, districts, onClose, onShowBranch,
+  selection, districts, cables = [], onClose, onShowBranch,
   moveActive, onStartMove, onStopMove,
   onUpdateOLT, onUpdateTB, onUpdateORK,
   onDeleteOLT, onDeleteTB, onDeleteORK,
@@ -297,8 +320,12 @@ export default function EntityEditor({
       </div>
 
       {/* Body */}
-      <div className="p-3 flex-1 overflow-y-auto min-h-0">
+      <div className="p-3 flex-1 overflow-y-auto min-h-0 space-y-3">
         {content}
+        <div>
+          <div className="text-[10px] text-[#64748b] mb-1">Соединения</div>
+          <ConnectedCables entityId={selection.id} cables={cables} />
+        </div>
       </div>
 
       {(onShowBranch || onStartMove) && (

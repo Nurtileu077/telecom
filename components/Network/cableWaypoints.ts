@@ -53,6 +53,48 @@ export function updateWaypointAt(coords: LatLon[], index: number, lat: number, l
   return out;
 }
 
+/** Концы A/B: сдвиг всей линии — промежуточные точки едут вместе с кабелем. */
+export function moveEndpointRigid(coords: LatLon[], index: number, lat: number, lon: number): LatLon[] {
+  if (coords.length === 0) return [];
+  if (index !== 0 && index !== coords.length - 1) {
+    return updateWaypointAt(coords, index, lat, lon);
+  }
+  const old = coords[index];
+  const dLat = lat - old[0];
+  const dLon = lon - old[1];
+  return coords.map((c) => [c[0] + dLat, c[1] + dLon] as LatLon);
+}
+
+/** Сохранить доли t вдоль полилинии при перетаскивании конца (для длинных OSRM-трасс). */
+export function moveEndpointPreserveFractions(
+  coords: LatLon[],
+  index: number,
+  lat: number,
+  lon: number,
+): LatLon[] {
+  const n = coords.length;
+  if (n < 2 || (index !== 0 && index !== n - 1)) {
+    return updateWaypointAt(coords, index, lat, lon);
+  }
+  const cum = polylineLengths(coords);
+  const total = cum[cum.length - 1];
+  if (total <= 0) return moveEndpointRigid(coords, index, lat, lon);
+
+  const fractions: number[] = coords.map((_, i) => cum[i] / total);
+  fractions[index] = index === 0 ? 0 : 1;
+  const out = coords.map((c) => [...c] as LatLon);
+  out[index] = [lat, lon];
+
+  const newCum = polylineLengths(out);
+  const newTotal = newCum[newCum.length - 1];
+  if (newTotal <= 0) return out;
+
+  for (let i = 1; i < n - 1; i++) {
+    out[i] = pointAtFraction(out, fractions[i]);
+  }
+  return out;
+}
+
 export function recalcLengthM(coords: LatLon[]): number {
   let len = 0;
   for (let i = 1; i < coords.length; i++) {

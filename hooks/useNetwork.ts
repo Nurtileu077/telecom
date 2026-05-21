@@ -14,6 +14,7 @@ import { planRepair, buildDropCable, type RepairReport } from '@/components/Netw
 import { filterByBBox, polylineTouchesBBox, pointInBBox, type BBox } from '@/components/Network/Selection';
 import { consolidateCables } from '@/components/Network/Consolidation';
 import { haversineM } from '@/components/Network/KMeans';
+import { findCablesNearPoint, splitCableAt, nearestEntity } from '@/components/Network/SnapConnect';
 import { calculateSubscriberBudgets, budgetStats } from '@/components/Network/PowerBudget';
 import { dbListProjects, dbSaveProject, dbDeleteProject, dbLoadProject, supabase } from '@/lib/supabase';
 
@@ -760,7 +761,7 @@ export function useNetwork() {
     }));
   }, []);
 
-  const updateCable = useCallback((id: string, patch: Partial<Pick<Cable, 'type' | 'coords' | 'lengthM'>>) => {
+  const updateCable = useCallback((id: string, patch: Partial<Pick<Cable, 'type' | 'coords' | 'lengthM' | 'fromId' | 'toId'>>) => {
     setCables((prev) => prev.map((c) => {
       if (c.id !== id) return c;
       const updated = { ...c, ...patch };
@@ -1094,7 +1095,6 @@ export function useNetwork() {
   }, []);
 
   const addTBAt = useCallback((lat: number, lon: number, oltId?: string) => {
-    // Auto-pick nearest OLT if not specified
     let chosen: { d: typeof districts[number]; olt: OLT } | null = null;
     if (oltId) {
       const d = districts.find((x) => x.olt.id === oltId);
@@ -1107,9 +1107,15 @@ export function useNetwork() {
       }
     }
     if (!chosen) return;
+
+    const hits = findCablesNearPoint(lat, lon, cables);
+    const snap = hits[0];
+    const placeLat = snap ? snap.point[0] : lat;
+    const placeLon = snap ? snap.point[1] : lon;
+
     const tbId = `Муфта-${chosen.d.name.slice(0, 4).replace(/\s/g, '')}-${chosen.olt.transitBoxes.length + 1}`;
     const newTB: TransitBox = {
-      id: tbId, lat, lon, district: chosen.d.name,
+      id: tbId, lat: placeLat, lon: placeLon, district: chosen.d.name,
       oltId: chosen.olt.id, orks: [],
       inCable: 'ОК-12', outCable: 'ОК-4', muftaType: 'МТОК-96А',
     };
@@ -1118,17 +1124,79 @@ export function useNetwork() {
         ? { ...d, olt: { ...d.olt, transitBoxes: [...d.olt.transitBoxes, newTB] } }
         : d,
     ));
-    // Auto-create OLT→TB straight-line cable
-    const cable: Cable = {
-      id: `cable-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      type: 'ОК-12', fibers: CABLE_FIBERS['ОК-12'],
-      fromId: chosen.olt.id, toId: tbId,
-      coords: [[chosen.olt.lat, chosen.olt.lon], [lat, lon]],
-      lengthM: haversineM(chosen.olt.lat, chosen.olt.lon, lat, lon),
-      routedByOSRM: false,
-    };
-    setCables((prev) => [...prev, cable]);
-  }, [districts]);
+
+    if (hits.length === 0) return;
+
+    setCables((prev) => {
+      let next = [...prev];
+      const splitIds = new Set<string>();
+      for (const hit of hits) {
+        if (splitIds.has(hit.cableId)) continue;
+        const cable = next.find((c) => c.id === hit.cableId);
+        if (!cable) continue;
+        const { removedId, added } = splitCableAt(cable, hit, tbId);
+        if (added.length === 0) continue;
+        splitIds.add(hit.cableId);
+        next = next.filter((c) => c.id !== removedId);
+        next.push(...added);
+      }
+      return next;
+    });
+  }, [districts, cables]);
+
+  /** Магнит: привязать конец кабеля к узлу (OLT/муфта/ОРК). */
+  const connectCableEndpoint = useCallback((
+    cableId: string,
+    end: 'from' | 'to',
+    entityId: string,
+  ) => {
+    const coords = findEntityCoords(entityId);
+    if (!coords) return;
+    setCables((prev) => prev.map((c) => {
+      if (c.id !== cableId) return c;
+      const pts = [...c.coords] as [number, number][];
+      if (end === 'from') {
+        pts[0] = coords;
+        return {
+          ...c,
+          fromId: entityId,
+          coords: pts,
+          routedByOSRM: false,
+          lengthM: pts.slice(1).reduce(
+            (acc, p, i) => acc + haversineM(pts[i][0], pts[i][1], p[0], p[1]), 0,
+          ),
+        };
+      }
+      pts[pts.length - 1] = coords;
+      return {
+        ...c,
+        toId: entityId,
+        coords: pts,
+        routedByOSRM: false,
+        lengthM: pts.slice(1).reduce(
+          (acc, p, i) => acc + haversineM(pts[i][0], pts[i][1], p[0], p[1]), 0,
+        ),
+      };
+    }));
+  }, [findEntityCoords]);
+
+  /** Позиция для клика: магнит к кабелю или узлу при установке муфты. */
+  const snapPlaceTB = useCallback((lat: number, lon: number): { lat: number; lon: number; hint?: string } => {
+    const cableHits = findCablesNearPoint(lat, lon, cables);
+    if (cableHits[0]) {
+      const h = cableHits[0];
+      return {
+        lat: h.point[0],
+        lon: h.point[1],
+        hint: `На кабель ${h.fromId} → ${h.toId}`,
+      };
+    }
+    const ent = nearestEntity(lat, lon, districts, 40);
+    if (ent) {
+      return { lat: ent.lat, lon: ent.lon, hint: ent.label };
+    }
+    return { lat, lon };
+  }, [cables, districts]);
 
   const addORKAt = useCallback((lat: number, lon: number, tbId?: string) => {
     // Auto-pick nearest TB
@@ -1544,6 +1612,7 @@ export function useNetwork() {
     updateCable, rerouteSingleCable,
     deleteOLT, deleteTB, deleteORK, deleteCable,
     addOLTAt, addTBAt, addORKAt, addCableBetween, addCableByPoints,
+    connectCableEndpoint, snapPlaceTB,
     reassignORK, reassignSubscriber,
     undo, redo, canUndo, canRedo,
     takeSnapshot, restoreSnapshot, deleteSnapshot, snapshots,

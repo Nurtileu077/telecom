@@ -43,6 +43,9 @@ interface Props {
   onCableClick?: (id: string) => void;
   editingCableId?: string | null;
   onUpdateCableCoords?: (id: string, coords: [number, number][]) => void;
+  onCableEndpointSnap?: (cableId: string, end: 'from' | 'to', entityId: string) => void;
+  onSnapHighlight?: (entityId: string | null) => void;
+  snapHighlightId?: string | null;
 
   // Power-budget colouring of subscribers
   budgetMap?: Map<string, 'ok' | 'warn' | 'fail'>;
@@ -465,7 +468,7 @@ export default function LeafletMap(props: Props) {
     if (!map || !group) return;
     import('leaflet').then((L) => {
       group.clearLayers();
-      const { districts, cables, layers, joints, moveEntityTarget } = propsRef.current;
+      const { districts, cables, layers, joints, moveEntityTarget, snapHighlightId } = propsRef.current;
       const zoom = map.getZoom();
 
       if (layers.cables) {
@@ -536,8 +539,9 @@ export default function LeafletMap(props: Props) {
         const { olt } = district;
         if (layers.olt) {
           const moveHere = moveEntityTarget?.kind === 'olt' && moveEntityTarget.id === olt.id;
+          const snapHere = snapHighlightId === olt.id;
           const icon = L.divIcon({
-            html: `<div style="width:40px;height:22px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;font-family:monospace;background:linear-gradient(135deg,#f59e0b,#fbbf24);border:2px solid ${moveHere ? '#a78bfa' : '#f59e0b'};border-radius:4px;color:#0a0e1a;box-shadow:0 ${moveHere ? '0 12px' : '2px 8px'} rgba(${moveHere ? '167,139,250' : '0,0,0'},0.5)">OLT</div>`,
+            html: `<div style="width:40px;height:22px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;font-family:monospace;background:linear-gradient(135deg,#f59e0b,#fbbf24);border:2px solid ${snapHere ? '#34d399' : moveHere ? '#a78bfa' : '#f59e0b'};border-radius:4px;color:#0a0e1a;box-shadow:0 ${snapHere || moveHere ? '0 12px' : '2px 8px'} rgba(${snapHere ? '52,211,153' : moveHere ? '167,139,250' : '0,0,0'},0.55)">OLT</div>`,
             className: '', iconSize: [40, 22], iconAnchor: [20, 11],
           });
           const canDrag = entityDraggable('olt', olt.id);
@@ -549,9 +553,10 @@ export default function LeafletMap(props: Props) {
         for (const tb of olt.transitBoxes) {
           if (layers.tb) {
             const moveHere = moveEntityTarget?.kind === 'tb' && moveEntityTarget.id === tb.id;
+            const snapHere = snapHighlightId === tb.id;
             const canDrag = entityDraggable('tb', tb.id);
             const iconTb = L.divIcon({
-              html: `<div style="width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:#0d1b2a;border:2px solid ${moveHere ? '#a78bfa' : '#38bdf8'};border-radius:50%;color:#38bdf8;box-shadow:0 0 ${moveHere ? '10px' : '5px'} rgba(56,189,248,0.7)">⊕</div>`,
+              html: `<div style="width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:#0d1b2a;border:2px solid ${snapHere ? '#34d399' : moveHere ? '#a78bfa' : '#38bdf8'};border-radius:50%;color:#38bdf8;box-shadow:0 0 ${snapHere || moveHere ? '10px' : '5px'} rgba(${snapHere ? '52,211,153' : '56,189,248'},0.75)">⊕</div>`,
               className: '', iconSize: [18, 18], iconAnchor: [9, 9],
             });
             const m = L.marker([tb.lat, tb.lon], { icon: iconTb, draggable: canDrag });
@@ -562,9 +567,10 @@ export default function LeafletMap(props: Props) {
           for (const ork of tb.orks) {
             if (layers.ork) {
               const moveHere = moveEntityTarget?.kind === 'ork' && moveEntityTarget.id === ork.id;
+              const snapHere = snapHighlightId === ork.id;
               const canDrag = entityDraggable('ork', ork.id);
               const iconOrk = L.divIcon({
-                html: `<div style="width:32px;height:18px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;font-family:monospace;background:#1a2744;border:2px solid ${moveHere ? '#a78bfa' : '#f59e0b'};border-radius:3px;color:#f59e0b;box-shadow:0 1px 4px rgba(0,0,0,0.4)">ОРК</div>`,
+                html: `<div style="width:32px;height:18px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;font-family:monospace;background:#1a2744;border:2px solid ${snapHere ? '#34d399' : moveHere ? '#a78bfa' : '#f59e0b'};border-radius:3px;color:#f59e0b;box-shadow:0 1px 4px rgba(0,0,0,0.4)">ОРК</div>`,
                 className: '', iconSize: [32, 18], iconAnchor: [16, 9],
               });
               const m = L.marker([ork.lat, ork.lon], { icon: iconOrk, draggable: canDrag });
@@ -813,7 +819,7 @@ export default function LeafletMap(props: Props) {
   // Re-render whenever data changes
   useEffect(() => {
     renderData();
-  }, [props.districts, props.cables, props.joints, props.layers, props.editMode, props.editingCableId, props.budgetColoring, props.budgetMap, props.highlightCableIds, props.moveEntityTarget]);
+  }, [props.districts, props.cables, props.joints, props.layers, props.editMode, props.editingCableId, props.budgetColoring, props.budgetMap, props.highlightCableIds, props.moveEntityTarget, props.snapHighlightId]);
 
   // Waypoint editing: drag moves one vertex (no perpendicular inserts)
   useEffect(() => {
@@ -824,7 +830,10 @@ export default function LeafletMap(props: Props) {
     if (!editingCableId || !onUpdateCableCoords) return;
 
     import('leaflet').then((L) => {
-      import('@/components/Network/cableWaypoints').then(({ updateWaypointAt, recalcLengthM }) => {
+      Promise.all([
+        import('@/components/Network/cableWaypoints'),
+        import('@/components/Network/SnapConnect'),
+      ]).then(([{ updateWaypointAt, moveEndpointRigid, recalcLengthM }, { nearestEntity, SNAP_ENTITY_M }]) => {
         const readCoords = (): [number, number][] => {
           const c = propsRef.current.cables.find((x) => x.id === editingCableId);
           return c ? c.coords.map((p) => [p[0], p[1]] as [number, number]) : [];
@@ -844,7 +853,6 @@ export default function LeafletMap(props: Props) {
           });
 
         const applyCoords = (newCoords: [number, number][]) => {
-          const len = recalcLengthM(newCoords);
           propsRef.current.onUpdateCableCoords?.(editingCableId, newCoords);
         };
 
@@ -852,10 +860,48 @@ export default function LeafletMap(props: Props) {
         coords.forEach((coord, idx) => {
           const kind = idx === 0 || idx === n - 1 ? 'end' : 'mid';
           const m = L.marker(coord, { icon: makeIcon(kind), draggable: true });
+          const isEnd = idx === 0 || idx === n - 1;
+          const end: 'from' | 'to' = idx === 0 ? 'from' : 'to';
+
+          m.on('drag', () => {
+            if (!isEnd) return;
+            const ll = m.getLatLng();
+            const cable = propsRef.current.cables.find((x) => x.id === editingCableId);
+            const exclude = cable
+              ? (end === 'from' ? cable.toId : cable.fromId)
+              : undefined;
+            const hit = nearestEntity(
+              ll.lat, ll.lng, propsRef.current.districts, SNAP_ENTITY_M, exclude,
+            );
+            if (hit) {
+              m.setLatLng([hit.lat, hit.lon]);
+              propsRef.current.onSnapHighlight?.(hit.id);
+            } else {
+              propsRef.current.onSnapHighlight?.(null);
+            }
+          });
+
           m.on('dragend', () => {
             const ll = m.getLatLng();
             const latest = readCoords();
             if (idx < 0 || idx >= latest.length) return;
+            propsRef.current.onSnapHighlight?.(null);
+
+            if (isEnd) {
+              const cable = propsRef.current.cables.find((x) => x.id === editingCableId);
+              const exclude = cable
+                ? (end === 'from' ? cable.toId : cable.fromId)
+                : undefined;
+              const hit = nearestEntity(
+                ll.lat, ll.lng, propsRef.current.districts, SNAP_ENTITY_M, exclude,
+              );
+              if (hit) {
+                propsRef.current.onCableEndpointSnap?.(editingCableId, end, hit.id);
+                return;
+              }
+              applyCoords(moveEndpointRigid(latest, idx, ll.lat, ll.lng));
+              return;
+            }
             applyCoords(updateWaypointAt(latest, idx, ll.lat, ll.lng));
           });
           group.addLayer(m);

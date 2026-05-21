@@ -19,7 +19,7 @@ import ChatPanel from '@/components/AI/ChatPanel';
 import AddCamerasModal from '@/components/Import/AddCamerasModal';
 import { bboxOfPolygon } from '@/components/Network/Selection';
 import { computeBranchCables } from '@/components/Network/Branch';
-import { densifyByFraction, recalcLengthM } from '@/components/Network/cableWaypoints';
+import { recalcLengthM } from '@/components/Network/cableWaypoints';
 
 const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
   ssr: false,
@@ -48,6 +48,7 @@ export default function HomePage() {
   const [heatmapEnabled, setHeatmapEnabled] = useState(false);
   const [entitySelection, setEntitySelection] = useState<EntitySelection | null>(null);
   const [moveEntityTarget, setMoveEntityTarget] = useState<{ kind: 'olt' | 'tb' | 'ork'; id: string } | null>(null);
+  const [snapHighlightId, setSnapHighlightId] = useState<string | null>(null);
   const [selectedCableId, setSelectedCableId] = useState<string | null>(null);
   const [editingCableId, setEditingCableId] = useState<string | null>(null);
   const [placing, setPlacing] = useState<'olt' | 'tb' | 'ork' | null>(null);
@@ -146,7 +147,11 @@ export default function HomePage() {
   // For subscribers: if dropped near another ORK (≤120m), reassign.
   const SNAP_TB_M = 80;
   const SNAP_ORK_M = 120;
-  const handleMoveEntity = useCallback((kind: 'tb' | 'ork' | 'olt', id: string, lat: number, lon: number) => {
+  const handleMoveEntity = useCallback(async (kind: 'tb' | 'ork' | 'olt', id: string, lat: number, lon: number) => {
+    const { nearestEntity, SNAP_ENTITY_M } = await import('@/components/Network/SnapConnect');
+    const snap = nearestEntity(lat, lon, net.districts, SNAP_ENTITY_M, id);
+    const placeLat = snap?.lat ?? lat;
+    const placeLon = snap?.lon ?? lon;
     // Compute haversine inline
     const dist = (a: [number, number], b: [number, number]) => {
       const R = 6371000;
@@ -169,12 +174,12 @@ export default function HomePage() {
         }
       }
       if (bestTbId && currentTbId && bestTbId !== currentTbId && bestTbDist <= SNAP_TB_M) {
-        net.moveEntity('ork', id, lat, lon);
+        net.moveEntity('ork', id, placeLat, placeLon);
         net.reassignORK(id, bestTbId);
         return;
       }
     }
-    net.moveEntity(kind, id, lat, lon);
+    net.moveEntity(kind, id, placeLat, placeLon);
   }, [net]);
 
   const handleImportNetwork = useCallback(async (project: Project, mode: NetworkImportMode) => {
@@ -208,7 +213,8 @@ export default function HomePage() {
     }
     if (placing === 'tb') {
       if (net.districts.length === 0) { alert('Сначала создай OLT'); setPlacing(null); return; }
-      net.addTBAt(lat, lon);
+      const s = net.snapPlaceTB(lat, lon);
+      net.addTBAt(s.lat, s.lon);
       setPlacing(null);
       return;
     }
@@ -235,7 +241,8 @@ export default function HomePage() {
     }
     if (kind === 'tb') {
       if (net.districts.length === 0) { alert('Сначала создай OLT'); return; }
-      net.addTBAt(lat, lon);
+      const s = net.snapPlaceTB(lat, lon);
+      net.addTBAt(s.lat, s.lon);
       return;
     }
     if (kind === 'ork') {
@@ -470,6 +477,9 @@ export default function HomePage() {
             onCableClick={(id) => { setSelectedCableId(id); setEntitySelection(null); }}
             editingCableId={editingCableId}
             onUpdateCableCoords={(id, coords) => net.updateCable(id, { coords, lengthM: recalcLengthM(coords) })}
+            onCableEndpointSnap={(id, end, entityId) => net.connectCableEndpoint(id, end, entityId)}
+            onSnapHighlight={setSnapHighlightId}
+            snapHighlightId={snapHighlightId}
             measureMode={measureMode}
             setMeasureMode={setMeasureMode}
             heatmapEnabled={heatmapEnabled}
@@ -495,6 +505,7 @@ export default function HomePage() {
           <EntityEditor
             selection={entitySelection}
             districts={net.districts}
+            cables={net.cables}
             onClose={() => { setEntitySelection(null); setMoveEntityTarget(null); }}
             moveActive={
               !!moveEntityTarget
@@ -530,18 +541,7 @@ export default function HomePage() {
             onClose={() => { setSelectedCableId(null); setEditingCableId(null); }}
             onUpdateType={(id, type) => net.updateCable(id, { type })}
             onRerouteOSRM={(id) => net.rerouteSingleCable(id)}
-            onToggleWaypoints={(id) => {
-              if (id) {
-                const cable = net.cables.find((c) => c.id === id);
-                if (cable?.coords.length === 2) {
-                  const dense = densifyByFraction(cable.coords, 0.25);
-                  if (dense.length > cable.coords.length) {
-                    net.updateCable(id, { coords: dense, lengthM: recalcLengthM(dense) });
-                  }
-                }
-              }
-              setEditingCableId(id);
-            }}
+            onToggleWaypoints={(id) => setEditingCableId(id)}
             onDelete={net.deleteCable}
             waypointEditing={editingCableId === selectedCableId && !!editingCableId}
             rerouteStatus={net.status}
@@ -549,7 +549,11 @@ export default function HomePage() {
 
           {placing && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#a78bfa]/50 rounded-lg px-3 py-1.5 text-xs text-[#a78bfa] shadow-2xl flex items-center gap-2 animate-fade-in">
-              <span>🎯 Клик по карте — поставить {placing === 'olt' ? 'OLT' : placing === 'tb' ? 'Муфту' : 'ОРК'}</span>
+              <span>
+                🎯 {placing === 'tb'
+                  ? 'Муфта на перекрёстке — клик по кабелю (магнит ~35 м), без автокабеля к OLT'
+                  : `Клик по карте — поставить ${placing === 'olt' ? 'OLT' : 'ОРК'}`}
+              </span>
               <button onClick={() => setPlacing(null)} className="text-[#94a3b8] hover:text-white border border-[#a78bfa]/30 rounded px-1.5 py-0.5 text-[10px]">Esc</button>
             </div>
           )}
