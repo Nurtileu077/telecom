@@ -7,26 +7,31 @@ import { kmeans, centroid, haversineM, Point } from './KMeans';
 let cableIdCounter = 0;
 function newCableId() { return `cable-${++cableIdCounter}`; }
 
-// k-means не ограничивает РАЗМЕР кластера: при неравномерной плотности один
-// кластер мог собрать 17–19 камер на ОРКСП (порты 8/16 → перегруз >100%), а
-// далёкие точки такого «рыхлого» кластера давали километровые дропы. Жёстко
-// режем любой кластер крупнее maxSize: дробим под-kmeans на ⌈len/maxSize⌉
-// частей и рекурсивно дочищаем; для вырожденного случая (совпавшие точки) —
-// гарантированная нарезка срезами.
-function capClusterSizes(clusters: Point[][], maxSize: number): Point[][] {
+// k-means не ограничивает ни РАЗМЕР, ни РАДИУС кластера. При неравномерной
+// плотности один кластер собирал 17–19 камер (порты 8/16 → перегруз) ИЛИ был
+// «рыхлым» — 8 камер растянуты на 1–2 км, что давало километровые дропы и
+// «висящие» прямые линии. Режем кластер, если он крупнее maxSize ИЛИ если
+// какая-то точка дальше maxRadiusM от центра. Дробим под-kmeans и рекурсивно
+// дочищаем; для вырожденного случая (совпавшие точки) — нарезка срезами.
+function capClusters(clusters: Point[][], maxSize: number, maxRadiusM = Infinity): Point[][] {
   const out: Point[][] = [];
+  const tooWide = (c: Point[]): boolean => {
+    if (!isFinite(maxRadiusM) || c.length <= 1) return false;
+    const ct = centroid(c);
+    return c.some((p) => haversineM(p.lat, p.lon, ct.lat, ct.lon) > maxRadiusM);
+  };
   const split = (cluster: Point[]) => {
-    if (cluster.length <= maxSize) {
+    const oversize = cluster.length > maxSize;
+    if (!oversize && !tooWide(cluster)) {
       if (cluster.length > 0) out.push(cluster);
       return;
     }
-    const k = Math.ceil(cluster.length / maxSize);
+    // По размеру делим на ⌈len/maxSize⌉; если делим только по радиусу — минимум 2.
+    const k = oversize ? Math.ceil(cluster.length / maxSize) : 2;
     const { clusters: sub } = kmeans(cluster, k);
     const progressed = sub.some((sc) => sc.length > 0 && sc.length < cluster.length);
     if (!progressed) {
-      for (let i = 0; i < cluster.length; i += maxSize) {
-        out.push(cluster.slice(i, i + maxSize));
-      }
+      for (let i = 0; i < cluster.length; i += maxSize) out.push(cluster.slice(i, i + maxSize));
       return;
     }
     for (const sc of sub) split(sc);
@@ -134,7 +139,9 @@ function buildSingleOlt(
     subs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id })),
     kOrk,
   );
-  const orkClusters = capClusterSizes(orkClustersRaw, settings.maxPerORK);
+  // Радиус-лимит ОРКСП по умолчанию выключен (короткие дропы = в 2–3 раза больше
+  // шкафов). Включается через settings.maxOrkRadiusM, если нужно.
+  const orkClusters = capClusters(orkClustersRaw, settings.maxPerORK, settings.maxOrkRadiusM ?? Infinity);
 
   const orks: ORK[] = [];
   const updatedSubs: Subscriber[] = [];
@@ -180,7 +187,7 @@ function buildSingleOlt(
     orks.map((o) => ({ lat: o.lat, lon: o.lon, id: o.id })),
     kTB,
   );
-  const tbClusters = capClusterSizes(tbClustersRaw, settings.maxORKperTB);
+  const tbClusters = capClusters(tbClustersRaw, settings.maxORKperTB);
 
   const transitBoxes: TransitBox[] = [];
 

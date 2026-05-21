@@ -211,6 +211,10 @@ export const ANNOTATION_PRESETS: Record<AnnotationType, { icon: string; color: s
 export interface ProjectSettings {
   maxPerORK: number;
   maxORKperTB: number;
+  // Макс. радиус кластера ОРКСП (м): камера не должна быть дальше этого от своего
+  // ОРКСП — иначе кластер дробится. Держит дропы короткими (≤~300 м по дороге) и
+  // убирает «висящие» длинные прямые линии. Не обязателен (старые сейвы → 250).
+  maxOrkRadiusM?: number;
   spareFiresPerSub: number;
   cableReserve: number;
   useOSRM: boolean;

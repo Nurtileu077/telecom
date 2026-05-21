@@ -506,9 +506,11 @@ export default function LeafletMap(props: Props) {
         }
         for (const tb of olt.transitBoxes) {
           if (layers.tb) {
+            // Транзитная муфта — обычная круглая универсальная муфта (как in-line
+            // муфты на развилках), а не отдельный «TB»-бокс. Ставится на трассе.
             const icon = L.divIcon({
-              html: `<div style="width:30px;height:18px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;font-family:monospace;background:#1a2744;border:2px solid #38bdf8;border-radius:3px;color:#38bdf8;box-shadow:0 1px 4px rgba(0,0,0,0.4)">TB</div>`,
-              className: '', iconSize: [30, 18], iconAnchor: [15, 9],
+              html: `<div style="width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:#0d1b2a;border:2px solid #38bdf8;border-radius:50%;color:#38bdf8;box-shadow:0 0 5px rgba(56,189,248,0.7)">⊕</div>`,
+              className: '', iconSize: [18, 18], iconAnchor: [9, 9],
             });
             const draggable = !!propsRef.current.editMode;
             const m = L.marker([tb.lat, tb.lon], { icon, draggable });
