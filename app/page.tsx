@@ -598,7 +598,7 @@ export default function HomePage() {
         />
         </div>
 
-        <main className={`flex-1 relative overflow-hidden isolate min-w-0 pb-[calc(52px+env(safe-area-inset-bottom))] md:pb-0 ${(entitySelection || interiorView) ? 'md:pr-[min(400px,42vw)]' : ''}`}>
+        <main className={`flex-1 relative overflow-hidden isolate min-w-0 max-md:pb-[calc(var(--mobile-dock-h)+max(8px,var(--sab)))] md:pb-0 ${(entitySelection || interiorView) ? 'md:pr-[min(400px,42vw)]' : ''}`}>
           <LeafletMap
             districts={net.districts}
             cables={net.cables}
