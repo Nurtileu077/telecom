@@ -41,17 +41,30 @@ function fmt(n: number): string {
   return n.toFixed(6);
 }
 
-function pt(name: string, desc: string, lat: number, lon: number, style: string): string {
+// ExtendedData → структурированные атрибуты (Длина, Тип, От, До…). В отличие от
+// HTML-описания они подхватываются как поля в Google Earth/My Maps/QGIS сразу,
+// поэтому метраж виден без редактирования метки.
+function dataXml(ext?: Record<string, string | number>): string {
+  if (!ext) return '';
+  const rows = Object.entries(ext)
+    .filter(([, v]) => v !== undefined && v !== null && v !== '')
+    .map(([k, v]) => `    <Data name="${esc(k)}"><value>${esc(String(v))}</value></Data>`)
+    .join('\n');
+  if (!rows) return '';
+  return `\n  <ExtendedData>\n${rows}\n  </ExtendedData>`;
+}
+
+function pt(name: string, desc: string, lat: number, lon: number, style: string, ext?: Record<string, string | number>): string {
   if (!isValidLatLng(lat, lon)) return '';
   return `<Placemark>
   <name>${esc(name)}</name>
   <description><![CDATA[${desc}]]></description>
-  <styleUrl>#${style}</styleUrl>
+  <styleUrl>#${style}</styleUrl>${dataXml(ext)}
   <Point><coordinates>${fmt(lon)},${fmt(lat)},0</coordinates></Point>
 </Placemark>\n`;
 }
 
-function line(name: string, coords: [number, number][], style: string, desc = ''): string {
+function line(name: string, coords: [number, number][], style: string, desc = '', ext?: Record<string, string | number>): string {
   // Filter NaN / out-of-range pairs; collapse adjacent duplicates so Google Maps
   // doesn't reject the LineString as degenerate.
   const clean: [number, number][] = [];
@@ -68,7 +81,7 @@ function line(name: string, coords: [number, number][], style: string, desc = ''
   return `<Placemark>
   <name>${esc(name)}</name>
   <description><![CDATA[${desc}]]></description>
-  <styleUrl>#${style}</styleUrl>
+  <styleUrl>#${style}</styleUrl>${dataXml(ext)}
   <LineString><tessellate>1</tessellate><altitudeMode>clampToGround</altitudeMode><coordinates>${cs}</coordinates></LineString>
 </Placemark>\n`;
 }
@@ -121,7 +134,7 @@ ${Object.entries(CABLE_STYLES).map(([t, s]) =>
   let kml = `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
 <Document>
-<name>GPON Network — ${new Date().toLocaleDateString('ru')}</name>
+<name>OPTIQ — ${new Date().toLocaleDateString('ru')}</name>
 ${styles}
 `;
 
@@ -133,7 +146,7 @@ ${styles}
   const routedCount = cables.filter((c) => c.routedByOSRM).length;
 
   kml += `<description><![CDATA[
-<b>GPON Проект</b><br/>
+<b>OPTIQ — проект сети</b><br/>
 Районов: ${districts.length}<br/>
 Абонентов: ${totalSubs}<br/>
 OLT: ${districts.length}<br/>
@@ -155,7 +168,13 @@ ${html(SPECS.olt)}<br/>
 Транзитных муфт: ${d.olt.transitBoxes.length}<br/>
 ОРК шкафов: ${d.olt.transitBoxes.reduce((s, tb) => s + tb.orks.length, 0)}<br/>
 Абонентов: ${d.subscribers.length}`;
-    kml += pt(d.olt.id, desc, d.olt.lat, d.olt.lon, 'olt');
+    kml += pt(d.olt.id, desc, d.olt.lat, d.olt.lon, 'olt', {
+      'Тип': 'OLT',
+      'Район': d.name,
+      'Муфт': d.olt.transitBoxes.length,
+      'ОРКСП': d.olt.transitBoxes.reduce((s, tb) => s + tb.orks.length, 0),
+      'Камер': d.subscribers.length,
+    });
   }
   kml += `</Folder>\n`;
 
@@ -172,7 +191,13 @@ OLT: ${esc(d.olt.id)}<br/>
 ОРК подключено: ${tb.orks.length}<br/>
 <br/>
 ${html(SPECS.tb)}`;
-      kml += pt(tb.id, desc, tb.lat, tb.lon, 'tb');
+      kml += pt(tb.id, desc, tb.lat, tb.lon, 'tb', {
+        'Тип': 'Транзитная муфта',
+        'Район': d.name,
+        'OLT': d.olt.id,
+        'Муфта': tb.muftaType,
+        'ОРКСП': tb.orks.length,
+      });
     }
     kml += `</Folder>\n`;
   }
@@ -191,7 +216,13 @@ ${html(SPECS.tb)}`;
 Абонентов: ${ork.subscribers.length}<br/>
 <br/>
 ${html(SPECS.ork)}`;
-        kml += pt(ork.id, desc, ork.lat, ork.lon, 'ork');
+        kml += pt(ork.id, desc, ork.lat, ork.lon, 'ork', {
+          'Тип': 'ОРКСП',
+          'Район': d.name,
+          'Муфта': tb.id,
+          'Сплиттер': ork.splitter,
+          'Камер': ork.subscribers.length,
+        });
       }
     }
     kml += `</Folder>\n`;
@@ -211,7 +242,13 @@ ${html(SPECS.ork)}`;
 Волокна: ${sub.fibers.working} раб. + ${sub.fibers.spare} зап.<br/>
 <br/>
 ${html(SPECS.sub)}`;
-      kml += pt(`${sub.desc}`, desc, sub.lat, sub.lon, 'sub');
+      kml += pt(`${sub.desc}`, desc, sub.lat, sub.lon, 'sub', {
+        'Тип': 'Камера',
+        'Район': d.name,
+        'ОРКСП': sub.orkId || '',
+        'Сплиттер': ork ? ork.splitter : '',
+        'Волокна': `${sub.fibers.working}+${sub.fibers.spare}`,
+      });
     }
     kml += `</Folder>\n`;
   }
@@ -262,12 +299,25 @@ ${html(SPECS.sub)}`;
       kml += `<Folder><name>${esc(distName)} (${distCables.length} уч.)</name>\n`;
       for (const cable of distCables) {
         const routed = cable.routedByOSRM ? '✅ по дороге (OSRM)' : '⚠️ прямая линия';
+        const lenM = Math.round(cable.lengthM);
         const desc = `<b>${esc(cable.fromId)} → ${esc(cable.toId)}</b><br/>
 Тип: ${esc(cable.type)}<br/>
 Длина: ${fmtLen(cable.lengthM)}<br/>
 Маршрут: ${routed}<br/>
 Точек: ${cable.coords.length}`;
-        const placemark = line(`${cable.fromId}→${cable.toId}`, cable.coords, `cable-${type}`, desc);
+        // Метраж в НАЗВАНИЕ + в ExtendedData, чтобы он был виден сразу при
+        // загрузке (а не только в описании после редактирования).
+        const cableName = `${cable.type} · ${fmtLen(cable.lengthM)} · ${cable.fromId}→${cable.toId}`;
+        const ext = {
+          'Тип': cable.type,
+          'Длина_м': lenM,
+          'Длина': fmtLen(cable.lengthM),
+          'Жил': cable.fibers,
+          'От': cable.fromId,
+          'До': cable.toId,
+          'Маршрут': cable.routedByOSRM ? 'OSRM' : 'прямая',
+        };
+        const placemark = line(cableName, cable.coords, `cable-${type}`, desc, ext);
         if (!placemark) { skippedCables++; continue; }
         kml += placemark;
       }

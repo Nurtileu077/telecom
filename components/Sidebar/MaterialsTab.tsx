@@ -78,7 +78,7 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = selectionBBox ? 'gpon-materials-выделение.xlsx' : 'gpon-materials.xlsx';
+    a.download = selectionBBox ? 'optiq-materials-выделение.xlsx' : 'optiq-materials.xlsx';
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -89,7 +89,7 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = selectionBBox ? 'gpon-network-выделение.kmz' : 'gpon-network.kmz';
+    a.download = selectionBBox ? 'optiq-network-выделение.kmz' : 'optiq-network.kmz';
     a.click();
     URL.revokeObjectURL(url);
   };

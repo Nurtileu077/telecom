@@ -286,7 +286,7 @@ export default function HomePage() {
       <header className="h-12 flex items-center px-3 gap-3 border-b border-[#1e3a5f] bg-[#0d1b2a] flex-shrink-0 z-10">
         <div className="flex items-center gap-2 flex-shrink-0">
           <span className="text-lg">📡</span>
-          <span className="text-sm font-bold text-[#38bdf8] font-mono tracking-wide">GPON</span>
+          <span className="text-sm font-bold text-[#38bdf8] font-mono tracking-wide">OPTIQ</span>
           <span className="text-[#1e3a5f]">|</span>
           <input
             type="text"

@@ -194,7 +194,7 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
     try {
       const text = await file.text();
       const p = JSON.parse(text) as Project;
-      if (!p.districts || !Array.isArray(p.districts)) throw new Error('Не похоже на экспорт проекта GPON');
+      if (!p.districts || !Array.isArray(p.districts)) throw new Error('Не похоже на экспорт проекта OPTIQ');
       setNetProject(p);
       setNetFileName(file.name);
     } catch (e: any) {
