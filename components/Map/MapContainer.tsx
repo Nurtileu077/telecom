@@ -52,6 +52,9 @@ interface Props {
   // Bounding-box overlay for "export selection".  Drawn as a translucent
   // amber rectangle so the user can see what's about to be exported.
   selectionBBox?: { latMin: number; lonMin: number; latMax: number; lonMax: number } | null;
+  // Лассо-выделение: вершины в процессе рисования и финальный полигон.
+  selectionPoints?: [number, number][];
+  selectionPoly?: [number, number][] | null;
 }
 
 const CABLE_COLORS: Record<string, string> = CABLE_COLORS_MAP as Record<string, string>;
@@ -832,28 +835,43 @@ export default function LeafletMap(props: Props) {
   }, [props.editingCableId, props.cables]);
   useEffect(() => { renderAnnotations(); }, [props.annotations]);
 
-  // Draw the selection-rectangle overlay (independent layer so it doesn't
-  // get cleared by the data-layer rerender).
+  // Draw the lasso selection overlay (independent layer so it doesn't get
+  // cleared by the data-layer rerender): in-progress vertices + closed polygon.
   const selectionLayerRef = useRef<any>(null);
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     import('leaflet').then((L) => {
-      // Remove the previous overlay regardless — even if no new bbox.
       if (selectionLayerRef.current) {
         map.removeLayer(selectionLayerRef.current);
         selectionLayerRef.current = null;
       }
-      const bb = props.selectionBBox;
-      if (!bb) return;
-      const rect = L.rectangle(
-        [[bb.latMin, bb.lonMin], [bb.latMax, bb.lonMax]] as any,
-        { color: '#fbbf24', weight: 2, dashArray: '6,4', fillColor: '#fbbf24', fillOpacity: 0.08 } as any,
-      );
-      rect.addTo(map);
-      selectionLayerRef.current = rect;
+      const poly = props.selectionPoly;
+      const pts = props.selectionPoints ?? [];
+      const group = L.layerGroup();
+      if (poly && poly.length >= 3) {
+        // Финальный замкнутый полигон выделения.
+        L.polygon(poly as any, {
+          color: '#fbbf24', weight: 2, dashArray: '6,4',
+          fillColor: '#fbbf24', fillOpacity: 0.08,
+        } as any).addTo(group);
+      } else if (pts.length > 0) {
+        // В процессе: пунктирная линия по вершинам + точки-маркеры.
+        if (pts.length >= 2) {
+          L.polyline(pts as any, { color: '#fbbf24', weight: 2, dashArray: '6,4' } as any).addTo(group);
+        }
+        for (const [la, lo] of pts) {
+          L.circleMarker([la, lo], {
+            radius: 4, color: '#fbbf24', fillColor: '#fbbf24', fillOpacity: 1, weight: 1,
+          } as any).addTo(group);
+        }
+      } else {
+        return;
+      }
+      group.addTo(map);
+      selectionLayerRef.current = group;
     });
-  }, [props.selectionBBox]);
+  }, [props.selectionPoly, props.selectionPoints]);
 
   // Heatmap
   useEffect(() => {

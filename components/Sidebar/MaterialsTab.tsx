@@ -12,6 +12,7 @@ interface Props {
   cables: Cable[];
   joints?: InlineJoint[];
   selectionBBox?: BBox | null;
+  selectionPoly?: [number, number][] | null;
   // Settings is needed to recalculate materials for the filtered subset.
   cableReserve?: number;
 }
@@ -49,7 +50,7 @@ function Section({ title, rows }: { title: string; rows: Row[] }) {
   );
 }
 
-export default function MaterialsTab({ materials, districts, cables, joints, selectionBBox, cableReserve = 1.10 }: Props) {
+export default function MaterialsTab({ materials, districts, cables, joints, selectionBBox, selectionPoly, cableReserve = 1.10 }: Props) {
   const [kmzLayers, setKmzLayers] = useState<KmzLayer[]>([...ALL_LAYERS]);
   const [kmzSeparate, setKmzSeparate] = useState(false);
   const toggleKmzLayer = (l: KmzLayer) =>
@@ -69,7 +70,7 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
   // cableReserve so reserve-padded totals stay consistent with the sidebar.
   const exportSet = (): { districts: District[]; cables: Cable[]; materials: Materials } => {
     if (!selectionBBox) return { districts, cables, materials: materials! };
-    const f = filterByBBox(districts, cables, joints ?? [], selectionBBox);
+    const f = filterByBBox(districts, cables, joints ?? [], selectionBBox, selectionPoly);
     const m = calculateMaterials(
       f.districts, f.cables,
       { maxPerORK: 8, maxORKperTB: 4, spareFiresPerSub: 1, cableReserve, useOSRM: true, osrmDelay: 100 },
@@ -152,7 +153,7 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
       {/* Export buttons */}
       <div className="p-3 border-t border-[#1e3a5f] space-y-2">
         {selectionBBox && (() => {
-          const f = filterByBBox(districts, cables, joints ?? [], selectionBBox);
+          const f = filterByBBox(districts, cables, joints ?? [], selectionBBox, selectionPoly);
           return (
             <div className="p-2 bg-[#fbbf24]/10 border border-[#fbbf24]/40 rounded text-[10px] text-[#fbbf24]">
               🔲 Выделено: <b>{f.counts.olt}</b> OLT · <b>{f.counts.tb}</b> Муфт · <b>{f.counts.ork}</b> ОРК · <b>{f.counts.sub}</b> Аб. · <b>{f.counts.cable}</b> кабелей

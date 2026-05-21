@@ -23,6 +23,7 @@ interface Props {
   cables: Cable[];
   joints?: InlineJoint[];
   selectionBBox?: BBox | null;
+  selectionPoly?: [number, number][] | null;
   cableReserve?: number;
   materials: Materials | null;
   layers: LayerVisibility;
@@ -141,7 +142,7 @@ export default function Sidebar(props: Props) {
           />
         )}
         {activeTab === 'materials' && (
-          <MaterialsTab materials={props.materials} districts={props.districts} cables={props.cables} joints={props.joints} selectionBBox={props.selectionBBox} cableReserve={props.cableReserve} />
+          <MaterialsTab materials={props.materials} districts={props.districts} cables={props.cables} joints={props.joints} selectionBBox={props.selectionBBox} selectionPoly={props.selectionPoly} cableReserve={props.cableReserve} />
         )}
         {activeTab === 'budget' && (
           <BudgetTab

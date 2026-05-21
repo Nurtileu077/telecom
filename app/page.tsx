@@ -16,6 +16,7 @@ import CableEditor from '@/components/Map/CableEditor';
 import SplicePlan from '@/components/Map/SplicePlan';
 import ChatPanel from '@/components/AI/ChatPanel';
 import AddCamerasModal from '@/components/Import/AddCamerasModal';
+import { bboxOfPolygon } from '@/components/Network/Selection';
 
 const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
   ssr: false,
@@ -55,11 +56,30 @@ export default function HomePage() {
   const [showChat, setShowChat] = useState(false);
   const [showAddCameras, setShowAddCameras] = useState(false);
   // Two-click rectangle selection for "export only this area".
-  // selectionStage='waiting-first' → next map click is the first corner.
-  // selectionStage='waiting-second' → next click is the second corner.
-  const [selectionStage, setSelectionStage] = useState<'idle' | 'waiting-first' | 'waiting-second'>('idle');
-  const [selectionFirstPt, setSelectionFirstPt] = useState<[number, number] | null>(null);
+  // Лассо-выделение: каждым кликом ставим вершину полигона, «Готово» замыкает.
+  // selectionBBox держим производным от полигона — его ждут reroute/reconsolidate.
+  const [selecting, setSelecting] = useState(false);
+  const [selectionPoints, setSelectionPoints] = useState<[number, number][]>([]);
+  const [selectionPoly, setSelectionPoly] = useState<[number, number][] | null>(null);
   const [selectionBBox, setSelectionBBox] = useState<{ latMin: number; lonMin: number; latMax: number; lonMax: number } | null>(null);
+
+  const finishSelection = useCallback(() => {
+    setSelectionPoints((pts) => {
+      if (pts.length >= 3) {
+        setSelectionPoly(pts);
+        setSelectionBBox(bboxOfPolygon(pts));
+      }
+      return [];
+    });
+    setSelecting(false);
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setSelecting(false);
+    setSelectionPoints([]);
+    setSelectionPoly(null);
+    setSelectionBBox(null);
+  }, []);
 
   const budgetMap = useRef<Map<string, 'ok' | 'warn' | 'fail'>>(new Map());
   useEffect(() => {
@@ -151,20 +171,9 @@ export default function HomePage() {
   }, [net]);
 
   const handleMapClickAddSub = useCallback((lat: number, lon: number) => {
-    // Selection-rectangle drawing takes top priority.
-    if (selectionStage === 'waiting-first') {
-      setSelectionFirstPt([lat, lon]);
-      setSelectionStage('waiting-second');
-      return;
-    }
-    if (selectionStage === 'waiting-second' && selectionFirstPt) {
-      const [la, lo] = selectionFirstPt;
-      setSelectionBBox({
-        latMin: Math.min(la, lat), latMax: Math.max(la, lat),
-        lonMin: Math.min(lo, lon), lonMax: Math.max(lo, lon),
-      });
-      setSelectionFirstPt(null);
-      setSelectionStage('idle');
+    // Лассо-выделение: каждый клик — вершина полигона (замыкаем кнопкой «Готово»).
+    if (selecting) {
+      setSelectionPoints((pts) => [...pts, [lat, lon]]);
       return;
     }
     // Placement mode takes priority over add-subscriber
@@ -191,7 +200,7 @@ export default function HomePage() {
     setShowAddSub({ lat, lon });
     const existing = Array.from(new Set(net.districts.map((d) => d.name)));
     if (existing.length === 1) setNewSubDistrict(existing[0]);
-  }, [net, placing, selectionStage, selectionFirstPt]);
+  }, [net, placing, selecting]);
 
   // Drop a point of the requested kind at (lat, lon) — used by the right-click
   // context menu and by the manual-coordinate dialog.  Bypasses placing/edit mode.
@@ -267,8 +276,7 @@ export default function HomePage() {
           setCableDraw(null);
           setEntitySelection(null);
           setSelectedCableId(null);
-          setSelectionStage('idle');
-          setSelectionFirstPt(null);
+          clearSelection();
         }
       }
     };
@@ -428,33 +436,40 @@ export default function HomePage() {
               🔨 Построить
             </button>
           )}
-          {/* Selection rectangle: toggle drawing mode, or show "clear" pill when active. */}
-          {selectionBBox ? (
+          {/* Лассо-выделение: вкл → клики ставят вершины → «Готово» замыкает. */}
+          {selectionPoly ? (
             <button
-              onClick={() => { setSelectionBBox(null); setSelectionStage('idle'); setSelectionFirstPt(null); }}
+              onClick={clearSelection}
               className="px-2 py-1 text-[11px] bg-[#fbbf24]/20 border border-[#fbbf24]/60 text-[#fbbf24] font-mono rounded-lg transition-colors hover:bg-[#fbbf24]/30"
               title="Снять выделение"
             >
-              🔲 Выделено  ✕
+              🔷 Выделено  ✕
             </button>
+          ) : selecting ? (
+            <>
+              <button
+                onClick={finishSelection}
+                disabled={selectionPoints.length < 3}
+                className="px-2 py-1 text-[11px] bg-[#34d399]/20 border border-[#34d399]/60 text-[#34d399] rounded-lg transition-colors hover:bg-[#34d399]/30 disabled:opacity-40"
+                title="Замкнуть полигон выделения"
+              >
+                ✓ Готово ({selectionPoints.length})
+              </button>
+              <button
+                onClick={clearSelection}
+                className="px-2 py-1 text-[11px] text-[#94a3b8] border border-[#1e3a5f] rounded-lg hover:text-[#e2e8f0]"
+                title="Отмена"
+              >
+                ✕
+              </button>
+            </>
           ) : (
             <button
-              onClick={() => {
-                if (selectionStage === 'idle') { setSelectionStage('waiting-first'); setPlacing(null); setCableDraw(null); }
-                else { setSelectionStage('idle'); setSelectionFirstPt(null); }
-              }}
-              className={`px-2 py-1 text-[11px] rounded-lg transition-colors ${
-                selectionStage !== 'idle'
-                  ? 'bg-[#fbbf24]/30 border border-[#fbbf24] text-[#fbbf24]'
-                  : 'text-[#94a3b8] border border-[#1e3a5f] hover:text-[#e2e8f0] hover:border-[#fbbf24]/50'
-              }`}
-              title="Выделить прямоугольник для экспорта"
+              onClick={() => { setSelecting(true); setSelectionPoints([]); setPlacing(null); setCableDraw(null); }}
+              className="px-2 py-1 text-[11px] rounded-lg transition-colors text-[#94a3b8] border border-[#1e3a5f] hover:text-[#e2e8f0] hover:border-[#fbbf24]/50"
+              title="Лассо: кликай вершины области, затем «Готово»"
             >
-              {selectionStage === 'waiting-first'
-                ? '🔲 Кликни первый угол'
-                : selectionStage === 'waiting-second'
-                ? '🔲 Кликни второй угол'
-                : '🔲 Выделить'}
+              🔷 Выделить (лассо)
             </button>
           )}
           {/* Brownfield — add new cameras from Excel to existing network. */}
@@ -483,6 +498,7 @@ export default function HomePage() {
           cables={net.cables}
           joints={net.joints}
           selectionBBox={selectionBBox}
+          selectionPoly={selectionPoly}
           cableReserve={net.settings.cableReserve}
           materials={net.materials}
           layers={net.layers}
@@ -547,10 +563,12 @@ export default function HomePage() {
             deleteAnnotation={net.deleteAnnotation}
             editMode={net.editMode}
             placingMode={!!placing}
-            selectingMode={selectionStage !== 'idle'}
+            selectingMode={selecting}
             onMapClick={handleMapClickAddSub}
             onMapContextMenu={(lat, lon, x, y) => setContextMenu({ lat, lon, x, y })}
             selectionBBox={selectionBBox}
+            selectionPoints={selectionPoints}
+            selectionPoly={selectionPoly}
             moveEntity={handleMoveEntity}
             deleteSubscriber={net.deleteSubscriber}
             onEntityClick={(kind, id) => {
