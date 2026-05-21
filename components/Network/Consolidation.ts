@@ -471,10 +471,40 @@ export function consolidateCables(
     if (!usedCableIds.has(c.id)) { outCables.push(c); passthrough++; }
   }
 
+  // ── Страховка связности: «не достаёт» ──────────────────────────────────
+  // BFS-консолидация изредка не доводит кабель до терминала (камера/ОРКСП
+  // оказывается на снэпнутом узле, чей сегмент схлопнулся или ушёл в чужую
+  // цепочку). Тогда оборудование «висит» без кабеля. Проверяем КАЖДУЮ сущность:
+  // если она не является концом ни одного итогового кабеля — до-кладываем её
+  // исходный родительский кабель (OLT→муфта / муфта→ОРКСП / ОРКСП→камера).
+  const reached = new Set<string>();
+  for (const c of outCables) { reached.add(c.fromId); reached.add(c.toId); }
+  let patched = 0;
+  const addOriginal = (fromId: string, toId: string) => {
+    const orig = cableByEndpoint.get(`${fromId}::${toId}`);
+    if (!orig || orig.coords.length < 2) return;
+    outCables.push({ ...orig, id: `cable-fix-${++cableSeq}` });
+    reached.add(fromId);
+    reached.add(toId);
+    patched++;
+  };
+  for (const d of districts) {
+    const olt = d.olt;
+    for (const tb of olt.transitBoxes) {
+      if (!reached.has(tb.id)) addOriginal(olt.id, tb.id);
+      for (const ork of tb.orks) {
+        if (!reached.has(ork.id)) addOriginal(tb.id, ork.id);
+        for (const sub of ork.subscribers) {
+          if (!reached.has(sub.id)) addOriginal(ork.id, sub.id);
+        }
+      }
+    }
+  }
+
   if (typeof console !== 'undefined') {
     console.log(
       `[Consolidation] in=${cables.length} → out=${outCables.length} ` +
-      `(consolidated=${cableSeq}, joints=${outJoints.length}, passthrough=${passthrough})`,
+      `(consolidated=${cableSeq}, joints=${outJoints.length}, passthrough=${passthrough}, fixed=${patched})`,
     );
   }
 

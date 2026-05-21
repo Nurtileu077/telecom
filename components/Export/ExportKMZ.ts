@@ -97,10 +97,6 @@ export const ALL_LAYERS: KmzLayer[] = ['olt', 'tb', 'ork', 'sub', 'cables'];
 export const LAYER_LABEL: Record<KmzLayer, string> = {
   olt: 'OLT', tb: 'Муфты', ork: 'ОРКСП', sub: 'Камеры', cables: 'Кабели',
 };
-// ASCII-имена для файлов внутри zip — кириллица в именах архива бьётся на Windows.
-const LAYER_FILE: Record<KmzLayer, string> = {
-  olt: 'OLT', tb: 'mufty', ork: 'orksp', sub: 'kamery', cables: 'kabeli',
-};
 
 export interface KmzExportOpts {
   layers?: KmzLayer[];   // какие слои включать (по умолчанию все)
@@ -369,7 +365,7 @@ ${withSummary ? summaryCDATA : ''}${body}</Document></kml>`;
       const inner = new JSZip();
       inner.file('doc.kml', kml);
       const kmz = await inner.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 9 } });
-      outer.file(`OPTIQ-${LAYER_FILE[layer]}.kmz`, kmz);
+      outer.file(`OPTIQ-${LAYER_LABEL[layer]}.kmz`, kmz);
     }
     return outer.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 9 } });
   }

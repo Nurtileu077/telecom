@@ -84,7 +84,7 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = selectionBBox ? 'optiq-materials-выделение.xlsx' : 'optiq-materials.xlsx';
+    a.download = selectionBBox ? 'OPTIQ-материалы-выделение.xlsx' : 'OPTIQ-материалы.xlsx';
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -97,7 +97,7 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
     const a = document.createElement('a');
     a.href = url;
     const suffix = selectionBBox ? '-выделение' : '';
-    a.download = kmzSeparate ? `optiq-network-слои${suffix}.zip` : `optiq-network${suffix}.kmz`;
+    a.download = kmzSeparate ? `OPTIQ-сеть-слои${suffix}.zip` : `OPTIQ-сеть${suffix}.kmz`;
     a.click();
     URL.revokeObjectURL(url);
   };
