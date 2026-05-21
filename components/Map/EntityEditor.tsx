@@ -24,6 +24,7 @@ interface Props {
   onDeleteORK: (id: string) => void;
   onReassignORK: (orkId: string, newTbId: string) => void;
   onOpenSplicePlan: (tbId: string) => void;
+  onOpenInterior?: (tbId: string) => void;
   onShowBranch?: (kind: 'olt' | 'tb' | 'ork', id: string) => void;
   moveActive?: boolean;
   onStartMove?: () => void;
@@ -248,7 +249,7 @@ export default function EntityEditor({
   moveActive, onStartMove, onStopMove,
   onUpdateOLT, onUpdateTB, onUpdateORK,
   onDeleteOLT, onDeleteTB, onDeleteORK,
-  onReassignORK, onOpenSplicePlan,
+  onReassignORK, onOpenSplicePlan, onOpenInterior,
 }: Props) {
   if (!selection) return null;
 
@@ -277,7 +278,17 @@ export default function EntityEditor({
     content = (
       <div className="space-y-2">
         <TBEditor tb={tb} onSave={(patch) => { onUpdateTB(tb.id, patch); onClose(); }} />
+        {onOpenInterior && (
+          <button
+            type="button"
+            onClick={() => onOpenInterior(tb.id)}
+            className="w-full py-1.5 border border-[#a78bfa]/40 text-[#a78bfa] hover:bg-[#a78bfa]/10 text-[11px] rounded transition-colors"
+          >
+            🔬 Что внутри муфты
+          </button>
+        )}
         <button
+          type="button"
           onClick={() => onOpenSplicePlan(tb.id)}
           className="w-full py-1.5 border border-[#38bdf8]/30 text-[#38bdf8] hover:bg-[#38bdf8]/10 text-[11px] rounded transition-colors"
         >

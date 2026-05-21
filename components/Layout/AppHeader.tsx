@@ -32,8 +32,11 @@ interface Props {
   onSetPlacing: (m: PlacingMode) => void;
   cableDrawActive: boolean;
   pointCableActive: boolean;
+  connectModeActive?: boolean;
+  undoHint?: string | null;
   onToggleCableDraw: () => void;
   onTogglePointCable: () => void;
+  onToggleConnectMode?: () => void;
   dbEnabled: boolean;
   onCatalog: () => void;
   onProjects: () => void;
@@ -106,7 +109,15 @@ export default function AppHeader(p: Props) {
             <Pencil size={12} className="inline mr-1" />Редакт.
           </button>
         </div>
-        <button type="button" className="btn btn-ghost btn-icon" onClick={p.onUndo} disabled={!p.canUndo} title="Ctrl+Z"><Undo2 size={16} /></button>
+        <button
+          type="button"
+          className="btn btn-ghost btn-icon"
+          onClick={p.onUndo}
+          disabled={!p.canUndo}
+          title={p.undoHint ? `Отменить: ${p.undoHint}` : 'Ctrl+Z'}
+        >
+          <Undo2 size={16} />
+        </button>
         <button type="button" className="btn btn-ghost btn-icon" onClick={p.onRedo} disabled={!p.canRedo} title="Ctrl+Shift+Z"><Redo2 size={16} /></button>
 
         <div className="hidden 2xl:flex items-center gap-0.5 p-0.5 rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)]">
@@ -115,6 +126,9 @@ export default function AppHeader(p: Props) {
           <button type="button" className={`btn btn-ghost text-[10px] py-1 ${p.placing === 'ork' ? '!bg-[var(--accent-dim)] !text-[var(--accent)]' : ''}`} onClick={() => p.onSetPlacing(p.placing === 'ork' ? null : 'ork')}>ОРК</button>
           <button type="button" className={`btn btn-ghost text-[10px] py-1 ${p.cableDrawActive ? '!bg-[var(--accent-dim)] !text-[var(--accent)]' : ''}`} onClick={p.onToggleCableDraw}>Кабель</button>
           <button type="button" className={`btn btn-ghost text-[10px] py-1 ${p.pointCableActive ? '!bg-[var(--accent-dim)] !text-[var(--accent)]' : ''}`} onClick={p.onTogglePointCable}>A→B</button>
+          {p.onToggleConnectMode && (
+            <button type="button" className={`btn btn-ghost text-[10px] py-1 ${p.connectModeActive ? '!bg-[var(--success)]/15 !text-[var(--success)]' : ''}`} onClick={p.onToggleConnectMode}>Соединить</button>
+          )}
         </div>
 
         {p.showBuild && (

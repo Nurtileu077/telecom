@@ -12,6 +12,7 @@ interface Props {
   onDelete: (id: string) => void;
   waypointEditing: boolean;
   rerouteStatus: 'idle' | 'routing' | 'done' | string;
+  onStartConnect?: (cableId: string) => void;
 }
 
 // color dot for cable type
@@ -21,7 +22,7 @@ function Dot({ type }: { type: string }) {
 }
 
 export default function CableEditor({
-  cable, onClose, onUpdateType, onRerouteOSRM, onToggleWaypoints, onDelete, waypointEditing, rerouteStatus,
+  cable, onClose, onUpdateType, onRerouteOSRM, onToggleWaypoints, onDelete, waypointEditing, rerouteStatus, onStartConnect,
 }: Props) {
   const [type, setType] = useState<Cable['type']>(cable?.type ?? 'ОК-4');
   const [dirty, setDirty] = useState(false);
@@ -105,8 +106,18 @@ export default function CableEditor({
           </button>
         </div>
 
-        {/* Waypoint edit toggle */}
+        {onStartConnect && (
+          <button
+            type="button"
+            onClick={() => onStartConnect(cable.id)}
+            className="w-full py-1.5 text-xs rounded border border-[#34d399]/40 text-[#34d399] hover:bg-[#34d399]/10 transition-colors"
+          >
+            🔗 Соединить конец с узлом
+          </button>
+        )}
+
         <button
+          type="button"
           onClick={() => onToggleWaypoints(waypointEditing ? null : cable.id)}
           className={`w-full py-1.5 text-xs rounded transition-all border ${
             waypointEditing

@@ -179,3 +179,27 @@ export function cablesForEntity(cables: Cable[], entityId: string): Cable[] {
 export function entityKindLabel(kind: EntityKind): string {
   return kind === 'olt' ? 'OLT' : kind === 'tb' ? 'Муфта' : 'ОРК';
 }
+
+/** Какой конец кабеля ближе к точке (для «Соединить»). */
+export function nearestCableEnd(
+  cable: Cable,
+  lat: number,
+  lon: number,
+): 'from' | 'to' {
+  const [a, b] = [cable.coords[0], cable.coords[cable.coords.length - 1]];
+  const d0 = haversineM(lat, lon, a[0], a[1]);
+  const d1 = haversineM(lat, lon, b[0], b[1]);
+  return d0 <= d1 ? 'from' : 'to';
+}
+
+/** Узлы, к которым можно примагнитить конец кабеля (не противоположный конец). */
+export function compatibleTargetsForCable(
+  cable: Cable,
+  end: 'from' | 'to',
+  districts: District[],
+): string[] {
+  const otherId = end === 'from' ? cable.toId : cable.fromId;
+  return listEntities(districts)
+    .filter((e) => e.id !== otherId && !e.id.startsWith('pt-'))
+    .map((e) => e.id);
+}

@@ -11,10 +11,14 @@ import { buildNetwork, OltLocationMap } from '@/components/Network/AutoBuild';
 import { calculateMaterials, validateNetwork } from '@/components/Network/MaterialCalc';
 import { routeCables, getRoute, snapBatch } from '@/components/Network/OSRMRouter';
 import { planRepair, buildDropCable, type RepairReport } from '@/components/Network/NetworkRepair';
-import { filterByBBox, polylineTouchesBBox, pointInBBox, type BBox } from '@/components/Network/Selection';
+import {
+  filterByBBox, polylineTouchesBBox, pointInBBox, pointInPolygon, polylineTouchesPolygon, type BBox, type Poly,
+} from '@/components/Network/Selection';
 import { consolidateCables } from '@/components/Network/Consolidation';
 import { haversineM } from '@/components/Network/KMeans';
-import { findCablesNearPoint, splitCableAt, nearestEntity } from '@/components/Network/SnapConnect';
+import {
+  findCablesNearPoint, splitCableAt, nearestEntity, nearestCableEnd,
+} from '@/components/Network/SnapConnect';
 import { calculateSubscriberBudgets, budgetStats } from '@/components/Network/PowerBudget';
 import { dbListProjects, dbSaveProject, dbDeleteProject, dbLoadProject, supabase } from '@/lib/supabase';
 
@@ -31,6 +35,10 @@ const DEFAULT_LAYERS: LayerVisibility = {
   cableOK4: true, cableOK8: true, cableOK12: true, cableOK16: true,
   cableOK24: true, cableOK32: true, cableOK48: true, cableOK96: true,
 };
+
+export type CableLinkEnd =
+  | { type: 'entity'; id: string }
+  | { type: 'map'; coord: [number, number] };
 
 const STORAGE_KEY = 'gpon-projects-v2';
 const CURRENT_KEY = 'gpon-current-project';
@@ -74,13 +82,19 @@ export function useNetwork() {
   const [snapshots, setSnapshots] = useState<ProjectSnapshot[]>([]);
 
   // Undo/Redo: serialized history of (districts, cables, joints) snapshots
-  type HistEntry = { districts: District[]; cables: Cable[]; joints: InlineJoint[] };
+  type HistEntry = { districts: District[]; cables: Cable[]; joints: InlineJoint[]; label: string };
   const historyRef = useRef<HistEntry[]>([]);
   const historyCursor = useRef<number>(-1);
   const skipNextSnapshot = useRef(false);
+  const pendingHistoryLabel = useRef('Изменение');
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
+  const [undoLabel, setUndoLabel] = useState<string | null>(null);
   const HISTORY_MAX = 40;
+
+  const recordAction = useCallback((label: string) => {
+    pendingHistoryLabel.current = label;
+  }, []);
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -92,14 +106,22 @@ export function useNetwork() {
   // History: push current state to stack on every change to districts/cables/joints
   useEffect(() => {
     if (skipNextSnapshot.current) { skipNextSnapshot.current = false; return; }
-    const entry: HistEntry = { districts, cables, joints };
+    const label = pendingHistoryLabel.current || 'Изменение';
+    pendingHistoryLabel.current = 'Изменение';
+    const entry: HistEntry = {
+      districts: JSON.parse(JSON.stringify(districts)),
+      cables: JSON.parse(JSON.stringify(cables)),
+      joints: JSON.parse(JSON.stringify(joints)),
+      label,
+    };
     const cur = historyCursor.current;
-    // truncate future, push new
     historyRef.current = historyRef.current.slice(0, cur + 1).concat([entry]);
     if (historyRef.current.length > HISTORY_MAX) historyRef.current.shift();
     historyCursor.current = historyRef.current.length - 1;
     setCanUndo(historyCursor.current > 0);
     setCanRedo(false);
+    const prev = historyRef.current[historyCursor.current - 1];
+    setUndoLabel(prev?.label ?? null);
   }, [districts, cables, joints]);
 
   const undo = useCallback(() => {
@@ -390,7 +412,13 @@ export function useNetwork() {
   // current district structure (preserving any existing routed coords for
   // direct entity-to-entity pairs), then consolidate. This works even after
   // previous consolidation (where trunk cables go through joint IDs).
-  const reconsolidate = useCallback(async (bbox?: BBox | null) => {
+  const cableTouchesSelection = useCallback((coords: [number, number][], bbox?: BBox | null, poly?: Poly | null) => {
+    if (poly && poly.length >= 3) return polylineTouchesPolygon(coords, poly);
+    if (bbox) return polylineTouchesBBox(coords, bbox);
+    return true;
+  }, []);
+
+  const reconsolidate = useCallback(async (bbox?: BBox | null, poly?: Poly | null) => {
     if (districts.length === 0) return;
 
     // Reconstruct OSRM-routed paths between direct entity pairs, EVEN when
@@ -465,21 +493,23 @@ export function useNetwork() {
 
     // Consolidate (optionally only the subset that touches the bbox).
     if (bbox) {
-      // Scope-limited consolidation: run consolidate over a filtered district
-      // set + filtered cables, then splice the result back into full state.
-      // Outside-bbox cables/joints are preserved.
-      const scope = filterByBBox(districts, routed, joints, bbox);
-      const { cables: newConsolidated, joints: newJoints } = consolidateCables(routed.filter((c) => polylineTouchesBBox(c.coords, bbox)), scope.districts);
-      // Replace bbox cables with the consolidated set; keep the rest untouched.
+      const scope = filterByBBox(districts, routed, joints, bbox, poly);
+      const inScope = routed.filter((c) => cableTouchesSelection(c.coords, bbox, poly));
+      const { cables: newConsolidated, joints: newJoints } = consolidateCables(inScope, scope.districts);
       setCables((prev) => [
-        ...prev.filter((c) => !polylineTouchesBBox(c.coords, bbox)),
+        ...prev.filter((c) => !cableTouchesSelection(c.coords, bbox, poly)),
         ...newConsolidated,
       ]);
+      const jointInside = (j: InlineJoint) =>
+        poly && poly.length >= 3
+          ? pointInPolygon(j.lat, j.lon, poly)
+          : pointInBBox(j.lat, j.lon, bbox!);
       setJoints((prev) => [
-        ...prev.filter((j) => !pointInBBox(j.lat, j.lon, bbox)),
+        ...prev.filter((j) => !jointInside(j)),
         ...newJoints,
       ]);
       setStatus('done');
+      recordAction(poly && poly.length >= 3 ? 'Объединение (лассо)' : 'Объединение (выделение)');
       return;
     }
     const { cables: consolidated, joints: newJoints } = consolidateCables(routed, districts);
@@ -487,14 +517,14 @@ export function useNetwork() {
     setJoints(newJoints);
     setMaterials(calculateMaterials(districts, consolidated, settings, newJoints.length));
     setStatus('done');
-  }, [districts, cables, joints, settings, buildExistingCoordsMap]);
+  }, [districts, cables, joints, settings, buildExistingCoordsMap, cableTouchesSelection, recordAction]);
 
   // Re-route existing cables with OSRM (without re-clustering)
   // bbox: if provided, only re-route cables whose polyline touches the
   // rectangle.  In that mode we route IN PLACE on the current cables —
   // works correctly even after consolidation (where cables go through
   // joints and don't have direct entity-pair ids).
-  const rerouteWithOSRM = useCallback(async (bbox?: BBox | null) => {
+  const rerouteWithOSRM = useCallback(async (bbox?: BBox | null, poly?: Poly | null) => {
     if (districts.length === 0 && cables.length === 0) return;
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
@@ -513,7 +543,7 @@ export function useNetwork() {
       // cable's coords are replaced with the OSRM route between its current
       // endpoints.  Anything outside the bbox is preserved as-is.
       if (bbox) {
-        const affected = cables.filter((c) => polylineTouchesBBox(c.coords, bbox));
+        const affected = cables.filter((c) => cableTouchesSelection(c.coords, bbox, poly));
         if (affected.length === 0) {
           setStatus('done');
           return;
@@ -528,6 +558,7 @@ export function useNetwork() {
         setCables((prev) => prev.map((c) => byId.get(c.id) ?? c));
         setMaterials(calculateMaterials(districts, cables, settings, joints.length));
         setStatus('done');
+        recordAction(poly && poly.length >= 3 ? 'OSRM (лассо)' : 'OSRM (выделение)');
         return;
       }
 
@@ -1078,6 +1109,46 @@ export function useNetwork() {
     setCables((prev) => [...prev, cable]);
   }, [settings.useOSRM]);
 
+  const addCableLink = useCallback(async (
+    from: CableLinkEnd,
+    to: CableLinkEnd,
+    typeArg?: Cable['type'],
+  ) => {
+    const fromCoord = from.type === 'entity' ? findEntityCoords(from.id) : from.coord;
+    const toCoord = to.type === 'entity' ? findEntityCoords(to.id) : to.coord;
+    if (!fromCoord || !toCoord) return;
+    const fromId = from.type === 'entity' ? from.id : `pt-${Date.now()}-a`;
+    const toId = to.type === 'entity' ? to.id : `pt-${Date.now()}-b`;
+    const type = typeArg
+      ?? (from.type === 'entity' && to.type === 'entity'
+        ? inferCableType(from.id, to.id)
+        : 'ОК-12');
+
+    let coords: [number, number][] = [fromCoord, toCoord];
+    let routed = false;
+    if (settings.useOSRM) {
+      try {
+        const route = await getRoute(fromCoord[0], fromCoord[1], toCoord[0], toCoord[1]);
+        if (route && route.length > 2) { coords = route; routed = true; }
+      } catch { /* straight */ }
+    }
+    const lengthM = coords.slice(1).reduce(
+      (acc, c, i) => acc + haversineM(coords[i][0], coords[i][1], c[0], c[1]), 0,
+    );
+    const cable: Cable = {
+      id: `cable-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      type,
+      fibers: CABLE_FIBERS[type],
+      fromId,
+      toId,
+      coords,
+      lengthM,
+      routedByOSRM: routed,
+    };
+    setCables((prev) => [...prev, cable]);
+    recordAction(`Кабель ${fromId} → ${toId}`);
+  }, [findEntityCoords, inferCableType, settings.useOSRM, recordAction]);
+
   // Manual placement of entities ----------------------------------------------
 
   const addOLTAt = useCallback((lat: number, lon: number, districtName: string) => {
@@ -1179,6 +1250,15 @@ export function useNetwork() {
       };
     }));
   }, [findEntityCoords]);
+
+  const connectCableToEntity = useCallback((cableId: string, entityId: string) => {
+    const cable = cables.find((c) => c.id === cableId);
+    const ec = findEntityCoords(entityId);
+    if (!cable || !ec) return;
+    const end = nearestCableEnd(cable, ec[0], ec[1]);
+    connectCableEndpoint(cableId, end, entityId);
+    recordAction(`Соединить ${cableId} → ${entityId}`);
+  }, [cables, findEntityCoords, connectCableEndpoint, recordAction]);
 
   /** Позиция для клика: магнит к кабелю или узлу при установке муфты. */
   const snapPlaceTB = useCallback((lat: number, lon: number): { lat: number; lon: number; hint?: string } => {
@@ -1612,7 +1692,8 @@ export function useNetwork() {
     updateCable, rerouteSingleCable,
     deleteOLT, deleteTB, deleteORK, deleteCable,
     addOLTAt, addTBAt, addORKAt, addCableBetween, addCableByPoints,
-    connectCableEndpoint, snapPlaceTB,
+    connectCableEndpoint, connectCableToEntity, addCableLink, snapPlaceTB,
+    recordAction, undoLabel,
     reassignORK, reassignSubscriber,
     undo, redo, canUndo, canRedo,
     takeSnapshot, restoreSnapshot, deleteSnapshot, snapshots,

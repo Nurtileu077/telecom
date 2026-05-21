@@ -17,9 +17,13 @@ import CableEditor from '@/components/Map/CableEditor';
 import SplicePlan from '@/components/Map/SplicePlan';
 import ChatPanel from '@/components/AI/ChatPanel';
 import AddCamerasModal from '@/components/Import/AddCamerasModal';
-import { bboxOfPolygon } from '@/components/Network/Selection';
+import { bboxOfPolygon, filterByBBox } from '@/components/Network/Selection';
 import { computeBranchCables } from '@/components/Network/Branch';
 import { recalcLengthM } from '@/components/Network/cableWaypoints';
+import { compatibleTargetsForCable } from '@/components/Network/SnapConnect';
+import { validateForExport, formatValidationSummary } from '@/components/Network/ExportValidation';
+import type { CableLinkEnd } from '@/hooks/useNetwork';
+import MuftaInterior from '@/components/Map/MuftaInterior';
 
 const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
   ssr: false,
@@ -52,11 +56,16 @@ export default function HomePage() {
   const [selectedCableId, setSelectedCableId] = useState<string | null>(null);
   const [editingCableId, setEditingCableId] = useState<string | null>(null);
   const [placing, setPlacing] = useState<'olt' | 'tb' | 'ork' | null>(null);
-  const [cableDraw, setCableDraw] = useState<{ stage: 'from' | 'to'; fromId?: string } | null>(null);
-  // Ручной кабель A→B по точкам карты + выбор типа ОК.
-  const [pointCable, setPointCable] = useState<{ a?: [number, number] } | null>(null);
+  /** Кабель: allowMap=false только узлы; A→B: allowMap=true узлы + карта */
+  const [cableLink, setCableLink] = useState<{ allowMap: boolean; from?: CableLinkEnd } | null>(null);
+  const [connectMode, setConnectMode] = useState(false);
+  const [connectCableId, setConnectCableId] = useState<string | null>(null);
+  const [muftaInteriorId, setMuftaInteriorId] = useState<string | null>(null);
   const [pendingCable, setPendingCable] = useState<
-    { a: [number, number]; b: [number, number] } | { fromId: string; toId: string } | null
+    | { a: [number, number]; b: [number, number] }
+    | { fromId: string; toId: string }
+    | { link: { from: CableLinkEnd; to: CableLinkEnd } }
+    | null
   >(null);
   const [budgetColoring, setBudgetColoring] = useState(false);
   const [splicePlanTbId, setSplicePlanTbId] = useState<string | null>(null);
@@ -98,6 +107,31 @@ export default function HomePage() {
     [branchSel, net.cables, net.districts],
   );
 
+  const snapHighlightIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (snapHighlightId) ids.add(snapHighlightId);
+    if (connectCableId) {
+      const c = net.cables.find((x) => x.id === connectCableId);
+      if (c) {
+        for (const id of compatibleTargetsForCable(c, 'from', net.districts)) ids.add(id);
+        for (const id of compatibleTargetsForCable(c, 'to', net.districts)) ids.add(id);
+      }
+    }
+    return ids.size > 0 ? ids : null;
+  }, [snapHighlightId, connectCableId, net.cables, net.districts]);
+
+  const finishCableLink = useCallback((from: CableLinkEnd, to: CableLinkEnd) => {
+    if (from.type === 'entity' && to.type === 'entity') {
+      if (from.id === to.id) return;
+      setPendingCable({ fromId: from.id, toId: to.id });
+    } else if (from.type === 'map' && to.type === 'map') {
+      setPendingCable({ a: from.coord, b: to.coord });
+    } else {
+      setPendingCable({ link: { from, to } });
+    }
+    setCableLink(null);
+  }, []);
+
   const budgetMap = useRef<Map<string, 'ok' | 'warn' | 'fail'>>(new Map());
   useEffect(() => {
     const m = new Map<string, 'ok' | 'warn' | 'fail'>();
@@ -109,9 +143,29 @@ export default function HomePage() {
 
   const onExportPDF = useCallback(async () => {
     if (!net.materials) { alert('Сначала постройте сеть'); return; }
+    const issues = validateForExport(net.districts, net.cables);
+    if (issues.length > 0) {
+      const preview = issues.slice(0, 8).map((i) => `• ${i.message}`).join('\n');
+      const more = issues.length > 8 ? `\n…и ещё ${issues.length - 8}` : '';
+      const ok = confirm(
+        `Перед экспортом: ${formatValidationSummary(issues)}\n\n${preview}${more}\n\nВсё равно экспортировать?`,
+      );
+      if (!ok) return;
+    }
+    let districts = net.districts;
+    let cables = net.cables;
+    if (selectionBBox) {
+      const f = filterByBBox(net.districts, net.cables, net.joints, selectionBBox, selectionPoly);
+      districts = f.districts;
+      cables = f.cables;
+      if (cables.length === 0) {
+        alert('В выделении нет кабелей для экспорта');
+        return;
+      }
+    }
     const cost = calculateCost(net.materials, net.prices);
-    await exportPDF(net.projectName, net.districts, net.cables, net.materials, cost, mapElRef.current);
-  }, [net.projectName, net.districts, net.cables, net.materials, net.prices]);
+    await exportPDF(net.projectName, districts, cables, net.materials, cost, mapElRef.current);
+  }, [net, selectionBBox, selectionPoly]);
 
   const onPrintMap = useCallback(() => window.print(), []);
 
@@ -198,9 +252,10 @@ export default function HomePage() {
       return;
     }
     // Ручной кабель A→B: первый клик — точка A, второй — B → выбор типа ОК.
-    if (pointCable) {
-      if (!pointCable.a) setPointCable({ a: [lat, lon] });
-      else { setPendingCable({ a: pointCable.a, b: [lat, lon] }); setPointCable(null); }
+    if (cableLink?.allowMap) {
+      const end: CableLinkEnd = { type: 'map', coord: [lat, lon] };
+      if (!cableLink.from) setCableLink({ ...cableLink, from: end });
+      else finishCableLink(cableLink.from, end);
       return;
     }
     // Placement mode takes priority over add-subscriber
@@ -228,7 +283,7 @@ export default function HomePage() {
     setShowAddSub({ lat, lon });
     const existing = Array.from(new Set(net.districts.map((d) => d.name)));
     if (existing.length === 1) setNewSubDistrict(existing[0]);
-  }, [net, placing, selecting, pointCable]);
+  }, [net, placing, selecting, cableLink, finishCableLink]);
 
   // Drop a point of the requested kind at (lat, lon) — used by the right-click
   // context menu and by the manual-coordinate dialog.  Bypasses placing/edit mode.
@@ -302,12 +357,12 @@ export default function HomePage() {
           setShowHelp(false);
           setShowAddSub(null);
           setPlacing(null);
-          setCableDraw(null);
+          setCableLink(null);
+          setConnectMode(false);
           setEntitySelection(null);
           setSelectedCableId(null);
           clearSelection();
           setBranchSel(null);
-          setPointCable(null);
           setPendingCable(null);
         }
       }
@@ -343,10 +398,26 @@ export default function HomePage() {
         onRedo={() => net.redo()}
         placing={placing}
         onSetPlacing={setPlacing}
-        cableDrawActive={!!cableDraw}
-        pointCableActive={!!pointCable}
-        onToggleCableDraw={() => { setCableDraw(cableDraw ? null : { stage: 'from' }); setPointCable(null); setPlacing(null); }}
-        onTogglePointCable={() => { setPointCable(pointCable ? null : {}); setCableDraw(null); setPlacing(null); }}
+        cableDrawActive={!!cableLink && !cableLink.allowMap}
+        pointCableActive={!!cableLink && cableLink.allowMap}
+        connectModeActive={connectMode}
+        undoHint={net.undoLabel}
+        onToggleConnectMode={() => {
+          setConnectMode((v) => !v);
+          setConnectCableId(null);
+          setCableLink(null);
+          setPlacing(null);
+        }}
+        onToggleCableDraw={() => {
+          setCableLink(cableLink && !cableLink.allowMap ? null : { allowMap: false });
+          setConnectMode(false);
+          setPlacing(null);
+        }}
+        onTogglePointCable={() => {
+          setCableLink(cableLink?.allowMap ? null : { allowMap: true });
+          setConnectMode(false);
+          setPlacing(null);
+        }}
         dbEnabled={net.dbEnabled}
         onCatalog={() => setShowCatalog(true)}
         onProjects={() => setShowProjects(true)}
@@ -359,7 +430,7 @@ export default function HomePage() {
         selectionPoly={!!selectionPoly}
         selecting={selecting}
         selectionCount={selectionPoints.length}
-        onStartSelection={() => { setSelecting(true); setSelectionPoints([]); setPlacing(null); setCableDraw(null); }}
+        onStartSelection={() => { setSelecting(true); setSelectionPoints([]); setPlacing(null); setCableLink(null); setConnectMode(false); }}
         onFinishSelection={finishSelection}
         onClearSelection={clearSelection}
         showAddCameras={net.districts.length > 0}
@@ -409,8 +480,8 @@ export default function HomePage() {
           setHeatmapEnabled={setHeatmapEnabled}
           onExportPDF={onExportPDF}
           onPrintMap={onPrintMap}
-          onRerouteOSRM={() => net.rerouteWithOSRM(selectionBBox)}
-          onReconsolidate={() => net.reconsolidate(selectionBBox)}
+          onRerouteOSRM={() => net.rerouteWithOSRM(selectionBBox, selectionPoly)}
+          onReconsolidate={() => net.reconsolidate(selectionBBox, selectionPoly)}
           osrmStatus={net.status}
           powerBudgets={net.powerBudgets}
           powerBudgetStats={net.powerBudgetStats}
@@ -442,7 +513,7 @@ export default function HomePage() {
             deleteAnnotation={net.deleteAnnotation}
             editMode={net.editMode}
             placingMode={!!placing}
-            selectingMode={selecting || !!pointCable}
+            selectingMode={selecting || !!cableLink?.allowMap}
             onMapClick={handleMapClickAddSub}
             onMapContextMenu={(lat, lon, x, y) => setContextMenu({ lat, lon, x, y })}
             selectionBBox={selectionBBox}
@@ -461,20 +532,38 @@ export default function HomePage() {
               );
             }}
             onEntityClick={(kind, id) => {
-              // Cable-drawing flow takes priority
-              if (cableDraw) {
-                if (cableDraw.stage === 'from') {
-                  setCableDraw({ stage: 'to', fromId: id });
-                } else if (cableDraw.stage === 'to' && cableDraw.fromId) {
-                  if (cableDraw.fromId !== id) setPendingCable({ fromId: cableDraw.fromId, toId: id });
-                  setCableDraw(null);
-                }
+              if (connectMode && connectCableId) {
+                net.recordAction('Соединить кабель');
+                net.connectCableToEntity(connectCableId, id);
+                setConnectCableId(null);
+                return;
+              }
+              if (cableLink) {
+                const end: CableLinkEnd = { type: 'entity', id };
+                if (!cableLink.from) setCableLink({ ...cableLink, from: end });
+                else finishCableLink(cableLink.from, end);
+                return;
+              }
+              if (kind === 'tb') {
+                setMuftaInteriorId(id);
+                setEntitySelection({ kind, id });
+                setSelectedCableId(null);
                 return;
               }
               setEntitySelection({ kind, id } as EntitySelection);
               setSelectedCableId(null);
             }}
-            onCableClick={(id) => { setSelectedCableId(id); setEntitySelection(null); }}
+            onCableClick={(id) => {
+              if (connectMode) {
+                setConnectCableId(id);
+                setSelectedCableId(id);
+                setEntitySelection(null);
+                return;
+              }
+              setSelectedCableId(id);
+              setEntitySelection(null);
+            }}
+            snapHighlightIds={snapHighlightIds}
             editingCableId={editingCableId}
             onUpdateCableCoords={(id, coords) => net.updateCable(id, { coords, lengthM: recalcLengthM(coords) })}
             onCableEndpointSnap={(id, end, entityId) => net.connectCableEndpoint(id, end, entityId)}
@@ -526,7 +615,15 @@ export default function HomePage() {
             onDeleteORK={net.deleteORK}
             onReassignORK={net.reassignORK}
             onOpenSplicePlan={(tbId) => { setSplicePlanTbId(tbId); setEntitySelection(null); }}
+            onOpenInterior={(tbId) => { setMuftaInteriorId(tbId); }}
             onShowBranch={(kind, id) => setBranchSel({ kind, id })}
+          />
+
+          <MuftaInterior
+            tbId={muftaInteriorId}
+            districts={net.districts}
+            cables={net.cables}
+            onClose={() => setMuftaInteriorId(null)}
           />
 
           <SplicePlan
@@ -545,6 +642,11 @@ export default function HomePage() {
             onDelete={net.deleteCable}
             waypointEditing={editingCableId === selectedCableId && !!editingCableId}
             rerouteStatus={net.status}
+            onStartConnect={(id) => {
+              setConnectMode(true);
+              setConnectCableId(id);
+              setCableLink(null);
+            }}
           />
 
           {placing && (
@@ -558,21 +660,29 @@ export default function HomePage() {
             </div>
           )}
 
-          {cableDraw && (
+          {connectMode && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#34d399]/50 rounded-lg px-3 py-1.5 text-xs text-[#34d399] shadow-2xl flex items-center gap-2 animate-fade-in">
               <span>
-                〰 {cableDraw.stage === 'from'
-                    ? 'Клик на первой точке (OLT/Муфта/ОРК)'
-                    : 'Клик на второй точке — кабель будет создан'}
+                🔗 {connectCableId
+                  ? 'Клик по OLT / муфте / ОРК — привязать конец (зелёная подсветка)'
+                  : 'Клик по кабелю на карте, затем по узлу'}
               </span>
-              <button onClick={() => setCableDraw(null)} className="text-[#94a3b8] hover:text-white border border-[#34d399]/30 rounded px-1.5 py-0.5 text-[10px]">Esc</button>
+              <button type="button" onClick={() => { setConnectMode(false); setConnectCableId(null); }} className="text-[#94a3b8] hover:text-white border border-[#34d399]/30 rounded px-1.5 py-0.5 text-[10px]">Esc</button>
             </div>
           )}
 
-          {pointCable && (
+          {cableLink && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#34d399]/50 rounded-lg px-3 py-1.5 text-xs text-[#34d399] shadow-2xl flex items-center gap-2 animate-fade-in">
-              <span>✏️ {pointCable.a ? 'Клик на точке B — кабель потянется по дороге' : 'Клик на точке A на карте'}</span>
-              <button onClick={() => setPointCable(null)} className="text-[#94a3b8] hover:text-white border border-[#34d399]/30 rounded px-1.5 py-0.5 text-[10px]">Esc</button>
+              <span>
+                〰 {!cableLink.from
+                  ? (cableLink.allowMap
+                    ? 'Точка A или OLT/муфта/ОРК'
+                    : 'Первый узел (OLT / муфта / ОРК)')
+                  : (cableLink.allowMap
+                    ? 'Точка B или второй узел на карте'
+                    : 'Второй узел — кабель будет создан')}
+              </span>
+              <button type="button" onClick={() => setCableLink(null)} className="text-[#94a3b8] hover:text-white border border-[#34d399]/30 rounded px-1.5 py-0.5 text-[10px]">Esc</button>
             </div>
           )}
 
@@ -584,8 +694,15 @@ export default function HomePage() {
                   <button
                     key={t}
                     onClick={() => {
-                      if ('fromId' in pendingCable) net.addCableBetween(pendingCable.fromId, pendingCable.toId, t);
-                      else net.addCableByPoints(pendingCable.a, pendingCable.b, t);
+                      if ('fromId' in pendingCable) {
+                        net.recordAction('Кабель между узлами');
+                        void net.addCableBetween(pendingCable.fromId, pendingCable.toId, t);
+                      } else if ('link' in pendingCable) {
+                        void net.addCableLink(pendingCable.link.from, pendingCable.link.to, t);
+                      } else {
+                        net.recordAction('Кабель A→B');
+                        void net.addCableByPoints(pendingCable.a, pendingCable.b, t);
+                      }
                       setPendingCable(null);
                     }}
                     className="px-2.5 py-1 text-[11px] rounded-lg border border-[#1e3a5f] text-[#e2e8f0] hover:bg-[#38bdf8]/20 hover:border-[#38bdf8]/50 transition-colors"
@@ -703,7 +820,7 @@ export default function HomePage() {
             <div className="my-1 border-t border-[#1e3a5f]/50" />
             <button
               onClick={() => {
-                setCableDraw({ stage: 'from' });
+                setCableLink({ allowMap: true });
                 setPlacing(null);
                 setContextMenu(null);
               }}
