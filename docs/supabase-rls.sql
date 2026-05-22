@@ -13,7 +13,7 @@ create policy "projects_select_org"
   to authenticated
   using (
     org_id is null
-    or org_id::text = coalesce(auth.jwt() ->> 'org_id', '')
+    or org_id::text = coalesce(auth.jwt() -> 'user_metadata' ->> 'org_id', '')
   );
 
 drop policy if exists "projects_insert_org" on gpon_projects;
@@ -22,7 +22,7 @@ create policy "projects_insert_org"
   to authenticated
   with check (
     org_id is null
-    or org_id::text = coalesce(auth.jwt() ->> 'org_id', '')
+    or org_id::text = coalesce(auth.jwt() -> 'user_metadata' ->> 'org_id', '')
   );
 
 drop policy if exists "projects_update_org" on gpon_projects;
@@ -31,11 +31,11 @@ create policy "projects_update_org"
   to authenticated
   using (
     org_id is null
-    or org_id::text = coalesce(auth.jwt() ->> 'org_id', '')
+    or org_id::text = coalesce(auth.jwt() -> 'user_metadata' ->> 'org_id', '')
   )
   with check (
     org_id is null
-    or org_id::text = coalesce(auth.jwt() ->> 'org_id', '')
+    or org_id::text = coalesce(auth.jwt() -> 'user_metadata' ->> 'org_id', '')
   );
 
 drop policy if exists "projects_delete_org" on gpon_projects;
@@ -44,7 +44,7 @@ create policy "projects_delete_org"
   to authenticated
   using (
     org_id is null
-    or org_id::text = coalesce(auth.jwt() ->> 'org_id', '')
+    or org_id::text = coalesce(auth.jwt() -> 'user_metadata' ->> 'org_id', '')
   );
 
 -- Realtime: Dashboard → Database → Replication → включить gpon_projects (для presence отдельный канал optiq-presence:*)
