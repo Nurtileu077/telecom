@@ -141,12 +141,15 @@ function densify(coords: [number, number][], stepM: number): [number, number][] 
 // прогоняем вершины через ЕДИНЫЙ гриди-снэппер: точки соседних нитей в пределах R
 // садятся на один узел → линии ложатся друг на друга. Концы (оборудование/муфты)
 // оставляем точными. Радиус = MERGE_RADIUS_M (сливает полосы одной улицы, но не
-// соседние улицы). Дропы (ОК-4/ОК-8) не трогаем — короткие подводки к камере.
+// соседние улицы). Не трогаем только ОК-4 — настоящие дропы к одной камере.
+// ОК-8 и выше — общие магистрали (pickSharedCableType назначает ОК-8 на 2–4
+// камеры), их обязательно сливаем, иначе соседние улицы с малой жильностью
+// остаются двумя параллельными линиями.
 function overlayCoRouted(cables: Cable[], R = MERGE_RADIUS_M): Cable[] {
   const snapper = makeSnapper(R);
   const STEP = 12;
   return cables.map((c) => {
-    if (c.type === 'ОК-4' || c.type === 'ОК-8' || c.coords.length < 2) return c;
+    if (c.type === 'ОК-4' || c.coords.length < 2) return c;
     const first = c.coords[0];
     const last = c.coords[c.coords.length - 1];
     const dense = densify(c.coords, STEP);
