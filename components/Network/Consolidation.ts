@@ -113,50 +113,27 @@ function pathLength(coords: [number, number][]): number {
   return len;
 }
 
-// Уплотнение полилинии: вставляем точки каждые stepM метров вдоль каждого
-// сегмента. Нужно перед глобальным снэпом — у прямой магистрали OSRM оставляет
-// всего 2 точки (старт/финиш), снэпать нечего; после уплотнения вдоль неё
-// появляются вершины, которые могут лечь на общие узлы соседней нити.
-function densify(coords: [number, number][], stepM: number): [number, number][] {
-  if (coords.length < 2) return coords;
-  const out: [number, number][] = [coords[0]];
-  for (let i = 1; i < coords.length; i++) {
-    const [ay, ax] = coords[i - 1];
-    const [by, bx] = coords[i];
-    const seg = haversineM(ay, ax, by, bx);
-    const n = Math.floor(seg / stepM);
-    for (let k = 1; k <= n; k++) {
-      const t = (k * stepM) / seg;
-      out.push([ay + (by - ay) * t, ax + (bx - ax) * t]);
-    }
-    out.push([by, bx]);
-  }
-  return out;
-}
+// Радиус слияния дорожных вершин ПОПЕРЁК районов. Меньше MERGE_RADIUS_M, чтобы
+// не склеить соседние улицы, но достаточно, чтобы наложить независимо
+// проложенные OSRM-нитки одной дороги (центр-линии расходятся на единицы метров).
+const GLOBAL_SNAP_M = 18;
 
-// Фикс A — наложение со-трассных кабелей. Слияние работает ВНУТРИ района, поэтому
-// распред/питающие/магистрали РАЗНЫХ OLT по одной улице (разные цвета) идут
-// сдвинутыми параллельными линиями. Волокна сваривать нельзя (разные PON), но
-// геометрия должна совпадать (одна трасса/канализация). Уплотняем каждую линию и
-// прогоняем вершины через ЕДИНЫЙ гриди-снэппер: точки соседних нитей в пределах R
-// садятся на один узел → линии ложатся друг на друга. Концы (оборудование/муфты)
-// оставляем точными. Радиус = MERGE_RADIUS_M (сливает полосы одной улицы, но не
-// соседние улицы). Дропы (ОК-4/ОК-8) НЕ трогаем — короткие подводки к камере.
-// Включение ОК-8 в слияние пробовали и откатили: на реальных данных короткие
-// ОК-8-сегменты у оборудования глобальный снэп по 30 м тащил на чужие узлы →
-// геометрия искажалась и появлялись нестыковки сильнее, чем польза от слияния
-// редких параллельных ОК-8.
-function overlayCoRouted(cables: Cable[], R = MERGE_RADIUS_M): Cable[] {
+// Фикс A — наложение со-трассных кабелей. Слияние работает внутри района, поэтому
+// магистрали РАЗНЫХ OLT по одной улице (разные цвета на перекрёстке) идут чуть
+// сдвинутыми параллельными линиями. Их волокна сваривать нельзя (разные PON), но
+// геометрия должна совпадать (одна трасса/канализация). Прогоняем ПРОМЕЖУТОЧНЫЕ
+// вершины всех кабелей через единый снэппер: совпавшие дорожные точки получают
+// одну координату → линии ложатся друг на друга. Концы (оборудование/муфты) не
+// трогаем, чтобы кабель не оторвался от своего узла.
+function overlayCoRouted(cables: Cable[], R = GLOBAL_SNAP_M): Cable[] {
   const snapper = makeSnapper(R);
-  const STEP = 12;
   return cables.map((c) => {
-    if (c.type === 'ОК-4' || c.type === 'ОК-8' || c.coords.length < 2) return c;
+    if (c.coords.length < 3) return c;
     const first = c.coords[0];
     const last = c.coords[c.coords.length - 1];
-    const dense = densify(c.coords, STEP);
     const snapped: [number, number][] = [first];
-    for (let i = 1; i < dense.length - 1; i++) {
-      snapped.push(snapper.snapCoord(dense[i][0], dense[i][1]));
+    for (let i = 1; i < c.coords.length - 1; i++) {
+      snapped.push(snapper.snapCoord(c.coords[i][0], c.coords[i][1]));
     }
     snapped.push(last);
     // Чистим подряд идущие совпавшие вершины (последнюю всегда сохраняем).
@@ -164,7 +141,7 @@ function overlayCoRouted(cables: Cable[], R = MERGE_RADIUS_M): Cable[] {
     for (let i = 1; i < snapped.length; i++) {
       const p = snapped[i];
       const prev = dd[dd.length - 1];
-      if (i === snapped.length - 1 || haversineM(prev[0], prev[1], p[0], p[1]) > 1) dd.push(p);
+      if (i === snapped.length - 1 || haversineM(prev[0], prev[1], p[0], p[1]) > 0.5) dd.push(p);
     }
     if (dd.length < 2) return c;
     return { ...c, coords: dd, lengthM: pathLength(dd) };
