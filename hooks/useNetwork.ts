@@ -792,7 +792,7 @@ export function useNetwork() {
     }));
   }, []);
 
-  const updateCable = useCallback((id: string, patch: Partial<Pick<Cable, 'type' | 'coords' | 'lengthM' | 'fromId' | 'toId'>>) => {
+  const updateCable = useCallback((id: string, patch: Partial<Pick<Cable, 'type' | 'coords' | 'lengthM' | 'fromId' | 'toId' | 'displayName' | 'installType' | 'poleCount'>>) => {
     setCables((prev) => prev.map((c) => {
       if (c.id !== id) return c;
       const updated = { ...c, ...patch };

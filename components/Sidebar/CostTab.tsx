@@ -1,15 +1,21 @@
 'use client';
-import { useState } from 'react';
-import { Materials, PriceCatalog } from '@/types/network';
+import { useState, useMemo } from 'react';
+import { Materials, PriceCatalog, District, Cable, InlineJoint, ProjectSettings } from '@/types/network';
 import { calculateCost, formatMoney } from '@/components/Network/CostCalc';
+import { districtCostRows } from '@/components/Network/districtCost';
+import DistrictCostChart from '@/components/Sidebar/DistrictCostChart';
 
 interface Props {
   materials: Materials | null;
   prices: PriceCatalog;
   setPrices: (p: PriceCatalog) => void;
+  districts?: District[];
+  cables?: Cable[];
+  joints?: InlineJoint[];
+  settings?: ProjectSettings;
 }
 
-export default function CostTab({ materials, prices, setPrices }: Props) {
+export default function CostTab({ materials, prices, setPrices, districts = [], cables = [], joints = [], settings }: Props) {
   const [showEditor, setShowEditor] = useState(false);
 
   if (!materials) {
@@ -22,6 +28,10 @@ export default function CostTab({ materials, prices, setPrices }: Props) {
   }
 
   const cost = calculateCost(materials, prices);
+  const districtRows = useMemo(() => {
+    if (!districts.length || !settings) return [];
+    return districtCostRows(districts, cables, joints, settings, prices);
+  }, [districts, cables, joints, settings, prices]);
 
   const updatePrice = (path: string, value: number) => {
     const next = { ...prices };
@@ -44,6 +54,10 @@ export default function CostTab({ materials, prices, setPrices }: Props) {
             {formatMoney(cost.grandTotal, cost.currency)}
           </div>
         </div>
+
+        {districtRows.length > 1 && (
+          <DistrictCostChart rows={districtRows} currency={cost.currency} />
+        )}
 
         {/* Subtotals */}
         <div className="grid grid-cols-2 gap-2 mb-3">

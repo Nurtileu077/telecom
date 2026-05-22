@@ -7,6 +7,7 @@ import {
 } from '@/types/network';
 import type { DrawingTool } from '@/components/Sidebar/NotesTab';
 import { nearestTbToJoint } from '@/components/Network/entityInterior';
+import GpsLocateButton from '@/components/Map/GpsLocateButton';
 
 interface Props {
   districts: District[];
@@ -237,6 +238,8 @@ function offsetPolyline(coords: [number, number][], offsetM: number): [number, n
 
 export default function LeafletMap(props: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const gpsMarkerRef = useRef<any>(null);
+  const gpsCircleRef = useRef<any>(null);
   const mapRef = useRef<any>(null);
   const tileLayerRef = useRef<any>(null);
   const hybridLabelsRef = useRef<any>(null);
@@ -519,8 +522,14 @@ export default function LeafletMap(props: Props) {
               : (CABLE_WEIGHTS[cable.type] || 2) + (isEditing ? 2 : inBranch ? 1 : 0),
             opacity: dimmed ? 0.12 : inBranch ? 1 : (cable.type === 'ОК-4' ? 0.6 : 0.85),
           });
+          const cableTitle = cable.displayName
+            ? `<b>${cable.displayName}</b><br/><span style="font-size:10px;color:#94a3b8">${cable.type}</span>`
+            : `<b>${cable.type}</b>`;
+          const installNote = cable.installType
+            ? `<br/>Прокладка: ${({ aerial: 'Воздушная', duct: 'В канализации', ground: 'В грунте' } as Record<string, string>)[cable.installType] ?? cable.installType}`
+            : '';
           poly.bindTooltip(
-            `<b>${cable.type}</b><br/>${cable.fromId} → ${cable.toId}<br/>Длина: ${Math.round(cable.lengthM)} м${lane > 0 ? `<br/><i style=\"color:#94a3b8\">полоса ${lane}</i>` : ''}`,
+            `${cableTitle}<br/>${cable.fromId} → ${cable.toId}<br/>Длина: ${Math.round(cable.lengthM)} м${installNote}${lane > 0 ? `<br/><i style=\"color:#94a3b8\">полоса ${lane}</i>` : ''}`,
             { sticky: true, className: 'text-xs' },
           );
           poly.on('click', (e: any) => {
@@ -1000,6 +1009,30 @@ export default function LeafletMap(props: Props) {
   return (
     <div className="relative w-full h-full" style={{ position: 'absolute', inset: 0 }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'absolute', inset: 0 }} />
+
+      <GpsLocateButton
+        className="absolute bottom-[calc(118px+env(safe-area-inset-bottom))] md:bottom-auto md:top-14 right-2 md:right-3 z-[400]"
+        onLocated={(lat, lon, accuracyM) => {
+          propsRef.current.flyToRef?.current?.(lat, lon, 18);
+          import('leaflet').then((L) => {
+            const map = mapRef.current;
+            if (!map) return;
+            gpsMarkerRef.current?.remove();
+            gpsCircleRef.current?.remove();
+            const icon = L.divIcon({
+              className: '',
+              html: '<div style="width:14px;height:14px;border-radius:50%;background:#38bdf8;border:2px solid #fff;box-shadow:0 0 8px #38bdf8"></div>',
+              iconSize: [14, 14],
+              iconAnchor: [7, 7],
+            });
+            gpsMarkerRef.current = L.marker([lat, lon], { icon }).addTo(map)
+              .bindPopup('<b>Вы здесь</b>');
+            if (accuracyM && accuracyM < 200) {
+              gpsCircleRef.current = L.circle([lat, lon], { radius: accuracyM, color: '#38bdf8', fillOpacity: 0.08, weight: 1 }).addTo(map);
+            }
+          });
+        }}
+      />
 
       {/* Basemap switcher */}
       <div className="absolute bottom-[calc(58px+env(safe-area-inset-bottom))] md:bottom-auto md:top-3 right-2 md:right-3 flex flex-col gap-1 z-[400]">

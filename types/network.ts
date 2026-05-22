@@ -52,6 +52,18 @@ export interface Subscriber {
   minBandwidthMbps?: number;
 }
 
+/** Монтажный чеклист на объекте (ОРК / муфта) — для выездной приёмки. */
+export interface FieldChecklistItem {
+  id: string;
+  label: string;
+  done: boolean;
+}
+
+export interface FieldChecklist {
+  items: FieldChecklistItem[];
+  updatedAt?: string;
+}
+
 export interface ORK {
   id: string;
   lat: number;
@@ -62,6 +74,7 @@ export interface ORK {
   subscribers: Subscriber[];
   cableType: CableType;
   boxType: BoxType;
+  fieldChecklist?: FieldChecklist;
 }
 
 export type MuftaType = 'МТОК-96А' | 'МТОК-48А' | 'МТОК-32А' | 'FOSC-400' | 'ОМС-3В' | string;
@@ -79,6 +92,7 @@ export interface TransitBox {
   inCable: CableType;
   outCable: CableType;
   muftaType: MuftaType;
+  fieldChecklist?: FieldChecklist;
 }
 
 export interface OLT {
@@ -111,6 +125,14 @@ export function selectCableType(subs: number, sparePerSub = 1): CableType {
   return allowed.find((t) => CABLE_FIBERS[t] >= needed) ?? MAX_CABLE_TYPE;
 }
 
+export type CableInstallType = 'aerial' | 'duct' | 'ground';
+
+export const CABLE_INSTALL_LABELS: Record<CableInstallType, string> = {
+  aerial: 'Воздушная',
+  duct: 'В канализации',
+  ground: 'В грунте',
+};
+
 export interface Cable {
   id: string;
   type: CableType;
@@ -120,6 +142,11 @@ export interface Cable {
   coords: [number, number][];
   lengthM: number;
   routedByOSRM: boolean;
+  /** Человекочитаемое имя линии (для сметы и полевых бригад). */
+  displayName?: string;
+  installType?: CableInstallType;
+  /** Опоры для воздушной прокладки (≈1 на 40 м, если не задано). */
+  poleCount?: number;
 }
 
 export interface District {

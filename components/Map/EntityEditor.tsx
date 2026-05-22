@@ -10,6 +10,9 @@ import type { SubBudget } from '@/components/Network/PowerBudget';
 import type { InteriorView } from '@/components/Network/entityInterior';
 import { findEntityCoords, cableLinksForEntity } from '@/components/Network/entityInterior';
 import { NetworkInteriorEmbed } from '@/components/Map/NetworkInterior';
+import FieldChecklistPanel from '@/components/Field/FieldChecklistPanel';
+import QrPassportLink from '@/components/Field/QrPassportLink';
+import { ensureFieldChecklist, DEFAULT_ORK_CHECKLIST, DEFAULT_TB_CHECKLIST } from '@/lib/fieldChecklist';
 
 export type EntitySelection =
   | { kind: 'olt'; id: string }
@@ -249,9 +252,15 @@ export default function EntityEditor({
       } else return null;
     } else {
       title = tb.id;
+      const tbCheck = ensureFieldChecklist(tb.fieldChecklist, DEFAULT_TB_CHECKLIST);
       propsPanel = (
         <>
           <TBEditor tb={tb} onSave={(patch) => onUpdateTB(tb.id, patch)} />
+          <FieldChecklistPanel
+            checklist={tbCheck}
+            onChange={(next) => onUpdateTB(tb.id, { fieldChecklist: next })}
+          />
+          <QrPassportLink kind="tb" id={tb.id} />
           <button type="button" onClick={() => onOpenSplicePlan(tb.id)}
             className="w-full py-1.5 mt-2 border border-[#38bdf8]/30 text-[#38bdf8] text-[11px] rounded">
             🔗 Сплайс-план
@@ -265,11 +274,19 @@ export default function EntityEditor({
     const ork = findORK(districts, sel.id);
     if (!ork) return null;
     title = ork.id;
+    const orkCheck = ensureFieldChecklist(ork.fieldChecklist, DEFAULT_ORK_CHECKLIST);
     propsPanel = (
-      <ORKEditor ork={ork} districts={districts}
-        onSave={(patch) => onUpdateORK(ork.id, patch)}
-        onReassign={(newTbId) => onReassignORK(ork.id, newTbId)}
-      />
+      <>
+        <ORKEditor ork={ork} districts={districts}
+          onSave={(patch) => onUpdateORK(ork.id, patch)}
+          onReassign={(newTbId) => onReassignORK(ork.id, newTbId)}
+        />
+        <FieldChecklistPanel
+          checklist={orkCheck}
+          onChange={(next) => onUpdateORK(ork.id, { fieldChecklist: next })}
+        />
+        <QrPassportLink kind="ork" id={ork.id} />
+      </>
     );
     onDelete = () => { onDeleteORK(ork.id); onClose(); };
     deleteWarn = `Удалит ${ork.subscribers.length} камер`;

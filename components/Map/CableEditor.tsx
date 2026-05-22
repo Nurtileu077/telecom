@@ -1,12 +1,15 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { Cable, CABLE_SIZES, CABLE_COLORS } from '@/types/network';
+import { Cable, CABLE_SIZES, CABLE_COLORS, CableInstallType, CABLE_INSTALL_LABELS } from '@/types/network';
+import { suggestCableDisplayName, defaultPoleCount } from '@/lib/cableNaming';
 import { TIA_598_COLORS, tubeCount, fibersPerTube } from '@/components/Network/FiberColors';
 
 interface Props {
   cable: Cable | null;
+  districts?: import('@/types/network').District[];
   onClose: () => void;
   onUpdateType: (id: string, type: Cable['type']) => void;
+  onUpdateMeta?: (id: string, patch: Partial<Pick<Cable, 'displayName' | 'installType' | 'poleCount'>>) => void;
   onRerouteOSRM: (id: string) => void;
   onToggleWaypoints: (id: string | null) => void;
   onDelete: (id: string) => void;
@@ -21,14 +24,25 @@ function Dot({ type }: { type: string }) {
   return <span className="inline-block w-2.5 h-2.5 rounded-full mr-1.5" style={{ background: color }} />;
 }
 
+const INSTALL_TYPES: CableInstallType[] = ['aerial', 'duct', 'ground'];
+
 export default function CableEditor({
-  cable, onClose, onUpdateType, onRerouteOSRM, onToggleWaypoints, onDelete, waypointEditing, rerouteStatus, onStartConnect,
+  cable, districts = [], onClose, onUpdateType, onUpdateMeta, onRerouteOSRM, onToggleWaypoints, onDelete, waypointEditing, rerouteStatus, onStartConnect,
 }: Props) {
   const [type, setType] = useState<Cable['type']>(cable?.type ?? 'ОК-4');
+  const [displayName, setDisplayName] = useState('');
+  const [installType, setInstallType] = useState<CableInstallType | ''>('');
+  const [poleCount, setPoleCount] = useState('');
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
-    if (cable) { setType(cable.type); setDirty(false); }
+    if (cable) {
+      setType(cable.type);
+      setDisplayName(cable.displayName ?? '');
+      setInstallType(cable.installType ?? '');
+      setPoleCount(cable.poleCount != null ? String(cable.poleCount) : '');
+      setDirty(false);
+    }
   }, [cable?.id]);
 
   if (!cable) return null;
@@ -43,7 +57,9 @@ export default function CableEditor({
         <div className="flex items-center gap-2">
           <Dot type={cable.type} />
           <span className="text-xs font-semibold text-[#e2e8f0]">Кабель</span>
-          <span className="text-[10px] text-[#64748b] font-mono">{cable.fromId} → {cable.toId}</span>
+          <span className="text-[10px] text-[#64748b] font-mono truncate max-w-[140px]">
+            {cable.displayName || `${cable.fromId} → ${cable.toId}`}
+          </span>
         </div>
         <button onClick={onClose} className="text-[#64748b] hover:text-white transition-colors px-1">×</button>
       </div>
@@ -65,6 +81,72 @@ export default function CableEditor({
             <div className="text-[#64748b] mt-0.5">точек</div>
           </div>
         </div>
+
+        {onUpdateMeta && (
+          <div className="space-y-2">
+            <div>
+              <div className="text-[10px] text-[#64748b] mb-1">Название линии</div>
+              <div className="flex gap-1">
+                <input
+                  value={displayName}
+                  onChange={(e) => { setDisplayName(e.target.value); setDirty(true); }}
+                  placeholder={suggestCableDisplayName(cable, districts)}
+                  className="flex-1 bg-[#0a0e1a] border border-[#1e3a5f] rounded px-2 py-1 text-xs text-[#e2e8f0]"
+                />
+                <button
+                  type="button"
+                  className="text-[10px] px-2 border border-[#1e3a5f] rounded text-[#94a3b8] hover:text-[#e2e8f0]"
+                  onClick={() => { setDisplayName(suggestCableDisplayName(cable, districts)); setDirty(true); }}
+                >
+                  Авто
+                </button>
+              </div>
+            </div>
+            <div>
+              <div className="text-[10px] text-[#64748b] mb-1">Прокладка</div>
+              <select
+                value={installType}
+                onChange={(e) => { setInstallType(e.target.value as CableInstallType | ''); setDirty(true); }}
+                className="w-full bg-[#0a0e1a] border border-[#1e3a5f] rounded px-2 py-1 text-xs text-[#e2e8f0]"
+              >
+                <option value="">— не указано —</option>
+                {INSTALL_TYPES.map((t) => (
+                  <option key={t} value={t}>{CABLE_INSTALL_LABELS[t]}</option>
+                ))}
+              </select>
+            </div>
+            {installType === 'aerial' && (
+              <div>
+                <div className="text-[10px] text-[#64748b] mb-1">Опоры (шт.)</div>
+                <input
+                  type="number"
+                  min={0}
+                  value={poleCount}
+                  onChange={(e) => { setPoleCount(e.target.value); setDirty(true); }}
+                  placeholder={String(defaultPoleCount(cable.lengthM))}
+                  className="w-full bg-[#0a0e1a] border border-[#1e3a5f] rounded px-2 py-1 text-xs text-[#e2e8f0]"
+                />
+              </div>
+            )}
+            <button
+              type="button"
+              disabled={!dirty}
+              onClick={() => {
+                onUpdateMeta(cable.id, {
+                  displayName: displayName.trim() || undefined,
+                  installType: installType || undefined,
+                  poleCount: installType === 'aerial'
+                    ? (parseInt(poleCount, 10) || defaultPoleCount(cable.lengthM))
+                    : undefined,
+                });
+                setDirty(false);
+              }}
+              className="w-full py-1.5 bg-[#a78bfa]/15 disabled:opacity-30 text-[#a78bfa] text-xs rounded"
+            >
+              Сохранить свойства линии
+            </button>
+          </div>
+        )}
 
         {/* Type selector */}
         <div>

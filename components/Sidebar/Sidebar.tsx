@@ -20,7 +20,9 @@ import ToolsTab from './ToolsTab';
 import GeocodeSearch from '@/components/Geocoding/GeocodeSearch';
 import BudgetTab from './BudgetTab';
 import type { SubBudget, BudgetStats } from '@/components/Network/PowerBudget';
-import type { ProjectSnapshot, ProjectStatus, InlineJoint } from '@/types/network';
+import type { ProjectSnapshot, ProjectStatus, InlineJoint, ProjectSettings } from '@/types/network';
+import type { SearchHit } from '@/lib/entitySearch';
+import EntityIdSearch from '@/components/Search/EntityIdSearch';
 import type { BBox } from '@/components/Network/Selection';
 
 type Tab = 'layers' | 'materials' | 'schema' | 'groups' | 'notes' | 'stats' | 'projects' | 'cost' | 'tools' | 'budget';
@@ -100,6 +102,8 @@ interface Props {
   restoreSnapshot: (id: string) => void;
   deleteSnapshot: (id: string) => void;
   hasNetwork: boolean;
+  settings?: ProjectSettings;
+  onSearchHit?: (hit: SearchHit) => void;
   onMobileClose?: () => void;
   /** Не закрывать drawer при переключении вкладок (мобилка). */
   mobilePersist?: boolean;
@@ -205,8 +209,18 @@ export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Prop
           </button>
         )}
 
-        <div className="md:hidden px-3 py-2 border-b border-[var(--border)]">
+        <div className="md:hidden px-3 py-2 border-b border-[var(--border)] space-y-2">
           <GeocodeSearch flyTo={props.flyTo} className="relative block w-full" />
+          {props.onSearchHit && (
+            <EntityIdSearch
+              districts={props.districts}
+              cables={props.cables}
+              joints={props.joints}
+              flyTo={props.flyTo}
+              onSelectHit={props.onSearchHit}
+              className="relative block w-full"
+            />
+          )}
         </div>
 
         <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
@@ -230,7 +244,17 @@ export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Prop
           {activeTab === 'stats' && <StatsTab districts={props.districts} cables={props.cables} issues={props.validationIssues} />}
           {activeTab === 'schema' && <SchemaTab districts={props.districts} flyTo={props.flyTo} />}
           {activeTab === 'groups' && <GroupsTab districts={props.districts} flyTo={props.flyTo} />}
-          {activeTab === 'cost' && <CostTab materials={props.materials} prices={props.prices} setPrices={props.setPrices} />}
+          {activeTab === 'cost' && (
+            <CostTab
+              materials={props.materials}
+              prices={props.prices}
+              setPrices={props.setPrices}
+              districts={props.districts}
+              cables={props.cables}
+              joints={props.joints}
+              settings={props.settings}
+            />
+          )}
           {activeTab === 'tools' && (
             <ToolsTab
               onShowHeatmap={() => props.setHeatmapEnabled(!props.heatmapEnabled)}

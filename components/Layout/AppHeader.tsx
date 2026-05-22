@@ -5,6 +5,9 @@ import {
 } from 'lucide-react';
 import Logo from '@/components/Brand/Logo';
 import GeocodeSearch from '@/components/Geocoding/GeocodeSearch';
+import EntityIdSearch from '@/components/Search/EntityIdSearch';
+import type { District, Cable, InlineJoint } from '@/types/network';
+import type { SearchHit } from '@/lib/entitySearch';
 import { PROJECT_STATUS_LABELS, ProjectStatus } from '@/types/network';
 
 export type PlacingMode = 'olt' | 'tb' | 'ork' | null;
@@ -60,6 +63,10 @@ interface Props {
   onToggleChat: () => void;
   onMenuToggle?: () => void;
   mobileMenuOpen?: boolean;
+  districts?: District[];
+  cables?: Cable[];
+  joints?: InlineJoint[];
+  onSearchHit?: (hit: SearchHit) => void;
 }
 
 export default function AppHeader(p: Props) {
@@ -98,7 +105,17 @@ export default function AppHeader(p: Props) {
         ))}
       </select>
 
-      <GeocodeSearch flyTo={p.flyTo} />
+      <GeocodeSearch flyTo={p.flyTo} className="hidden sm:block" />
+      {p.districts && p.onSearchHit && (
+        <EntityIdSearch
+          districts={p.districts}
+          cables={p.cables ?? []}
+          joints={p.joints}
+          flyTo={p.flyTo}
+          onSelectHit={p.onSearchHit}
+          className="hidden md:block"
+        />
+      )}
 
       <div className="hidden lg:flex items-center gap-1 flex-wrap">
         <span className="chip chip-accent">{p.totalSubscribers} аб.</span>

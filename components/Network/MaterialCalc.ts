@@ -13,10 +13,12 @@ export function calculateMaterials(
   // Build cables object dynamically
   const cablesByType = {} as Record<CableType, number>;
   for (const t of CABLE_SIZES) cablesByType[t] = 0;
+  let aerialInstallM = 0;
   for (const c of cables) {
     if (cablesByType[c.type] !== undefined) {
       cablesByType[c.type] = (cablesByType[c.type] || 0) + c.lengthM * reserve;
     }
+    if (c.installType === 'aerial') aerialInstallM += c.lengthM * reserve;
   }
   const totalM = Object.values(cablesByType).reduce((a, b) => a + b, 0);
   const totalKm = totalM / 1000;
@@ -51,10 +53,15 @@ export function calculateMaterials(
   const pigtailSCAPC = totalMufta * 12 + subCount;
   const kdzsGilzy = Math.ceil(totalKm * 4) + 200;
   // Use distribution cables (ОК-8 and above) for clamp estimation
-  const aerialM = (cablesByType['ОК-8'] || 0) + (cablesByType['ОК-12'] || 0) +
-    (cablesByType['ОК-16'] || 0) + (cablesByType['ОК-24'] || 0) +
-    (cablesByType['ОК-32'] || 0) + (cablesByType['ОК-48'] || 0) + (cablesByType['ОК-96'] || 0);
-  const clamps = Math.ceil(aerialM / 50);
+  const aerialM = aerialInstallM > 0
+    ? aerialInstallM
+    : (cablesByType['ОК-8'] || 0) + (cablesByType['ОК-12'] || 0) +
+      (cablesByType['ОК-16'] || 0) + (cablesByType['ОК-24'] || 0) +
+      (cablesByType['ОК-32'] || 0) + (cablesByType['ОК-48'] || 0) + (cablesByType['ОК-96'] || 0);
+  const poleClamps = cables
+    .filter((c) => c.installType === 'aerial' && c.poleCount)
+    .reduce((s, c) => s + (c.poleCount ?? 0), 0);
+  const clamps = poleClamps > 0 ? poleClamps : Math.ceil(aerialM / 50);
   const cable_reserve_m = totalM - (totalM / reserve);
 
   return {

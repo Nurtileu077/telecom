@@ -526,6 +526,34 @@ body {
   min-width: 180px;
 }
 .search-pill:focus-within { border-color: color-mix(in srgb, var(--accent) 45%, transparent); box-shadow: 0 0 0 3px var(--accent-dim); }
+
+.map-gps-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  color: var(--accent);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+.map-gps-btn:hover:not(:disabled) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--bg-surface)); }
+.map-gps-btn:disabled { opacity: 0.6; }
+.map-gps-err {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  margin-top: 4px;
+  max-width: 160px;
+  font-size: 9px;
+  color: #f87171;
+  background: var(--bg-surface);
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
 .stepper-dot {
   width: 22px;
   height: 22px;

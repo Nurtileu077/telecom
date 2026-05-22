@@ -25,6 +25,8 @@ import { validateForExport, formatValidationSummary } from '@/components/Network
 import type { CableLinkEnd } from '@/hooks/useNetwork';
 import type { InteriorView } from '@/components/Network/entityInterior';
 import { findEntityCoords, findSubscriber } from '@/components/Network/entityInterior';
+import { parseDeepLinkOpen, type SearchHit } from '@/lib/entitySearch';
+import EntityIdSearch from '@/components/Search/EntityIdSearch';
 import MobileDock from '@/components/Layout/MobileDock';
 import MobileActionSheet from '@/components/Layout/MobileActionSheet';
 import PwaInstallBanner from '@/components/Layout/PwaInstallBanner';
@@ -464,6 +466,43 @@ export default function HomePage() {
     handleFlyToEntity('joint', jointId);
   }, [handleFlyToEntity]);
 
+  const handleSearchHit = useCallback((hit: SearchHit) => {
+    if (hit.kind === 'sub') {
+      handleFlyToSubscriber(hit.id);
+      return;
+    }
+    if (hit.kind === 'cable') {
+      setSelectedCableId(hit.id);
+      setEntitySelection(null);
+      setInteriorView(null);
+      return;
+    }
+    if (hit.kind === 'joint') {
+      handleJointClick(hit.id);
+      return;
+    }
+    handleNavigateInterior(hit.kind, hit.id);
+    handleFlyToEntity(hit.kind, hit.id);
+  }, [handleFlyToSubscriber, handleJointClick, handleNavigateInterior, handleFlyToEntity]);
+
+  const deepLinkHandled = useRef(false);
+  useEffect(() => {
+    if (deepLinkHandled.current || typeof window === 'undefined' || net.districts.length === 0) return;
+    const open = parseDeepLinkOpen(new URLSearchParams(window.location.search).get('open'));
+    if (!open) return;
+    deepLinkHandled.current = true;
+    if (open.kind === 'sub') {
+      handleFlyToSubscriber(open.id);
+      return;
+    }
+    if (open.kind === 'joint') {
+      handleJointClick(open.id);
+      return;
+    }
+    handleNavigateInterior(open.kind, open.id);
+    handleFlyToEntity(open.kind, open.id);
+  }, [net.districts.length, handleFlyToSubscriber, handleJointClick, handleNavigateInterior, handleFlyToEntity]);
+
   return (
     <div className="app-shell flex flex-col overflow-hidden">
       <AppHeader
@@ -530,6 +569,10 @@ export default function HomePage() {
         onToggleChat={() => setShowChat((v) => !v)}
         onMenuToggle={() => setMobileMenuOpen((v) => !v)}
         mobileMenuOpen={mobileMenuOpen}
+        districts={net.districts}
+        cables={net.cables}
+        joints={net.joints}
+        onSearchHit={handleSearchHit}
       />
 
       <div className="flex flex-1 overflow-hidden relative min-h-0">
@@ -596,6 +639,8 @@ export default function HomePage() {
           restoreSnapshot={net.restoreSnapshot}
           deleteSnapshot={net.deleteSnapshot}
           hasNetwork={net.districts.length > 0}
+          settings={net.settings}
+          onSearchHit={handleSearchHit}
         />
         </div>
 
@@ -735,8 +780,10 @@ export default function HomePage() {
 
           <CableEditor
             cable={selectedCableId ? (net.cables.find((c) => c.id === selectedCableId) ?? null) : null}
+            districts={net.districts}
             onClose={() => { setSelectedCableId(null); setEditingCableId(null); }}
             onUpdateType={(id, type) => net.updateCable(id, { type })}
+            onUpdateMeta={(id, patch) => net.updateCable(id, patch)}
             onRerouteOSRM={(id) => net.rerouteSingleCable(id)}
             onToggleWaypoints={(id) => setEditingCableId(id)}
             onDelete={net.deleteCable}
