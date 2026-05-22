@@ -22,7 +22,7 @@ export function calculateCost(materials: Materials, prices: PriceCatalog): CostB
   const equipment = [
     { name: 'OLT Huawei MA5800-X7', qty: materials.equipment.oltUnits, unit: 'шт', unitPrice: prices.olt, total: materials.equipment.oltUnits * prices.olt },
     { name: 'Сплиттер 1:4', qty: materials.equipment.splitter_1x4_L1 + materials.equipment.splitter_1x4_L2, unit: 'шт', unitPrice: prices.splitter_1x4, total: (materials.equipment.splitter_1x4_L1 + materials.equipment.splitter_1x4_L2) * prices.splitter_1x4 },
-    { name: 'Сплиттер 1:8', qty: materials.equipment.splitter_1x8_L2, unit: 'шт', unitPrice: prices.splitter_1x8, total: materials.equipment.splitter_1x8_L2 * prices.splitter_1x8 },
+    { name: 'Сплиттер 1:8', qty: materials.equipment.splitter_1x8_L1 + materials.equipment.splitter_1x8_L2, unit: 'шт', unitPrice: prices.splitter_1x8, total: (materials.equipment.splitter_1x8_L1 + materials.equipment.splitter_1x8_L2) * prices.splitter_1x8 },
     { name: 'Сплиттер 1:16', qty: materials.equipment.splitter_1x16_L2, unit: 'шт', unitPrice: prices.splitter_1x16, total: materials.equipment.splitter_1x16_L2 * prices.splitter_1x16 },
     { name: 'Муфта МТОК-96А', qty: materials.equipment.muftaMTOK96A, unit: 'шт', unitPrice: prices.mufta, total: materials.equipment.muftaMTOK96A * prices.mufta },
     { name: 'Бокс распределительный', qty: materials.equipment.boksCount, unit: 'шт', unitPrice: prices.boks, total: materials.equipment.boksCount * prices.boks },

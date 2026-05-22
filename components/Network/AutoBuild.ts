@@ -1,6 +1,6 @@
 import {
   Subscriber, ORK, TransitBox, OLT, Cable, District, ProjectSettings, DISTRICT_COLORS,
-  CABLE_FIBERS, selectCableType, CableType,
+  CABLE_FIBERS, CABLE_SIZES, CableType, SplitterRatio,
 } from '@/types/network';
 import { kmeans, centroid, haversineM, Point } from './KMeans';
 
@@ -40,22 +40,39 @@ function capClusters(clusters: Point[][], maxSize: number, maxRadiusM = Infinity
   return out;
 }
 
-// GPON fiber requirements (per logical hop):
-//   OLT → TB:  one fiber per ORK served (carries pre-splitter signal) + spare
-//   TB  → ORK: one fiber (входное волокно для L2-сплиттера) + 1 резерв = ОК-4 хватает всегда
-//   ORK → sub: один drop (ОК-4) до абонента; реально работают 1–2 волокна
-function trunkCableType(orkCount: number): CableType {
-  // 1 fiber per ORK + 100% spare, минимум ОК-4
-  const needed = Math.max(2, orkCount * 2);
-  return selectCableType(orkCount, 1) === 'ОК-4' && needed <= 4 ? 'ОК-4' : selectCableType(orkCount, 1);
+// Каскад сплиттеров под жёсткие 64 камеры на порт OLT.
+// L1 (ОМСП-муфта) × L2 (ОРКСП) = 1:64:
+//   L2 1:16 → L1 1:4  (4 ОРКСП × 16 камер = 64)
+//   L2 1:8  → L1 1:8  (8 ОРКСП × 8  камер = 64)
+// Выбор каскада идёт от L2-сплиттера (settings.defaultSplitter), который задаётся
+// на импорте/в настройках. По умолчанию 1:8 → каскад 1:8×1:8.
+interface Cascade { l1: SplitterRatio; l2: SplitterRatio; orksPerTb: number; camsPerOrk: number }
+function resolveCascade(settings: ProjectSettings): Cascade {
+  const l2 = settings.defaultSplitter ?? '1:8';
+  if (l2 === '1:16') return { l1: '1:4', l2: '1:16', orksPerTb: 4, camsPerOrk: 16 };
+  return { l1: '1:8', l2: '1:8', orksPerTb: 8, camsPerOrk: 8 };
 }
 
-// Choose ORK position on the boundary closest to the parent TB (so trunk
-// terminates at the road edge rather than deep in the cluster).
-function pickOrkAnchor(subs: Subscriber[]): { lat: number; lon: number } {
-  if (subs.length === 1) return { lat: subs[0].lat, lon: subs[0].lon };
-  // centroid is already a fine logical center; just return it
-  return centroid(subs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id })));
+// Ёмкость кабеля на сегмент по числу камер ниже по течению: 2 волокна на камеру
+// (1 рабочее + 1 резерв). Одиночная камера → ОК-4. Группа → минимум ОК-8, далее
+// по N×2. Потолок ОК-48 (ОК-96 в проекте не используется).
+function cableForCameras(n: number): CableType {
+  if (n <= 1) return 'ОК-4';
+  const needed = Math.max(8, n * 2);
+  const allowed = CABLE_SIZES.filter((t) => t !== 'ОК-96');
+  return allowed.find((t) => CABLE_FIBERS[t] >= needed) ?? 'ОК-48';
+}
+
+// Камера кластера, ближайшая к точке (ОМСП-муфте/магистрали) — на ней ставится
+// шкаф ОРКСП, от него «куст» расходится на остальные камеры.
+function nearestSubTo(subs: Subscriber[], lat: number, lon: number): Subscriber {
+  let best = subs[0];
+  let bd = Infinity;
+  for (const s of subs) {
+    const d = haversineM(s.lat, s.lon, lat, lon);
+    if (d < bd) { bd = d; best = s; }
+  }
+  return best;
 }
 
 // Place TB at the median position of its ORKs projected toward the OLT axis.
@@ -111,6 +128,9 @@ function slugForId(districtName: string): string {
 }
 
 // Build the network rooted at a single OLT for one (sub-)district.
+// Строгое дерево с каскадным сплиттированием: на порт OLT — ровно 64 камеры
+// (L1 ОМСП-муфта × L2 ОРКСП = 1:64). Шкаф ОРКСП ставится у первой камеры куста
+// (ближайшей к своей ОМСП-муфте). Ёмкость кабелей — 2 волокна на камеру.
 function buildSingleOlt(
   districtName: string,
   color: string,
@@ -121,6 +141,7 @@ function buildSingleOlt(
   cables: Cable[],
 ): District {
   const slug = slugForId(districtName);
+  const cascade = resolveCascade(settings);
   const olt: OLT = {
     id: `OLT-${slug}${oltSuffix}`,
     lat: oltPos.lat,
@@ -129,90 +150,86 @@ function buildSingleOlt(
     model: 'Huawei MA5800-X7',
     capacity: 64,
     transitBoxes: [],
-    l1Splitter: '1:4',
+    l1Splitter: cascade.l1,
   };
 
-  // Cluster subscribers into ORKs (с жёстким ограничением размера: ≤ maxPerORK
-  // камер на ОРКСП — иначе перегруз портов и длинные дропы).
-  const kOrk = Math.max(1, Math.ceil(subs.length / settings.maxPerORK));
+  // === Шаг 1. Камеры → кусты ОРКСП (≤ camsPerOrk = число портов L2). ===
+  const kOrk = Math.max(1, Math.ceil(subs.length / cascade.camsPerOrk));
   const { clusters: orkClustersRaw } = kmeans(
     subs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id })),
     kOrk,
   );
-  // Радиус-лимит ОРКСП по умолчанию выключен (короткие дропы = в 2–3 раза больше
-  // шкафов). Включается через settings.maxOrkRadiusM, если нужно.
-  const orkClusters = capClusters(orkClustersRaw, settings.maxPerORK, settings.maxOrkRadiusM ?? Infinity);
+  // Радиус-лимит ОРКСП по умолчанию выключен; включается через settings.maxOrkRadiusM.
+  const orkClusters = capClusters(orkClustersRaw, cascade.camsPerOrk, settings.maxOrkRadiusM ?? Infinity);
 
-  const orks: ORK[] = [];
-  const updatedSubs: Subscriber[] = [];
-
-  for (let i = 0; i < orkClusters.length; i++) {
-    const cluster = orkClusters[i];
+  // Черновики ОРКСП: финальная позиция (= первая камера у муфты) ставится
+  // после кластеризации в ОМСП-муфты, поэтому пока держим центроид.
+  interface OrkDraft { id: string; centroid: { lat: number; lon: number }; subs: Subscriber[] }
+  const drafts: OrkDraft[] = [];
+  let orkIdx = 0;
+  for (const cluster of orkClusters) {
     if (cluster.length === 0) continue;
-    const orkSubsRaw: Subscriber[] = cluster
+    const orkSubs = cluster
       .map((p) => subs.find((s) => s.id === p.id))
       .filter(Boolean) as Subscriber[];
-    const orkAnchor = pickOrkAnchor(orkSubsRaw);
-    const orkId = `Бокс-${slug}${oltSuffix}-${i + 1}`;
-    // Default L2-сплиттер из настроек проекта (выбран пользователем на импорте);
-    // если он явно меньше чем нужно для кластера, поднимаем минимально.
-    const userSplitter = settings.defaultSplitter ?? '1:8';
-    const minByCluster: '1:4' | '1:8' | '1:16' =
-      cluster.length <= 4 ? '1:4' : cluster.length <= 8 ? '1:8' : '1:16';
-    const order = ['1:2', '1:4', '1:8', '1:16', '1:32', '1:64'] as const;
-    const splitter = order.indexOf(userSplitter) > order.indexOf(minByCluster)
-      ? userSplitter
-      : minByCluster;
-
-    const updatedOrkSubs = orkSubsRaw.map((s) => ({ ...s, orkId }));
-    updatedSubs.push(...updatedOrkSubs);
-
-    const orkSubCount = updatedOrkSubs.length;
-    orks.push({
-      id: orkId,
-      lat: orkAnchor.lat,
-      lon: orkAnchor.lon,
-      district: districtName,
-      splitter,
-      tbId: '',
-      subscribers: updatedOrkSubs,
-      cableType: 'ОК-4',
-      boxType: orkSubCount <= 4 ? 'Бокс-8' : orkSubCount <= 8 ? 'Бокс-16' : 'ОРКСп-16',
+    if (orkSubs.length === 0) continue;
+    orkIdx++;
+    drafts.push({
+      id: `Бокс-${slug}${oltSuffix}-${orkIdx}`,
+      centroid: centroid(orkSubs.map((s) => ({ lat: s.lat, lon: s.lon, id: s.id }))),
+      subs: orkSubs,
     });
   }
 
-  // Cluster ORKs into Transit Boxes (≤ maxORKperTB ОРКСП на муфту).
-  const kTB = Math.max(1, Math.ceil(orks.length / settings.maxORKperTB));
+  // === Шаг 2. Кусты ОРКСП → ОМСП-муфты (≤ orksPerTb = число портов L1). ===
+  // orksPerTb × camsPerOrk = 64 камеры на муфту = один порт OLT.
+  const kTB = Math.max(1, Math.ceil(drafts.length / cascade.orksPerTb));
   const { clusters: tbClustersRaw } = kmeans(
-    orks.map((o) => ({ lat: o.lat, lon: o.lon, id: o.id })),
+    drafts.map((d) => ({ lat: d.centroid.lat, lon: d.centroid.lon, id: d.id })),
     kTB,
   );
-  const tbClusters = capClusters(tbClustersRaw, settings.maxORKperTB);
+  const tbClusters = capClusters(tbClustersRaw, cascade.orksPerTb);
 
   const transitBoxes: TransitBox[] = [];
+  const updatedSubs: Subscriber[] = [];
+  let tbIdx = 0;
 
-  for (let i = 0; i < tbClusters.length; i++) {
-    const cluster = tbClusters[i];
+  for (const cluster of tbClusters) {
     if (cluster.length === 0) continue;
-    const tbId = `Муфта-${slug}${oltSuffix}-${i + 1}`;
+    tbIdx++;
+    const tbId = `Муфта-${slug}${oltSuffix}-${tbIdx}`;
 
-    const tbOrks = cluster
-      .map((p) => orks.find((o) => o.id === p.id))
-      .filter(Boolean) as ORK[];
-
-    const updatedTBOrks = tbOrks.map((o) => ({ ...o, tbId }));
-    for (const o of updatedTBOrks) {
-      const idx = orks.findIndex((x) => x.id === o.id);
-      if (idx >= 0) orks[idx] = o;
-    }
+    const tbDrafts = cluster
+      .map((p) => drafts.find((d) => d.id === p.id))
+      .filter(Boolean) as OrkDraft[];
+    if (tbDrafts.length === 0) continue;
 
     const tbAnchor = pickTbAnchor(
-      updatedTBOrks.map((o) => ({ lat: o.lat, lon: o.lon })),
+      tbDrafts.map((d) => d.centroid),
       olt.lat, olt.lon,
     );
 
-    const trunkType = trunkCableType(updatedTBOrks.length);
-    const tbToOrkType: CableType = 'ОК-4';
+    const tbOrks: ORK[] = [];
+    let camsInTb = 0;
+    for (const d of tbDrafts) {
+      // Шкаф ОРКСП — на камере, ближайшей к ОМСП-муфте (первая в кусте).
+      const first = nearestSubTo(d.subs, tbAnchor.lat, tbAnchor.lon);
+      const orkSubs = d.subs.map((s) => ({ ...s, orkId: d.id }));
+      updatedSubs.push(...orkSubs);
+      camsInTb += orkSubs.length;
+      const cnt = orkSubs.length;
+      tbOrks.push({
+        id: d.id,
+        lat: first.lat,
+        lon: first.lon,
+        district: districtName,
+        splitter: cascade.l2,
+        tbId,
+        subscribers: orkSubs,
+        cableType: 'ОК-4',
+        boxType: cnt <= 4 ? 'Бокс-8' : cnt <= 8 ? 'Бокс-16' : 'ОРКСп-16',
+      });
+    }
 
     const tb: TransitBox = {
       id: tbId,
@@ -220,21 +237,24 @@ function buildSingleOlt(
       lon: tbAnchor.lon,
       district: districtName,
       oltId: olt.id,
-      orks: updatedTBOrks,
-      inCable: trunkType,
-      outCable: tbToOrkType,
+      orks: tbOrks,
+      inCable: cableForCameras(camsInTb),
+      outCable: 'ОК-4',
       muftaType: 'МТОК-96А',
     };
     transitBoxes.push(tb);
 
-    cables.push(makeCable(trunkType, olt.id, tbId, [
+    // OLT → ОМСП-муфта (L1): 2 волокна на каждую камеру порта (резерв home-run).
+    cables.push(makeCable(cableForCameras(camsInTb), olt.id, tbId, [
       [olt.lat, olt.lon], [tb.lat, tb.lon],
     ]));
 
-    for (const ork of updatedTBOrks) {
-      cables.push(makeCable(tbToOrkType, tbId, ork.id, [
+    for (const ork of tbOrks) {
+      // ОМСП-муфта → ОРКСП: 2 волокна на каждую камеру куста.
+      cables.push(makeCable(cableForCameras(ork.subscribers.length), tbId, ork.id, [
         [tb.lat, tb.lon], [ork.lat, ork.lon],
       ]));
+      // ОРКСП → камера: дроп ОК-4 (1 рабочее + 1 резерв из 4 волокон).
       for (const sub of ork.subscribers) {
         cables.push(makeCable('ОК-4', ork.id, sub.id, [
           [ork.lat, ork.lon], [sub.lat, sub.lon],

@@ -25,6 +25,9 @@ export function calculateMaterials(
 
   const oltUnits = districts.length;
 
+  // L1-сплиттер ставится в каждой ОМСП-муфте (один на порт OLT), а не один на OLT.
+  let splitter_1x4_L1 = 0;
+  let splitter_1x8_L1 = 0;
   let splitter_1x4_L2 = 0;
   let splitter_1x8_L2 = 0;
   let splitter_1x16_L2 = 0;
@@ -33,8 +36,11 @@ export function calculateMaterials(
   let subCount = 0;
 
   for (const d of districts) {
+    const l1 = d.olt.l1Splitter;
     for (const tb of d.olt.transitBoxes) {
       tbCount++;
+      if (l1 === '1:8') splitter_1x8_L1++;
+      else splitter_1x4_L1++;
       for (const ork of tb.orks) {
         orkCount++;
         if (ork.splitter === '1:4') splitter_1x4_L2++;
@@ -78,7 +84,8 @@ export function calculateMaterials(
     },
     equipment: {
       oltUnits,
-      splitter_1x4_L1: oltUnits,
+      splitter_1x4_L1,
+      splitter_1x8_L1,
       splitter_1x4_L2,
       splitter_1x8_L2,
       splitter_1x16_L2,

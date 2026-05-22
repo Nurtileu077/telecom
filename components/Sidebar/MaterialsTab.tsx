@@ -109,13 +109,15 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
 
   const equipRows: Row[] = [
     { category: '', name: 'OLT', spec: 'Huawei MA5800-X7', qty: materials.equipment.oltUnits, unit: 'шт' },
-    { category: '', name: 'Сплиттер L1', spec: 'PLC 1:4 SC/APC', qty: materials.equipment.splitter_1x4_L1, unit: 'шт' },
+    { category: '', name: 'Сплиттер L1 1:4', spec: 'PLC 1:4 SC/APC', qty: materials.equipment.splitter_1x4_L1, unit: 'шт' },
+    { category: '', name: 'Сплиттер L1 1:8', spec: 'PLC 1:8 SC/APC', qty: materials.equipment.splitter_1x8_L1, unit: 'шт' },
     { category: '', name: 'Сплиттер L2 1:4', spec: 'PLC 1:4 SC/APC', qty: materials.equipment.splitter_1x4_L2, unit: 'шт' },
     { category: '', name: 'Сплиттер L2 1:8', spec: 'PLC 1:8 SC/APC', qty: materials.equipment.splitter_1x8_L2, unit: 'шт' },
+    { category: '', name: 'Сплиттер L2 1:16', spec: 'PLC 1:16 SC/APC', qty: materials.equipment.splitter_1x16_L2, unit: 'шт' },
     { category: '', name: 'Муфта транзитная', spec: 'МТОК-96А IP68', qty: materials.equipment.muftaMTOK96A, unit: 'шт' },
     { category: '', name: 'Бокс распределительный', spec: 'IP55', qty: materials.equipment.boksCount, unit: 'шт' },
     { category: '', name: 'ONT терминал', spec: 'ZTE F601', qty: materials.equipment.ontZTE_F601, unit: 'шт' },
-  ];
+  ].filter((r) => r.qty > 0);
 
   const mountRows: Row[] = [
     { category: '', name: 'Пигтейл', spec: 'SC/APC 1м G.657A', qty: materials.equipment.pigtailSCAPC, unit: 'шт' },

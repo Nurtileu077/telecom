@@ -318,6 +318,7 @@ export interface Materials {
   equipment: {
     oltUnits: number;
     splitter_1x4_L1: number;
+    splitter_1x8_L1: number;
     splitter_1x4_L2: number;
     splitter_1x8_L2: number;
     splitter_1x16_L2: number;
