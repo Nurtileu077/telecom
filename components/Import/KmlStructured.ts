@@ -210,6 +210,10 @@ export function buildStructured(
   } = {},
 ): BuildOutcome {
   const SNAP_M = opts.snapMaxM ?? 75; // endpoints often a few metres off the icon
+  // Каскад сплиттеров под 1:64 на порт: L2 1:16 → L1 1:4, иначе L1 1:8.
+  // Иначе при L1 1:4 + L2 1:8 получалось 1:32 (рассинхрон каскада).
+  const l2Splitter: SplitterRatio = opts.defaultSplitter ?? '1:8';
+  const l1Splitter: SplitterRatio = l2Splitter === '1:16' ? '1:4' : '1:8';
   const stats = {
     olt: 0, tb: 0, ork: 0,
     camLu: 0, camIntersect: 0, camOvn: 0,
@@ -402,7 +406,7 @@ export function buildStructured(
           id: `ORK-${slug}-${i + 1}`,
           lat: o.lat, lon: o.lon,
           district: subName,
-          splitter: (opts.defaultSplitter ?? '1:8'),
+          splitter: l2Splitter,
           tbId: nearest?.id ?? '',
           subscribers: [],
           cableType: 'ОК-4' as CableType,
@@ -442,7 +446,7 @@ export function buildStructured(
         model: 'Huawei MA5800-X7',
         capacity: 64,
         transitBoxes: tbs,
-        l1Splitter: '1:4',
+        l1Splitter,
       };
       outDistricts.push({
         name: subName,

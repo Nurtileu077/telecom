@@ -117,6 +117,16 @@ export function validateNetwork(districts: District[], cables: Cable[]): Validat
         }
       }
 
+      // Порт OLT = одна ОМСП-муфта: каскад 1:64 → не более 64 камер на муфте.
+      const camsInTb = tb.orks.reduce((s, o) => s + o.subscribers.length, 0);
+      if (camsInTb > 64) {
+        issues.push({
+          type: 'warning',
+          message: `${tb.id}: ${camsInTb} камер на муфте > 64 (порт OLT) — разнеси на ещё одну муфту`,
+          entityId: tb.id,
+        });
+      }
+
       // OLT → TB distance
       const oltTBDist = haversineM(d.olt.lat, d.olt.lon, tb.lat, tb.lon);
       if (oltTBDist > 10000) {
