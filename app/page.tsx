@@ -132,7 +132,7 @@ export default function HomePage() {
   const [saveConflict, setSaveConflict] = useState<{ serverUpdatedAt: string; serverName: string } | null>(null);
   const [mergeBusy, setMergeBusy] = useState(false);
   const [authUser, setAuthUser] = useState<User | null>(null);
-  const [authBannerOpen, setAuthBannerOpen] = useState(false);
+  const [authPanelOpen, setAuthPanelOpen] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const canSave = canSaveProject(appMode) && (net.districts.length > 0 || net.annotations.length > 0);
@@ -167,7 +167,6 @@ export default function HomePage() {
     } catch (e) {
       if (isAuthRequiredError(e)) {
         setSaveError('Войдите по email, чтобы сохранить в облако');
-        setAuthBannerOpen(true);
         return;
       }
       if (isProjectSaveConflict(e)) {
@@ -640,7 +639,9 @@ export default function HomePage() {
   return (
     <div className="app-shell flex flex-col overflow-hidden">
       <ReadOnlyBanner mode={appMode} role={userRole} onCopyShareLink={readOnly ? copyShareViewLink : undefined} />
-      {cloudBlocked && <AuthRequiredBanner onOpenAuth={() => setAuthBannerOpen(true)} />}
+      {cloudBlocked && (
+        <AuthRequiredBanner onOpenHeaderAuth={() => setAuthPanelOpen(true)} />
+      )}
       {presenceEnabled && <PresenceBar onlineCount={onlineCount} peers={presencePeers} />}
       {saveError && (
         <div className="shrink-0 px-3 py-1 text-center text-[11px] text-[#f87171] border-b border-[#f87171]/30 bg-[#f87171]/10">
@@ -656,7 +657,12 @@ export default function HomePage() {
         onUserRoleChange={setUserRole}
         authSlot={(
           <AuthButton
-            onUserChange={setAuthUser}
+            open={authPanelOpen}
+            onOpenChange={setAuthPanelOpen}
+            onUserChange={(u) => {
+              setAuthUser(u);
+              if (u) setAuthPanelOpen(false);
+            }}
             onRoleFromAuth={(r) => { if (r) { setStoredRole(r); setUserRole(r); } }}
           />
         )}

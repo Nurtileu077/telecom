@@ -9,12 +9,21 @@ import { USER_ROLE_LABELS } from '@/types/network';
 interface Props {
   onRoleFromAuth?: (role: UserRole | null) => void;
   onUserChange?: (user: User | null) => void;
+  /** Управление выпадашкой снаружи (баннер «Войти») */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
-export default function AuthButton({ onRoleFromAuth, onUserChange }: Props) {
+export default function AuthButton({ onRoleFromAuth, onUserChange, open: openControlled, onOpenChange }: Props) {
   const [user, setUser] = useState<User | null>(null);
   const [email, setEmail] = useState('');
-  const [open, setOpen] = useState(false);
+  const [openInternal, setOpenInternal] = useState(false);
+  const open = openControlled ?? openInternal;
+  const setOpen = (v: boolean | ((prev: boolean) => boolean)) => {
+    const next = typeof v === 'function' ? v(open) : v;
+    onOpenChange?.(next);
+    if (openControlled === undefined) setOpenInternal(next);
+  };
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -32,7 +41,13 @@ export default function AuthButton({ onRoleFromAuth, onUserChange }: Props) {
     });
   }, [onRoleFromAuth, onUserChange]);
 
-  if (!supabase) return null;
+  if (!supabase) {
+    return (
+      <span className="text-[10px] text-[#64748b] px-2" title="Задайте NEXT_PUBLIC_SUPABASE_URL и ANON_KEY">
+        Нет облака
+      </span>
+    );
+  }
 
   const signIn = async () => {
     setBusy(true);
@@ -61,7 +76,11 @@ export default function AuthButton({ onRoleFromAuth, onUserChange }: Props) {
     <div className="relative">
       <button
         type="button"
-        className="btn btn-ghost text-[10px] h-8 px-2"
+        className={`btn text-[10px] h-8 px-2.5 ${
+          user
+            ? 'btn-ghost text-[#34d399]'
+            : 'border border-[#38bdf8]/40 text-[#38bdf8] bg-[#38bdf8]/10 hover:bg-[#38bdf8]/20'
+        }`}
         onClick={() => setOpen((v) => !v)}
       >
         {user ? `✓ ${user.email?.split('@')[0]}` : 'Вход'}
