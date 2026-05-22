@@ -1,6 +1,18 @@
 import { Cable } from '@/types/network';
 
-const OSRM_BASE = 'https://router.project-osrm.org/route/v1/driving';
+// OSRM-сервер настраивается через env (Next инлайнит NEXT_PUBLIC_* при сборке).
+// Дефолт — публичный демо с профилем `driving` (машина): прежнее поведение, без
+// регрессии. Для чистой прокладки кабеля поднимите self-host OSRM с пешеходным
+// профилем (см. osrm/README.md) и задайте:
+//   NEXT_PUBLIC_OSRM_HOST=http://localhost:5000
+//   NEXT_PUBLIC_OSRM_PROFILE=foot
+// Пешеходный профиль игнорирует односторонки и не штрафует развороты, поэтому
+// исчезают объезды «проехал-развернулся» и кабель по обеим сторонам дороги
+// (туда и обратно идут по одним рёбрам → линии накладываются).
+const OSRM_HOST = (process.env.NEXT_PUBLIC_OSRM_HOST || 'https://router.project-osrm.org').replace(/\/$/, '');
+const OSRM_PROFILE = process.env.NEXT_PUBLIC_OSRM_PROFILE || 'driving';
+const OSRM_BASE = `${OSRM_HOST}/route/v1/${OSRM_PROFILE}`;
+const OSRM_NEAREST = `${OSRM_HOST}/nearest/v1/${OSRM_PROFILE}`;
 
 export type ProgressCallback = (done: number, total: number, current: string) => void;
 
@@ -9,7 +21,9 @@ async function fetchRoute(
   lat2: number, lon2: number,
   signal: AbortSignal,
 ): Promise<[number, number][]> {
-  const url = `${OSRM_BASE}/${lon1},${lat1};${lon2},${lat2}?overview=full&geometries=geojson`;
+  // continue_straight=false — не форсировать проезд через точку с разворотом
+  // (снимает часть «развернулся и поехал обратно» даже на профиле driving).
+  const url = `${OSRM_BASE}/${lon1},${lat1};${lon2},${lat2}?overview=full&geometries=geojson&continue_straight=false`;
   const res = await fetch(url, { signal: AbortSignal.any
     ? AbortSignal.any([signal, AbortSignal.timeout(12000)])
     : signal,
@@ -45,7 +59,7 @@ export async function snapToRoad(
   maxDistM = 60,
 ): Promise<[number, number] | null> {
   try {
-    const url = `https://router.project-osrm.org/nearest/v1/driving/${lon},${lat}?number=1`;
+    const url = `${OSRM_NEAREST}/${lon},${lat}?number=1`;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 8000);
     const res = await fetch(url, { signal: ctrl.signal });
