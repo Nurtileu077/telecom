@@ -77,6 +77,16 @@ function makeSnapper(R: number) {
       put(n);
       return n.key;
     },
+    // Как snap, но возвращает КАНОНИЧЕСКУЮ координату узла (а не ключ). Нужна
+    // для глобального наложения со-трассных кабелей: одинаковые дорожные вершины
+    // получают одну и ту же точку → линии ложатся друг на друга, без сдвига.
+    snapCoord(lat: number, lon: number): [number, number] {
+      const f = nearest(lat, lon);
+      if (f) return [f.lat, f.lon];
+      const n: SnapNode = { lat, lon, key: `q${seq++}` };
+      put(n);
+      return [n.lat, n.lon];
+    },
   };
 }
 
@@ -101,6 +111,41 @@ function pathLength(coords: [number, number][]): number {
     len += haversineM(coords[i - 1][0], coords[i - 1][1], coords[i][0], coords[i][1]);
   }
   return len;
+}
+
+// Радиус слияния дорожных вершин ПОПЕРЁК районов. Меньше MERGE_RADIUS_M, чтобы
+// не склеить соседние улицы, но достаточно, чтобы наложить независимо
+// проложенные OSRM-нитки одной дороги (центр-линии расходятся на единицы метров).
+const GLOBAL_SNAP_M = 18;
+
+// Фикс A — наложение со-трассных кабелей. Слияние работает внутри района, поэтому
+// магистрали РАЗНЫХ OLT по одной улице (разные цвета на перекрёстке) идут чуть
+// сдвинутыми параллельными линиями. Их волокна сваривать нельзя (разные PON), но
+// геометрия должна совпадать (одна трасса/канализация). Прогоняем ПРОМЕЖУТОЧНЫЕ
+// вершины всех кабелей через единый снэппер: совпавшие дорожные точки получают
+// одну координату → линии ложатся друг на друга. Концы (оборудование/муфты) не
+// трогаем, чтобы кабель не оторвался от своего узла.
+function overlayCoRouted(cables: Cable[], R = GLOBAL_SNAP_M): Cable[] {
+  const snapper = makeSnapper(R);
+  return cables.map((c) => {
+    if (c.coords.length < 3) return c;
+    const first = c.coords[0];
+    const last = c.coords[c.coords.length - 1];
+    const snapped: [number, number][] = [first];
+    for (let i = 1; i < c.coords.length - 1; i++) {
+      snapped.push(snapper.snapCoord(c.coords[i][0], c.coords[i][1]));
+    }
+    snapped.push(last);
+    // Чистим подряд идущие совпавшие вершины (последнюю всегда сохраняем).
+    const dd: [number, number][] = [snapped[0]];
+    for (let i = 1; i < snapped.length; i++) {
+      const p = snapped[i];
+      const prev = dd[dd.length - 1];
+      if (i === snapped.length - 1 || haversineM(prev[0], prev[1], p[0], p[1]) > 0.5) dd.push(p);
+    }
+    if (dd.length < 2) return c;
+    return { ...c, coords: dd, lengthM: pathLength(dd) };
+  });
 }
 
 // Cap at ОК-48 per project requirement — never emit ОК-96.
@@ -475,7 +520,16 @@ export function consolidateCables(
   // если она не является концом ни одного итогового кабеля — до-кладываем её
   // исходный родительский кабель (OLT→муфта / муфта→ОРКСП / ОРКСП→камера).
   const reached = new Set<string>();
-  for (const c of outCables) { reached.add(c.fromId); reached.add(c.toId); }
+  const endpoints: { id: string; lat: number; lon: number }[] = [];
+  for (const c of outCables) {
+    reached.add(c.fromId);
+    reached.add(c.toId);
+    if (c.coords.length >= 2) {
+      endpoints.push({ id: c.fromId, lat: c.coords[0][0], lon: c.coords[0][1] });
+      const L = c.coords[c.coords.length - 1];
+      endpoints.push({ id: c.toId, lat: L[0], lon: L[1] });
+    }
+  }
   let patched = 0;
   const addOriginal = (fromId: string, toId: string) => {
     const orig = cableByEndpoint.get(`${fromId}::${toId}`);
@@ -485,6 +539,22 @@ export function consolidateCables(
     reached.add(toId);
     patched++;
   };
+
+  // Фикс C: камеру, до которой BFS не довёл кабель, подключаем КОРОТКИМ дропом от
+  // ближайшего конца кабеля/муфты (≤ NEAR_M), а не дублируем полный ОРК→камера
+  // поверх магистрали — именно дубль-дроп давал треугольники-циклы у боксов.
+  const NEAR_M = 35;
+  const nearestEnd = (lat: number, lon: number, exclude: string) => {
+    let best: { id: string; lat: number; lon: number } | null = null;
+    let bd = NEAR_M;
+    for (const e of endpoints) {
+      if (e.id === exclude) continue;
+      const d = haversineM(lat, lon, e.lat, e.lon);
+      if (d < bd) { bd = d; best = e; }
+    }
+    return best;
+  };
+
   for (const d of districts) {
     const olt = d.olt;
     for (const tb of olt.transitBoxes) {
@@ -492,18 +562,39 @@ export function consolidateCables(
       for (const ork of tb.orks) {
         if (!reached.has(ork.id)) addOriginal(tb.id, ork.id);
         for (const sub of ork.subscribers) {
-          if (!reached.has(sub.id)) addOriginal(ork.id, sub.id);
+          if (reached.has(sub.id)) continue;
+          const near = nearestEnd(sub.lat, sub.lon, sub.id);
+          if (near) {
+            outCables.push({
+              id: `cable-fix-${++cableSeq}`,
+              type: 'ОК-4',
+              fibers: CABLE_FIBERS['ОК-4'],
+              fromId: near.id,
+              toId: sub.id,
+              coords: [[near.lat, near.lon], [sub.lat, sub.lon]],
+              lengthM: haversineM(near.lat, near.lon, sub.lat, sub.lon),
+              routedByOSRM: false,
+            });
+            reached.add(sub.id);
+            patched++;
+          } else {
+            addOriginal(ork.id, sub.id);
+          }
         }
       }
     }
   }
 
+  // Фикс A: накладываем со-трассные кабели разных районов на общие дорожные
+  // вершины, чтобы они рисовались одной линией, а не сдвинутыми параллелями.
+  const finalCables = overlayCoRouted(outCables);
+
   if (typeof console !== 'undefined') {
     console.log(
-      `[Consolidation] in=${cables.length} → out=${outCables.length} ` +
+      `[Consolidation] in=${cables.length} → out=${finalCables.length} ` +
       `(consolidated=${cableSeq}, joints=${outJoints.length}, passthrough=${passthrough}, fixed=${patched})`,
     );
   }
 
-  return { cables: outCables, joints: outJoints };
+  return { cables: finalCables, joints: outJoints };
 }
