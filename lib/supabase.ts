@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Project, CatalogItem } from '@/types/network';
+import { getDefaultOrgId } from '@/lib/orgId';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
@@ -10,6 +11,7 @@ export interface ProjectRow {
   id: string;
   name: string;
   data: Project;
+  org_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -26,14 +28,15 @@ export async function dbListProjects(): Promise<ProjectRow[]> {
 
 export async function dbSaveProject(project: Project): Promise<void> {
   if (!supabase) return;
-  const { error } = await supabase
-    .from('gpon_projects')
-    .upsert({
-      id: project.id,
-      name: project.name,
-      data: project,
-      updated_at: new Date().toISOString(),
-    });
+  const orgId = project.orgId ?? getDefaultOrgId();
+  const row: Record<string, unknown> = {
+    id: project.id,
+    name: project.name,
+    data: project,
+    updated_at: new Date().toISOString(),
+  };
+  if (orgId) row.org_id = orgId;
+  const { error } = await supabase.from('gpon_projects').upsert(row);
   if (error) throw error;
 }
 
@@ -52,11 +55,15 @@ export async function dbLoadProjectRow(id: string): Promise<ProjectRow | null> {
   if (!supabase) return null;
   const { data, error } = await supabase
     .from('gpon_projects')
-    .select('id, name, created_at, updated_at, data')
+    .select('id, name, org_id, created_at, updated_at, data')
     .eq('id', id)
     .single();
   if (error) return null;
-  return data as ProjectRow;
+  const row = data as ProjectRow;
+  if (row.org_id && row.data && !row.data.orgId) {
+    row.data = { ...row.data, orgId: row.org_id };
+  }
+  return row;
 }
 
 export async function dbFetchProjectRevision(id: string): Promise<{ updated_at: string; name: string } | null> {

@@ -233,6 +233,8 @@ export interface AuditEntry {
 export interface Project {
   id: string;
   name: string;
+  /** UUID организации для RLS в Supabase (опционально). */
+  orgId?: string;
   status?: ProjectStatus;
   createdAt: string;
   updatedAt: string;

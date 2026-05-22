@@ -123,6 +123,7 @@ export default function HomePage() {
   const [selectionBBox, setSelectionBBox] = useState<{ latMin: number; lonMin: number; latMax: number; lonMax: number } | null>(null);
   const [scenarioDiffOn, setScenarioDiffOn] = useState(false);
   const [saveConflict, setSaveConflict] = useState<{ serverUpdatedAt: string; serverName: string } | null>(null);
+  const [mergeBusy, setMergeBusy] = useState(false);
 
   const handleSaveProject = useCallback(async (opts?: { audit?: boolean; force?: boolean }) => {
     try {
@@ -1268,6 +1269,16 @@ A3: ...`}
         <SaveConflictModal
           serverName={saveConflict.serverName}
           serverUpdatedAt={saveConflict.serverUpdatedAt}
+          mergeBusy={mergeBusy}
+          onMerge={net.dbEnabled ? async (strategy) => {
+            setMergeBusy(true);
+            try {
+              await net.mergeProjectWithServer(strategy);
+              setSaveConflict(null);
+            } finally {
+              setMergeBusy(false);
+            }
+          } : undefined}
           onLoadServer={async () => {
             await net.reloadProjectFromServer();
             setSaveConflict(null);

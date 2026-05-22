@@ -27,6 +27,8 @@ import {
 import { ProjectSaveConflict } from '@/lib/projectConflict';
 import { appendAudit, newAuditEntry } from '@/lib/audit';
 import { getActorName } from '@/lib/appRole';
+import { getDefaultOrgId } from '@/lib/orgId';
+import { applyMergeStrategy, type MergeStrategy } from '@/lib/projectMerge';
 
 export type BuildStatus = 'idle' | 'importing' | 'clustering' | 'routing' | 'calculating' | 'done' | 'error';
 
@@ -88,6 +90,7 @@ export function useNetwork() {
   const [snapshots, setSnapshots] = useState<ProjectSnapshot[]>([]);
   const [scenarios, setScenarios] = useState<ProjectScenarios>({});
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
+  const [orgId, setOrgId] = useState<string | undefined>(() => getDefaultOrgId());
   /** Последняя известная ревизия в Supabase (updated_at строки). */
   const serverUpdatedAtRef = useRef<string | null>(null);
 
@@ -1581,11 +1584,12 @@ export function useNetwork() {
     return loadProjects();
   }, []);
 
-  const saveProject = useCallback(async (opts?: { audit?: boolean; force?: boolean; skipRemote?: boolean }) => {
+  const buildCurrentProject = useCallback((): Project => {
     const now = new Date().toISOString();
-    const project: Project = {
+    return {
       id: projectId,
       name: projectName,
+      orgId: orgId ?? getDefaultOrgId(),
       status: status_,
       createdAt: now,
       updatedAt: now,
@@ -1594,6 +1598,11 @@ export function useNetwork() {
       scenarios,
       auditLog,
     };
+  }, [projectId, projectName, orgId, status_, districts, cables, joints, annotations, importHistory, settings, snapshots, scenarios, auditLog]);
+
+  const saveProject = useCallback(async (opts?: { audit?: boolean; force?: boolean; skipRemote?: boolean }) => {
+    const now = new Date().toISOString();
+    const project: Project = { ...buildCurrentProject(), updatedAt: now };
     saveToLocalStorage(project);
     if (opts?.audit) recordAudit('Сохранение проекта', projectName);
     if (supabase && !opts?.skipRemote) {
@@ -1615,7 +1624,18 @@ export function useNetwork() {
     }
     setLastSavedAt(now);
     return project;
-  }, [projectId, projectName, status_, districts, cables, joints, annotations, importHistory, settings, snapshots, scenarios, auditLog, recordAudit]);
+  }, [buildCurrentProject, recordAudit]);
+
+  const mergeProjectWithServer = useCallback(async (strategy: MergeStrategy) => {
+    if (!supabase) return;
+    const row = await dbLoadProjectRow(projectId);
+    if (!row?.data) return;
+    const local = buildCurrentProject();
+    const merged = applyMergeStrategy(local, row.data, strategy);
+    loadProjectInternal(merged);
+    serverUpdatedAtRef.current = row.updated_at;
+    await saveProject({ force: true, audit: true });
+  }, [projectId, buildCurrentProject, saveProject]);
 
   const reloadProjectFromServer = useCallback(async () => {
     if (!supabase) return;
@@ -1639,6 +1659,7 @@ export function useNetwork() {
     setSnapshots(p.snapshots ?? []);
     setScenarios(p.scenarios ?? {});
     setAuditLog(p.auditLog ?? []);
+    setOrgId(p.orgId ?? getDefaultOrgId());
     const subs = (p.districts || []).flatMap((d) => d.subscribers);
     setAllSubscribers(subs);
     if (p.districts?.length) {
@@ -1683,6 +1704,7 @@ export function useNetwork() {
     setSnapshots([]);
     setScenarios({});
     setAuditLog([]);
+    setOrgId(getDefaultOrgId());
     setDistricts([]);
     setCables([]);
     setJoints([]);
@@ -1700,13 +1722,7 @@ export function useNetwork() {
   }, []);
 
   const exportProjectJSON = useCallback(() => {
-    const project: Project = {
-      id: projectId, name: projectName,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      districts, cables, joints, annotations, importHistory, settings,
-      snapshots, scenarios, auditLog,
-    };
+    const project = buildCurrentProject();
     const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1714,7 +1730,7 @@ export function useNetwork() {
     a.download = `${projectName.replace(/[^\w\s-]/g, '_')}.json`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [projectId, projectName, status_, districts, cables, joints, annotations, importHistory, settings, snapshots, scenarios, auditLog]);
+  }, [buildCurrentProject, projectName]);
 
   const setProjectStatusWithAudit = useCallback((s: ProjectStatus) => {
     setProjectStatus(s);
@@ -1763,7 +1779,7 @@ export function useNetwork() {
     buildFromSubscribers, appendSubscribers,
     addAnnotation, updateAnnotation, deleteAnnotation,
     addSubscriberAt, deleteSubscriber, moveEntity, rebuildFromCurrent, autoRepair, loadRaw, loadStructured,
-    saveProject, reloadProjectFromServer, loadProject, deleteProject, listProjects, newProject,
+    saveProject, mergeProjectWithServer, reloadProjectFromServer, loadProject, deleteProject, listProjects, newProject,
     serverUpdatedAt: serverUpdatedAtRef.current,
     exportProjectJSON, importProjectJSON,
     totalSubscribers, totalCableKm, totalOrks,

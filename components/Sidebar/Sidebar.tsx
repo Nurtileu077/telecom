@@ -283,6 +283,10 @@ export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Prop
           )}
           {activeTab === 'tools' && (
             <ToolsTab
+              projectId={props.projectId}
+              districts={props.districts}
+              cables={props.cables}
+              annotations={props.annotations}
               scenarios={props.scenarios}
               settings={props.settings}
               prices={props.prices}

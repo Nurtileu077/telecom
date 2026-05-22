@@ -1,5 +1,5 @@
 'use client';
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { Route, Merge, Flame, Activity, Printer, FileDown } from 'lucide-react';
 import { OpticalBudgetInputs } from '@/types/network';
 import { calculateOpticalBudget } from '@/components/Network/OpticalBudget';
@@ -19,6 +19,10 @@ import type { ProjectScenarios, ProjectSettings, PriceCatalog } from '@/types/ne
 import {
   isOfflineTilesEnabled, setOfflineTilesEnabled, syncOfflineTileWorker,
 } from '@/lib/offlineMap';
+import { bboxFromProject } from '@/lib/projectBounds';
+import { preloadTilesForBBox, type TilePreloadProgress } from '@/lib/tilePreload';
+import type { District, Cable, MapAnnotation } from '@/types/network';
+
 interface Props {
   scenarios?: ProjectScenarios;
   settings?: ProjectSettings;
@@ -31,6 +35,9 @@ interface Props {
   onToggleScenarioDiff?: () => void;
   readOnly?: boolean;
   projectId?: string;
+  districts?: District[];
+  cables?: Cable[];
+  annotations?: MapAnnotation[];
   onCopyShareViewLink?: () => void;
   onCopyShareFieldLink?: () => void;
   onShowHeatmap: () => void;
@@ -49,16 +56,48 @@ interface Props {
 export default function ToolsTab({
   scenarios = {}, settings, prices, onSaveScenarioA, onSaveScenarioB, onRestoreScenarioA, onRestoreScenarioB,
   scenarioDiffOn, onToggleScenarioDiff,
-  readOnly, projectId, onCopyShareViewLink, onCopyShareFieldLink,
+  readOnly, projectId, districts = [], cables = [], annotations = [],
+  onCopyShareViewLink, onCopyShareFieldLink,
   onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onRerouteOSRM, onReconsolidate, selectionBBox, osrmStatus, hasCables, budgetColoring, onToggleBudgetColoring,
 }: Props) {
   const [inputs, setInputs] = useState<OpticalBudgetInputs>(DEFAULT_INPUTS);
   const [offlineTiles, setOfflineTiles] = useState(false);
+  const [tilePreload, setTilePreload] = useState<TilePreloadProgress | null>(null);
+  const [preloading, setPreloading] = useState(false);
+  const preloadAbort = useRef<AbortController | null>(null);
   useEffect(() => {
     setOfflineTiles(isOfflineTilesEnabled());
   }, []);
 
   const result = useMemo(() => calculateOpticalBudget(inputs), [inputs]);
+
+  const projectBbox = useMemo(
+    () => bboxFromProject(districts, cables, annotations),
+    [districts, cables, annotations],
+  );
+
+  const startTilePreload = async () => {
+    if (!projectBbox || preloading) return;
+    if (!offlineTiles) {
+      setOfflineTiles(true);
+      setOfflineTilesEnabled(true);
+      await syncOfflineTileWorker();
+      setOfflineTiles(true);
+    }
+    preloadAbort.current?.abort();
+    const ac = new AbortController();
+    preloadAbort.current = ac;
+    setPreloading(true);
+    setTilePreload({ done: 0, total: 0, failed: 0 });
+    try {
+      await preloadTilesForBBox(projectBbox, {
+        signal: ac.signal,
+        onProgress: setTilePreload,
+      });
+    } finally {
+      setPreloading(false);
+    }
+  };
 
   const toggleOfflineTiles = async () => {
     const next = !offlineTiles;
@@ -83,6 +122,25 @@ export default function ToolsTab({
         <p className="text-[9px] text-[#64748b] mt-1">
           Прокрутите нужный район онлайн — тайлы сохранятся для просмотра без сети (Carto/Esri).
         </p>
+        <button
+          type="button"
+          onClick={startTilePreload}
+          disabled={!projectBbox || preloading}
+          className="w-full mt-2 py-1.5 text-[10px] rounded border border-[#38bdf8]/40 text-[#38bdf8] disabled:opacity-40"
+        >
+          {preloading
+            ? `Предзагрузка… ${tilePreload?.done ?? 0}/${tilePreload?.total ?? '…'}`
+            : 'Предзагрузить тайлы проекта'}
+        </button>
+        {!projectBbox && (
+          <p className="text-[9px] text-[#64748b] mt-1">Нужны объекты на карте (OLT, кабели, заметки).</p>
+        )}
+        {tilePreload && !preloading && tilePreload.total > 0 && (
+          <p className="text-[9px] text-[#64748b] mt-1">
+            Готово: {tilePreload.done - tilePreload.failed} из {tilePreload.total}
+            {tilePreload.failed > 0 ? `, ошибок: ${tilePreload.failed}` : ''}.
+          </p>
+        )}
       </section>
 
       {onSaveScenarioA && onSaveScenarioB && (
