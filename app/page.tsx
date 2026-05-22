@@ -28,14 +28,21 @@ import { findEntityCoords, findSubscriber } from '@/components/Network/entityInt
 import { parseDeepLinkOpen, type SearchHit } from '@/lib/entitySearch';
 import EntityIdSearch from '@/components/Search/EntityIdSearch';
 import ReadOnlyBanner from '@/components/Layout/ReadOnlyBanner';
-import { parseAppViewMode, buildShareViewUrl, buildShareFieldUrl, isMutationAllowed } from '@/lib/viewMode';
+import { parseAppViewMode, buildShareViewUrl, buildShareFieldUrl, isMutationAllowed, canSaveProject } from '@/lib/viewMode';
 import type { AppViewMode, UserRole } from '@/types/network';
 import {
   getStoredRole, setStoredRole, parseUserRole, resolveEffectiveMode, roleAllowsStatusChange,
 } from '@/lib/appRole';
 import { diffScenarioCables, highlightCurrentCableIds } from '@/lib/scenarioDiff';
 import AuthButton from '@/components/Auth/AuthButton';
+import type { User } from '@supabase/supabase-js';
 import { dbLoadProject } from '@/lib/supabase';
+import { isAuthRequired, isAuthRequiredError } from '@/lib/supabaseAccess';
+import { getActorName } from '@/lib/appRole';
+import { getGuestPresenceKey } from '@/lib/guestId';
+import { useProjectPresence } from '@/hooks/useProjectPresence';
+import PresenceBar from '@/components/Layout/PresenceBar';
+import AuthRequiredBanner from '@/components/Layout/AuthRequiredBanner';
 import SaveConflictModal from '@/components/Projects/SaveConflictModal';
 import { isProjectSaveConflict } from '@/lib/projectConflict';
 import { isOfflineTilesEnabled, syncOfflineTileWorker } from '@/lib/offlineMap';
@@ -124,16 +131,50 @@ export default function HomePage() {
   const [scenarioDiffOn, setScenarioDiffOn] = useState(false);
   const [saveConflict, setSaveConflict] = useState<{ serverUpdatedAt: string; serverName: string } | null>(null);
   const [mergeBusy, setMergeBusy] = useState(false);
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authBannerOpen, setAuthBannerOpen] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const canSave = canSaveProject(appMode) && (net.districts.length > 0 || net.annotations.length > 0);
+  const cloudBlocked = isAuthRequired() && !authUser && net.dbEnabled;
+
+  useEffect(() => {
+    net.setFieldRemoteSave(appMode === 'field');
+  }, [appMode, net]);
+
+  const presenceSelf = useMemo(() => {
+    const name = authUser?.email?.split('@')[0]
+      || getActorName()
+      || 'Гость';
+    const key = authUser?.id ?? getGuestPresenceKey();
+    return { key, name };
+  }, [authUser]);
+
+  const presenceEnabled = net.dbEnabled && net.districts.length > 0 && !cloudBlocked;
+  const { peers: presencePeers, onlineCount, publishCursor } = useProjectPresence(
+    net.projectId,
+    presenceSelf,
+    presenceEnabled,
+  );
 
   const handleSaveProject = useCallback(async (opts?: { audit?: boolean; force?: boolean }) => {
+    setSaveError(null);
     try {
-      await net.saveProject(opts);
+      await net.saveProject({
+        ...opts,
+        fieldSave: appMode === 'field',
+      });
     } catch (e) {
+      if (isAuthRequiredError(e)) {
+        setSaveError('Войдите по email, чтобы сохранить в облако');
+        setAuthBannerOpen(true);
+        return;
+      }
       if (isProjectSaveConflict(e)) {
         setSaveConflict({ serverUpdatedAt: e.serverUpdatedAt, serverName: e.serverName });
       }
     }
-  }, [net]);
+  }, [net, appMode]);
 
   useEffect(() => {
     syncOfflineTileWorker().catch(() => {});
@@ -599,6 +640,13 @@ export default function HomePage() {
   return (
     <div className="app-shell flex flex-col overflow-hidden">
       <ReadOnlyBanner mode={appMode} role={userRole} onCopyShareLink={readOnly ? copyShareViewLink : undefined} />
+      {cloudBlocked && <AuthRequiredBanner onOpenAuth={() => setAuthBannerOpen(true)} />}
+      {presenceEnabled && <PresenceBar onlineCount={onlineCount} peers={presencePeers} />}
+      {saveError && (
+        <div className="shrink-0 px-3 py-1 text-center text-[11px] text-[#f87171] border-b border-[#f87171]/30 bg-[#f87171]/10">
+          {saveError}
+        </div>
+      )}
       <AppHeader
         projectName={net.projectName}
         onProjectNameChange={net.setProjectName}
@@ -606,7 +654,12 @@ export default function HomePage() {
         onProjectStatusChange={canChangeStatus ? net.setProjectStatus : undefined}
         userRole={userRole}
         onUserRoleChange={setUserRole}
-        authSlot={<AuthButton onRoleFromAuth={(r) => { if (r) { setStoredRole(r); setUserRole(r); } }} />}
+        authSlot={(
+          <AuthButton
+            onUserChange={setAuthUser}
+            onRoleFromAuth={(r) => { if (r) { setStoredRole(r); setUserRole(r); } }}
+          />
+        )}
         flyTo={flyToRef.current}
         totalSubscribers={net.totalSubscribers}
         totalCableKm={net.totalCableKm}
@@ -647,7 +700,7 @@ export default function HomePage() {
         onCatalog={() => setShowCatalog(true)}
         onProjects={() => setShowProjects(true)}
         onSave={() => handleSaveProject({ audit: true })}
-        canSave={!readOnly && (net.districts.length > 0 || net.annotations.length > 0)}
+        canSave={canSave && !cloudBlocked}
         showBuild={net.allSubscribers.length > 0 && net.districts.length === 0}
         onBuild={() => net.rebuildFromCurrent()}
         branchActive={!!branchSel}
@@ -785,6 +838,8 @@ export default function HomePage() {
             selectionPoly={selectionPoly}
             highlightCableIds={highlightCableIds}
             scenarioMapDiff={scenarioMapDiff}
+            presencePeers={presencePeers}
+            onPresenceCursorMove={publishCursor}
             onShowBranchSub={(id) => setBranchSel({ kind: 'sub', id })}
             moveEntity={handleMoveEntity}
             deleteSubscriber={net.deleteSubscriber}

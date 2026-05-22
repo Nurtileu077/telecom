@@ -16,11 +16,18 @@ export function buildShareViewUrl(projectId: string, origin?: string): string {
   return u.toString();
 }
 
+/** Правки топологии (OLT, кабели, удаление). */
 export function isMutationAllowed(mode: AppViewMode): boolean {
   return mode === 'edit';
 }
 
+/** Чеклист и фото на ОРК/муфтах. */
 export function isFieldToolsAllowed(mode: AppViewMode): boolean {
+  return mode === 'edit' || mode === 'field';
+}
+
+/** Кнопка «Сохранить» и запись в Supabase (в т.ч. полевой режим). */
+export function canSaveProject(mode: AppViewMode): boolean {
   return mode === 'edit' || mode === 'field';
 }
 

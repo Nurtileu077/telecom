@@ -23,6 +23,14 @@
 - [x] Diff сценариев A↔B на карте (пунктир + подсветка)
 - [x] Supabase Auth magic link + роль из `user_metadata.role`
 
+## Волна 7 — коллаборация и безопасность
+- [x] Полевой режим: сохранение в Supabase (merge поле, не затирать топологию)
+- [x] `createdAt` не сбрасывается при каждом save
+- [x] Приоритет загрузки `?project=` над last project
+- [x] Realtime: курсоры + имена на карте (Supabase Presence)
+- [x] `NEXT_PUBLIC_OPTIQ_REQUIRE_AUTH=1` — облако только после входа
+- [x] RLS SQL активирован в `docs/supabase-rls.sql`
+
 ## Волна 6 — слияние и офлайн
 - [x] Слияние при конфликте: сеть локально + поле с сервера (и наоборот)
 - [x] `org_id` / `NEXT_PUBLIC_OPTIQ_ORG_ID` при сохранении в Supabase

@@ -91,8 +91,15 @@ export function useNetwork() {
   const [scenarios, setScenarios] = useState<ProjectScenarios>({});
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
   const [orgId, setOrgId] = useState<string | undefined>(() => getDefaultOrgId());
+  const createdAtRef = useRef<string>(new Date().toISOString());
+  /** Полевой режим: autosave также пишет в Supabase (с merge поля). */
+  const fieldRemoteSaveRef = useRef(false);
   /** Последняя известная ревизия в Supabase (updated_at строки). */
   const serverUpdatedAtRef = useRef<string | null>(null);
+
+  const setFieldRemoteSave = useCallback((enabled: boolean) => {
+    fieldRemoteSaveRef.current = enabled;
+  }, []);
 
   const recordAudit = useCallback((action: string, detail?: string, entityId?: string) => {
     const entry = newAuditEntry(action, { detail, entityId, actor: getActorName() });
@@ -221,10 +228,14 @@ export function useNetwork() {
     recordAudit('Восстановление сценария', slot.toUpperCase());
   }, [scenarios, recordAudit]);
 
-  // Auto-load last project on mount
+  // Auto-load last project on mount (не перебиваем ?project= из URL)
   useEffect(() => {
     (async () => {
       try {
+        if (typeof window !== 'undefined') {
+          const urlPid = new URLSearchParams(window.location.search).get('project');
+          if (urlPid) return;
+        }
         const lastId = localStorage.getItem(CURRENT_KEY);
         if (!lastId) return;
         // Try Supabase first, fall back to localStorage
@@ -1591,7 +1602,7 @@ export function useNetwork() {
       name: projectName,
       orgId: orgId ?? getDefaultOrgId(),
       status: status_,
-      createdAt: now,
+      createdAt: createdAtRef.current,
       updatedAt: now,
       districts, cables, joints, annotations, importHistory, settings,
       snapshots,
@@ -1600,12 +1611,28 @@ export function useNetwork() {
     };
   }, [projectId, projectName, orgId, status_, districts, cables, joints, annotations, importHistory, settings, snapshots, scenarios, auditLog]);
 
-  const saveProject = useCallback(async (opts?: { audit?: boolean; force?: boolean; skipRemote?: boolean }) => {
+  const saveProject = useCallback(async (opts?: {
+    audit?: boolean;
+    force?: boolean;
+    skipRemote?: boolean;
+    /** Полевой режим: merge поле в облако, не затирать чужую топологию */
+    fieldSave?: boolean;
+  }) => {
     const now = new Date().toISOString();
-    const project: Project = { ...buildCurrentProject(), updatedAt: now };
+    let project: Project = { ...buildCurrentProject(), updatedAt: now };
     saveToLocalStorage(project);
     if (opts?.audit) recordAudit('Сохранение проекта', projectName);
-    if (supabase && !opts?.skipRemote) {
+    const skipRemote = opts?.skipRemote ?? false;
+    const allowRemote = !skipRemote || fieldRemoteSaveRef.current;
+    if (supabase && allowRemote) {
+      if (opts?.fieldSave) {
+        const row = await dbLoadProjectRow(projectId);
+        if (row?.data) {
+          project = applyMergeStrategy(project, row.data, 'local_network_server_field');
+          loadProjectInternal(project);
+          serverUpdatedAtRef.current = row.updated_at;
+        }
+      }
       const baseline = serverUpdatedAtRef.current;
       if (!opts?.force && baseline) {
         const remote = await dbFetchProjectRevision(projectId);
@@ -1660,6 +1687,7 @@ export function useNetwork() {
     setScenarios(p.scenarios ?? {});
     setAuditLog(p.auditLog ?? []);
     setOrgId(p.orgId ?? getDefaultOrgId());
+    createdAtRef.current = p.createdAt || p.updatedAt || new Date().toISOString();
     const subs = (p.districts || []).flatMap((d) => d.subscribers);
     setAllSubscribers(subs);
     if (p.districts?.length) {
@@ -1705,6 +1733,7 @@ export function useNetwork() {
     setScenarios({});
     setAuditLog([]);
     setOrgId(getDefaultOrgId());
+    createdAtRef.current = new Date().toISOString();
     setDistricts([]);
     setCables([]);
     setJoints([]);
@@ -1747,7 +1776,13 @@ export function useNetwork() {
   useEffect(() => {
     if (!autoSaveEnabled) return;
     if (districts.length === 0 && annotations.length === 0) return;
-    const t = setInterval(() => { saveProject({ skipRemote: true }); }, AUTOSAVE_INTERVAL_MS);
+    const t = setInterval(() => {
+      const skipRemote = !fieldRemoteSaveRef.current;
+      saveProject({
+        skipRemote,
+        fieldSave: fieldRemoteSaveRef.current,
+      });
+    }, AUTOSAVE_INTERVAL_MS);
     return () => clearInterval(t);
   }, [autoSaveEnabled, districts.length, annotations.length, saveProject]);
 
@@ -1779,7 +1814,7 @@ export function useNetwork() {
     buildFromSubscribers, appendSubscribers,
     addAnnotation, updateAnnotation, deleteAnnotation,
     addSubscriberAt, deleteSubscriber, moveEntity, rebuildFromCurrent, autoRepair, loadRaw, loadStructured,
-    saveProject, mergeProjectWithServer, reloadProjectFromServer, loadProject, deleteProject, listProjects, newProject,
+    saveProject, setFieldRemoteSave, mergeProjectWithServer, reloadProjectFromServer, loadProject, deleteProject, listProjects, newProject,
     serverUpdatedAt: serverUpdatedAtRef.current,
     exportProjectJSON, importProjectJSON,
     totalSubscribers, totalCableKm, totalOrks,

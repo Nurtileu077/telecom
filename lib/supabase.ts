@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Project, CatalogItem } from '@/types/network';
 import { getDefaultOrgId } from '@/lib/orgId';
+import { assertSupabaseAccess } from '@/lib/supabaseAccess';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
@@ -18,6 +19,7 @@ export interface ProjectRow {
 
 export async function dbListProjects(): Promise<ProjectRow[]> {
   if (!supabase) return [];
+  await assertSupabaseAccess();
   const { data, error } = await supabase
     .from('gpon_projects')
     .select('id, name, created_at, updated_at, data')
@@ -28,6 +30,7 @@ export async function dbListProjects(): Promise<ProjectRow[]> {
 
 export async function dbSaveProject(project: Project): Promise<void> {
   if (!supabase) return;
+  await assertSupabaseAccess();
   const orgId = project.orgId ?? getDefaultOrgId();
   const row: Record<string, unknown> = {
     id: project.id,
@@ -35,6 +38,7 @@ export async function dbSaveProject(project: Project): Promise<void> {
     data: project,
     updated_at: new Date().toISOString(),
   };
+  if (project.createdAt) row.created_at = project.createdAt;
   if (orgId) row.org_id = orgId;
   const { error } = await supabase.from('gpon_projects').upsert(row);
   if (error) throw error;
@@ -42,6 +46,7 @@ export async function dbSaveProject(project: Project): Promise<void> {
 
 export async function dbDeleteProject(id: string): Promise<void> {
   if (!supabase) return;
+  await assertSupabaseAccess();
   const { error } = await supabase.from('gpon_projects').delete().eq('id', id);
   if (error) throw error;
 }
@@ -53,6 +58,7 @@ export async function dbLoadProject(id: string): Promise<Project | null> {
 
 export async function dbLoadProjectRow(id: string): Promise<ProjectRow | null> {
   if (!supabase) return null;
+  await assertSupabaseAccess();
   const { data, error } = await supabase
     .from('gpon_projects')
     .select('id, name, org_id, created_at, updated_at, data')
@@ -68,6 +74,7 @@ export async function dbLoadProjectRow(id: string): Promise<ProjectRow | null> {
 
 export async function dbFetchProjectRevision(id: string): Promise<{ updated_at: string; name: string } | null> {
   if (!supabase) return null;
+  await assertSupabaseAccess();
   const { data, error } = await supabase
     .from('gpon_projects')
     .select('updated_at, name')
@@ -119,6 +126,7 @@ export async function storageUploadFieldPhoto(
   blob: Blob,
 ): Promise<{ url: string; storagePath: string }> {
   if (!supabase) throw new Error('Supabase не настроен');
+  await assertSupabaseAccess();
   const safeId = entityId.replace(/[^\w.-]/g, '_');
   const storagePath = `${projectId}/${entityKind}/${safeId}/${Date.now()}.jpg`;
   const { error } = await supabase.storage

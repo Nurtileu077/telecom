@@ -8,6 +8,7 @@ import {
 import type { DrawingTool } from '@/components/Sidebar/NotesTab';
 import { nearestTbToJoint } from '@/components/Network/entityInterior';
 import GpsLocateButton from '@/components/Map/GpsLocateButton';
+import PresenceCursors from '@/components/Map/PresenceCursors';
 
 interface Props {
   districts: District[];
@@ -71,6 +72,9 @@ interface Props {
   /** Diff сценариев A↔B: пунктирные линии поверх карты */
   scenarioMapDiff?: import('@/lib/scenarioDiff').ScenarioMapDiff | null;
   onShowBranchSub?: (id: string) => void;
+  /** Курсоры коллег (Supabase Realtime presence) */
+  presencePeers?: import('@/hooks/useProjectPresence').PresenceCursor[];
+  onPresenceCursorMove?: (lat: number, lon: number) => void;
 }
 
 const CABLE_COLORS: Record<string, string> = CABLE_COLORS_MAP as Record<string, string>;
@@ -256,6 +260,7 @@ export default function LeafletMap(props: Props) {
   const entityDragRef = useRef(false);
 
   const [baseMap, setBaseMap] = useState<BaseMap>('dark');
+  const [mapReady, setMapReady] = useState(false);
 
   // Stable refs for callbacks (so we don't re-init map)
   const propsRef = useRef(props);
@@ -287,6 +292,7 @@ export default function LeafletMap(props: Props) {
       measureGroupRef.current = L.layerGroup().addTo(map);
       waypointGroupRef.current = L.layerGroup().addTo(map);
       mapRef.current = map;
+      setMapReady(true);
 
       // Force Leaflet to recalculate container size after layout settles
       setTimeout(() => { map.invalidateSize(); }, 100);
@@ -352,6 +358,14 @@ export default function LeafletMap(props: Props) {
         }
       });
 
+      let lastPresenceSend = 0;
+      map.on('mousemove', (e: any) => {
+        const now = Date.now();
+        if (now - lastPresenceSend < 80) return;
+        lastPresenceSend = now;
+        propsRef.current.onPresenceCursorMove?.(e.latlng.lat, e.latlng.lng);
+      });
+
       // Re-render on zoom (for drop visibility threshold)
       map.on('zoomend', () => {
         renderData();
@@ -387,6 +401,7 @@ export default function LeafletMap(props: Props) {
         mapRef.current.remove();
         mapRef.current = null;
       }
+      setMapReady(false);
     };
   }, []);
 
@@ -1056,6 +1071,10 @@ export default function LeafletMap(props: Props) {
   return (
     <div className="relative w-full h-full" style={{ position: 'absolute', inset: 0 }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'absolute', inset: 0 }} />
+
+      {mapReady && (
+        <PresenceCursors map={mapRef.current} peers={props.presencePeers ?? []} />
+      )}
 
       <GpsLocateButton
         className="absolute bottom-[calc(118px+env(safe-area-inset-bottom))] md:bottom-auto md:top-14 right-2 md:right-3 z-[400]"

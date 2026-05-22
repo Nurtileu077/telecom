@@ -8,9 +8,10 @@ import { USER_ROLE_LABELS } from '@/types/network';
 
 interface Props {
   onRoleFromAuth?: (role: UserRole | null) => void;
+  onUserChange?: (user: User | null) => void;
 }
 
-export default function AuthButton({ onRoleFromAuth }: Props) {
+export default function AuthButton({ onRoleFromAuth, onUserChange }: Props) {
   const [user, setUser] = useState<User | null>(null);
   const [email, setEmail] = useState('');
   const [open, setOpen] = useState(false);
@@ -21,13 +22,15 @@ export default function AuthButton({ onRoleFromAuth }: Props) {
     if (!supabase) return;
     authGetSession().then(({ user: u }) => {
       setUser(u);
+      onUserChange?.(u);
       onRoleFromAuth?.(roleFromUser(u));
     });
     return authOnStateChange((u) => {
       setUser(u);
+      onUserChange?.(u);
       onRoleFromAuth?.(roleFromUser(u));
     });
-  }, [onRoleFromAuth]);
+  }, [onRoleFromAuth, onUserChange]);
 
   if (!supabase) return null;
 
@@ -47,6 +50,7 @@ export default function AuthButton({ onRoleFromAuth }: Props) {
   const signOut = async () => {
     await authSignOut();
     setUser(null);
+    onUserChange?.(null);
     onRoleFromAuth?.(null);
     setOpen(false);
   };
