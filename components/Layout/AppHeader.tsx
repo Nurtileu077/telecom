@@ -8,7 +8,8 @@ import GeocodeSearch from '@/components/Geocoding/GeocodeSearch';
 import EntityIdSearch from '@/components/Search/EntityIdSearch';
 import type { District, Cable, InlineJoint } from '@/types/network';
 import type { SearchHit } from '@/lib/entitySearch';
-import { PROJECT_STATUS_LABELS, ProjectStatus } from '@/types/network';
+import { PROJECT_STATUS_LABELS, ProjectStatus, type UserRole } from '@/types/network';
+import RoleSelector from '@/components/Layout/RoleSelector';
 
 export type PlacingMode = 'olt' | 'tb' | 'ork' | null;
 
@@ -16,7 +17,9 @@ interface Props {
   projectName: string;
   onProjectNameChange: (v: string) => void;
   projectStatus: ProjectStatus;
-  onProjectStatusChange: (s: ProjectStatus) => void;
+  onProjectStatusChange?: (s: ProjectStatus) => void;
+  userRole?: UserRole;
+  onUserRoleChange?: (r: UserRole) => void;
   flyTo: ((lat: number, lon: number, zoom?: number) => void) | null;
   totalSubscribers: number;
   totalCableKm: number | string;
@@ -92,8 +95,9 @@ export default function AppHeader(p: Props) {
       />
       <select
         value={p.projectStatus}
-        onChange={(e) => p.onProjectStatusChange(e.target.value as ProjectStatus)}
-        className="input-optiq h-8 text-[10px] md:text-[11px] font-semibold px-1.5 md:px-2 cursor-pointer shrink-0 max-w-[100px] md:max-w-none"
+        disabled={!p.onProjectStatusChange}
+        onChange={(e) => p.onProjectStatusChange?.(e.target.value as ProjectStatus)}
+        className="input-optiq h-8 text-[10px] md:text-[11px] font-semibold px-1.5 md:px-2 cursor-pointer shrink-0 max-w-[100px] md:max-w-none disabled:opacity-70"
         style={{
           color: PROJECT_STATUS_LABELS[p.projectStatus].color,
           borderColor: `${PROJECT_STATUS_LABELS[p.projectStatus].color}44`,
@@ -105,6 +109,11 @@ export default function AppHeader(p: Props) {
         ))}
       </select>
 
+      {p.userRole && p.onUserRoleChange && (
+        <div className="relative hidden md:block">
+          <RoleSelector role={p.userRole} onRoleChange={p.onUserRoleChange} compact />
+        </div>
+      )}
       <GeocodeSearch flyTo={p.flyTo} className="hidden sm:block" />
       {p.districts && p.onSearchHit && (
         <EntityIdSearch

@@ -48,6 +48,7 @@ interface Props {
   moveActive?: boolean;
   onStartMove?: () => void;
   onStopMove?: () => void;
+  onAudit?: (action: string, detail?: string, entityId?: string) => void;
 }
 
 const SPLITTERS: SplitterRatio[] = ['1:2', '1:4', '1:8', '1:16', '1:32', '1:64'];
@@ -208,7 +209,7 @@ export default function EntityEditor({
   onShowBranch, moveActive, onStartMove, onStopMove,
   onUpdateOLT, onUpdateTB, onUpdateORK,
   onDeleteOLT, onDeleteTB, onDeleteORK,
-  onReassignORK, onOpenSplicePlan,
+  onReassignORK, onOpenSplicePlan, onAudit,
 }: Props) {
   const sel = useMemo((): EntitySelection | null => {
     if (!selection) return null;
@@ -270,14 +271,20 @@ export default function EntityEditor({
             <>
               <FieldChecklistPanel
                 checklist={tbCheck}
-                onChange={(next) => onUpdateTB(tb.id, { fieldChecklist: next })}
+                onChange={(next) => {
+                  onUpdateTB(tb.id, { fieldChecklist: next });
+                  onAudit?.('Чеклист муфты', tb.id, tb.id);
+                }}
               />
               <EntityPhotoPanel
                 projectId={projectId}
                 entityKind="tb"
                 entityId={tb.id}
                 photos={tb.fieldPhotos ?? []}
-                onPhotosChange={(fieldPhotos) => onUpdateTB(tb.id, { fieldPhotos })}
+                onPhotosChange={(fieldPhotos) => {
+                  onUpdateTB(tb.id, { fieldPhotos });
+                  onAudit?.('Фото муфты', `${fieldPhotos.length} шт.`, tb.id);
+                }}
                 allowUpload={allowField}
               />
               <QrPassportLink kind="tb" id={tb.id} />
@@ -311,14 +318,20 @@ export default function EntityEditor({
           <>
             <FieldChecklistPanel
               checklist={orkCheck}
-              onChange={(next) => onUpdateORK(ork.id, { fieldChecklist: next })}
+              onChange={(next) => {
+                onUpdateORK(ork.id, { fieldChecklist: next });
+                onAudit?.('Чеклист ОРК', ork.id, ork.id);
+              }}
             />
             <EntityPhotoPanel
               projectId={projectId}
               entityKind="ork"
               entityId={ork.id}
               photos={ork.fieldPhotos ?? []}
-              onPhotosChange={(fieldPhotos: EntityFieldPhoto[]) => onUpdateORK(ork.id, { fieldPhotos })}
+              onPhotosChange={(fieldPhotos: EntityFieldPhoto[]) => {
+                onUpdateORK(ork.id, { fieldPhotos });
+                onAudit?.('Фото ОРК', `${fieldPhotos.length} шт.`, ork.id);
+              }}
               allowUpload={allowField}
             />
             <QrPassportLink kind="ork" id={ork.id} />

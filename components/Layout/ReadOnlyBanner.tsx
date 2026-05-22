@@ -1,16 +1,19 @@
 'use client';
-import type { AppViewMode } from '@/types/network';
+import type { AppViewMode, UserRole } from '@/types/network';
+import { USER_ROLE_LABELS } from '@/types/network';
 
 interface Props {
   mode: AppViewMode;
+  role?: UserRole;
   onCopyShareLink?: () => void;
 }
 
-export default function ReadOnlyBanner({ mode, onCopyShareLink }: Props) {
+export default function ReadOnlyBanner({ mode, role, onCopyShareLink }: Props) {
   if (mode === 'edit') return null;
+  const roleNote = role && role !== 'engineer' ? ` · ${USER_ROLE_LABELS[role]}` : '';
   const label = mode === 'view'
-    ? 'Режим просмотра — изменения отключены'
-    : 'Полевой режим — чеклист и фото';
+    ? `Режим просмотра — изменения отключены${roleNote}`
+    : `Полевой режим — чеклист и фото${roleNote}`;
 
   return (
     <div

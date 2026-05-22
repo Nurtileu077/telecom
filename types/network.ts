@@ -212,6 +212,24 @@ export interface ProjectScenarios {
 
 export type AppViewMode = 'edit' | 'view' | 'field';
 
+/** Роль пользователя (до полноценного Supabase Auth). */
+export type UserRole = 'engineer' | 'field' | 'viewer';
+
+export const USER_ROLE_LABELS: Record<UserRole, string> = {
+  engineer: 'Инженер',
+  field: 'Монтажник',
+  viewer: 'Просмотр',
+};
+
+export interface AuditEntry {
+  id: string;
+  at: string;
+  action: string;
+  detail?: string;
+  entityId?: string;
+  actor?: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -226,6 +244,7 @@ export interface Project {
   settings: ProjectSettings;
   snapshots?: ProjectSnapshot[];
   scenarios?: ProjectScenarios;
+  auditLog?: AuditEntry[];
 }
 
 export interface ImportRecord {

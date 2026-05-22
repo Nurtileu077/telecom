@@ -23,3 +23,13 @@ export function isMutationAllowed(mode: AppViewMode): boolean {
 export function isFieldToolsAllowed(mode: AppViewMode): boolean {
   return mode === 'edit' || mode === 'field';
 }
+
+export function buildShareFieldUrl(projectId: string, origin?: string): string {
+  const base = origin ?? (typeof window !== 'undefined' ? window.location.origin : '');
+  const path = typeof window !== 'undefined' ? window.location.pathname : '/';
+  const u = new URL(path, base);
+  u.searchParams.set('mode', 'field');
+  u.searchParams.set('role', 'field');
+  u.searchParams.set('project', projectId);
+  return u.toString();
+}

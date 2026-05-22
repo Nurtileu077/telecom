@@ -27,6 +27,7 @@ interface Props {
   readOnly?: boolean;
   projectId?: string;
   onCopyShareViewLink?: () => void;
+  onCopyShareFieldLink?: () => void;
   onShowHeatmap: () => void;
   heatmapEnabled: boolean;
   onExportPDF: () => void;
@@ -42,7 +43,7 @@ interface Props {
 
 export default function ToolsTab({
   scenarios = {}, settings, onSaveScenarioA, onSaveScenarioB, onRestoreScenarioA, onRestoreScenarioB,
-  readOnly, projectId, onCopyShareViewLink,
+  readOnly, projectId, onCopyShareViewLink, onCopyShareFieldLink,
   onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onRerouteOSRM, onReconsolidate, selectionBBox, osrmStatus, hasCables, budgetColoring, onToggleBudgetColoring,
 }: Props) {
   const [inputs, setInputs] = useState<OpticalBudgetInputs>(DEFAULT_INPUTS);
@@ -60,13 +61,20 @@ export default function ToolsTab({
           readOnly={readOnly}
         />
       )}
-      {projectId && onCopyShareViewLink && !readOnly && (
+      {projectId && !readOnly && (onCopyShareViewLink || onCopyShareFieldLink) && (
         <section>
-          <h3 className="section-title mb-2">Ссылка для просмотра</h3>
-          <button type="button" className="btn btn-secondary w-full text-[10px]" onClick={onCopyShareViewLink}>
-            🔗 Скопировать read-only URL
-          </button>
-          <p className="text-[9px] text-[#64748b] mt-1">Откроет проект в режиме <code>?mode=view</code> без правок.</p>
+          <h3 className="section-title mb-2">Ссылки для команды</h3>
+          {onCopyShareViewLink && (
+            <button type="button" className="btn btn-secondary w-full text-[10px] mb-1.5" onClick={onCopyShareViewLink}>
+              🔗 Просмотр (read-only)
+            </button>
+          )}
+          {onCopyShareFieldLink && (
+            <button type="button" className="btn btn-secondary w-full text-[10px]" onClick={onCopyShareFieldLink}>
+              📷 Поле (чеклист + фото)
+            </button>
+          )}
+          <p className="text-[9px] text-[#64748b] mt-1">С параметрами <code>project</code> и <code>role</code>.</p>
         </section>
       )}
       {/* OSRM routing */}

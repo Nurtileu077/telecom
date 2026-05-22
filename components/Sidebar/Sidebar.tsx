@@ -20,12 +20,15 @@ import ToolsTab from './ToolsTab';
 import GeocodeSearch from '@/components/Geocoding/GeocodeSearch';
 import BudgetTab from './BudgetTab';
 import type { SubBudget, BudgetStats } from '@/components/Network/PowerBudget';
-import type { ProjectSnapshot, ProjectStatus, InlineJoint, ProjectSettings, ProjectScenarios } from '@/types/network';
+import type {
+  ProjectSnapshot, ProjectStatus, InlineJoint, ProjectSettings, ProjectScenarios, AuditEntry,
+} from '@/types/network';
+import DashboardTab from './DashboardTab';
 import type { SearchHit } from '@/lib/entitySearch';
 import EntityIdSearch from '@/components/Search/EntityIdSearch';
 import type { BBox } from '@/components/Network/Selection';
 
-type Tab = 'layers' | 'materials' | 'schema' | 'groups' | 'notes' | 'stats' | 'projects' | 'cost' | 'tools' | 'budget';
+type Tab = 'layers' | 'materials' | 'schema' | 'groups' | 'notes' | 'dashboard' | 'stats' | 'projects' | 'cost' | 'tools' | 'budget';
 
 type Group = 'map' | 'network' | 'analytics' | 'workflow';
 
@@ -40,6 +43,7 @@ const GROUPS: { id: Group; label: string; icon: typeof Layers; tabs: { id: Tab; 
     { id: 'schema', label: 'Схема' },
   ]},
   { id: 'analytics', label: 'Анализ', icon: BarChart3, tabs: [
+    { id: 'dashboard', label: 'Сводка' },
     { id: 'stats', label: 'Статистика' },
     { id: 'budget', label: 'Бюджет' },
     { id: 'cost', label: 'Стоимость' },
@@ -109,6 +113,8 @@ interface Props {
   readOnly?: boolean;
   onCopyShareViewLink?: () => void;
   onSearchHit?: (hit: SearchHit) => void;
+  auditLog?: AuditEntry[];
+  onCopyShareFieldLink?: () => void;
   onMobileClose?: () => void;
   /** Не закрывать drawer при переключении вкладок (мобилка). */
   mobilePersist?: boolean;
@@ -246,6 +252,19 @@ export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Prop
             <MaterialsTab materials={props.materials} districts={props.districts} cables={props.cables} joints={props.joints} selectionBBox={props.selectionBBox} selectionPoly={props.selectionPoly} cableReserve={props.cableReserve} />
           )}
           {activeTab === 'budget' && <BudgetTab budgets={props.powerBudgets} stats={props.powerBudgetStats} districts={props.districts} flyTo={props.flyTo} />}
+          {activeTab === 'dashboard' && (
+            <DashboardTab
+              districts={props.districts}
+              cables={props.cables}
+              issues={props.validationIssues}
+              materials={props.materials}
+              prices={props.prices}
+              projectStatus={props.projectStatus}
+              scenarios={props.scenarios ?? {}}
+              auditLog={props.auditLog ?? []}
+              lastSavedAt={props.lastSavedAt}
+            />
+          )}
           {activeTab === 'stats' && <StatsTab districts={props.districts} cables={props.cables} issues={props.validationIssues} />}
           {activeTab === 'schema' && <SchemaTab districts={props.districts} flyTo={props.flyTo} />}
           {activeTab === 'groups' && <GroupsTab districts={props.districts} flyTo={props.flyTo} />}
@@ -270,6 +289,7 @@ export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Prop
               onRestoreScenarioB={props.restoreScenarioSlot ? () => props.restoreScenarioSlot!('b') : undefined}
               readOnly={props.readOnly}
               onCopyShareViewLink={props.onCopyShareViewLink}
+              onCopyShareFieldLink={props.onCopyShareFieldLink}
               onShowHeatmap={() => props.setHeatmapEnabled(!props.heatmapEnabled)}
               heatmapEnabled={props.heatmapEnabled}
               onExportPDF={props.onExportPDF}

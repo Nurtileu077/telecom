@@ -4,7 +4,7 @@ import {
   District, Cable, Subscriber, ProjectSettings, Materials, LayerVisibility,
   DEFAULT_SETTINGS, Project, MapAnnotation, ImportRecord, ValidationIssue,
   PriceCatalog, DEFAULT_PRICES, InlineJoint, OLT, TransitBox, ORK, CABLE_FIBERS, DISTRICT_COLORS,
-  ProjectStatus, ProjectSnapshot, ProjectScenarios, ScenarioSlotData,
+  ProjectStatus, ProjectSnapshot, ProjectScenarios, ScenarioSlotData, AuditEntry,
   CameraKind, ProjectSide, CAMERA_MIN_BANDWIDTH_MBPS,
 } from '@/types/network';
 import { buildNetwork, OltLocationMap } from '@/components/Network/AutoBuild';
@@ -21,6 +21,8 @@ import {
 } from '@/components/Network/SnapConnect';
 import { calculateSubscriberBudgets, budgetStats } from '@/components/Network/PowerBudget';
 import { dbListProjects, dbSaveProject, dbDeleteProject, dbLoadProject, supabase } from '@/lib/supabase';
+import { appendAudit, newAuditEntry } from '@/lib/audit';
+import { getActorName } from '@/lib/appRole';
 
 export type BuildStatus = 'idle' | 'importing' | 'clustering' | 'routing' | 'calculating' | 'done' | 'error';
 
@@ -81,6 +83,12 @@ export function useNetwork() {
   const [status_, setProjectStatus] = useState<ProjectStatus>('draft');
   const [snapshots, setSnapshots] = useState<ProjectSnapshot[]>([]);
   const [scenarios, setScenarios] = useState<ProjectScenarios>({});
+  const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
+
+  const recordAudit = useCallback((action: string, detail?: string, entityId?: string) => {
+    const entry = newAuditEntry(action, { detail, entityId, actor: getActorName() });
+    setAuditLog((prev) => appendAudit(prev, entry));
+  }, []);
 
   // Undo/Redo: serialized history of (districts, cables, joints) snapshots
   type HistEntry = { districts: District[]; cables: Cable[]; joints: InlineJoint[]; label: string };
@@ -163,8 +171,9 @@ export function useNetwork() {
       },
     };
     setSnapshots((prev) => [snap, ...prev].slice(0, 30));
+    recordAudit('Снимок', name.trim() || snap.name);
     return snap;
-  }, [districts, cables, joints, annotations]);
+  }, [districts, cables, joints, annotations, recordAudit]);
 
   const restoreSnapshot = useCallback((id: string) => {
     const snap = snapshots.find((s) => s.id === id);
@@ -174,7 +183,8 @@ export function useNetwork() {
     setCables(snap.snapshot.cables);
     setJoints(snap.snapshot.joints ?? []);
     setAnnotations(snap.snapshot.annotations);
-  }, [snapshots]);
+    recordAudit('Восстановление снимка', snap.name);
+  }, [snapshots, recordAudit]);
 
   const deleteSnapshot = useCallback((id: string) => {
     setSnapshots((prev) => prev.filter((s) => s.id !== id));
@@ -189,7 +199,8 @@ export function useNetwork() {
 
   const saveScenarioSlot = useCallback((slot: 'a' | 'b') => {
     setScenarios((prev) => ({ ...prev, [slot]: captureScenarioSlot() }));
-  }, [captureScenarioSlot]);
+    recordAudit('Сценарий сохранён', `Слот ${slot.toUpperCase()}`);
+  }, [captureScenarioSlot, recordAudit]);
 
   const restoreScenarioSlot = useCallback((slot: 'a' | 'b') => {
     const data = scenarios[slot];
@@ -198,7 +209,8 @@ export function useNetwork() {
     setDistricts(data.districts);
     setCables(data.cables);
     setJoints(data.joints ?? []);
-  }, [scenarios]);
+    recordAudit('Восстановление сценария', slot.toUpperCase());
+  }, [scenarios, recordAudit]);
 
   // Auto-load last project on mount
   useEffect(() => {
@@ -1559,7 +1571,7 @@ export function useNetwork() {
     return loadProjects();
   }, []);
 
-  const saveProject = useCallback(async () => {
+  const saveProject = useCallback(async (opts?: { audit?: boolean }) => {
     const project: Project = {
       id: projectId,
       name: projectName,
@@ -1569,9 +1581,11 @@ export function useNetwork() {
       districts, cables, joints, annotations, importHistory, settings,
       snapshots,
       scenarios,
+      auditLog,
     };
     // Always save to localStorage as offline backup
     saveToLocalStorage(project);
+    if (opts?.audit) recordAudit('Сохранение проекта', projectName);
     // Save to Supabase if available
     if (supabase) {
       try {
@@ -1582,7 +1596,7 @@ export function useNetwork() {
     }
     setLastSavedAt(new Date().toISOString());
     return project;
-  }, [projectId, projectName, status_, districts, cables, joints, annotations, importHistory, settings, snapshots, scenarios]);
+  }, [projectId, projectName, status_, districts, cables, joints, annotations, importHistory, settings, snapshots, scenarios, auditLog, recordAudit]);
 
   function loadProjectInternal(p: Project) {
     setProjectId(p.id);
@@ -1596,6 +1610,7 @@ export function useNetwork() {
     setProjectStatus(p.status ?? 'draft');
     setSnapshots(p.snapshots ?? []);
     setScenarios(p.scenarios ?? {});
+    setAuditLog(p.auditLog ?? []);
     const subs = (p.districts || []).flatMap((d) => d.subscribers);
     setAllSubscribers(subs);
     if (p.districts?.length) {
@@ -1634,6 +1649,7 @@ export function useNetwork() {
     setProjectStatus('draft');
     setSnapshots([]);
     setScenarios({});
+    setAuditLog([]);
     setDistricts([]);
     setCables([]);
     setJoints([]);
@@ -1655,7 +1671,7 @@ export function useNetwork() {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       districts, cables, joints, annotations, importHistory, settings,
-      snapshots, scenarios,
+      snapshots, scenarios, auditLog,
     };
     const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -1664,7 +1680,12 @@ export function useNetwork() {
     a.download = `${projectName.replace(/[^\w\s-]/g, '_')}.json`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [projectId, projectName, status_, districts, cables, joints, annotations, importHistory, settings, snapshots, scenarios]);
+  }, [projectId, projectName, status_, districts, cables, joints, annotations, importHistory, settings, snapshots, scenarios, auditLog]);
+
+  const setProjectStatusWithAudit = useCallback((s: ProjectStatus) => {
+    setProjectStatus(s);
+    recordAudit('Статус проекта', s);
+  }, [recordAudit]);
 
   const importProjectJSON = useCallback(async (file: File) => {
     const text = await file.text();
@@ -1723,7 +1744,8 @@ export function useNetwork() {
     undo, redo, canUndo, canRedo,
     takeSnapshot, restoreSnapshot, deleteSnapshot, snapshots,
     scenarios, saveScenarioSlot, restoreScenarioSlot,
-    projectStatus: status_, setProjectStatus,
+    projectStatus: status_, setProjectStatus: setProjectStatusWithAudit,
+    auditLog, recordAudit,
     reconsolidate,
   };
 }

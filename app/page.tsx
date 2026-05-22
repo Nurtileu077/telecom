@@ -28,8 +28,11 @@ import { findEntityCoords, findSubscriber } from '@/components/Network/entityInt
 import { parseDeepLinkOpen, type SearchHit } from '@/lib/entitySearch';
 import EntityIdSearch from '@/components/Search/EntityIdSearch';
 import ReadOnlyBanner from '@/components/Layout/ReadOnlyBanner';
-import { parseAppViewMode, buildShareViewUrl, isMutationAllowed } from '@/lib/viewMode';
-import type { AppViewMode } from '@/types/network';
+import { parseAppViewMode, buildShareViewUrl, buildShareFieldUrl, isMutationAllowed } from '@/lib/viewMode';
+import type { AppViewMode, UserRole } from '@/types/network';
+import {
+  getStoredRole, setStoredRole, parseUserRole, resolveEffectiveMode, roleAllowsStatusChange,
+} from '@/lib/appRole';
 import { dbLoadProject } from '@/lib/supabase';
 import MobileDock from '@/components/Layout/MobileDock';
 import MobileActionSheet from '@/components/Layout/MobileActionSheet';
@@ -50,10 +53,25 @@ const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
 
 export default function HomePage() {
   const net = useNetwork();
-  const [appMode] = useState<AppViewMode>(() =>
+  const [urlMode] = useState<AppViewMode>(() =>
     typeof window !== 'undefined' ? parseAppViewMode(window.location.search) : 'edit',
   );
+  const [userRole, setUserRole] = useState<UserRole>(() =>
+    typeof window !== 'undefined' ? getStoredRole() : 'engineer',
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const r = parseUserRole(window.location.search);
+    if (r) {
+      setStoredRole(r);
+      setUserRole(r);
+    }
+  }, []);
+
+  const appMode = useMemo(() => resolveEffectiveMode(urlMode, userRole), [urlMode, userRole]);
   const readOnly = !isMutationAllowed(appMode);
+  const canChangeStatus = roleAllowsStatusChange(userRole);
   const [showImport, setShowImport] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showProjects, setShowProjects] = useState(false);
@@ -542,12 +560,14 @@ export default function HomePage() {
 
   return (
     <div className="app-shell flex flex-col overflow-hidden">
-      <ReadOnlyBanner mode={appMode} onCopyShareLink={readOnly ? copyShareViewLink : undefined} />
+      <ReadOnlyBanner mode={appMode} role={userRole} onCopyShareLink={readOnly ? copyShareViewLink : undefined} />
       <AppHeader
         projectName={net.projectName}
         onProjectNameChange={net.setProjectName}
         projectStatus={net.projectStatus}
-        onProjectStatusChange={net.setProjectStatus}
+        onProjectStatusChange={canChangeStatus ? net.setProjectStatus : undefined}
+        userRole={userRole}
+        onUserRoleChange={setUserRole}
         flyTo={flyToRef.current}
         totalSubscribers={net.totalSubscribers}
         totalCableKm={net.totalCableKm}
@@ -587,7 +607,7 @@ export default function HomePage() {
         dbEnabled={net.dbEnabled}
         onCatalog={() => setShowCatalog(true)}
         onProjects={() => setShowProjects(true)}
-        onSave={() => net.saveProject()}
+        onSave={() => net.saveProject({ audit: true })}
         canSave={!readOnly && (net.districts.length > 0 || net.annotations.length > 0)}
         showBuild={net.allSubscribers.length > 0 && net.districts.length === 0}
         onBuild={() => net.rebuildFromCurrent()}
@@ -684,6 +704,10 @@ export default function HomePage() {
           restoreScenarioSlot={net.restoreScenarioSlot}
           readOnly={readOnly}
           onCopyShareViewLink={copyShareViewLink}
+          onCopyShareFieldLink={() => {
+            navigator.clipboard?.writeText(buildShareFieldUrl(net.projectId)).catch(() => {});
+          }}
+          auditLog={net.auditLog}
         />
         </div>
 
@@ -782,6 +806,7 @@ export default function HomePage() {
             interiorView={interiorView}
             projectId={net.projectId}
             appMode={appMode}
+            onAudit={net.recordAudit}
             districts={net.districts}
             cables={net.cables}
             joints={net.joints}
