@@ -18,13 +18,23 @@ export async function authGetSession() {
 export async function authSignInOtp(email: string) {
   if (!supabase) throw new Error('Supabase не настроен — задайте NEXT_PUBLIC_SUPABASE_URL и ANON_KEY');
   const redirectTo = typeof window !== 'undefined'
-    ? `${window.location.origin}${window.location.pathname}`
+    ? `${window.location.origin}${window.location.pathname}${window.location.search}`
     : undefined;
   const { error } = await supabase.auth.signInWithOtp({
     email: email.trim(),
     options: { emailRedirectTo: redirectTo },
   });
   if (error) throw error;
+}
+
+export async function authSignInPassword(email: string, password: string) {
+  if (!supabase) throw new Error('Supabase не настроен');
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: email.trim(),
+    password,
+  });
+  if (error) throw error;
+  return data.user;
 }
 
 export async function authSignOut() {

@@ -35,7 +35,8 @@ import {
 } from '@/lib/appRole';
 import { diffScenarioCables, highlightCurrentCableIds } from '@/lib/scenarioDiff';
 import AuthButton from '@/components/Auth/AuthButton';
-import type { User } from '@supabase/supabase-js';
+import { useSupabaseAuth } from '@/hooks/useSupabaseAuth';
+import { roleFromUser } from '@/lib/authSession';
 import { dbLoadProject } from '@/lib/supabase';
 import { isAuthRequired, isAuthRequiredError } from '@/lib/supabaseAccess';
 import { getActorName } from '@/lib/appRole';
@@ -131,12 +132,20 @@ export default function HomePage() {
   const [scenarioDiffOn, setScenarioDiffOn] = useState(false);
   const [saveConflict, setSaveConflict] = useState<{ serverUpdatedAt: string; serverName: string } | null>(null);
   const [mergeBusy, setMergeBusy] = useState(false);
-  const [authUser, setAuthUser] = useState<User | null>(null);
   const [authPanelOpen, setAuthPanelOpen] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const { user: authUser, ready: authReady } = useSupabaseAuth();
+
+  useEffect(() => {
+    const r = roleFromUser(authUser);
+    if (r) {
+      setStoredRole(r);
+      setUserRole(r);
+    }
+  }, [authUser]);
 
   const canSave = canSaveProject(appMode) && (net.districts.length > 0 || net.annotations.length > 0);
-  const cloudBlocked = isAuthRequired() && !authUser && net.dbEnabled;
+  const cloudBlocked = isAuthRequired() && authReady && !authUser && net.dbEnabled;
 
   useEffect(() => {
     net.setFieldRemoteSave(appMode === 'field');
@@ -659,10 +668,6 @@ export default function HomePage() {
           <AuthButton
             open={authPanelOpen}
             onOpenChange={setAuthPanelOpen}
-            onUserChange={(u) => {
-              setAuthUser(u);
-              if (u) setAuthPanelOpen(false);
-            }}
             onRoleFromAuth={(r) => { if (r) { setStoredRole(r); setUserRole(r); } }}
           />
         )}
