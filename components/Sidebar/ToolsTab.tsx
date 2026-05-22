@@ -21,6 +21,7 @@ import {
 } from '@/lib/offlineMap';
 import { bboxFromProject } from '@/lib/projectBounds';
 import { preloadTilesForBBox, type TilePreloadProgress } from '@/lib/tilePreload';
+import { OSRM_HOST_LS_KEY, OSRM_PROFILE_LS_KEY } from '@/components/Network/OSRMRouter';
 import type { District, Cable, MapAnnotation } from '@/types/network';
 
 interface Props {
@@ -65,9 +66,24 @@ export default function ToolsTab({
   const [tilePreload, setTilePreload] = useState<TilePreloadProgress | null>(null);
   const [preloading, setPreloading] = useState(false);
   const preloadAbort = useRef<AbortController | null>(null);
+  const [osrmHost, setOsrmHost] = useState('');
+  const [osrmProfile, setOsrmProfile] = useState('foot');
+  const [osrmSaved, setOsrmSaved] = useState(false);
   useEffect(() => {
     setOfflineTiles(isOfflineTilesEnabled());
+    setOsrmHost(localStorage.getItem(OSRM_HOST_LS_KEY) ?? '');
+    setOsrmProfile(localStorage.getItem(OSRM_PROFILE_LS_KEY) ?? 'foot');
   }, []);
+
+  const saveOsrm = () => {
+    const h = osrmHost.trim().replace(/\/$/, '');
+    if (h) localStorage.setItem(OSRM_HOST_LS_KEY, h);
+    else localStorage.removeItem(OSRM_HOST_LS_KEY);
+    localStorage.setItem(OSRM_PROFILE_LS_KEY, osrmProfile);
+    setOsrmHost(h);
+    setOsrmSaved(true);
+    setTimeout(() => setOsrmSaved(false), 1500);
+  };
 
   const result = useMemo(() => calculateOpticalBudget(inputs), [inputs]);
 
@@ -213,6 +229,34 @@ export default function ToolsTab({
             ? 'Консолидация и муфты только в выбранной области, остальная сеть не трогается.'
             : 'Слияние узлов в радиусе 30м (оборудование защищено), объединение параллельных кабелей одной дороги, муфты в развилках. Используй после ручных правок.'}
         </p>
+        <div className="mt-3 pt-2 border-t border-[#1e3a5f]">
+          <label className="text-[9px] uppercase tracking-widest text-[#64748b]">OSRM-сервер</label>
+          <input
+            type="text"
+            value={osrmHost}
+            onChange={(e) => setOsrmHost(e.target.value)}
+            placeholder="https://xxxx.trycloudflare.com"
+            disabled={readOnly}
+            className="w-full mt-1 px-2 py-1 text-[10px] bg-[#0b1e34] border border-[#1e3a5f] rounded text-[#e2e8f0] disabled:opacity-50"
+          />
+          <div className="flex gap-1.5 mt-1.5">
+            <select
+              value={osrmProfile}
+              onChange={(e) => setOsrmProfile(e.target.value)}
+              disabled={readOnly}
+              className="flex-1 px-2 py-1 text-[10px] bg-[#0b1e34] border border-[#1e3a5f] rounded text-[#e2e8f0] disabled:opacity-50"
+            >
+              <option value="foot">foot (пешеход)</option>
+              <option value="driving">driving (авто)</option>
+            </select>
+            <button type="button" onClick={saveOsrm} disabled={readOnly} className="btn btn-secondary px-3">
+              {osrmSaved ? '✓ Сохранено' : 'Сохранить'}
+            </button>
+          </div>
+          <p className="text-[9px] text-[#64748b] mt-1">
+            Свой OSRM (например, Cloudflare-туннель к локальному Docker). Пусто = публичный demo (driving). Применяется при следующей прокладке, без пересборки.
+          </p>
+        </div>
       </section>
 
       {/* Visualization tools */}

@@ -1,18 +1,35 @@
 import { Cable } from '@/types/network';
 
-// OSRM-сервер настраивается через env (Next инлайнит NEXT_PUBLIC_* при сборке).
-// Дефолт — публичный демо с профилем `driving` (машина): прежнее поведение, без
-// регрессии. Для чистой прокладки кабеля поднимите self-host OSRM с пешеходным
-// профилем (см. osrm/README.md) и задайте:
-//   NEXT_PUBLIC_OSRM_HOST=http://localhost:5000
-//   NEXT_PUBLIC_OSRM_PROFILE=foot
-// Пешеходный профиль игнорирует односторонки и не штрафует развороты, поэтому
+// OSRM-сервер выбирается по приоритету:
+//   1) рантайм-настройка в приложении (localStorage) — поле в Tools. Удобно для
+//      бесплатного Cloudflare-туннеля, у которого URL меняется при перезапуске:
+//      вписал новый адрес прямо в UI, без пересборки.
+//   2) env при сборке: NEXT_PUBLIC_OSRM_HOST / NEXT_PUBLIC_OSRM_PROFILE.
+//   3) дефолт — публичный demo/driving (прежнее поведение, без регрессии).
+// Профиль foot (пешеход) игнорирует односторонки и не штрафует развороты, поэтому
 // исчезают объезды «проехал-развернулся» и кабель по обеим сторонам дороги
 // (туда и обратно идут по одним рёбрам → линии накладываются).
-const OSRM_HOST = (process.env.NEXT_PUBLIC_OSRM_HOST || 'https://router.project-osrm.org').replace(/\/$/, '');
-const OSRM_PROFILE = process.env.NEXT_PUBLIC_OSRM_PROFILE || 'driving';
-const OSRM_BASE = `${OSRM_HOST}/route/v1/${OSRM_PROFILE}`;
-const OSRM_NEAREST = `${OSRM_HOST}/nearest/v1/${OSRM_PROFILE}`;
+export const OSRM_HOST_LS_KEY = 'optiq-osrm-host';
+export const OSRM_PROFILE_LS_KEY = 'optiq-osrm-profile';
+
+function lsGet(key: string): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const v = window.localStorage.getItem(key);
+    return v && v.trim() ? v.trim() : null;
+  } catch {
+    return null;
+  }
+}
+function osrmHost(): string {
+  const h = lsGet(OSRM_HOST_LS_KEY) ?? process.env.NEXT_PUBLIC_OSRM_HOST ?? 'https://router.project-osrm.org';
+  return h.replace(/\/$/, '');
+}
+function osrmProfile(): string {
+  return lsGet(OSRM_PROFILE_LS_KEY) ?? process.env.NEXT_PUBLIC_OSRM_PROFILE ?? 'driving';
+}
+const routeBase = () => `${osrmHost()}/route/v1/${osrmProfile()}`;
+const nearestBase = () => `${osrmHost()}/nearest/v1/${osrmProfile()}`;
 
 export type ProgressCallback = (done: number, total: number, current: string) => void;
 
@@ -23,7 +40,7 @@ async function fetchRoute(
 ): Promise<[number, number][]> {
   // continue_straight=false — не форсировать проезд через точку с разворотом
   // (снимает часть «развернулся и поехал обратно» даже на профиле driving).
-  const url = `${OSRM_BASE}/${lon1},${lat1};${lon2},${lat2}?overview=full&geometries=geojson&continue_straight=false`;
+  const url = `${routeBase()}/${lon1},${lat1};${lon2},${lat2}?overview=full&geometries=geojson&continue_straight=false`;
   const res = await fetch(url, { signal: AbortSignal.any
     ? AbortSignal.any([signal, AbortSignal.timeout(12000)])
     : signal,
@@ -59,7 +76,7 @@ export async function snapToRoad(
   maxDistM = 60,
 ): Promise<[number, number] | null> {
   try {
-    const url = `${OSRM_NEAREST}/${lon},${lat}?number=1`;
+    const url = `${nearestBase()}/${lon},${lat}?number=1`;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 8000);
     const res = await fetch(url, { signal: ctrl.signal });
