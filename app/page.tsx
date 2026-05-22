@@ -36,6 +36,9 @@ import {
 import { diffScenarioCables, highlightCurrentCableIds } from '@/lib/scenarioDiff';
 import AuthButton from '@/components/Auth/AuthButton';
 import { dbLoadProject } from '@/lib/supabase';
+import SaveConflictModal from '@/components/Projects/SaveConflictModal';
+import { isProjectSaveConflict } from '@/lib/projectConflict';
+import { isOfflineTilesEnabled, syncOfflineTileWorker } from '@/lib/offlineMap';
 import MobileDock from '@/components/Layout/MobileDock';
 import MobileActionSheet from '@/components/Layout/MobileActionSheet';
 import PwaInstallBanner from '@/components/Layout/PwaInstallBanner';
@@ -119,6 +122,21 @@ export default function HomePage() {
   const [selectionPoly, setSelectionPoly] = useState<[number, number][] | null>(null);
   const [selectionBBox, setSelectionBBox] = useState<{ latMin: number; lonMin: number; latMax: number; lonMax: number } | null>(null);
   const [scenarioDiffOn, setScenarioDiffOn] = useState(false);
+  const [saveConflict, setSaveConflict] = useState<{ serverUpdatedAt: string; serverName: string } | null>(null);
+
+  const handleSaveProject = useCallback(async (opts?: { audit?: boolean; force?: boolean }) => {
+    try {
+      await net.saveProject(opts);
+    } catch (e) {
+      if (isProjectSaveConflict(e)) {
+        setSaveConflict({ serverUpdatedAt: e.serverUpdatedAt, serverName: e.serverName });
+      }
+    }
+  }, [net]);
+
+  useEffect(() => {
+    syncOfflineTileWorker().catch(() => {});
+  }, []);
 
   const finishSelection = useCallback(() => {
     setSelectionPoints((pts) => {
@@ -439,7 +457,7 @@ export default function HomePage() {
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
 
       if (e.ctrlKey || e.metaKey) {
-        if (e.key === 's') { e.preventDefault(); net.saveProject(); }
+        if (e.key === 's') { e.preventDefault(); handleSaveProject({ audit: true }); }
         if (e.key === 'i') { e.preventDefault(); setShowImport(true); }
         if (e.key === 'n') { e.preventDefault(); if (confirm('Новый проект? Несохранённые данные пропадут.')) net.newProject(); }
         if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); net.undo(); }
@@ -627,7 +645,7 @@ export default function HomePage() {
         dbEnabled={net.dbEnabled}
         onCatalog={() => setShowCatalog(true)}
         onProjects={() => setShowProjects(true)}
-        onSave={() => net.saveProject({ audit: true })}
+        onSave={() => handleSaveProject({ audit: true })}
         canSave={!readOnly && (net.districts.length > 0 || net.annotations.length > 0)}
         showBuild={net.allSubscribers.length > 0 && net.districts.length === 0}
         onBuild={() => net.rebuildFromCurrent()}
@@ -689,7 +707,15 @@ export default function HomePage() {
           lastSavedAt={net.lastSavedAt}
           autoSaveEnabled={net.autoSaveEnabled}
           setAutoSaveEnabled={net.setAutoSaveEnabled}
-          saveProject={net.saveProject}
+          saveProject={async () => {
+            try {
+              return await net.saveProject({ audit: true });
+            } catch (e) {
+              if (isProjectSaveConflict(e)) {
+                setSaveConflict({ serverUpdatedAt: e.serverUpdatedAt, serverName: e.serverName });
+              }
+            }
+          }}
           loadProject={net.loadProject}
           deleteProject={net.deleteProject}
           newProject={net.newProject}
@@ -1237,6 +1263,22 @@ A3: ...`}
         }}
         onShare={shareProject}
       />
+
+      {saveConflict && (
+        <SaveConflictModal
+          serverName={saveConflict.serverName}
+          serverUpdatedAt={saveConflict.serverUpdatedAt}
+          onLoadServer={async () => {
+            await net.reloadProjectFromServer();
+            setSaveConflict(null);
+          }}
+          onOverwrite={async () => {
+            await handleSaveProject({ audit: true, force: true });
+            setSaveConflict(null);
+          }}
+          onCancel={() => setSaveConflict(null)}
+        />
+      )}
 
       {showChat && (
         <ChatPanel

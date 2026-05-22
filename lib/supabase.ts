@@ -44,14 +44,30 @@ export async function dbDeleteProject(id: string): Promise<void> {
 }
 
 export async function dbLoadProject(id: string): Promise<Project | null> {
+  const row = await dbLoadProjectRow(id);
+  return row?.data ?? null;
+}
+
+export async function dbLoadProjectRow(id: string): Promise<ProjectRow | null> {
   if (!supabase) return null;
   const { data, error } = await supabase
     .from('gpon_projects')
-    .select('data')
+    .select('id, name, created_at, updated_at, data')
     .eq('id', id)
     .single();
   if (error) return null;
-  return (data as { data: Project }).data;
+  return data as ProjectRow;
+}
+
+export async function dbFetchProjectRevision(id: string): Promise<{ updated_at: string; name: string } | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('gpon_projects')
+    .select('updated_at, name')
+    .eq('id', id)
+    .single();
+  if (error || !data) return null;
+  return { updated_at: data.updated_at as string, name: data.name as string };
 }
 
 // ── Equipment catalog ─────────────────────────────────────────────────────────

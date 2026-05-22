@@ -20,7 +20,11 @@ import {
   findCablesNearPoint, splitCableAt, nearestEntity, nearestCableEnd,
 } from '@/components/Network/SnapConnect';
 import { calculateSubscriberBudgets, budgetStats } from '@/components/Network/PowerBudget';
-import { dbListProjects, dbSaveProject, dbDeleteProject, dbLoadProject, supabase } from '@/lib/supabase';
+import {
+  dbListProjects, dbSaveProject, dbDeleteProject, dbLoadProject, dbLoadProjectRow,
+  dbFetchProjectRevision, supabase,
+} from '@/lib/supabase';
+import { ProjectSaveConflict } from '@/lib/projectConflict';
 import { appendAudit, newAuditEntry } from '@/lib/audit';
 import { getActorName } from '@/lib/appRole';
 
@@ -84,6 +88,8 @@ export function useNetwork() {
   const [snapshots, setSnapshots] = useState<ProjectSnapshot[]>([]);
   const [scenarios, setScenarios] = useState<ProjectScenarios>({});
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
+  /** Последняя известная ревизия в Supabase (updated_at строки). */
+  const serverUpdatedAtRef = useRef<string | null>(null);
 
   const recordAudit = useCallback((action: string, detail?: string, entityId?: string) => {
     const entry = newAuditEntry(action, { detail, entityId, actor: getActorName() });
@@ -220,8 +226,12 @@ export function useNetwork() {
         if (!lastId) return;
         // Try Supabase first, fall back to localStorage
         if (supabase) {
-          const p = await dbLoadProject(lastId);
-          if (p) { loadProjectInternal(p); return; }
+          const row = await dbLoadProjectRow(lastId);
+          if (row?.data) {
+            loadProjectInternal(row.data);
+            serverUpdatedAtRef.current = row.updated_at;
+            return;
+          }
         }
         const projects = loadProjects();
         const p = projects.find((x) => x.id === lastId);
@@ -1571,32 +1581,50 @@ export function useNetwork() {
     return loadProjects();
   }, []);
 
-  const saveProject = useCallback(async (opts?: { audit?: boolean }) => {
+  const saveProject = useCallback(async (opts?: { audit?: boolean; force?: boolean; skipRemote?: boolean }) => {
+    const now = new Date().toISOString();
     const project: Project = {
       id: projectId,
       name: projectName,
       status: status_,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
       districts, cables, joints, annotations, importHistory, settings,
       snapshots,
       scenarios,
       auditLog,
     };
-    // Always save to localStorage as offline backup
     saveToLocalStorage(project);
     if (opts?.audit) recordAudit('Сохранение проекта', projectName);
-    // Save to Supabase if available
-    if (supabase) {
+    if (supabase && !opts?.skipRemote) {
+      const baseline = serverUpdatedAtRef.current;
+      if (!opts?.force && baseline) {
+        const remote = await dbFetchProjectRevision(projectId);
+        if (remote && remote.updated_at !== baseline) {
+          throw new ProjectSaveConflict(remote.updated_at, remote.name);
+        }
+      }
       try {
         await dbSaveProject(project);
+        const after = await dbFetchProjectRevision(projectId);
+        serverUpdatedAtRef.current = after?.updated_at ?? now;
       } catch (e) {
+        if (e instanceof ProjectSaveConflict) throw e;
         console.warn('[DB] save failed, using localStorage only', e);
       }
     }
-    setLastSavedAt(new Date().toISOString());
+    setLastSavedAt(now);
     return project;
   }, [projectId, projectName, status_, districts, cables, joints, annotations, importHistory, settings, snapshots, scenarios, auditLog, recordAudit]);
+
+  const reloadProjectFromServer = useCallback(async () => {
+    if (!supabase) return;
+    const row = await dbLoadProjectRow(projectId);
+    if (!row?.data) return;
+    loadProjectInternal(row.data);
+    serverUpdatedAtRef.current = row.updated_at;
+    recordAudit('Загрузка с сервера', 'конфликт версий');
+  }, [projectId, recordAudit]);
 
   function loadProjectInternal(p: Project) {
     setProjectId(p.id);
@@ -1624,14 +1652,19 @@ export function useNetwork() {
   }
 
   const loadProject = useCallback(async (p: Project) => {
-    // If we have Supabase, load the freshest copy from DB
     if (supabase) {
       try {
-        const fresh = await dbLoadProject(p.id);
-        if (fresh) { loadProjectInternal(fresh); localStorage.setItem(CURRENT_KEY, p.id); return; }
+        const row = await dbLoadProjectRow(p.id);
+        if (row?.data) {
+          loadProjectInternal(row.data);
+          serverUpdatedAtRef.current = row.updated_at;
+          localStorage.setItem(CURRENT_KEY, p.id);
+          return;
+        }
       } catch {}
     }
     loadProjectInternal(p);
+    serverUpdatedAtRef.current = null;
     localStorage.setItem(CURRENT_KEY, p.id);
   }, []);
 
@@ -1663,6 +1696,7 @@ export function useNetwork() {
     historyCursor.current = -1;
     setCanUndo(false); setCanRedo(false);
     localStorage.removeItem(CURRENT_KEY);
+    serverUpdatedAtRef.current = null;
   }, []);
 
   const exportProjectJSON = useCallback(() => {
@@ -1697,7 +1731,7 @@ export function useNetwork() {
   useEffect(() => {
     if (!autoSaveEnabled) return;
     if (districts.length === 0 && annotations.length === 0) return;
-    const t = setInterval(() => { saveProject(); }, AUTOSAVE_INTERVAL_MS);
+    const t = setInterval(() => { saveProject({ skipRemote: true }); }, AUTOSAVE_INTERVAL_MS);
     return () => clearInterval(t);
   }, [autoSaveEnabled, districts.length, annotations.length, saveProject]);
 
@@ -1729,7 +1763,8 @@ export function useNetwork() {
     buildFromSubscribers, appendSubscribers,
     addAnnotation, updateAnnotation, deleteAnnotation,
     addSubscriberAt, deleteSubscriber, moveEntity, rebuildFromCurrent, autoRepair, loadRaw, loadStructured,
-    saveProject, loadProject, deleteProject, listProjects, newProject,
+    saveProject, reloadProjectFromServer, loadProject, deleteProject, listProjects, newProject,
+    serverUpdatedAt: serverUpdatedAtRef.current,
     exportProjectJSON, importProjectJSON,
     totalSubscribers, totalCableKm, totalOrks,
     powerBudgets, powerBudgetStats,

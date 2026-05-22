@@ -1,5 +1,6 @@
 'use client';
-import type { ProjectScenarios } from '@/types/network';
+import type { ProjectScenarios, PriceCatalog, ProjectSettings } from '@/types/network';
+import { compareScenarioDistrictCosts, formatCostDelta } from '@/lib/scenarioDistrictCost';
 import { compareScenarioMetrics, metricsFromSlot, type ScenarioCompareRow } from '@/lib/scenarioCompare';
 import { diffScenarioCables, diffSummary } from '@/lib/scenarioDiff';
 import { useMemo } from 'react';
@@ -13,11 +14,13 @@ interface Props {
   readOnly?: boolean;
   scenarioDiffOn?: boolean;
   onToggleScenarioDiff?: () => void;
+  settings?: ProjectSettings;
+  prices?: PriceCatalog;
 }
 
 export default function ScenarioPanel({
   scenarios, onSaveA, onSaveB, onRestoreA, onRestoreB, readOnly,
-  scenarioDiffOn, onToggleScenarioDiff,
+  scenarioDiffOn, onToggleScenarioDiff, settings, prices,
 }: Props) {
   const rows: ScenarioCompareRow[] = useMemo(() => {
     if (!scenarios.a || !scenarios.b) return [];
@@ -31,6 +34,11 @@ export default function ScenarioPanel({
     if (!scenarios.a || !scenarios.b) return null;
     return diffSummary(diffScenarioCables(scenarios.a, scenarios.b));
   }, [scenarios]);
+
+  const districtCostDiff = useMemo(() => {
+    if (!scenarios.a || !scenarios.b || !settings || !prices) return [];
+    return compareScenarioDistrictCosts(scenarios.a, scenarios.b, settings, prices);
+  }, [scenarios, settings, prices]);
 
   const fmtDate = (iso?: string) =>
     iso ? new Date(iso).toLocaleString('ru', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
@@ -83,6 +91,37 @@ export default function ScenarioPanel({
           </tbody>
         </table>
       )}
+      {districtCostDiff.length > 0 && prices && (
+        <div>
+          <div className="text-[10px] text-[#64748b] uppercase tracking-wider mb-1">Δ смета по районам</div>
+          <table className="w-full text-[9px] border border-[#1e3a5f] rounded overflow-hidden">
+            <thead>
+              <tr className="bg-[#0a0e1a] text-[#64748b]">
+                <th className="p-1 text-left">Район</th>
+                <th className="p-1 text-right">A</th>
+                <th className="p-1 text-right">B</th>
+                <th className="p-1 text-right">Δ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {districtCostDiff.map((r) => (
+                <tr key={r.name} className="border-t border-[#1e3a5f]/50">
+                  <td className="p-1">
+                    <span className="inline-block w-1.5 h-1.5 rounded-full mr-1" style={{ background: r.color }} />
+                    {r.name}
+                  </td>
+                  <td className="p-1 text-right font-mono text-[#94a3b8]">{Math.round(r.totalA / 1000)}k</td>
+                  <td className="p-1 text-right font-mono text-[#94a3b8]">{Math.round(r.totalB / 1000)}k</td>
+                  <td className={`p-1 text-right font-mono ${r.delta >= 0 ? 'text-[#f87171]' : 'text-[#34d399]'}`}>
+                    {formatCostDelta(r.delta, prices.currency)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {cableDiff && (
         <div className="text-[10px] space-y-1 rounded border border-[#1e3a5f] p-2 bg-[#0a0e1a]/80">
           <div className="text-[#64748b] uppercase tracking-wider text-[9px]">Кабели A↔B</div>

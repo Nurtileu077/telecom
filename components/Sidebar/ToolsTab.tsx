@@ -1,5 +1,5 @@
 'use client';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Route, Merge, Flame, Activity, Printer, FileDown } from 'lucide-react';
 import { OpticalBudgetInputs } from '@/types/network';
 import { calculateOpticalBudget } from '@/components/Network/OpticalBudget';
@@ -15,11 +15,14 @@ const DEFAULT_INPUTS: OpticalBudgetInputs = {
 };
 
 import ScenarioPanel from './ScenarioPanel';
-import type { ProjectScenarios, ProjectSettings } from '@/types/network';
-
+import type { ProjectScenarios, ProjectSettings, PriceCatalog } from '@/types/network';
+import {
+  isOfflineTilesEnabled, setOfflineTilesEnabled, syncOfflineTileWorker,
+} from '@/lib/offlineMap';
 interface Props {
   scenarios?: ProjectScenarios;
   settings?: ProjectSettings;
+  prices?: PriceCatalog;
   onSaveScenarioA?: () => void;
   onSaveScenarioB?: () => void;
   onRestoreScenarioA?: () => void;
@@ -44,19 +47,49 @@ interface Props {
 }
 
 export default function ToolsTab({
-  scenarios = {}, settings, onSaveScenarioA, onSaveScenarioB, onRestoreScenarioA, onRestoreScenarioB,
+  scenarios = {}, settings, prices, onSaveScenarioA, onSaveScenarioB, onRestoreScenarioA, onRestoreScenarioB,
   scenarioDiffOn, onToggleScenarioDiff,
   readOnly, projectId, onCopyShareViewLink, onCopyShareFieldLink,
   onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onRerouteOSRM, onReconsolidate, selectionBBox, osrmStatus, hasCables, budgetColoring, onToggleBudgetColoring,
 }: Props) {
   const [inputs, setInputs] = useState<OpticalBudgetInputs>(DEFAULT_INPUTS);
+  const [offlineTiles, setOfflineTiles] = useState(false);
+  useEffect(() => {
+    setOfflineTiles(isOfflineTilesEnabled());
+  }, []);
+
   const result = useMemo(() => calculateOpticalBudget(inputs), [inputs]);
+
+  const toggleOfflineTiles = async () => {
+    const next = !offlineTiles;
+    setOfflineTiles(next);
+    setOfflineTilesEnabled(next);
+    await syncOfflineTileWorker();
+  };
 
   return (
     <div className="overflow-y-auto h-full p-3 space-y-4">
+      <section>
+        <h3 className="section-title mb-2">Офлайн-карта</h3>
+        <button
+          type="button"
+          onClick={toggleOfflineTiles}
+          className={`w-full py-1.5 text-[10px] rounded border ${
+            offlineTiles ? 'border-[#34d399]/50 bg-[#34d399]/15 text-[#34d399]' : 'border-[#1e3a5f] text-[#94a3b8]'
+          }`}
+        >
+          {offlineTiles ? '✓ Кэш тайлов включён' : 'Кэшировать тайлы карты'}
+        </button>
+        <p className="text-[9px] text-[#64748b] mt-1">
+          Прокрутите нужный район онлайн — тайлы сохранятся для просмотра без сети (Carto/Esri).
+        </p>
+      </section>
+
       {onSaveScenarioA && onSaveScenarioB && (
         <ScenarioPanel
           scenarios={scenarios}
+          settings={settings}
+          prices={prices}
           onSaveA={onSaveScenarioA}
           onSaveB={onSaveScenarioB}
           onRestoreA={onRestoreScenarioA ?? (() => {})}
