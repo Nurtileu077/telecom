@@ -64,6 +64,15 @@ export interface FieldChecklist {
   updatedAt?: string;
 }
 
+/** Фото с объекта (Supabase Storage или data URL в офлайне). */
+export interface EntityFieldPhoto {
+  id: string;
+  url: string;
+  storagePath?: string;
+  caption?: string;
+  takenAt: string;
+}
+
 export interface ORK {
   id: string;
   lat: number;
@@ -75,6 +84,7 @@ export interface ORK {
   cableType: CableType;
   boxType: BoxType;
   fieldChecklist?: FieldChecklist;
+  fieldPhotos?: EntityFieldPhoto[];
 }
 
 export type MuftaType = 'МТОК-96А' | 'МТОК-48А' | 'МТОК-32А' | 'FOSC-400' | 'ОМС-3В' | string;
@@ -93,6 +103,7 @@ export interface TransitBox {
   outCable: CableType;
   muftaType: MuftaType;
   fieldChecklist?: FieldChecklist;
+  fieldPhotos?: EntityFieldPhoto[];
 }
 
 export interface OLT {
@@ -186,6 +197,21 @@ export interface ProjectSnapshot {
   };
 }
 
+/** Снимок сети для сравнения вариантов A/B. */
+export interface ScenarioSlotData {
+  takenAt: string;
+  districts: District[];
+  cables: Cable[];
+  joints?: InlineJoint[];
+}
+
+export interface ProjectScenarios {
+  a?: ScenarioSlotData;
+  b?: ScenarioSlotData;
+}
+
+export type AppViewMode = 'edit' | 'view' | 'field';
+
 export interface Project {
   id: string;
   name: string;
@@ -199,6 +225,7 @@ export interface Project {
   importHistory: ImportRecord[];
   settings: ProjectSettings;
   snapshots?: ProjectSnapshot[];
+  scenarios?: ProjectScenarios;
 }
 
 export interface ImportRecord {

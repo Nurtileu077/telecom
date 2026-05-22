@@ -85,3 +85,29 @@ export async function dbDeleteCatalog(id: string): Promise<void> {
   const { error } = await supabase.from('gpon_catalog').delete().eq('id', id);
   if (error) throw error;
 }
+
+// ── Field photos (Storage bucket: field-photos) ─────────────────────────────
+const FIELD_PHOTOS_BUCKET = 'field-photos';
+
+export async function storageUploadFieldPhoto(
+  projectId: string,
+  entityKind: 'ork' | 'tb',
+  entityId: string,
+  blob: Blob,
+): Promise<{ url: string; storagePath: string }> {
+  if (!supabase) throw new Error('Supabase не настроен');
+  const safeId = entityId.replace(/[^\w.-]/g, '_');
+  const storagePath = `${projectId}/${entityKind}/${safeId}/${Date.now()}.jpg`;
+  const { error } = await supabase.storage
+    .from(FIELD_PHOTOS_BUCKET)
+    .upload(storagePath, blob, { contentType: 'image/jpeg', upsert: false });
+  if (error) throw error;
+  const { data } = supabase.storage.from(FIELD_PHOTOS_BUCKET).getPublicUrl(storagePath);
+  return { url: data.publicUrl, storagePath };
+}
+
+export async function storageDeleteFieldPhoto(storagePath: string): Promise<void> {
+  if (!supabase || !storagePath) return;
+  const { error } = await supabase.storage.from(FIELD_PHOTOS_BUCKET).remove([storagePath]);
+  if (error) throw error;
+}

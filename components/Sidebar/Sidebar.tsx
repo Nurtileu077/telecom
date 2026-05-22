@@ -20,7 +20,7 @@ import ToolsTab from './ToolsTab';
 import GeocodeSearch from '@/components/Geocoding/GeocodeSearch';
 import BudgetTab from './BudgetTab';
 import type { SubBudget, BudgetStats } from '@/components/Network/PowerBudget';
-import type { ProjectSnapshot, ProjectStatus, InlineJoint, ProjectSettings } from '@/types/network';
+import type { ProjectSnapshot, ProjectStatus, InlineJoint, ProjectSettings, ProjectScenarios } from '@/types/network';
 import type { SearchHit } from '@/lib/entitySearch';
 import EntityIdSearch from '@/components/Search/EntityIdSearch';
 import type { BBox } from '@/components/Network/Selection';
@@ -103,6 +103,11 @@ interface Props {
   deleteSnapshot: (id: string) => void;
   hasNetwork: boolean;
   settings?: ProjectSettings;
+  scenarios?: ProjectScenarios;
+  saveScenarioSlot?: (slot: 'a' | 'b') => void;
+  restoreScenarioSlot?: (slot: 'a' | 'b') => void;
+  readOnly?: boolean;
+  onCopyShareViewLink?: () => void;
   onSearchHit?: (hit: SearchHit) => void;
   onMobileClose?: () => void;
   /** Не закрывать drawer при переключении вкладок (мобилка). */
@@ -257,6 +262,14 @@ export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Prop
           )}
           {activeTab === 'tools' && (
             <ToolsTab
+              scenarios={props.scenarios}
+              settings={props.settings}
+              onSaveScenarioA={props.saveScenarioSlot ? () => props.saveScenarioSlot!('a') : undefined}
+              onSaveScenarioB={props.saveScenarioSlot ? () => props.saveScenarioSlot!('b') : undefined}
+              onRestoreScenarioA={props.restoreScenarioSlot ? () => props.restoreScenarioSlot!('a') : undefined}
+              onRestoreScenarioB={props.restoreScenarioSlot ? () => props.restoreScenarioSlot!('b') : undefined}
+              readOnly={props.readOnly}
+              onCopyShareViewLink={props.onCopyShareViewLink}
               onShowHeatmap={() => props.setHeatmapEnabled(!props.heatmapEnabled)}
               heatmapEnabled={props.heatmapEnabled}
               onExportPDF={props.onExportPDF}

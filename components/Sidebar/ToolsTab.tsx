@@ -14,7 +14,19 @@ const DEFAULT_INPUTS: OpticalBudgetInputs = {
   reserveDb: 3,
 };
 
+import ScenarioPanel from './ScenarioPanel';
+import type { ProjectScenarios, ProjectSettings } from '@/types/network';
+
 interface Props {
+  scenarios?: ProjectScenarios;
+  settings?: ProjectSettings;
+  onSaveScenarioA?: () => void;
+  onSaveScenarioB?: () => void;
+  onRestoreScenarioA?: () => void;
+  onRestoreScenarioB?: () => void;
+  readOnly?: boolean;
+  projectId?: string;
+  onCopyShareViewLink?: () => void;
   onShowHeatmap: () => void;
   heatmapEnabled: boolean;
   onExportPDF: () => void;
@@ -28,12 +40,35 @@ interface Props {
   onToggleBudgetColoring: () => void;
 }
 
-export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onRerouteOSRM, onReconsolidate, selectionBBox, osrmStatus, hasCables, budgetColoring, onToggleBudgetColoring }: Props) {
+export default function ToolsTab({
+  scenarios = {}, settings, onSaveScenarioA, onSaveScenarioB, onRestoreScenarioA, onRestoreScenarioB,
+  readOnly, projectId, onCopyShareViewLink,
+  onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onRerouteOSRM, onReconsolidate, selectionBBox, osrmStatus, hasCables, budgetColoring, onToggleBudgetColoring,
+}: Props) {
   const [inputs, setInputs] = useState<OpticalBudgetInputs>(DEFAULT_INPUTS);
   const result = useMemo(() => calculateOpticalBudget(inputs), [inputs]);
 
   return (
     <div className="overflow-y-auto h-full p-3 space-y-4">
+      {onSaveScenarioA && onSaveScenarioB && (
+        <ScenarioPanel
+          scenarios={scenarios}
+          onSaveA={onSaveScenarioA}
+          onSaveB={onSaveScenarioB}
+          onRestoreA={onRestoreScenarioA ?? (() => {})}
+          onRestoreB={onRestoreScenarioB ?? (() => {})}
+          readOnly={readOnly}
+        />
+      )}
+      {projectId && onCopyShareViewLink && !readOnly && (
+        <section>
+          <h3 className="section-title mb-2">Ссылка для просмотра</h3>
+          <button type="button" className="btn btn-secondary w-full text-[10px]" onClick={onCopyShareViewLink}>
+            🔗 Скопировать read-only URL
+          </button>
+          <p className="text-[9px] text-[#64748b] mt-1">Откроет проект в режиме <code>?mode=view</code> без правок.</p>
+        </section>
+      )}
       {/* OSRM routing */}
       <section>
         <h3 className="section-title mb-2">Маршрутизация кабелей</h3>
@@ -45,7 +80,7 @@ export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, o
         <button
           type="button"
           onClick={onRerouteOSRM}
-          disabled={!hasCables || osrmStatus === 'routing'}
+          disabled={readOnly || !hasCables || osrmStatus === 'routing'}
           className="btn btn-secondary w-full"
         >
           <Route size={14} />
@@ -63,7 +98,7 @@ export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, o
         <button
           type="button"
           onClick={onReconsolidate}
-          disabled={!hasCables}
+          disabled={readOnly || !hasCables}
           className="btn btn-secondary w-full mt-2 text-[var(--accent-2)]"
         >
           <Merge size={14} />

@@ -4,7 +4,7 @@ import {
   District, Cable, Subscriber, ProjectSettings, Materials, LayerVisibility,
   DEFAULT_SETTINGS, Project, MapAnnotation, ImportRecord, ValidationIssue,
   PriceCatalog, DEFAULT_PRICES, InlineJoint, OLT, TransitBox, ORK, CABLE_FIBERS, DISTRICT_COLORS,
-  ProjectStatus, ProjectSnapshot,
+  ProjectStatus, ProjectSnapshot, ProjectScenarios, ScenarioSlotData,
   CameraKind, ProjectSide, CAMERA_MIN_BANDWIDTH_MBPS,
 } from '@/types/network';
 import { buildNetwork, OltLocationMap } from '@/components/Network/AutoBuild';
@@ -80,6 +80,7 @@ export function useNetwork() {
   const [dbEnabled, setDbEnabled] = useState(false);
   const [status_, setProjectStatus] = useState<ProjectStatus>('draft');
   const [snapshots, setSnapshots] = useState<ProjectSnapshot[]>([]);
+  const [scenarios, setScenarios] = useState<ProjectScenarios>({});
 
   // Undo/Redo: serialized history of (districts, cables, joints) snapshots
   type HistEntry = { districts: District[]; cables: Cable[]; joints: InlineJoint[]; label: string };
@@ -178,6 +179,26 @@ export function useNetwork() {
   const deleteSnapshot = useCallback((id: string) => {
     setSnapshots((prev) => prev.filter((s) => s.id !== id));
   }, []);
+
+  const captureScenarioSlot = useCallback((): ScenarioSlotData => ({
+    takenAt: new Date().toISOString(),
+    districts: JSON.parse(JSON.stringify(districts)),
+    cables: JSON.parse(JSON.stringify(cables)),
+    joints: JSON.parse(JSON.stringify(joints)),
+  }), [districts, cables, joints]);
+
+  const saveScenarioSlot = useCallback((slot: 'a' | 'b') => {
+    setScenarios((prev) => ({ ...prev, [slot]: captureScenarioSlot() }));
+  }, [captureScenarioSlot]);
+
+  const restoreScenarioSlot = useCallback((slot: 'a' | 'b') => {
+    const data = scenarios[slot];
+    if (!data) return;
+    if (!confirm(`Восстановить сценарий ${slot.toUpperCase()}? Текущая сеть будет заменена.`)) return;
+    setDistricts(data.districts);
+    setCables(data.cables);
+    setJoints(data.joints ?? []);
+  }, [scenarios]);
 
   // Auto-load last project on mount
   useEffect(() => {
@@ -1547,6 +1568,7 @@ export function useNetwork() {
       updatedAt: new Date().toISOString(),
       districts, cables, joints, annotations, importHistory, settings,
       snapshots,
+      scenarios,
     };
     // Always save to localStorage as offline backup
     saveToLocalStorage(project);
@@ -1560,7 +1582,7 @@ export function useNetwork() {
     }
     setLastSavedAt(new Date().toISOString());
     return project;
-  }, [projectId, projectName, districts, cables, joints, annotations, importHistory, settings]);
+  }, [projectId, projectName, status_, districts, cables, joints, annotations, importHistory, settings, snapshots, scenarios]);
 
   function loadProjectInternal(p: Project) {
     setProjectId(p.id);
@@ -1573,6 +1595,7 @@ export function useNetwork() {
     setSettings({ ...DEFAULT_SETTINGS, ...p.settings });
     setProjectStatus(p.status ?? 'draft');
     setSnapshots(p.snapshots ?? []);
+    setScenarios(p.scenarios ?? {});
     const subs = (p.districts || []).flatMap((d) => d.subscribers);
     setAllSubscribers(subs);
     if (p.districts?.length) {
@@ -1610,6 +1633,7 @@ export function useNetwork() {
     setProjectName('Новый проект');
     setProjectStatus('draft');
     setSnapshots([]);
+    setScenarios({});
     setDistricts([]);
     setCables([]);
     setJoints([]);
@@ -1631,6 +1655,7 @@ export function useNetwork() {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       districts, cables, joints, annotations, importHistory, settings,
+      snapshots, scenarios,
     };
     const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -1639,7 +1664,7 @@ export function useNetwork() {
     a.download = `${projectName.replace(/[^\w\s-]/g, '_')}.json`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [projectId, projectName, districts, cables, annotations, importHistory, settings]);
+  }, [projectId, projectName, status_, districts, cables, joints, annotations, importHistory, settings, snapshots, scenarios]);
 
   const importProjectJSON = useCallback(async (file: File) => {
     const text = await file.text();
@@ -1697,6 +1722,7 @@ export function useNetwork() {
     reassignORK, reassignSubscriber,
     undo, redo, canUndo, canRedo,
     takeSnapshot, restoreSnapshot, deleteSnapshot, snapshots,
+    scenarios, saveScenarioSlot, restoreScenarioSlot,
     projectStatus: status_, setProjectStatus,
     reconsolidate,
   };

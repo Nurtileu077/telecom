@@ -170,6 +170,28 @@ function OltBody({
         L1 сплиттер <span className="text-[#f59e0b] font-mono">{olt.l1Splitter}</span>
         {' · '}портов {olt.capacity}
       </div>
+      <div>
+        <div className="text-[10px] text-[#64748b] uppercase tracking-wider mb-2">Патч-панель PON</div>
+        <div className="grid grid-cols-4 gap-1">
+          {data.ponPorts.map((p) => (
+            <button
+              key={p.port}
+              type="button"
+              disabled={!p.tbId}
+              onClick={() => p.tbId && onOpenEntity?.('tb', p.tbId)}
+              className={`rounded border px-1 py-1.5 text-[9px] font-mono transition-colors ${
+                p.status === 'used'
+                  ? 'border-[#f59e0b]/50 bg-[#f59e0b]/10 text-[#fbbf24] hover:bg-[#f59e0b]/20'
+                  : 'border-[#1e3a5f] text-[#475569] cursor-default'
+              }`}
+              title={p.tbId ? `${p.label} · ${p.subCount} кам.` : 'Свободен'}
+            >
+              <div>P{p.port}</div>
+              <div className="truncate text-[8px] opacity-80">{p.status === 'used' ? p.orkCount : '—'}</div>
+            </button>
+          ))}
+        </div>
+      </div>
       <LinkList title="Кабели OLT" links={links} onOpenEntity={onOpenEntity} />
       <div>
         <div className="text-[10px] text-[#64748b] uppercase tracking-wider mb-2">Ветки сети</div>

@@ -4,7 +4,10 @@ import { Copy, MapPin } from 'lucide-react';
 import {
   District, OLT, TransitBox, ORK, Cable, InlineJoint,
   CABLE_SIZES, SplitterRatio, MuftaType, OLTModel, BoxType,
+  type AppViewMode, type EntityFieldPhoto,
 } from '@/types/network';
+import EntityPhotoPanel from '@/components/Field/EntityPhotoPanel';
+import { isFieldToolsAllowed, isMutationAllowed } from '@/lib/viewMode';
 import { cablesForEntity } from '@/components/Network/SnapConnect';
 import type { SubBudget } from '@/components/Network/PowerBudget';
 import type { InteriorView } from '@/components/Network/entityInterior';
@@ -23,6 +26,8 @@ export type EntitySelection =
 interface Props {
   selection: EntitySelection | null;
   interiorView: InteriorView | null;
+  projectId: string;
+  appMode?: AppViewMode;
   districts: District[];
   cables?: Cable[];
   joints?: InlineJoint[];
@@ -198,7 +203,7 @@ function ConnectedCables({
 }
 
 export default function EntityEditor({
-  selection, interiorView, districts, cables = [], joints = [], powerBudgets = [],
+  selection, interiorView, projectId, appMode = 'edit', districts, cables = [], joints = [], powerBudgets = [],
   onClose, onNavigateInterior, onFlyToEntity, onFlyToSubscriber,
   onShowBranch, moveActive, onStartMove, onStopMove,
   onUpdateOLT, onUpdateTB, onUpdateORK,
@@ -231,6 +236,9 @@ export default function EntityEditor({
 
   if (!sel) return null;
 
+  const allowField = isFieldToolsAllowed(appMode);
+  const allowStructure = isMutationAllowed(appMode);
+
   let title = sel.id;
   let propsPanel: React.ReactNode = null;
   let onDelete: (() => void) | null = null;
@@ -241,9 +249,11 @@ export default function EntityEditor({
     const olt = findOLT(districts, sel.id);
     if (!olt) return null;
     title = olt.id;
-    propsPanel = <OLTEditor olt={olt} onSave={(patch) => { onUpdateOLT(olt.id, patch); }} />;
+    propsPanel = allowStructure
+      ? <OLTEditor olt={olt} onSave={(patch) => { onUpdateOLT(olt.id, patch); }} />
+      : <p className="text-[10px] text-[#64748b]">Просмотр OLT — правки в режиме редактирования</p>;
     deleteWarn = `Удалит район`;
-    onDelete = () => { onDeleteOLT(olt.id); onClose(); };
+    onDelete = allowStructure ? () => { onDeleteOLT(olt.id); onClose(); } : null;
   } else if (kind === 'tb') {
     const tb = findTB(districts, sel.id);
     if (!tb) {
@@ -255,19 +265,33 @@ export default function EntityEditor({
       const tbCheck = ensureFieldChecklist(tb.fieldChecklist, DEFAULT_TB_CHECKLIST);
       propsPanel = (
         <>
-          <TBEditor tb={tb} onSave={(patch) => onUpdateTB(tb.id, patch)} />
-          <FieldChecklistPanel
-            checklist={tbCheck}
-            onChange={(next) => onUpdateTB(tb.id, { fieldChecklist: next })}
-          />
-          <QrPassportLink kind="tb" id={tb.id} />
-          <button type="button" onClick={() => onOpenSplicePlan(tb.id)}
-            className="w-full py-1.5 mt-2 border border-[#38bdf8]/30 text-[#38bdf8] text-[11px] rounded">
-            🔗 Сплайс-план
-          </button>
+          {allowStructure && <TBEditor tb={tb} onSave={(patch) => onUpdateTB(tb.id, patch)} />}
+          {allowField && (
+            <>
+              <FieldChecklistPanel
+                checklist={tbCheck}
+                onChange={(next) => onUpdateTB(tb.id, { fieldChecklist: next })}
+              />
+              <EntityPhotoPanel
+                projectId={projectId}
+                entityKind="tb"
+                entityId={tb.id}
+                photos={tb.fieldPhotos ?? []}
+                onPhotosChange={(fieldPhotos) => onUpdateTB(tb.id, { fieldPhotos })}
+                allowUpload={allowField}
+              />
+              <QrPassportLink kind="tb" id={tb.id} />
+            </>
+          )}
+          {allowStructure && (
+            <button type="button" onClick={() => onOpenSplicePlan(tb.id)}
+              className="w-full py-1.5 mt-2 border border-[#38bdf8]/30 text-[#38bdf8] text-[11px] rounded">
+              🔗 Сплайс-план
+            </button>
+          )}
         </>
       );
-      onDelete = () => { onDeleteTB(tb.id); onClose(); };
+      onDelete = allowStructure ? () => { onDeleteTB(tb.id); onClose(); } : null;
       deleteWarn = `Удалит ОРК в муфте`;
     }
   } else if (kind === 'ork') {
@@ -277,18 +301,32 @@ export default function EntityEditor({
     const orkCheck = ensureFieldChecklist(ork.fieldChecklist, DEFAULT_ORK_CHECKLIST);
     propsPanel = (
       <>
-        <ORKEditor ork={ork} districts={districts}
-          onSave={(patch) => onUpdateORK(ork.id, patch)}
-          onReassign={(newTbId) => onReassignORK(ork.id, newTbId)}
-        />
-        <FieldChecklistPanel
-          checklist={orkCheck}
-          onChange={(next) => onUpdateORK(ork.id, { fieldChecklist: next })}
-        />
-        <QrPassportLink kind="ork" id={ork.id} />
+        {allowStructure && (
+          <ORKEditor ork={ork} districts={districts}
+            onSave={(patch) => onUpdateORK(ork.id, patch)}
+            onReassign={(newTbId) => onReassignORK(ork.id, newTbId)}
+          />
+        )}
+        {allowField && (
+          <>
+            <FieldChecklistPanel
+              checklist={orkCheck}
+              onChange={(next) => onUpdateORK(ork.id, { fieldChecklist: next })}
+            />
+            <EntityPhotoPanel
+              projectId={projectId}
+              entityKind="ork"
+              entityId={ork.id}
+              photos={ork.fieldPhotos ?? []}
+              onPhotosChange={(fieldPhotos: EntityFieldPhoto[]) => onUpdateORK(ork.id, { fieldPhotos })}
+              allowUpload={allowField}
+            />
+            <QrPassportLink kind="ork" id={ork.id} />
+          </>
+        )}
       </>
     );
-    onDelete = () => { onDeleteORK(ork.id); onClose(); };
+    onDelete = allowStructure ? () => { onDeleteORK(ork.id); onClose(); } : null;
     deleteWarn = `Удалит ${ork.subscribers.length} камер`;
   } else {
     title = sel.id;
@@ -372,13 +410,13 @@ export default function EntityEditor({
             🌿 Показать ветку
           </button>
         )}
-        {onStartMove && kind !== 'joint' && (
+        {allowStructure && onStartMove && kind !== 'joint' && (
           <button type="button" onClick={() => (moveActive ? onStopMove?.() : onStartMove())}
             className={`w-full py-1.5 text-[11px] rounded border ${moveActive ? 'border-[#a78bfa]/50 text-[#a78bfa]' : 'border-[#a78bfa]/30'}`}>
             {moveActive ? '↔ Перетащите на карте' : '↔ Переместить'}
           </button>
         )}
-        {onDelete && (
+        {onDelete && allowStructure && (
           <button type="button" onClick={() => { if (confirm(deleteWarn + '?')) onDelete(); }}
             className="w-full py-1.5 text-[11px] text-[#f87171] border border-[#f87171]/30 rounded">
             🗑 Удалить

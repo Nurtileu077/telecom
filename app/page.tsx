@@ -27,6 +27,10 @@ import type { InteriorView } from '@/components/Network/entityInterior';
 import { findEntityCoords, findSubscriber } from '@/components/Network/entityInterior';
 import { parseDeepLinkOpen, type SearchHit } from '@/lib/entitySearch';
 import EntityIdSearch from '@/components/Search/EntityIdSearch';
+import ReadOnlyBanner from '@/components/Layout/ReadOnlyBanner';
+import { parseAppViewMode, buildShareViewUrl, isMutationAllowed } from '@/lib/viewMode';
+import type { AppViewMode } from '@/types/network';
+import { dbLoadProject } from '@/lib/supabase';
 import MobileDock from '@/components/Layout/MobileDock';
 import MobileActionSheet from '@/components/Layout/MobileActionSheet';
 import PwaInstallBanner from '@/components/Layout/PwaInstallBanner';
@@ -46,6 +50,10 @@ const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
 
 export default function HomePage() {
   const net = useNetwork();
+  const [appMode] = useState<AppViewMode>(() =>
+    typeof window !== 'undefined' ? parseAppViewMode(window.location.search) : 'edit',
+  );
+  const readOnly = !isMutationAllowed(appMode);
   const [showImport, setShowImport] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showProjects, setShowProjects] = useState(false);
@@ -485,6 +493,35 @@ export default function HomePage() {
     handleFlyToEntity(hit.kind, hit.id);
   }, [handleFlyToSubscriber, handleJointClick, handleNavigateInterior, handleFlyToEntity]);
 
+  useEffect(() => {
+    if (readOnly) net.setEditMode(false);
+  }, [readOnly, net]);
+
+  const urlProjectLoaded = useRef(false);
+  useEffect(() => {
+    if (urlProjectLoaded.current || typeof window === 'undefined') return;
+    const pid = new URLSearchParams(window.location.search).get('project');
+    if (!pid) return;
+    urlProjectLoaded.current = true;
+    (async () => {
+      try {
+        const fromDb = await dbLoadProject(pid);
+        if (fromDb) {
+          await net.loadProject(fromDb);
+          return;
+        }
+        const list = await net.listProjects();
+        const p = list.find((x) => x.id === pid);
+        if (p) await net.loadProject(p);
+      } catch { /* ignore */ }
+    })();
+  }, [net]);
+
+  const copyShareViewLink = useCallback(() => {
+    const url = buildShareViewUrl(net.projectId);
+    navigator.clipboard?.writeText(url).catch(() => {});
+  }, [net.projectId]);
+
   const deepLinkHandled = useRef(false);
   useEffect(() => {
     if (deepLinkHandled.current || typeof window === 'undefined' || net.districts.length === 0) return;
@@ -505,6 +542,7 @@ export default function HomePage() {
 
   return (
     <div className="app-shell flex flex-col overflow-hidden">
+      <ReadOnlyBanner mode={appMode} onCopyShareLink={readOnly ? copyShareViewLink : undefined} />
       <AppHeader
         projectName={net.projectName}
         onProjectNameChange={net.setProjectName}
@@ -518,8 +556,8 @@ export default function HomePage() {
         status={net.status}
         osrmPercent={osrmPercent}
         lastSavedAt={net.lastSavedAt}
-        editMode={net.editMode}
-        onToggleEditMode={() => net.setEditMode(!net.editMode)}
+        editMode={!readOnly && net.editMode}
+        onToggleEditMode={() => !readOnly && net.setEditMode(!net.editMode)}
         canUndo={net.canUndo}
         canRedo={net.canRedo}
         onUndo={() => net.undo()}
@@ -550,7 +588,7 @@ export default function HomePage() {
         onCatalog={() => setShowCatalog(true)}
         onProjects={() => setShowProjects(true)}
         onSave={() => net.saveProject()}
-        canSave={net.districts.length > 0 || net.annotations.length > 0}
+        canSave={!readOnly && (net.districts.length > 0 || net.annotations.length > 0)}
         showBuild={net.allSubscribers.length > 0 && net.districts.length === 0}
         onBuild={() => net.rebuildFromCurrent()}
         branchActive={!!branchSel}
@@ -563,7 +601,7 @@ export default function HomePage() {
         onClearSelection={clearSelection}
         showAddCameras={net.districts.length > 0}
         onAddCameras={() => setShowAddCameras(true)}
-        onImport={() => setShowImport(true)}
+        onImport={() => !readOnly && setShowImport(true)}
         onHelp={() => setShowHelp(true)}
         chatOpen={showChat}
         onToggleChat={() => setShowChat((v) => !v)}
@@ -641,6 +679,11 @@ export default function HomePage() {
           hasNetwork={net.districts.length > 0}
           settings={net.settings}
           onSearchHit={handleSearchHit}
+          scenarios={net.scenarios}
+          saveScenarioSlot={net.saveScenarioSlot}
+          restoreScenarioSlot={net.restoreScenarioSlot}
+          readOnly={readOnly}
+          onCopyShareViewLink={copyShareViewLink}
         />
         </div>
 
@@ -659,7 +702,7 @@ export default function HomePage() {
             activeAnnotationType={activeAnnotationType}
             addAnnotation={net.addAnnotation}
             deleteAnnotation={net.deleteAnnotation}
-            editMode={net.editMode}
+            editMode={!readOnly && net.editMode}
             placingMode={!!placing}
             selectingMode={selecting || !!cableLink?.allowMap}
             onMapClick={handleMapClickAddSub}
@@ -737,6 +780,8 @@ export default function HomePage() {
           <EntityEditor
             selection={entitySelection}
             interiorView={interiorView}
+            projectId={net.projectId}
+            appMode={appMode}
             districts={net.districts}
             cables={net.cables}
             joints={net.joints}

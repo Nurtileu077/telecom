@@ -52,6 +52,15 @@ export interface ComplexityBadge {
   hints: string[];
 }
 
+export interface OltPonPort {
+  port: number;
+  tbId: string | null;
+  label: string;
+  orkCount: number;
+  subCount: number;
+  status: 'free' | 'used';
+}
+
 export interface OltInteriorData {
   kind: 'olt';
   olt: OLT;
@@ -60,6 +69,7 @@ export interface OltInteriorData {
   tbCount: number;
   orkCount: number;
   subCount: number;
+  ponPorts: OltPonPort[];
   complexity: ComplexityBadge;
 }
 
@@ -420,6 +430,21 @@ export function resolveInterior(
       emptyLinks: links.length === 0,
       splitterLoss: SPLITTER_LOSS_DB[olt.l1Splitter],
     });
+    const portCount = Math.min(olt.capacity, 16);
+    const ponPorts: OltPonPort[] = Array.from({ length: portCount }, (_, i) => {
+      const port = i + 1;
+      const tb = olt.transitBoxes[i] ?? null;
+      const orkCount = tb ? tb.orks.length : 0;
+      const subCount = tb ? tb.orks.reduce((s, o) => s + o.subscribers.length, 0) : 0;
+      return {
+        port,
+        tbId: tb?.id ?? null,
+        label: tb ? tb.id : '—',
+        orkCount,
+        subCount,
+        status: tb ? 'used' : 'free',
+      };
+    });
     return {
       kind: 'olt',
       olt,
@@ -428,6 +453,7 @@ export function resolveInterior(
       tbCount: olt.transitBoxes.length,
       orkCount,
       subCount,
+      ponPorts,
       complexity,
     };
   }
