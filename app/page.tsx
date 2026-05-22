@@ -43,7 +43,8 @@ import { getActorName } from '@/lib/appRole';
 import { getGuestPresenceKey } from '@/lib/guestId';
 import { useProjectPresence } from '@/hooks/useProjectPresence';
 import PresenceBar from '@/components/Layout/PresenceBar';
-import AuthRequiredBanner from '@/components/Layout/AuthRequiredBanner';
+import AuthGateScreen from '@/components/Layout/AuthGateScreen';
+import type { PlacingMode } from '@/components/Layout/AppHeader';
 import SaveConflictModal from '@/components/Projects/SaveConflictModal';
 import { isProjectSaveConflict } from '@/lib/projectConflict';
 import { isOfflineTilesEnabled, syncOfflineTileWorker } from '@/lib/offlineMap';
@@ -103,7 +104,7 @@ export default function HomePage() {
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
   const [selectedCableId, setSelectedCableId] = useState<string | null>(null);
   const [editingCableId, setEditingCableId] = useState<string | null>(null);
-  const [placing, setPlacing] = useState<'olt' | 'tb' | 'ork' | null>(null);
+  const [placing, setPlacing] = useState<PlacingMode>(null);
   /** Кабель: allowMap=false только узлы; A→B: allowMap=true узлы + карта */
   const [cableLink, setCableLink] = useState<{ allowMap: boolean; from?: CableLinkEnd } | null>(null);
   const [connectMode, setConnectMode] = useState(false);
@@ -444,10 +445,17 @@ export default function HomePage() {
       setPlacing(null);
       return;
     }
+    if (placing === 'box') {
+      setShowAddSub({ lat, lon });
+      const existing = Array.from(new Set(net.districts.map((d) => d.name)));
+      if (existing.length === 1) setNewSubDistrict(existing[0]);
+      return;
+    }
+    if (!net.editMode && !readOnly) return;
     setShowAddSub({ lat, lon });
     const existing = Array.from(new Set(net.districts.map((d) => d.name)));
     if (existing.length === 1) setNewSubDistrict(existing[0]);
-  }, [net, placing, selecting, cableLink, finishCableLink]);
+  }, [net, placing, selecting, cableLink, finishCableLink, readOnly]);
 
   // Drop a point of the requested kind at (lat, lon) — used by the right-click
   // context menu and by the manual-coordinate dialog.  Bypasses placing/edit mode.
@@ -645,12 +653,15 @@ export default function HomePage() {
     handleFlyToEntity(open.kind, open.id);
   }, [net.districts.length, handleFlyToSubscriber, handleJointClick, handleNavigateInterior, handleFlyToEntity]);
 
+  const showAuthGate = net.dbEnabled && isAuthRequired() && authReady && !authUser;
+
+  if (showAuthGate) {
+    return <AuthGateScreen />;
+  }
+
   return (
     <div className="app-shell flex flex-col overflow-hidden">
       <ReadOnlyBanner mode={appMode} role={userRole} onCopyShareLink={readOnly ? copyShareViewLink : undefined} />
-      {cloudBlocked && (
-        <AuthRequiredBanner onOpenHeaderAuth={() => setAuthPanelOpen(true)} />
-      )}
       {presenceEnabled && <PresenceBar onlineCount={onlineCount} peers={presencePeers} />}
       {saveError && (
         <div className="shrink-0 px-3 py-1 text-center text-[11px] text-[#f87171] border-b border-[#f87171]/30 bg-[#f87171]/10">
@@ -685,55 +696,20 @@ export default function HomePage() {
         canRedo={net.canRedo}
         onUndo={() => net.undo()}
         onRedo={() => net.redo()}
-        placing={placing}
-        onSetPlacing={setPlacing}
-        cableDrawActive={!!cableLink && !cableLink.allowMap}
-        pointCableActive={!!cableLink && cableLink.allowMap}
-        connectModeActive={connectMode}
         undoHint={net.undoLabel}
-        onToggleConnectMode={() => {
-          setConnectMode((v) => !v);
-          setConnectCableId(null);
-          setCableLink(null);
-          setPlacing(null);
-        }}
-        onToggleCableDraw={() => {
-          setCableLink(cableLink && !cableLink.allowMap ? null : { allowMap: false });
-          setConnectMode(false);
-          setPlacing(null);
-        }}
-        onTogglePointCable={() => {
-          setCableLink(cableLink?.allowMap ? null : { allowMap: true });
-          setConnectMode(false);
-          setPlacing(null);
-        }}
         dbEnabled={net.dbEnabled}
         onCatalog={() => setShowCatalog(true)}
         onProjects={() => setShowProjects(true)}
         onSave={() => handleSaveProject({ audit: true })}
-        canSave={canSave && !cloudBlocked}
-        showBuild={net.allSubscribers.length > 0 && net.districts.length === 0}
-        onBuild={() => net.rebuildFromCurrent()}
+        canSave={canSave}
         branchActive={!!branchSel}
         onClearBranch={() => setBranchSel(null)}
-        selectionPoly={!!selectionPoly}
-        selecting={selecting}
-        selectionCount={selectionPoints.length}
-        onStartSelection={() => { setSelecting(true); setSelectionPoints([]); setPlacing(null); setCableLink(null); setConnectMode(false); }}
-        onFinishSelection={finishSelection}
-        onClearSelection={clearSelection}
-        showAddCameras={net.districts.length > 0}
-        onAddCameras={() => setShowAddCameras(true)}
         onImport={() => !readOnly && setShowImport(true)}
         onHelp={() => setShowHelp(true)}
         chatOpen={showChat}
         onToggleChat={() => setShowChat((v) => !v)}
         onMenuToggle={() => setMobileMenuOpen((v) => !v)}
         mobileMenuOpen={mobileMenuOpen}
-        districts={net.districts}
-        cables={net.cables}
-        joints={net.joints}
-        onSearchHit={handleSearchHit}
       />
 
       <div className="flex flex-1 overflow-hidden relative min-h-0">
@@ -821,6 +797,39 @@ export default function HomePage() {
           auditLog={net.auditLog}
           scenarioDiffOn={scenarioDiffOn}
           onToggleScenarioDiff={() => setScenarioDiffOn((v) => !v)}
+          placing={placing}
+          onSetPlacing={setPlacing}
+          cableDrawActive={!!cableLink && !cableLink.allowMap}
+          pointCableActive={!!cableLink && !!cableLink.allowMap}
+          connectModeActive={connectMode}
+          onToggleConnectMode={() => {
+            setConnectMode((v) => !v);
+            setConnectCableId(null);
+            setCableLink(null);
+            setPlacing(null);
+          }}
+          onToggleCableDraw={() => {
+            setCableLink(cableLink && !cableLink.allowMap ? null : { allowMap: false });
+            setConnectMode(false);
+            setPlacing(null);
+          }}
+          onTogglePointCable={() => {
+            setCableLink(cableLink?.allowMap ? null : { allowMap: true });
+            setConnectMode(false);
+            setPlacing(null);
+          }}
+          selecting={selecting}
+          selectionCount={selectionPoints.length}
+          hasSelectionPoly={!!selectionPoly}
+          onStartSelection={() => { setSelecting(true); setSelectionPoints([]); setPlacing(null); setCableLink(null); setConnectMode(false); }}
+          onFinishSelection={finishSelection}
+          onClearSelection={clearSelection}
+          showAddCameras={net.districts.length > 0}
+          onAddCameras={() => setShowAddCameras(true)}
+          editMode={!readOnly && net.editMode}
+          onToggleEditMode={() => !readOnly && net.setEditMode(!net.editMode)}
+          showBuild={net.allSubscribers.length > 0 && net.districts.length === 0}
+          onBuild={() => net.rebuildFromCurrent()}
         />
         </div>
 
@@ -998,7 +1007,9 @@ export default function HomePage() {
               <span>
                 🎯 {placing === 'tb'
                   ? 'Муфта на перекрёстке — клик по кабелю (магнит ~35 м), без автокабеля к OLT'
-                  : `Клик по карте — поставить ${placing === 'olt' ? 'OLT' : 'ОРК'}`}
+                  : placing === 'box'
+                    ? 'Клик по карте — Бокс / камера (абонент)'
+                    : `Клик по карте — поставить ${placing === 'olt' ? 'OLT' : 'ОРК'}`}
               </span>
               <button onClick={() => setPlacing(null)} className="text-[#94a3b8] hover:text-white border border-[#a78bfa]/30 rounded px-1.5 py-0.5 text-[10px]">Esc</button>
             </div>

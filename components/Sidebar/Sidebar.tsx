@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import {
   Layers, StickyNote, Package, LineChart, Wallet, BarChart3, Wrench,
-  GitBranch, Users, FolderOpen,
+  GitBranch, FolderOpen,
 } from 'lucide-react';
 import {
   District, Cable, Materials, LayerVisibility, ValidationIssue,
@@ -24,17 +24,21 @@ import type {
   ProjectSnapshot, ProjectStatus, InlineJoint, ProjectSettings, ProjectScenarios, AuditEntry,
 } from '@/types/network';
 import DashboardTab from './DashboardTab';
+import CreateTab from './CreateTab';
 import type { SearchHit } from '@/lib/entitySearch';
 import EntityIdSearch from '@/components/Search/EntityIdSearch';
 import type { BBox } from '@/components/Network/Selection';
+import type { PlacingMode } from '@/components/Layout/AppHeader';
 
-type Tab = 'layers' | 'materials' | 'schema' | 'groups' | 'notes' | 'dashboard' | 'stats' | 'projects' | 'cost' | 'tools' | 'budget';
+type Tab = 'layers' | 'create' | 'search' | 'materials' | 'schema' | 'groups' | 'notes' | 'dashboard' | 'stats' | 'projects' | 'cost' | 'tools' | 'budget';
 
 type Group = 'map' | 'network' | 'analytics' | 'workflow';
 
 const GROUPS: { id: Group; label: string; icon: typeof Layers; tabs: { id: Tab; label: string }[] }[] = [
   { id: 'map', label: 'Карта', icon: Layers, tabs: [
     { id: 'layers', label: 'Слои' },
+    { id: 'create', label: 'Создание' },
+    { id: 'search', label: 'Поиск' },
     { id: 'notes', label: 'Заметки' },
   ]},
   { id: 'network', label: 'Сеть', icon: GitBranch, tabs: [
@@ -118,8 +122,27 @@ interface Props {
   scenarioDiffOn?: boolean;
   onToggleScenarioDiff?: () => void;
   onMobileClose?: () => void;
-  /** Не закрывать drawer при переключении вкладок (мобилка). */
   mobilePersist?: boolean;
+  placing?: PlacingMode;
+  onSetPlacing?: (m: PlacingMode) => void;
+  cableDrawActive?: boolean;
+  pointCableActive?: boolean;
+  connectModeActive?: boolean;
+  onToggleCableDraw?: () => void;
+  onTogglePointCable?: () => void;
+  onToggleConnectMode?: () => void;
+  selecting?: boolean;
+  selectionCount?: number;
+  onStartSelection?: () => void;
+  onFinishSelection?: () => void;
+  onClearSelection?: () => void;
+  hasSelectionPoly?: boolean;
+  showAddCameras?: boolean;
+  onAddCameras?: () => void;
+  editMode?: boolean;
+  onToggleEditMode?: () => void;
+  showBuild?: boolean;
+  onBuild?: () => void;
 }
 
 export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Props) {
@@ -222,22 +245,54 @@ export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Prop
           </button>
         )}
 
-        <div className="md:hidden px-3 py-2 border-b border-[var(--border)] space-y-2">
-          <GeocodeSearch flyTo={props.flyTo} className="relative block w-full" />
-          {props.onSearchHit && (
-            <EntityIdSearch
-              districts={props.districts}
-              cables={props.cables}
-              joints={props.joints}
-              flyTo={props.flyTo}
-              onSelectHit={props.onSearchHit}
-              className="relative block w-full"
-            />
-          )}
-        </div>
-
         <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
           {activeTab === 'layers' && <LayersTab districts={props.districts} layers={props.layers} toggleLayer={props.toggleLayer} />}
+          {activeTab === 'create' && props.onSetPlacing && (
+            <CreateTab
+              readOnly={props.readOnly}
+              placing={props.placing ?? null}
+              onSetPlacing={props.onSetPlacing}
+              cableDrawActive={!!props.cableDrawActive}
+              pointCableActive={!!props.pointCableActive}
+              connectModeActive={!!props.connectModeActive}
+              onToggleCableDraw={props.onToggleCableDraw ?? (() => {})}
+              onTogglePointCable={props.onTogglePointCable ?? (() => {})}
+              onToggleConnectMode={props.onToggleConnectMode ?? (() => {})}
+              selecting={!!props.selecting}
+              selectionCount={props.selectionCount ?? 0}
+              onStartSelection={props.onStartSelection ?? (() => {})}
+              onFinishSelection={props.onFinishSelection ?? (() => {})}
+              onClearSelection={props.onClearSelection ?? (() => {})}
+              selectionPoly={!!props.hasSelectionPoly}
+              showAddCameras={!!props.showAddCameras}
+              onAddCameras={props.onAddCameras ?? (() => {})}
+              editMode={!!props.editMode}
+              onToggleEditMode={props.onToggleEditMode ?? (() => {})}
+              showBuild={!!props.showBuild}
+              onBuild={props.onBuild ?? (() => {})}
+            />
+          )}
+          {activeTab === 'search' && (
+            <div className="p-3 space-y-3 overflow-y-auto h-full">
+              <div>
+                <p className="section-title mb-2">Адрес</p>
+                <GeocodeSearch flyTo={props.flyTo} className="relative block w-full" />
+              </div>
+              {props.onSearchHit && (
+                <div>
+                  <p className="section-title mb-2">ID / камера / OLT</p>
+                  <EntityIdSearch
+                    districts={props.districts}
+                    cables={props.cables}
+                    joints={props.joints}
+                    flyTo={props.flyTo}
+                    onSelectHit={props.onSearchHit}
+                    className="relative block w-full"
+                  />
+                </div>
+              )}
+            </div>
+          )}
           {activeTab === 'notes' && (
             <NotesTab
               annotations={props.annotations}

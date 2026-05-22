@@ -42,6 +42,15 @@ export async function authSignOut() {
   await supabase.auth.signOut();
 }
 
+export async function authResetPassword(email: string) {
+  if (!supabase) throw new Error('Supabase не настроен');
+  const redirectTo = typeof window !== 'undefined'
+    ? `${window.location.origin}${window.location.pathname}`
+    : undefined;
+  const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo });
+  if (error) throw error;
+}
+
 export function authOnStateChange(cb: (user: User | null) => void) {
   if (!supabase) return () => {};
   const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {

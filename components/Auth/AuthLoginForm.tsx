@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { LogIn, Mail, Lock, Link2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { authSignInOtp, authSignInPassword } from '@/lib/authSession';
+import { authSignInOtp, authSignInPassword, authResetPassword } from '@/lib/authSession';
 
 type Mode = 'password' | 'magic';
 
@@ -17,7 +17,27 @@ export default function AuthLoginForm({ compact, onSuccess }: Props) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
+  const [showForgot, setShowForgot] = useState(false);
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+
+  const resetPassword = async () => {
+    const trimmed = email.trim();
+    if (!trimmed.includes('@')) {
+      setMsg({ type: 'err', text: 'Введите email для восстановления' });
+      return;
+    }
+    setBusy(true);
+    setMsg(null);
+    try {
+      await authResetPassword(trimmed);
+      setMsg({ type: 'ok', text: 'Письмо для сброса пароля отправлено' });
+      setShowForgot(false);
+    } catch (e) {
+      setMsg({ type: 'err', text: e instanceof Error ? e.message : 'Ошибка' });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const submit = async () => {
     if (!supabase) {
@@ -110,18 +130,48 @@ export default function AuthLoginForm({ compact, onSuccess }: Props) {
           </label>
         )}
 
-        <button
-          type="button"
-          disabled={busy}
-          onClick={submit}
-          className="btn h-10 w-full text-sm font-semibold bg-[#38bdf8] hover:bg-[#7dd3fc] text-[#0a0e1a] border-0 rounded-lg disabled:opacity-50"
-        >
-          {mode === 'password' ? (
-            <><LogIn size={16} className="inline mr-1.5 -mt-0.5" />{busy ? 'Вход…' : 'Войти'}</>
-          ) : (
-            <><Link2 size={16} className="inline mr-1.5 -mt-0.5" />{busy ? 'Отправка…' : 'Отправить ссылку'}</>
-          )}
-        </button>
+        {showForgot ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={resetPassword}
+            className="btn h-10 w-full text-sm font-semibold bg-[#fbbf24]/90 hover:bg-[#fbbf24] text-[#0a0e1a] border-0 rounded-lg"
+          >
+            {busy ? 'Отправка…' : 'Отправить сброс пароля'}
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={submit}
+            className="btn h-10 w-full text-sm font-semibold bg-[#38bdf8] hover:bg-[#7dd3fc] text-[#0a0e1a] border-0 rounded-lg disabled:opacity-50"
+          >
+            {mode === 'password' ? (
+              <><LogIn size={16} className="inline mr-1.5 -mt-0.5" />{busy ? 'Вход…' : 'Войти'}</>
+            ) : (
+              <><Link2 size={16} className="inline mr-1.5 -mt-0.5" />{busy ? 'Отправка…' : 'Отправить ссылку'}</>
+            )}
+          </button>
+        )}
+
+        {mode === 'password' && !showForgot && (
+          <button
+            type="button"
+            className="text-[11px] text-[#64748b] hover:text-[#38bdf8] text-center w-full mt-1"
+            onClick={() => { setShowForgot(true); setMsg(null); }}
+          >
+            Забыли пароль?
+          </button>
+        )}
+        {showForgot && (
+          <button
+            type="button"
+            className="text-[11px] text-[#64748b] hover:text-[#94a3b8] text-center w-full mt-1"
+            onClick={() => { setShowForgot(false); setMsg(null); }}
+          >
+            ← Назад к входу
+          </button>
+        )}
       </div>
 
       {msg && (
