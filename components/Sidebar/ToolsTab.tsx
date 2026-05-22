@@ -24,6 +24,8 @@ interface Props {
   onSaveScenarioB?: () => void;
   onRestoreScenarioA?: () => void;
   onRestoreScenarioB?: () => void;
+  scenarioDiffOn?: boolean;
+  onToggleScenarioDiff?: () => void;
   readOnly?: boolean;
   projectId?: string;
   onCopyShareViewLink?: () => void;
@@ -43,6 +45,7 @@ interface Props {
 
 export default function ToolsTab({
   scenarios = {}, settings, onSaveScenarioA, onSaveScenarioB, onRestoreScenarioA, onRestoreScenarioB,
+  scenarioDiffOn, onToggleScenarioDiff,
   readOnly, projectId, onCopyShareViewLink, onCopyShareFieldLink,
   onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onRerouteOSRM, onReconsolidate, selectionBBox, osrmStatus, hasCables, budgetColoring, onToggleBudgetColoring,
 }: Props) {
@@ -59,6 +62,8 @@ export default function ToolsTab({
           onRestoreA={onRestoreScenarioA ?? (() => {})}
           onRestoreB={onRestoreScenarioB ?? (() => {})}
           readOnly={readOnly}
+          scenarioDiffOn={scenarioDiffOn}
+          onToggleScenarioDiff={onToggleScenarioDiff}
         />
       )}
       {projectId && !readOnly && (onCopyShareViewLink || onCopyShareFieldLink) && (

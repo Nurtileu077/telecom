@@ -33,6 +33,8 @@ import type { AppViewMode, UserRole } from '@/types/network';
 import {
   getStoredRole, setStoredRole, parseUserRole, resolveEffectiveMode, roleAllowsStatusChange,
 } from '@/lib/appRole';
+import { diffScenarioCables, highlightCurrentCableIds } from '@/lib/scenarioDiff';
+import AuthButton from '@/components/Auth/AuthButton';
 import { dbLoadProject } from '@/lib/supabase';
 import MobileDock from '@/components/Layout/MobileDock';
 import MobileActionSheet from '@/components/Layout/MobileActionSheet';
@@ -116,6 +118,7 @@ export default function HomePage() {
   const [selectionPoints, setSelectionPoints] = useState<[number, number][]>([]);
   const [selectionPoly, setSelectionPoly] = useState<[number, number][] | null>(null);
   const [selectionBBox, setSelectionBBox] = useState<{ latMin: number; lonMin: number; latMax: number; lonMax: number } | null>(null);
+  const [scenarioDiffOn, setScenarioDiffOn] = useState(false);
 
   const finishSelection = useCallback(() => {
     setSelectionPoints((pts) => {
@@ -137,10 +140,26 @@ export default function HomePage() {
 
   // «Показать ветку»: подсветить кабели выбранного OLT/муфты/ОРКСП/камеры.
   const [branchSel, setBranchSel] = useState<{ kind: 'olt' | 'tb' | 'ork' | 'sub'; id: string } | null>(null);
-  const highlightCableIds = useMemo(
-    () => (branchSel ? computeBranchCables(net.cables, net.districts, branchSel.kind, branchSel.id) : null),
-    [branchSel, net.cables, net.districts],
-  );
+  const scenarioMapDiff = useMemo(() => {
+    if (!scenarioDiffOn || !net.scenarios.a || !net.scenarios.b) return null;
+    return diffScenarioCables(net.scenarios.a, net.scenarios.b);
+  }, [scenarioDiffOn, net.scenarios]);
+
+  const highlightCableIds = useMemo(() => {
+    const branch = branchSel
+      ? computeBranchCables(net.cables, net.districts, branchSel.kind, branchSel.id)
+      : null;
+    if (scenarioMapDiff) {
+      const diffHl = highlightCurrentCableIds(net.cables, scenarioMapDiff);
+      if (branch) {
+        const merged = new Set(branch);
+        diffHl.forEach((id) => merged.add(id));
+        return merged;
+      }
+      return diffHl.size > 0 ? diffHl : null;
+    }
+    return branch;
+  }, [branchSel, net.cables, net.districts, scenarioMapDiff]);
 
   const snapHighlightIds = useMemo(() => {
     const ids = new Set<string>();
@@ -568,6 +587,7 @@ export default function HomePage() {
         onProjectStatusChange={canChangeStatus ? net.setProjectStatus : undefined}
         userRole={userRole}
         onUserRoleChange={setUserRole}
+        authSlot={<AuthButton onRoleFromAuth={(r) => { if (r) { setStoredRole(r); setUserRole(r); } }} />}
         flyTo={flyToRef.current}
         totalSubscribers={net.totalSubscribers}
         totalCableKm={net.totalCableKm}
@@ -708,6 +728,8 @@ export default function HomePage() {
             navigator.clipboard?.writeText(buildShareFieldUrl(net.projectId)).catch(() => {});
           }}
           auditLog={net.auditLog}
+          scenarioDiffOn={scenarioDiffOn}
+          onToggleScenarioDiff={() => setScenarioDiffOn((v) => !v)}
         />
         </div>
 
@@ -735,6 +757,7 @@ export default function HomePage() {
             selectionPoints={selectionPoints}
             selectionPoly={selectionPoly}
             highlightCableIds={highlightCableIds}
+            scenarioMapDiff={scenarioMapDiff}
             onShowBranchSub={(id) => setBranchSel({ kind: 'sub', id })}
             moveEntity={handleMoveEntity}
             deleteSubscriber={net.deleteSubscriber}
@@ -865,6 +888,17 @@ export default function HomePage() {
               setCableLink(null);
             }}
           />
+
+          {scenarioDiffOn && scenarioMapDiff && (
+            <div className="map-hint absolute top-12 left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#fbbf24]/50 rounded-lg px-2 py-1.5 text-[11px] text-[#fbbf24] shadow-2xl">
+              A↔B: <span className="text-[#34d399]">+{scenarioMapDiff.added.length}</span>
+              {' · '}
+              <span className="text-[#f87171]">−{scenarioMapDiff.removed.length}</span>
+              {' · '}
+              <span className="text-[#fbbf24]">Δ{scenarioMapDiff.modified.length}</span>
+              <span className="text-[#64748b] ml-1">— выкл. в Инструменты</span>
+            </div>
+          )}
 
           {placing && (
             <div className="map-hint absolute top-2 md:top-3 left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#a78bfa]/50 rounded-lg px-2 py-1.5 text-[11px] md:text-xs text-[#a78bfa] shadow-2xl flex items-center gap-2 animate-fade-in">

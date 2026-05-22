@@ -20,7 +20,8 @@
 - [x] Read-only ссылка `?mode=view&project=…`
 - [x] Роли engineer / field / viewer (шапка + URL `?role=`)
 - [x] Журнал действий в проекте + вкладка «Сводка»
-- [ ] Supabase Auth (вход по email) — отдельно
+- [x] Diff сценариев A↔B на карте (пунктир + подсветка)
+- [x] Supabase Auth magic link + роль из `user_metadata.role`
 
 ## Как проверить
 1. Открыть ОРК → чеклист + QR → отсканировать на телефоне.

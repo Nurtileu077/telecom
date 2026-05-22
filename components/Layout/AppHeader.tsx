@@ -20,6 +20,7 @@ interface Props {
   onProjectStatusChange?: (s: ProjectStatus) => void;
   userRole?: UserRole;
   onUserRoleChange?: (r: UserRole) => void;
+  authSlot?: React.ReactNode;
   flyTo: ((lat: number, lon: number, zoom?: number) => void) | null;
   totalSubscribers: number;
   totalCableKm: number | string;
@@ -139,6 +140,7 @@ export default function AppHeader(p: Props) {
       </div>
 
       <div className="ml-auto app-header-toolbar flex items-center gap-1 justify-end shrink min-w-0">
+        {p.authSlot}
         <div className="seg hidden xl:flex">
           <button type="button" data-active={!p.editMode} onClick={() => p.editMode && p.onToggleEditMode()}>
             <Eye size={12} className="inline mr-1" />Просмотр

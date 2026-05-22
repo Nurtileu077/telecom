@@ -68,6 +68,8 @@ interface Props {
   selectionPoly?: [number, number][] | null;
   // «Показать ветку»: id кабелей выбранной ветки. Остальные кабели приглушаются.
   highlightCableIds?: Set<string> | null;
+  /** Diff сценариев A↔B: пунктирные линии поверх карты */
+  scenarioMapDiff?: import('@/lib/scenarioDiff').ScenarioMapDiff | null;
   onShowBranchSub?: (id: string) => void;
 }
 
@@ -503,8 +505,10 @@ export default function LeafletMap(props: Props) {
 
           const isEditing = propsRef.current.editingCableId === cable.id;
           const hl = propsRef.current.highlightCableIds;
+          const diffMode = !!propsRef.current.scenarioMapDiff;
           const dimmed = !!hl && !hl.has(cable.id);
           const inBranch = !!hl && hl.has(cable.id);
+          const inDiff = diffMode && hl?.has(cable.id);
           const lane = lanes.get(cable.id) ?? 0;
           // 0.6 m между параллельными «полосами» — компактно, помещается в ширину
           // полосы дороги.  Знакочередование вокруг центра, кап на 4 полосе.
@@ -516,11 +520,17 @@ export default function LeafletMap(props: Props) {
           const drawnCoords = offsetM === 0 ? cable.coords : offsetPolyline(cable.coords, offsetM);
 
           const poly = L.polyline(drawnCoords, {
-            color: dimmed ? '#334155' : isEditing ? '#c4b5fd' : (CABLE_COLORS[cable.type] || '#888'),
+            color: dimmed
+              ? '#334155'
+              : inDiff
+                ? '#fbbf24'
+                : isEditing
+                  ? '#c4b5fd'
+                  : (CABLE_COLORS[cable.type] || '#888'),
             weight: dimmed
               ? 1
-              : (CABLE_WEIGHTS[cable.type] || 2) + (isEditing ? 2 : inBranch ? 1 : 0),
-            opacity: dimmed ? 0.12 : inBranch ? 1 : (cable.type === 'ОК-4' ? 0.6 : 0.85),
+              : (CABLE_WEIGHTS[cable.type] || 2) + (isEditing ? 2 : inDiff ? 2 : inBranch ? 1 : 0),
+            opacity: dimmed ? 0.12 : inDiff || inBranch ? 1 : (cable.type === 'ОК-4' ? 0.6 : 0.85),
           });
           const cableTitle = cable.displayName
             ? `<b>${cable.displayName}</b><br/><span style="font-size:10px;color:#94a3b8">${cable.type}</span>`
@@ -537,6 +547,43 @@ export default function LeafletMap(props: Props) {
             propsRef.current.onCableClick?.(cable.id);
           });
           group.addLayer(poly);
+        }
+
+        const diff = propsRef.current.scenarioMapDiff;
+        if (diff) {
+          const dash = '10 8';
+          for (const d of diff.removed) {
+            if (d.cable.coords.length < 2) continue;
+            L.polyline(d.cable.coords, {
+              color: '#f87171', weight: 4, opacity: 0.85, dashArray: dash,
+            }).bindTooltip(
+              `<b>− Сценарий A</b><br/>${d.cable.type} · ${Math.round(d.cable.lengthM)} м<br/><span style="color:#94a3b8">нет в B</span>`,
+              { sticky: true, className: 'text-xs' },
+            ).addTo(group);
+          }
+          for (const d of diff.added) {
+            if (d.cable.coords.length < 2) continue;
+            L.polyline(d.cable.coords, {
+              color: '#34d399', weight: 4, opacity: 0.9, dashArray: dash,
+            }).bindTooltip(
+              `<b>+ Сценарий B</b><br/>${d.cable.type} · ${Math.round(d.cable.lengthM)} м`,
+              { sticky: true, className: 'text-xs' },
+            ).addTo(group);
+          }
+          for (const d of diff.modified) {
+            if (d.cable.coords.length < 2) continue;
+            L.polyline(d.cable.coords, {
+              color: '#fbbf24', weight: 5, opacity: 0.95,
+            }).bindTooltip(
+              `<b>Δ A→B</b><br/>${d.deltaLengthM != null && d.deltaLengthM >= 0 ? '+' : ''}${d.deltaLengthM ?? 0} м<br/>${d.cable.type}`,
+              { sticky: true, className: 'text-xs' },
+            ).addTo(group);
+            if (d.other && d.other.coords.length >= 2) {
+              L.polyline(d.other.coords, {
+                color: '#f87171', weight: 2, opacity: 0.35, dashArray: '4 6',
+              }).addTo(group);
+            }
+          }
         }
       }
 
@@ -845,7 +892,7 @@ export default function LeafletMap(props: Props) {
   // Re-render whenever data changes
   useEffect(() => {
     renderData();
-  }, [props.districts, props.cables, props.joints, props.layers, props.editMode, props.editingCableId, props.budgetColoring, props.budgetMap, props.highlightCableIds, props.moveEntityTarget, props.snapHighlightId, props.snapHighlightIds]);
+  }, [props.districts, props.cables, props.joints, props.layers, props.editMode, props.editingCableId, props.budgetColoring, props.budgetMap, props.highlightCableIds, props.scenarioMapDiff, props.moveEntityTarget, props.snapHighlightId, props.snapHighlightIds]);
 
   // Waypoint editing: drag moves one vertex (no perpendicular inserts)
   useEffect(() => {

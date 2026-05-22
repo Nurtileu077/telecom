@@ -115,6 +115,8 @@ interface Props {
   onSearchHit?: (hit: SearchHit) => void;
   auditLog?: AuditEntry[];
   onCopyShareFieldLink?: () => void;
+  scenarioDiffOn?: boolean;
+  onToggleScenarioDiff?: () => void;
   onMobileClose?: () => void;
   /** Не закрывать drawer при переключении вкладок (мобилка). */
   mobilePersist?: boolean;
@@ -290,6 +292,8 @@ export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Prop
               readOnly={props.readOnly}
               onCopyShareViewLink={props.onCopyShareViewLink}
               onCopyShareFieldLink={props.onCopyShareFieldLink}
+              scenarioDiffOn={props.scenarioDiffOn}
+              onToggleScenarioDiff={props.onToggleScenarioDiff}
               onShowHeatmap={() => props.setHeatmapEnabled(!props.heatmapEnabled)}
               heatmapEnabled={props.heatmapEnabled}
               onExportPDF={props.onExportPDF}

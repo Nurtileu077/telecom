@@ -1,6 +1,7 @@
 'use client';
 import type { ProjectScenarios } from '@/types/network';
 import { compareScenarioMetrics, metricsFromSlot, type ScenarioCompareRow } from '@/lib/scenarioCompare';
+import { diffScenarioCables, diffSummary } from '@/lib/scenarioDiff';
 import { useMemo } from 'react';
 
 interface Props {
@@ -10,10 +11,13 @@ interface Props {
   onRestoreA: () => void;
   onRestoreB: () => void;
   readOnly?: boolean;
+  scenarioDiffOn?: boolean;
+  onToggleScenarioDiff?: () => void;
 }
 
 export default function ScenarioPanel({
   scenarios, onSaveA, onSaveB, onRestoreA, onRestoreB, readOnly,
+  scenarioDiffOn, onToggleScenarioDiff,
 }: Props) {
   const rows: ScenarioCompareRow[] = useMemo(() => {
     if (!scenarios.a || !scenarios.b) return [];
@@ -21,6 +25,11 @@ export default function ScenarioPanel({
       metricsFromSlot(scenarios.a),
       metricsFromSlot(scenarios.b),
     );
+  }, [scenarios]);
+
+  const cableDiff = useMemo(() => {
+    if (!scenarios.a || !scenarios.b) return null;
+    return diffSummary(diffScenarioCables(scenarios.a, scenarios.b));
   }, [scenarios]);
 
   const fmtDate = (iso?: string) =>
@@ -73,6 +82,34 @@ export default function ScenarioPanel({
             ))}
           </tbody>
         </table>
+      )}
+      {cableDiff && (
+        <div className="text-[10px] space-y-1 rounded border border-[#1e3a5f] p-2 bg-[#0a0e1a]/80">
+          <div className="text-[#64748b] uppercase tracking-wider text-[9px]">Кабели A↔B</div>
+          <div className="flex gap-3 font-mono">
+            <span className="text-[#34d399]">+{cableDiff.added}</span>
+            <span className="text-[#f87171]">−{cableDiff.removed}</span>
+            <span className="text-[#fbbf24]">Δ{cableDiff.modified}</span>
+          </div>
+          {onToggleScenarioDiff && (
+            <button
+              type="button"
+              onClick={onToggleScenarioDiff}
+              className={`w-full py-1.5 mt-1 rounded text-[10px] border ${
+                scenarioDiffOn
+                  ? 'border-[#fbbf24]/50 bg-[#fbbf24]/15 text-[#fbbf24]'
+                  : 'border-[#1e3a5f] text-[#94a3b8] hover:text-[#e2e8f0]'
+              }`}
+            >
+              {scenarioDiffOn ? '✓ Diff на карте (выкл)' : '🗺 Показать diff на карте'}
+            </button>
+          )}
+          {scenarioDiffOn && (
+            <p className="text-[9px] text-[#64748b]">
+              Красный пунктир — только в A, зелёный — в B, жёлтый — изменённая длина/тип.
+            </p>
+          )}
+        </div>
       )}
       {scenarios.a && !scenarios.b && (
         <p className="text-[9px] text-[#64748b]">Сохраните сценарий B для сравнения.</p>
