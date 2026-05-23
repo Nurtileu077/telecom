@@ -7,7 +7,9 @@
     "dev": "next dev",
     "build": "node scripts/generate-pwa-icons.mjs && next build",
     "icons": "node scripts/generate-pwa-icons.mjs",
-    "start": "next start"
+    "start": "next start",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "repository": {
     "type": "git",
@@ -42,7 +44,8 @@
     "@tailwindcss/postcss": "^4.3.0",
     "autoprefixer": "^10.5.0",
     "postcss": "^8.5.14",
+    "sharp": "^0.34.2",
     "tailwindcss": "^4.3.0",
-    "sharp": "^0.34.2"
+    "vitest": "^4.1.7"
   }
 }

@@ -114,37 +114,113 @@ function pathLength(coords: [number, number][]): number {
 }
 
 // Радиус слияния дорожных вершин ПОПЕРЁК районов. Меньше MERGE_RADIUS_M, чтобы
-// не склеить соседние улицы, но достаточно, чтобы наложить независимо
-// проложенные OSRM-нитки одной дороги (центр-линии расходятся на единицы метров).
+// не склеить соседние улицы (оси обычно ≥40 м), но достаточно, чтобы наложить
+// независимо проложенные OSRM-нитки одной дороги (центр-линии расходятся на
+// единицы–десятки метров). 30 м (прежняя регрессия) притягивал и соседние улицы;
+// 18 м — проверенный безопасный радиус.
 const GLOBAL_SNAP_M = 18;
 
-// Фикс A — наложение со-трассных кабелей. Слияние работает внутри района, поэтому
-// магистрали РАЗНЫХ OLT по одной улице (разные цвета на перекрёстке) идут чуть
-// сдвинутыми параллельными линиями. Их волокна сваривать нельзя (разные PON), но
-// геометрия должна совпадать (одна трасса/канализация). Прогоняем ПРОМЕЖУТОЧНЫЕ
-// вершины всех кабелей через единый снэппер: совпавшие дорожные точки получают
-// одну координату → линии ложатся друг на друга. Концы (оборудование/муфты) не
-// трогаем, чтобы кабель не оторвался от своего узла.
-function overlayCoRouted(cables: Cable[], R = GLOBAL_SNAP_M): Cable[] {
+// Зона у концов кабеля, где вершины НЕ снэпаются к чужим узлам. Концы стоят на
+// оборудовании/муфтах; короткий подвод к ним глобальный снэп раньше притягивал к
+// соседней нитке → излом/треугольник у бокса (это и была регрессия слияния ОК-8).
+// Защищаем приконцевые вершины — магистраль сливается только в «теле» трассы.
+const EDGE_GUARD_M = 15;
+
+// Уплотнение полилинии: вставляем точки каждые stepM метров вдоль каждого
+// сегмента. Нужно перед глобальным снэпом — у прямой магистрали OSRM оставляет
+// всего 2 точки (старт/финиш), снэпать нечего; после уплотнения вдоль неё
+// появляются вершины, которые могут лечь на общие узлы соседней нити.
+export function densify(coords: [number, number][], stepM: number): [number, number][] {
+  if (coords.length < 2) return coords;
+  const out: [number, number][] = [coords[0]];
+  for (let i = 1; i < coords.length; i++) {
+    const [ay, ax] = coords[i - 1];
+    const [by, bx] = coords[i];
+    const seg = haversineM(ay, ax, by, bx);
+    const n = seg > 0 ? Math.floor(seg / stepM) : 0;
+    for (let k = 1; k <= n; k++) {
+      const t = (k * stepM) / seg;
+      out.push([ay + (by - ay) * t, ax + (bx - ax) * t]);
+    }
+    out.push([by, bx]);
+  }
+  return out;
+}
+
+// Удаляем «шипы» — промежуточные вершины, где трасса почти разворачивается назад
+// (угол поворота > ~135°). Такие зигзаги возникают, когда соседние вершины
+// снэпнулись к узлам, лежащим по ходу пути «назад» → самопересечения и
+// треугольники (классический симптом регрессии слияния). На реальной дороге
+// одиночная вершина так резко не разворачивается, поэтому удаление безопасно для
+// геометрии и итеративно (удаление одного шипа может обнажить следующий).
+export function despike(coords: [number, number][]): [number, number][] {
+  if (coords.length < 3) return coords;
+  const ky = 111320;
+  let pts = coords;
+  let changed = true;
+  while (changed && pts.length >= 3) {
+    changed = false;
+    const out: [number, number][] = [pts[0]];
+    for (let i = 1; i < pts.length - 1; i++) {
+      const a = out[out.length - 1];
+      const b = pts[i];
+      const c = pts[i + 1];
+      const kx = Math.cos((b[0] * Math.PI) / 180) * 111320;
+      const v1x = (b[1] - a[1]) * kx, v1y = (b[0] - a[0]) * ky;
+      const v2x = (c[1] - b[1]) * kx, v2y = (c[0] - b[0]) * ky;
+      const m1 = Math.hypot(v1x, v1y), m2 = Math.hypot(v2x, v2y);
+      if (m1 > 0 && m2 > 0) {
+        const cos = (v1x * v2x + v1y * v2y) / (m1 * m2);
+        if (cos < -0.7) { changed = true; continue; } // шип → выкидываем b
+      }
+      out.push(b);
+    }
+    out.push(pts[pts.length - 1]);
+    pts = out;
+  }
+  return pts;
+}
+
+// Фикс A — наложение со-трассных кабелей. Слияние BFS работает ВНУТРИ района,
+// поэтому магистрали РАЗНЫХ OLT по одной улице (разные цвета на перекрёстке) идут
+// чуть сдвинутыми параллельными линиями. Волокна сваривать нельзя (разные PON), но
+// геометрия должна совпадать (одна трасса/канализация). Алгоритм:
+//   1) уплотняем линию (иначе у прямой 2-точечной магистрали нечего снэпать);
+//   2) промежуточные вершины (кроме приконцевых, см. EDGE_GUARD_M) снэпаем к общим
+//      узлам в радиусе R → соседние нити ложатся друг на друга;
+//   3) убираем шипы despike() → никаких треугольников/самопересечений.
+// ОК-4 — настоящие дропы к одной камере, не магистрали; их не трогаем.
+export function overlayCoRouted(cables: Cable[], R = GLOBAL_SNAP_M): Cable[] {
   const snapper = makeSnapper(R);
+  const STEP = 10;
   return cables.map((c) => {
-    if (c.coords.length < 3) return c;
+    if (c.type === 'ОК-4' || c.coords.length < 2) return c;
     const first = c.coords[0];
     const last = c.coords[c.coords.length - 1];
+    const dense = densify(c.coords, STEP);
     const snapped: [number, number][] = [first];
-    for (let i = 1; i < c.coords.length - 1; i++) {
-      snapped.push(snapper.snapCoord(c.coords[i][0], c.coords[i][1]));
+    for (let i = 1; i < dense.length - 1; i++) {
+      const p = dense[i];
+      // Приконцевые вершины не снэпаем — защищаем подвод к оборудованию/муфте.
+      const dFirst = haversineM(p[0], p[1], first[0], first[1]);
+      const dLast = haversineM(p[0], p[1], last[0], last[1]);
+      if (dFirst < EDGE_GUARD_M || dLast < EDGE_GUARD_M) {
+        snapped.push(p);
+      } else {
+        snapped.push(snapper.snapCoord(p[0], p[1]));
+      }
     }
     snapped.push(last);
-    // Чистим подряд идущие совпавшие вершины (последнюю всегда сохраняем).
+    // Чистим подряд идущие совпавшие вершины (концы всегда сохраняем).
     const dd: [number, number][] = [snapped[0]];
     for (let i = 1; i < snapped.length; i++) {
       const p = snapped[i];
       const prev = dd[dd.length - 1];
-      if (i === snapped.length - 1 || haversineM(prev[0], prev[1], p[0], p[1]) > 0.5) dd.push(p);
+      if (i === snapped.length - 1 || haversineM(prev[0], prev[1], p[0], p[1]) > 1) dd.push(p);
     }
-    if (dd.length < 2) return c;
-    return { ...c, coords: dd, lengthM: pathLength(dd) };
+    const clean = despike(dd);
+    if (clean.length < 2) return c;
+    return { ...c, coords: clean, lengthM: pathLength(clean) };
   });
 }
 

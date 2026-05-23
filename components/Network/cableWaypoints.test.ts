@@ -10,7 +10,7 @@ describe('cableWaypoints', () => {
   });
 
   it('does not densify OSRM polyline with many points', () => {
-    const many = [...ab, [40.005, 68.005], [40.008, 68.008]];
+    const many: [number, number][] = [...ab, [40.005, 68.005], [40.008, 68.008]];
     expect(densifyByFraction(many).length).toBe(4);
   });
 
