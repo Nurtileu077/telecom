@@ -4,6 +4,7 @@ import { Cable, CABLE_SIZES, CABLE_COLORS, CableInstallType, CABLE_INSTALL_LABEL
 import { suggestCableDisplayName, defaultPoleCount } from '@/lib/cableNaming';
 import { TIA_598_COLORS, tubeCount, fibersPerTube } from '@/components/Network/FiberColors';
 import { endpointLabel } from '@/components/Network/entityInterior';
+import type { PeerKind } from '@/components/Network/entityInterior';
 
 interface Props {
   cable: Cable | null;
@@ -18,6 +19,12 @@ interface Props {
   waypointEditing: boolean;
   rerouteStatus: 'idle' | 'routing' | 'done' | string;
   onStartConnect?: (cableId: string) => void;
+  /** Переход к объекту на конце кабеля (ОРК/муфта/OLT/камера). */
+  onNavigate?: (kind: PeerKind, id: string) => void;
+  /** Подсветить ТОЛЬКО этот кабель на карте (остальные приглушаются). */
+  onFocusCable?: (id: string) => void;
+  /** Этот кабель сейчас в фокусе (подсвечен). */
+  focusActive?: boolean;
 }
 
 // color dot for cable type
@@ -29,7 +36,7 @@ function Dot({ type }: { type: string }) {
 const INSTALL_TYPES: CableInstallType[] = ['aerial', 'duct', 'ground'];
 
 export default function CableEditor({
-  cable, districts = [], joints = [], onClose, onUpdateType, onUpdateMeta, onRerouteOSRM, onToggleWaypoints, onDelete, waypointEditing, rerouteStatus, onStartConnect,
+  cable, districts = [], joints = [], onClose, onUpdateType, onUpdateMeta, onRerouteOSRM, onToggleWaypoints, onDelete, waypointEditing, rerouteStatus, onStartConnect, onNavigate, onFocusCable, focusActive,
 }: Props) {
   const [type, setType] = useState<Cable['type']>(cable?.type ?? 'ОК-4');
   const [displayName, setDisplayName] = useState('');
@@ -57,8 +64,35 @@ export default function CableEditor({
   const end = cable.coords[cable.coords.length - 1];
   const fmtCoord = (p?: [number, number]) => (p ? `${p[0].toFixed(5)}, ${p[1].toFixed(5)}` : '—');
 
+  const renderEndpoint = (
+    caption: string,
+    ep: { kind: PeerKind; label: string; shortId: string },
+    id: string,
+  ) => {
+    const clickable = !!onNavigate && ep.kind !== 'unknown';
+    const inner = (
+      <>
+        <div className="text-[9px] uppercase tracking-wide text-[#64748b]">{caption}</div>
+        <div className={`text-sm font-semibold ${clickable ? 'text-[#38bdf8]' : 'text-[#94a3b8]'}`}>{ep.label}</div>
+        <div className="font-mono text-[10px] text-[#64748b] truncate">{ep.shortId}</div>
+      </>
+    );
+    return clickable ? (
+      <button
+        type="button"
+        onClick={() => onNavigate!(ep.kind, id)}
+        title="Перейти к объекту на карте"
+        className="flex-1 min-w-0 text-left rounded-lg border border-[#1e3a5f] hover:border-[#38bdf8]/60 hover:bg-[#38bdf8]/5 px-2.5 py-2 transition-colors"
+      >
+        {inner}
+      </button>
+    ) : (
+      <div className="flex-1 min-w-0 rounded-lg border border-[#1e3a5f] px-2.5 py-2">{inner}</div>
+    );
+  };
+
   return (
-    <div className="absolute z-[510] left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 bottom-[calc(58px+env(safe-area-inset-bottom))] md:bottom-6 w-auto md:w-80 max-w-lg mx-auto bg-[#0d1b2a]/97 border border-[#1e3a5f] rounded-xl shadow-2xl backdrop-blur-sm animate-fade-in max-h-[45dvh] overflow-y-auto">
+    <div className="absolute z-[510] left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 bottom-[calc(58px+env(safe-area-inset-bottom))] md:bottom-6 w-auto md:w-96 max-w-lg mx-auto bg-[#0d1b2a]/97 border border-[#1e3a5f] rounded-xl shadow-2xl backdrop-blur-sm animate-fade-in max-h-[62dvh] overflow-y-auto">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2.5 border-b border-[#1e3a5f]">
         <div className="flex items-center gap-2">
@@ -89,30 +123,37 @@ export default function CableEditor({
           </div>
         </div>
 
-        {/* Маршрут: откуда → куда + начало/конец */}
-        <div className="bg-[#0a0e1a] rounded-lg p-2.5 space-y-2">
+        {/* Маршрут: откуда → куда (кликабельно) + начало/конец */}
+        <div className="bg-[#0a0e1a] rounded-lg p-3 space-y-2.5">
           <div className="text-[10px] uppercase tracking-wide text-[#64748b]">Маршрут</div>
-          <div className="flex items-center gap-2 text-[11px]">
-            <div className="flex-1 min-w-0">
-              <div className="text-[#94a3b8]">{fromL.label}</div>
-              <div className="font-mono text-[10px] text-[#64748b] truncate">{fromL.shortId}</div>
-            </div>
-            <span className="text-[#38bdf8] shrink-0">→</span>
-            <div className="flex-1 min-w-0 text-right">
-              <div className="text-[#94a3b8]">{toL.label}</div>
-              <div className="font-mono text-[10px] text-[#64748b] truncate">{toL.shortId}</div>
-            </div>
+          <div className="flex items-stretch gap-2">
+            {renderEndpoint('Откуда', fromL, cable.fromId)}
+            <div className="flex items-center text-[#38bdf8] text-lg shrink-0">→</div>
+            {renderEndpoint('Куда', toL, cable.toId)}
           </div>
-          <div className="grid grid-cols-2 gap-2 text-[10px] border-t border-[#1e3a5f] pt-1.5">
+          <div className="grid grid-cols-2 gap-2 text-[11px] border-t border-[#1e3a5f] pt-2">
             <div>
-              <div className="text-[#64748b]">Начало</div>
+              <div className="text-[#64748b] text-[10px]">Начало</div>
               <div className="font-mono text-[#94a3b8]">{fmtCoord(start)}</div>
             </div>
             <div className="text-right">
-              <div className="text-[#64748b]">Конец</div>
+              <div className="text-[#64748b] text-[10px]">Конец</div>
               <div className="font-mono text-[#94a3b8]">{fmtCoord(end)}</div>
             </div>
           </div>
+          {onFocusCable && (
+            <button
+              type="button"
+              onClick={() => onFocusCable(cable.id)}
+              className={`w-full py-2 text-xs rounded-lg border transition-colors ${
+                focusActive
+                  ? 'bg-[#38bdf8]/15 border-[#38bdf8]/50 text-[#38bdf8]'
+                  : 'border-[#1e3a5f] text-[#94a3b8] hover:border-[#38bdf8]/40 hover:text-[#e2e8f0]'
+              }`}
+            >
+              {focusActive ? '✓ Этот кабель подсвечен' : '◎ Показать только этот кабель'}
+            </button>
+          )}
         </div>
 
         {onUpdateMeta && (

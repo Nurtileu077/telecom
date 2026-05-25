@@ -23,7 +23,7 @@ import { recalcLengthM } from '@/components/Network/cableWaypoints';
 import { compatibleTargetsForCable } from '@/components/Network/SnapConnect';
 import { validateForExport, formatValidationSummary } from '@/components/Network/ExportValidation';
 import type { CableLinkEnd } from '@/hooks/useNetwork';
-import type { InteriorView } from '@/components/Network/entityInterior';
+import type { InteriorView, PeerKind } from '@/components/Network/entityInterior';
 import { findEntityCoords, findSubscriber } from '@/components/Network/entityInterior';
 import { parseDeepLinkOpen, type SearchHit } from '@/lib/entitySearch';
 import EntityIdSearch from '@/components/Search/EntityIdSearch';
@@ -209,12 +209,15 @@ export default function HomePage() {
 
   // «Показать ветку»: подсветить кабели выбранного OLT/муфты/ОРКСП/камеры.
   const [branchSel, setBranchSel] = useState<{ kind: 'olt' | 'tb' | 'ork' | 'sub'; id: string } | null>(null);
+  // «Показать только этот кабель»: подсветить один кабель (остальные приглушены).
+  const [focusCableId, setFocusCableId] = useState<string | null>(null);
   const scenarioMapDiff = useMemo(() => {
     if (!scenarioDiffOn || !net.scenarios.a || !net.scenarios.b) return null;
     return diffScenarioCables(net.scenarios.a, net.scenarios.b);
   }, [scenarioDiffOn, net.scenarios]);
 
   const highlightCableIds = useMemo(() => {
+    if (focusCableId) return new Set([focusCableId]);
     const branch = branchSel
       ? computeBranchCables(net.cables, net.districts, branchSel.kind, branchSel.id)
       : null;
@@ -228,7 +231,7 @@ export default function HomePage() {
       return diffHl.size > 0 ? diffHl : null;
     }
     return branch;
-  }, [branchSel, net.cables, net.districts, scenarioMapDiff]);
+  }, [focusCableId, branchSel, net.cables, net.districts, scenarioMapDiff]);
 
   const snapHighlightIds = useMemo(() => {
     const ids = new Set<string>();
@@ -580,6 +583,19 @@ export default function HomePage() {
     if (sub && flyToRef.current) flyToRef.current(sub.lat, sub.lon, 19);
   }, [net.districts]);
 
+  // Переход к объекту на конце кабеля (ОРК/муфта/OLT/Транзит — открыть инспектор;
+  // камера — пролёт к ней). Используется из попапа/редактора кабеля.
+  const handleNavigateCableEndpoint = useCallback((kind: PeerKind, id: string) => {
+    if (kind === 'sub') {
+      handleFlyToSubscriber(id);
+      return;
+    }
+    if (kind === 'olt' || kind === 'tb' || kind === 'ork' || kind === 'joint') {
+      handleNavigateInterior(kind, id);
+      handleFlyToEntity(kind, id);
+    }
+  }, [handleFlyToSubscriber, handleNavigateInterior, handleFlyToEntity]);
+
   const handleJointClick = useCallback((jointId: string) => {
     setInteriorView({ kind: 'joint', id: jointId });
     setEntitySelection({ kind: 'joint', id: jointId });
@@ -897,6 +913,7 @@ export default function HomePage() {
               }
               setSelectedCableId(id);
               setEntitySelection(null);
+              setFocusCableId(null);
             }}
             snapHighlightIds={snapHighlightIds}
             editingCableId={editingCableId}
@@ -977,7 +994,7 @@ export default function HomePage() {
             cable={selectedCableId ? (net.cables.find((c) => c.id === selectedCableId) ?? null) : null}
             districts={net.districts}
             joints={net.joints}
-            onClose={() => { setSelectedCableId(null); setEditingCableId(null); }}
+            onClose={() => { setSelectedCableId(null); setEditingCableId(null); setFocusCableId(null); }}
             onUpdateType={(id, type) => net.updateCable(id, { type })}
             onUpdateMeta={(id, patch) => net.updateCable(id, patch)}
             onRerouteOSRM={(id) => net.rerouteSingleCable(id)}
@@ -985,6 +1002,16 @@ export default function HomePage() {
             onDelete={net.deleteCable}
             waypointEditing={editingCableId === selectedCableId && !!editingCableId}
             rerouteStatus={net.status}
+            onNavigate={handleNavigateCableEndpoint}
+            onFocusCable={(id) => {
+              setFocusCableId((cur) => (cur === id ? null : id));
+              const c = net.cables.find((x) => x.id === id);
+              if (c && c.coords.length > 0 && flyToRef.current) {
+                const mid = c.coords[Math.floor(c.coords.length / 2)];
+                flyToRef.current(mid[0], mid[1], 17);
+              }
+            }}
+            focusActive={focusCableId === selectedCableId && !!focusCableId}
             onStartConnect={(id) => {
               setConnectMode(true);
               setConnectCableId(id);
