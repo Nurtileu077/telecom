@@ -1,30 +1,31 @@
 @import "tailwindcss";
 
 @theme {
-  --color-canvas: #06080f;
-  --color-surface: #0c1018;
-  --color-elevated: #141b28;
-  --color-accent: #2dd4bf;
-  --color-accent-2: #818cf8;
+  --color-canvas: #0a0e1a;
+  --color-surface: #0d1b2a;
+  --color-elevated: #15263b;
+  --color-accent: #38bdf8;
+  --color-accent-2: #a78bfa;
   --font-sans: var(--font-jakarta), system-ui, sans-serif;
   --font-mono: var(--font-mono-jb), monospace;
 }
 
 :root {
-  --bg-canvas: #06080f;
-  --bg-surface: #0c1018;
-  --bg-elevated: #141b28;
-  --bg-hover: #1c2538;
-  --border: rgba(148, 163, 184, 0.1);
-  --border-strong: rgba(148, 163, 184, 0.2);
-  --accent: #2dd4bf;
-  --accent-dim: rgba(45, 212, 191, 0.12);
-  --accent-glow: rgba(45, 212, 191, 0.3);
-  --accent-2: #818cf8;
+  /* Единая палитра приложения (синяя/навигационная) — совпадает с панелями. */
+  --bg-canvas: #0a0e1a;
+  --bg-surface: #0d1b2a;
+  --bg-elevated: #15263b;
+  --bg-hover: #1a2744;
+  --border: rgba(30, 58, 95, 0.6);
+  --border-strong: rgba(30, 58, 95, 0.95);
+  --accent: #38bdf8;
+  --accent-dim: rgba(56, 189, 248, 0.14);
+  --accent-glow: rgba(56, 189, 248, 0.32);
+  --accent-2: #a78bfa;
   --warn: #fbbf24;
   --danger: #f87171;
-  --success: #4ade80;
-  --text: #f1f5f9;
+  --success: #34d399;
+  --text: #e2e8f0;
   --text-2: #94a3b8;
   --text-muted: #64748b;
   /* PWA / «На экран Домой» — safe area (вырез, статус-бар, home indicator) */
