@@ -36,7 +36,10 @@
   --header-base-h: 48px;
 }
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
+/* Сброс box-sizing/margin/padding уже делает preflight Tailwind в @layer base.
+   Дублировать его БЕЗ слоя нельзя: безслойное правило перебивает слоевые
+   утилиты (@layer utilities) → p-*/m-*/pl-* перестают работать во всём
+   приложении. Поэтому полагаемся на preflight и не сбрасываем здесь. */
 
 html {
   height: 100%;

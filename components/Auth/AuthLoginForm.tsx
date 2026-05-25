@@ -96,11 +96,11 @@ export default function AuthLoginForm({ compact, onSuccess }: Props) {
         </button>
       </div>
 
-      <div className="flex flex-col gap-3.5">
+      <div className="flex flex-col gap-3">
         <label className="block">
-          <span className="block text-[11px] font-medium text-[#94a3b8] mb-1.5">Email</span>
+          <span className="sr-only">Email</span>
           <div className="relative">
-            <Mail size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#64748b]" />
+            <Mail size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#64748b] pointer-events-none" />
             <input
               type="email"
               value={email}
@@ -114,9 +114,9 @@ export default function AuthLoginForm({ compact, onSuccess }: Props) {
 
         {mode === 'password' && (
           <label className="block">
-            <span className="block text-[11px] font-medium text-[#94a3b8] mb-1.5">Пароль</span>
+            <span className="sr-only">Пароль</span>
             <div className="relative">
-              <Lock size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#64748b]" />
+              <Lock size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#64748b] pointer-events-none" />
               <input
                 type="password"
                 value={password}
