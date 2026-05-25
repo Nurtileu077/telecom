@@ -1,12 +1,13 @@
 'use client';
 import dynamic from 'next/dynamic';
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useNetwork } from '@/hooks/useNetwork';
 import Sidebar from '@/components/Sidebar/Sidebar';
 import ImportModal, { ImportMode, NetworkImportMode, OltLocations } from '@/components/Import/ImportModal';
-import { Subscriber, ProjectSettings, AnnotationType, Project, ProjectStatus, PROJECT_STATUS_LABELS } from '@/types/network';
+import { Subscriber, ProjectSettings, AnnotationType, Project, ProjectStatus, PROJECT_STATUS_LABELS, CABLE_SIZES, CableType } from '@/types/network';
 import type { DrawingTool } from '@/components/Sidebar/NotesTab';
-import GeocodeSearch from '@/components/Geocoding/GeocodeSearch';
+import AppHeader from '@/components/Layout/AppHeader';
+import EmptyState from '@/components/Layout/EmptyState';
 import { exportPDF } from '@/components/Export/ExportPDF';
 import { calculateCost } from '@/components/Network/CostCalc';
 import ProjectListModal from '@/components/Projects/ProjectListModal';
@@ -15,14 +16,51 @@ import EntityEditor, { EntitySelection } from '@/components/Map/EntityEditor';
 import CableEditor from '@/components/Map/CableEditor';
 import SplicePlan from '@/components/Map/SplicePlan';
 import ChatPanel from '@/components/AI/ChatPanel';
+import AddCamerasModal from '@/components/Import/AddCamerasModal';
+import { bboxOfPolygon, filterByBBox } from '@/components/Network/Selection';
+import { computeBranchCables } from '@/components/Network/Branch';
+import { recalcLengthM } from '@/components/Network/cableWaypoints';
+import { compatibleTargetsForCable } from '@/components/Network/SnapConnect';
+import { validateForExport, formatValidationSummary } from '@/components/Network/ExportValidation';
+import type { CableLinkEnd } from '@/hooks/useNetwork';
+import type { InteriorView } from '@/components/Network/entityInterior';
+import { findEntityCoords, findSubscriber } from '@/components/Network/entityInterior';
+import { parseDeepLinkOpen, type SearchHit } from '@/lib/entitySearch';
+import EntityIdSearch from '@/components/Search/EntityIdSearch';
+import ReadOnlyBanner from '@/components/Layout/ReadOnlyBanner';
+import { parseAppViewMode, buildShareViewUrl, buildShareFieldUrl, isMutationAllowed, canSaveProject } from '@/lib/viewMode';
+import type { AppViewMode, UserRole } from '@/types/network';
+import {
+  getStoredRole, setStoredRole, parseUserRole, resolveEffectiveMode, roleAllowsStatusChange,
+} from '@/lib/appRole';
+import { diffScenarioCables, highlightCurrentCableIds } from '@/lib/scenarioDiff';
+import AuthButton from '@/components/Auth/AuthButton';
+import { useSupabaseAuth } from '@/hooks/useSupabaseAuth';
+import { roleFromUser } from '@/lib/authSession';
+import { dbLoadProject } from '@/lib/supabase';
+import { isAuthRequired, isAuthRequiredError } from '@/lib/supabaseAccess';
+import { getActorName } from '@/lib/appRole';
+import { getGuestPresenceKey } from '@/lib/guestId';
+import { useProjectPresence } from '@/hooks/useProjectPresence';
+import { useProjectRealtimeSync } from '@/hooks/useProjectRealtimeSync';
+import PresenceBar from '@/components/Layout/PresenceBar';
+import AuthGateScreen from '@/components/Layout/AuthGateScreen';
+import type { PlacingMode } from '@/components/Layout/AppHeader';
+import SaveConflictModal from '@/components/Projects/SaveConflictModal';
+import { isProjectSaveConflict } from '@/lib/projectConflict';
+import { isOfflineTilesEnabled, syncOfflineTileWorker } from '@/lib/offlineMap';
+import MobileDock from '@/components/Layout/MobileDock';
+import MobileActionSheet from '@/components/Layout/MobileActionSheet';
+import PwaInstallBanner from '@/components/Layout/PwaInstallBanner';
+import RoutingProgressOverlay from '@/components/Layout/RoutingProgressOverlay';
 
 const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
   ssr: false,
   loading: () => (
-    <div className="w-full h-full flex items-center justify-center bg-[#0a0e1a]">
+    <div className="w-full h-full flex items-center justify-center bg-[var(--bg-canvas)]">
       <div className="text-center">
-        <div className="w-8 h-8 border-2 border-[#38bdf8] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-        <p className="text-xs text-[#64748b]">Загрузка карты...</p>
+        <div className="w-8 h-8 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+        <p className="text-xs text-[var(--text-muted)]">Загрузка карты...</p>
       </div>
     </div>
   ),
@@ -30,6 +68,25 @@ const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
 
 export default function HomePage() {
   const net = useNetwork();
+  const [urlMode] = useState<AppViewMode>(() =>
+    typeof window !== 'undefined' ? parseAppViewMode(window.location.search) : 'edit',
+  );
+  const [userRole, setUserRole] = useState<UserRole>(() =>
+    typeof window !== 'undefined' ? getStoredRole() : 'engineer',
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const r = parseUserRole(window.location.search);
+    if (r) {
+      setStoredRole(r);
+      setUserRole(r);
+    }
+  }, []);
+
+  const appMode = useMemo(() => resolveEffectiveMode(urlMode, userRole), [urlMode, userRole]);
+  const readOnly = !isMutationAllowed(appMode);
+  const canChangeStatus = roleAllowsStatusChange(userRole);
   const [showImport, setShowImport] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showProjects, setShowProjects] = useState(false);
@@ -42,22 +99,178 @@ export default function HomePage() {
   const [measureMode, setMeasureMode] = useState(false);
   const [heatmapEnabled, setHeatmapEnabled] = useState(false);
   const [entitySelection, setEntitySelection] = useState<EntitySelection | null>(null);
+  const [moveEntityTarget, setMoveEntityTarget] = useState<{ kind: 'olt' | 'tb' | 'ork' | 'sub' | 'joint'; id: string } | null>(null);
+  const [remoteSyncNotice, setRemoteSyncNotice] = useState<string | null>(null);
+  const [snapHighlightId, setSnapHighlightId] = useState<string | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
   const [selectedCableId, setSelectedCableId] = useState<string | null>(null);
   const [editingCableId, setEditingCableId] = useState<string | null>(null);
-  const [placing, setPlacing] = useState<'olt' | 'tb' | 'ork' | null>(null);
-  const [cableDraw, setCableDraw] = useState<{ stage: 'from' | 'to'; fromId?: string } | null>(null);
+  const [placing, setPlacing] = useState<PlacingMode>(null);
+  /** Кабель: allowMap=false только узлы; A→B: allowMap=true узлы + карта */
+  const [cableLink, setCableLink] = useState<{ allowMap: boolean; from?: CableLinkEnd } | null>(null);
+  const [connectMode, setConnectMode] = useState(false);
+  const [connectCableId, setConnectCableId] = useState<string | null>(null);
+  const [interiorView, setInteriorView] = useState<InteriorView | null>(null);
+  const [pendingCable, setPendingCable] = useState<
+    | { a: [number, number]; b: [number, number] }
+    | { fromId: string; toId: string }
+    | { link: { from: CableLinkEnd; to: CableLinkEnd } }
+    | null
+  >(null);
   const [budgetColoring, setBudgetColoring] = useState(false);
   const [splicePlanTbId, setSplicePlanTbId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ lat: number; lon: number; x: number; y: number } | null>(null);
   const [coordInput, setCoordInput] = useState<{ kind: 'sub' | 'olt' | 'tb' | 'ork' } | null>(null);
   const [coordText, setCoordText] = useState('');
   const [showChat, setShowChat] = useState(false);
+  const [showAddCameras, setShowAddCameras] = useState(false);
   // Two-click rectangle selection for "export only this area".
-  // selectionStage='waiting-first' → next map click is the first corner.
-  // selectionStage='waiting-second' → next click is the second corner.
-  const [selectionStage, setSelectionStage] = useState<'idle' | 'waiting-first' | 'waiting-second'>('idle');
-  const [selectionFirstPt, setSelectionFirstPt] = useState<[number, number] | null>(null);
+  // Лассо-выделение: каждым кликом ставим вершину полигона, «Готово» замыкает.
+  // selectionBBox держим производным от полигона — его ждут reroute/reconsolidate.
+  const [selecting, setSelecting] = useState(false);
+  const [selectionPoints, setSelectionPoints] = useState<[number, number][]>([]);
+  const [selectionPoly, setSelectionPoly] = useState<[number, number][] | null>(null);
   const [selectionBBox, setSelectionBBox] = useState<{ latMin: number; lonMin: number; latMax: number; lonMax: number } | null>(null);
+  const [scenarioDiffOn, setScenarioDiffOn] = useState(false);
+  const [saveConflict, setSaveConflict] = useState<{ serverUpdatedAt: string; serverName: string } | null>(null);
+  const [mergeBusy, setMergeBusy] = useState(false);
+  const [authPanelOpen, setAuthPanelOpen] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const { user: authUser, ready: authReady } = useSupabaseAuth();
+
+  useEffect(() => {
+    const r = roleFromUser(authUser);
+    if (r) {
+      setStoredRole(r);
+      setUserRole(r);
+    }
+  }, [authUser]);
+
+  const canSave = canSaveProject(appMode) && (net.districts.length > 0 || net.annotations.length > 0);
+  const cloudBlocked = isAuthRequired() && authReady && !authUser && net.dbEnabled;
+
+  useEffect(() => {
+    net.setFieldRemoteSave(appMode === 'field');
+  }, [appMode, net]);
+
+  const presenceSelf = useMemo(() => {
+    const name = authUser?.email?.split('@')[0]
+      || getActorName()
+      || 'Гость';
+    const key = authUser?.id ?? getGuestPresenceKey();
+    return { key, name };
+  }, [authUser]);
+
+  const presenceEnabled = net.dbEnabled && net.districts.length > 0 && !cloudBlocked;
+  const { peers: presencePeers, onlineCount, publishCursor } = useProjectPresence(
+    net.projectId,
+    presenceSelf,
+    presenceEnabled,
+  );
+
+  useProjectRealtimeSync(
+    net.projectId,
+    presenceEnabled && !!authUser,
+    net.lastSavedAt,
+    async (info) => {
+      try {
+        await net.syncFromServer(info.name || 'коллега');
+        setRemoteSyncNotice(`Проект обновлён с сервера (${new Date(info.updatedAt).toLocaleTimeString('ru')})`);
+        window.setTimeout(() => setRemoteSyncNotice(null), 8000);
+      } catch (e) {
+        console.warn('[realtime] sync failed', e);
+      }
+    },
+  );
+
+  const handleSaveProject = useCallback(async (opts?: { audit?: boolean; force?: boolean }) => {
+    setSaveError(null);
+    try {
+      await net.saveProject({
+        ...opts,
+        fieldSave: appMode === 'field',
+      });
+    } catch (e) {
+      if (isAuthRequiredError(e)) {
+        setSaveError('Войдите по email, чтобы сохранить в облако');
+        return;
+      }
+      if (isProjectSaveConflict(e)) {
+        setSaveConflict({ serverUpdatedAt: e.serverUpdatedAt, serverName: e.serverName });
+      }
+    }
+  }, [net, appMode]);
+
+  useEffect(() => {
+    syncOfflineTileWorker().catch(() => {});
+  }, []);
+
+  const finishSelection = useCallback(() => {
+    setSelectionPoints((pts) => {
+      if (pts.length >= 3) {
+        setSelectionPoly(pts);
+        setSelectionBBox(bboxOfPolygon(pts));
+      }
+      return [];
+    });
+    setSelecting(false);
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setSelecting(false);
+    setSelectionPoints([]);
+    setSelectionPoly(null);
+    setSelectionBBox(null);
+  }, []);
+
+  // «Показать ветку»: подсветить кабели выбранного OLT/муфты/ОРКСП/камеры.
+  const [branchSel, setBranchSel] = useState<{ kind: 'olt' | 'tb' | 'ork' | 'sub'; id: string } | null>(null);
+  const scenarioMapDiff = useMemo(() => {
+    if (!scenarioDiffOn || !net.scenarios.a || !net.scenarios.b) return null;
+    return diffScenarioCables(net.scenarios.a, net.scenarios.b);
+  }, [scenarioDiffOn, net.scenarios]);
+
+  const highlightCableIds = useMemo(() => {
+    const branch = branchSel
+      ? computeBranchCables(net.cables, net.districts, branchSel.kind, branchSel.id)
+      : null;
+    if (scenarioMapDiff) {
+      const diffHl = highlightCurrentCableIds(net.cables, scenarioMapDiff);
+      if (branch) {
+        const merged = new Set(branch);
+        diffHl.forEach((id) => merged.add(id));
+        return merged;
+      }
+      return diffHl.size > 0 ? diffHl : null;
+    }
+    return branch;
+  }, [branchSel, net.cables, net.districts, scenarioMapDiff]);
+
+  const snapHighlightIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (snapHighlightId) ids.add(snapHighlightId);
+    if (connectCableId) {
+      const c = net.cables.find((x) => x.id === connectCableId);
+      if (c) {
+        for (const id of compatibleTargetsForCable(c, 'from', net.districts)) ids.add(id);
+        for (const id of compatibleTargetsForCable(c, 'to', net.districts)) ids.add(id);
+      }
+    }
+    return ids.size > 0 ? ids : null;
+  }, [snapHighlightId, connectCableId, net.cables, net.districts]);
+
+  const finishCableLink = useCallback((from: CableLinkEnd, to: CableLinkEnd) => {
+    if (from.type === 'entity' && to.type === 'entity') {
+      if (from.id === to.id) return;
+      setPendingCable({ fromId: from.id, toId: to.id });
+    } else if (from.type === 'map' && to.type === 'map') {
+      setPendingCable({ a: from.coord, b: to.coord });
+    } else {
+      setPendingCable({ link: { from, to } });
+    }
+    setCableLink(null);
+  }, []);
 
   const budgetMap = useRef<Map<string, 'ok' | 'warn' | 'fail'>>(new Map());
   useEffect(() => {
@@ -70,9 +283,29 @@ export default function HomePage() {
 
   const onExportPDF = useCallback(async () => {
     if (!net.materials) { alert('Сначала постройте сеть'); return; }
+    const issues = validateForExport(net.districts, net.cables);
+    if (issues.length > 0) {
+      const preview = issues.slice(0, 8).map((i) => `• ${i.message}`).join('\n');
+      const more = issues.length > 8 ? `\n…и ещё ${issues.length - 8}` : '';
+      const ok = confirm(
+        `Перед экспортом: ${formatValidationSummary(issues)}\n\n${preview}${more}\n\nВсё равно экспортировать?`,
+      );
+      if (!ok) return;
+    }
+    let districts = net.districts;
+    let cables = net.cables;
+    if (selectionBBox) {
+      const f = filterByBBox(net.districts, net.cables, net.joints, selectionBBox, selectionPoly);
+      districts = f.districts;
+      cables = f.cables;
+      if (cables.length === 0) {
+        alert('В выделении нет кабелей для экспорта');
+        return;
+      }
+    }
     const cost = calculateCost(net.materials, net.prices);
-    await exportPDF(net.projectName, net.districts, net.cables, net.materials, cost, mapElRef.current);
-  }, [net.projectName, net.districts, net.cables, net.materials, net.prices]);
+    await exportPDF(net.projectName, districts, cables, net.materials, cost, mapElRef.current);
+  }, [net, selectionBBox, selectionPoly]);
 
   const onPrintMap = useCallback(() => window.print(), []);
 
@@ -108,7 +341,11 @@ export default function HomePage() {
   // For subscribers: if dropped near another ORK (≤120m), reassign.
   const SNAP_TB_M = 80;
   const SNAP_ORK_M = 120;
-  const handleMoveEntity = useCallback((kind: 'tb' | 'ork' | 'olt', id: string, lat: number, lon: number) => {
+  const handleMoveEntity = useCallback(async (kind: 'tb' | 'ork' | 'olt' | 'sub' | 'joint', id: string, lat: number, lon: number) => {
+    const { nearestEntity, SNAP_ENTITY_M } = await import('@/components/Network/SnapConnect');
+    const snap = nearestEntity(lat, lon, net.districts, SNAP_ENTITY_M, id);
+    const placeLat = snap?.lat ?? lat;
+    const placeLon = snap?.lon ?? lon;
     // Compute haversine inline
     const dist = (a: [number, number], b: [number, number]) => {
       const R = 6371000;
@@ -131,12 +368,12 @@ export default function HomePage() {
         }
       }
       if (bestTbId && currentTbId && bestTbId !== currentTbId && bestTbDist <= SNAP_TB_M) {
-        net.moveEntity('ork', id, lat, lon);
+        net.moveEntity('ork', id, placeLat, placeLon);
         net.reassignORK(id, bestTbId);
         return;
       }
     }
-    net.moveEntity(kind, id, lat, lon);
+    net.moveEntity(kind, id, placeLat, placeLon);
   }, [net]);
 
   const handleImportNetwork = useCallback(async (project: Project, mode: NetworkImportMode) => {
@@ -148,21 +385,59 @@ export default function HomePage() {
     }
   }, [net]);
 
+  const goHomeMobile = useCallback(() => {
+    setMobileMenuOpen(false);
+    setMobileSheetOpen(false);
+    setEntitySelection(null);
+    setSelectedCableId(null);
+    setEditingCableId(null);
+    setInteriorView(null);
+    setSplicePlanTbId(null);
+    setShowChat(false);
+    setConnectMode(false);
+    setConnectCableId(null);
+    setCableLink(null);
+    setPlacing(null);
+    setBranchSel(null);
+    setMoveEntityTarget(null);
+    setPendingCable(null);
+  }, []);
+
+  const shareProject = useCallback(async () => {
+    const title = net.projectName || 'OPTIQ';
+    const text = `${title} · ${net.totalSubscribers} аб. · ${net.totalCableKm} км`;
+    const url = window.location.href;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title, text, url });
+        return;
+      }
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') return;
+    }
+    try {
+      await navigator.clipboard.writeText(`${title}\n${url}`);
+      alert('Ссылка скопирована');
+    } catch {
+      prompt('Ссылка на проект:', url);
+    }
+  }, [net.projectName, net.totalSubscribers, net.totalCableKm]);
+
   const handleMapClickAddSub = useCallback((lat: number, lon: number) => {
-    // Selection-rectangle drawing takes top priority.
-    if (selectionStage === 'waiting-first') {
-      setSelectionFirstPt([lat, lon]);
-      setSelectionStage('waiting-second');
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      setMobileMenuOpen(false);
+      setMobileSheetOpen(false);
+    }
+    // Лассо-выделение: каждый клик — вершина полигона (замыкаем кнопкой «Готово»).
+    if (selecting) {
+      setSelectionPoints((pts) => [...pts, [lat, lon]]);
       return;
     }
-    if (selectionStage === 'waiting-second' && selectionFirstPt) {
-      const [la, lo] = selectionFirstPt;
-      setSelectionBBox({
-        latMin: Math.min(la, lat), latMax: Math.max(la, lat),
-        lonMin: Math.min(lo, lon), lonMax: Math.max(lo, lon),
-      });
-      setSelectionFirstPt(null);
-      setSelectionStage('idle');
+    // Ручной кабель A→B: первый клик — точка A, второй — B → выбор типа ОК.
+    if (cableLink?.allowMap) {
+      const end: CableLinkEnd = { type: 'map', coord: [lat, lon] };
+      if (!cableLink.from) setCableLink({ ...cableLink, from: end });
+      else finishCableLink(cableLink.from, end);
       return;
     }
     // Placement mode takes priority over add-subscriber
@@ -175,7 +450,8 @@ export default function HomePage() {
     }
     if (placing === 'tb') {
       if (net.districts.length === 0) { alert('Сначала создай OLT'); setPlacing(null); return; }
-      net.addTBAt(lat, lon);
+      const s = net.snapPlaceTB(lat, lon);
+      net.addTBAt(s.lat, s.lon);
       setPlacing(null);
       return;
     }
@@ -186,10 +462,17 @@ export default function HomePage() {
       setPlacing(null);
       return;
     }
+    if (placing === 'box') {
+      setShowAddSub({ lat, lon });
+      const existing = Array.from(new Set(net.districts.map((d) => d.name)));
+      if (existing.length === 1) setNewSubDistrict(existing[0]);
+      return;
+    }
+    if (!net.editMode && !readOnly) return;
     setShowAddSub({ lat, lon });
     const existing = Array.from(new Set(net.districts.map((d) => d.name)));
     if (existing.length === 1) setNewSubDistrict(existing[0]);
-  }, [net, placing, selectionStage, selectionFirstPt]);
+  }, [net, placing, selecting, cableLink, finishCableLink, readOnly]);
 
   // Drop a point of the requested kind at (lat, lon) — used by the right-click
   // context menu and by the manual-coordinate dialog.  Bypasses placing/edit mode.
@@ -202,7 +485,8 @@ export default function HomePage() {
     }
     if (kind === 'tb') {
       if (net.districts.length === 0) { alert('Сначала создай OLT'); return; }
-      net.addTBAt(lat, lon);
+      const s = net.snapPlaceTB(lat, lon);
+      net.addTBAt(s.lat, s.lon);
       return;
     }
     if (kind === 'ork') {
@@ -248,7 +532,7 @@ export default function HomePage() {
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
 
       if (e.ctrlKey || e.metaKey) {
-        if (e.key === 's') { e.preventDefault(); net.saveProject(); }
+        if (e.key === 's') { e.preventDefault(); handleSaveProject({ audit: true }); }
         if (e.key === 'i') { e.preventDefault(); setShowImport(true); }
         if (e.key === 'n') { e.preventDefault(); if (confirm('Новый проект? Несохранённые данные пропадут.')) net.newProject(); }
         if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); net.undo(); }
@@ -262,11 +546,13 @@ export default function HomePage() {
           setShowHelp(false);
           setShowAddSub(null);
           setPlacing(null);
-          setCableDraw(null);
+          setCableLink(null);
+          setConnectMode(false);
           setEntitySelection(null);
           setSelectedCableId(null);
-          setSelectionStage('idle');
-          setSelectionFirstPt(null);
+          clearSelection();
+          setBranchSel(null);
+          setPendingCable(null);
         }
       }
     };
@@ -278,199 +564,194 @@ export default function HomePage() {
     ? Math.round((net.osrmProgress.done / net.osrmProgress.total) * 100)
     : 0;
 
+  useEffect(() => {
+    const t = window.setTimeout(() => window.dispatchEvent(new Event('resize')), 320);
+    return () => window.clearTimeout(t);
+  }, [mobileMenuOpen]);
+
+  const openMobileMenu = useCallback(() => {
+    setMobileSheetOpen(false);
+    setMobileMenuOpen(true);
+  }, []);
+
+  const handleNavigateInterior = useCallback((kind: InteriorView['kind'], id: string) => {
+    let k = kind;
+    let i = id;
+    if (kind === 'tb' && !net.districts.some((d) => d.olt.transitBoxes.some((t) => t.id === id))) {
+      if (net.joints.some((j) => j.id === id)) {
+        k = 'joint';
+      }
+    }
+    setInteriorView({ kind: k, id: i });
+    setEntitySelection(k === 'joint' ? { kind: 'joint', id: i } : { kind: k as 'olt' | 'tb' | 'ork', id: i });
+    setSelectedCableId(null);
+  }, [net.districts, net.joints]);
+
+  const handleFlyToEntity = useCallback((kind: InteriorView['kind'], id: string) => {
+    const c = findEntityCoords(kind, id, net.districts, net.joints);
+    if (c && flyToRef.current) flyToRef.current(c.lat, c.lon, 17);
+  }, [net.districts, net.joints]);
+
+  const handleFlyToSubscriber = useCallback((subId: string) => {
+    const sub = findSubscriber(subId, net.districts);
+    if (sub && flyToRef.current) flyToRef.current(sub.lat, sub.lon, 19);
+  }, [net.districts]);
+
+  const handleJointClick = useCallback((jointId: string) => {
+    setInteriorView({ kind: 'joint', id: jointId });
+    setEntitySelection({ kind: 'joint', id: jointId });
+    setSelectedCableId(null);
+    handleFlyToEntity('joint', jointId);
+  }, [handleFlyToEntity]);
+
+  const handleSearchHit = useCallback((hit: SearchHit) => {
+    if (hit.kind === 'sub') {
+      handleFlyToSubscriber(hit.id);
+      return;
+    }
+    if (hit.kind === 'cable') {
+      setSelectedCableId(hit.id);
+      setEntitySelection(null);
+      setInteriorView(null);
+      return;
+    }
+    if (hit.kind === 'joint') {
+      handleJointClick(hit.id);
+      return;
+    }
+    handleNavigateInterior(hit.kind, hit.id);
+    handleFlyToEntity(hit.kind, hit.id);
+  }, [handleFlyToSubscriber, handleJointClick, handleNavigateInterior, handleFlyToEntity]);
+
+  useEffect(() => {
+    if (readOnly) net.setEditMode(false);
+  }, [readOnly, net]);
+
+  const urlProjectLoaded = useRef(false);
+  useEffect(() => {
+    if (urlProjectLoaded.current || typeof window === 'undefined') return;
+    const pid = new URLSearchParams(window.location.search).get('project');
+    if (!pid) return;
+    urlProjectLoaded.current = true;
+    (async () => {
+      try {
+        const fromDb = await dbLoadProject(pid);
+        if (fromDb) {
+          await net.loadProject(fromDb);
+          return;
+        }
+        const list = await net.listProjects();
+        const p = list.find((x) => x.id === pid);
+        if (p) await net.loadProject(p);
+      } catch { /* ignore */ }
+    })();
+  }, [net]);
+
+  const copyShareViewLink = useCallback(() => {
+    const url = buildShareViewUrl(net.projectId);
+    navigator.clipboard?.writeText(url).catch(() => {});
+  }, [net.projectId]);
+
+  const deepLinkHandled = useRef(false);
+  useEffect(() => {
+    if (deepLinkHandled.current || typeof window === 'undefined' || net.districts.length === 0) return;
+    const open = parseDeepLinkOpen(new URLSearchParams(window.location.search).get('open'));
+    if (!open) return;
+    deepLinkHandled.current = true;
+    if (open.kind === 'sub') {
+      handleFlyToSubscriber(open.id);
+      return;
+    }
+    if (open.kind === 'joint') {
+      handleJointClick(open.id);
+      return;
+    }
+    handleNavigateInterior(open.kind, open.id);
+    handleFlyToEntity(open.kind, open.id);
+  }, [net.districts.length, handleFlyToSubscriber, handleJointClick, handleNavigateInterior, handleFlyToEntity]);
+
+  const showAuthGate = net.dbEnabled && isAuthRequired() && authReady && !authUser;
+
+  if (showAuthGate) {
+    return <AuthGateScreen />;
+  }
+
   return (
-    <div className="flex flex-col h-screen overflow-hidden">
-      {/* Header */}
-      <header className="h-12 flex items-center px-3 gap-3 border-b border-[#1e3a5f] bg-[#0d1b2a] flex-shrink-0 z-10">
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <span className="text-lg">📡</span>
-          <span className="text-sm font-bold text-[#38bdf8] font-mono tracking-wide">GPON</span>
-          <span className="text-[#1e3a5f]">|</span>
-          <input
-            type="text"
-            value={net.projectName}
-            onChange={(e) => net.setProjectName(e.target.value)}
-            className="bg-transparent text-sm text-[#e2e8f0] border-none outline-none w-44 focus:text-[#38bdf8] transition-colors"
+    <div className="app-shell flex flex-col overflow-hidden">
+      <ReadOnlyBanner mode={appMode} role={userRole} onCopyShareLink={readOnly ? copyShareViewLink : undefined} />
+      {presenceEnabled && <PresenceBar onlineCount={onlineCount} peers={presencePeers} />}
+      {remoteSyncNotice && (
+        <div className="shrink-0 px-3 py-1.5 text-[11px] bg-[#34d399]/15 border-b border-[#34d399]/40 text-[#34d399] z-40">
+          {remoteSyncNotice}
+        </div>
+      )}
+      {saveError && (
+        <div className="shrink-0 px-3 py-1 text-center text-[11px] text-[#f87171] border-b border-[#f87171]/30 bg-[#f87171]/10">
+          {saveError}
+        </div>
+      )}
+      <AppHeader
+        projectName={net.projectName}
+        onProjectNameChange={net.setProjectName}
+        projectStatus={net.projectStatus}
+        onProjectStatusChange={canChangeStatus ? net.setProjectStatus : undefined}
+        userRole={userRole}
+        onUserRoleChange={setUserRole}
+        authSlot={(
+          <AuthButton
+            open={authPanelOpen}
+            onOpenChange={setAuthPanelOpen}
+            onRoleFromAuth={(r) => { if (r) { setStoredRole(r); setUserRole(r); } }}
           />
-          <select
-            value={net.projectStatus}
-            onChange={(e) => net.setProjectStatus(e.target.value as ProjectStatus)}
-            className="bg-transparent text-[10px] font-medium border rounded px-1.5 py-0.5 cursor-pointer focus:outline-none"
-            style={{
-              color: PROJECT_STATUS_LABELS[net.projectStatus].color,
-              borderColor: `${PROJECT_STATUS_LABELS[net.projectStatus].color}55`,
-              background: `${PROJECT_STATUS_LABELS[net.projectStatus].color}10`,
-            }}
-            title="Статус проекта"
-          >
-            {(Object.keys(PROJECT_STATUS_LABELS) as ProjectStatus[]).map((s) => (
-              <option key={s} value={s} className="bg-[#0d1b2a] text-[#e2e8f0]">
-                {PROJECT_STATUS_LABELS[s].icon} {PROJECT_STATUS_LABELS[s].label}
-              </option>
-            ))}
-          </select>
-        </div>
+        )}
+        flyTo={flyToRef.current}
+        totalSubscribers={net.totalSubscribers}
+        totalCableKm={net.totalCableKm}
+        totalOrks={net.totalOrks}
+        annotationsCount={net.annotations.length}
+        status={net.status}
+        osrmPercent={osrmPercent}
+        lastSavedAt={net.lastSavedAt}
+        editMode={!readOnly && net.editMode}
+        onToggleEditMode={() => !readOnly && net.setEditMode(!net.editMode)}
+        canUndo={net.canUndo}
+        canRedo={net.canRedo}
+        onUndo={() => net.undo()}
+        onRedo={() => net.redo()}
+        undoHint={net.undoLabel}
+        dbEnabled={net.dbEnabled}
+        onCatalog={() => setShowCatalog(true)}
+        onProjects={() => setShowProjects(true)}
+        onSave={() => handleSaveProject({ audit: true })}
+        canSave={canSave}
+        branchActive={!!branchSel}
+        onClearBranch={() => setBranchSel(null)}
+        onImport={() => !readOnly && setShowImport(true)}
+        onHelp={() => setShowHelp(true)}
+        chatOpen={showChat}
+        onToggleChat={() => setShowChat((v) => !v)}
+        onMenuToggle={() => setMobileMenuOpen((v) => !v)}
+        mobileMenuOpen={mobileMenuOpen}
+      />
 
-        <GeocodeSearch flyTo={flyToRef.current} />
-
-        <div className="flex items-center gap-1.5 text-[10px] font-mono">
-          <span className="px-2 py-0.5 bg-[#38bdf8]/10 border border-[#38bdf8]/30 text-[#38bdf8] rounded-md">👥 {net.totalSubscribers}</span>
-          <span className="px-2 py-0.5 bg-[#34d399]/10 border border-[#34d399]/30 text-[#34d399] rounded-md">〰 {net.totalCableKm} км</span>
-          <span className="px-2 py-0.5 bg-[#f59e0b]/10 border border-[#f59e0b]/30 text-[#f59e0b] rounded-md">📦 {net.totalOrks}</span>
-          <span className="px-2 py-0.5 bg-[#a78bfa]/10 border border-[#a78bfa]/30 text-[#a78bfa] rounded-md">📝 {net.annotations.length}</span>
-          {net.status === 'routing' && (
-            <span className="px-2 py-0.5 bg-[#a78bfa]/10 border border-[#a78bfa]/30 text-[#a78bfa] rounded-md animate-pulse">🛣 OSRM {osrmPercent}%</span>
-          )}
-          {net.status === 'clustering' && (
-            <span className="px-2 py-0.5 bg-[#f59e0b]/10 border border-[#f59e0b]/30 text-[#f59e0b] rounded-md animate-pulse">⚙ Кластеризация...</span>
-          )}
-          {net.lastSavedAt && net.status === 'done' && (
-            <span className="px-2 py-0.5 bg-[#34d399]/10 border border-[#34d399]/30 text-[#34d399] rounded-md">💾 {new Date(net.lastSavedAt).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' })}</span>
-          )}
-        </div>
-
-        <div className="ml-auto flex items-center gap-1.5">
+      <div className="flex flex-1 overflow-hidden relative min-h-0">
+        {mobileMenuOpen && (
           <button
-            onClick={() => net.setEditMode(!net.editMode)}
-            className={`px-2 py-1 text-xs rounded-lg transition-colors ${net.editMode ? 'bg-[#34d399]/15 border border-[#34d399]/50 text-[#34d399]' : 'border border-[#1e3a5f] text-[#94a3b8] hover:text-[#e2e8f0]'}`}
-            title="Режим редактирования (E)"
-          >
-            🛠 {net.editMode ? 'Ред.' : 'Просм.'}
-          </button>
-          <button
-            onClick={() => setShowHelp(true)}
-            className="px-2 py-1 text-xs border border-[#1e3a5f] rounded-lg text-[#94a3b8] hover:text-[#e2e8f0] transition-colors"
-            title="Справка (?)"
-          >
-            ?
-          </button>
-          <div className="flex items-center gap-0.5 border border-[#1e3a5f] rounded-lg px-0.5 py-0.5">
-            <button
-              onClick={() => net.undo()}
-              disabled={!net.canUndo}
-              className="px-2 py-0.5 text-[11px] rounded text-[#94a3b8] hover:text-[#e2e8f0] disabled:opacity-30"
-              title="Отмена (Ctrl+Z)"
-            >
-              ↶
-            </button>
-            <button
-              onClick={() => net.redo()}
-              disabled={!net.canRedo}
-              className="px-2 py-0.5 text-[11px] rounded text-[#94a3b8] hover:text-[#e2e8f0] disabled:opacity-30"
-              title="Повтор (Ctrl+Shift+Z)"
-            >
-              ↷
-            </button>
-          </div>
-          <div className="flex items-center gap-0.5 border border-[#1e3a5f] rounded-lg px-0.5 py-0.5">
-            <button
-              onClick={() => setPlacing(placing === 'olt' ? null : 'olt')}
-              className={`px-2 py-0.5 text-[11px] rounded transition-colors ${placing === 'olt' ? 'bg-[#f59e0b]/20 text-[#f59e0b]' : 'text-[#94a3b8] hover:text-[#e2e8f0]'}`}
-              title="Поставить OLT по клику"
-            >
-              +OLT
-            </button>
-            <button
-              onClick={() => setPlacing(placing === 'tb' ? null : 'tb')}
-              className={`px-2 py-0.5 text-[11px] rounded transition-colors ${placing === 'tb' ? 'bg-[#38bdf8]/20 text-[#38bdf8]' : 'text-[#94a3b8] hover:text-[#e2e8f0]'}`}
-              title="Поставить Муфту (TB) — подключится к ближайшему OLT"
-            >
-              +Муфта
-            </button>
-            <button
-              onClick={() => setPlacing(placing === 'ork' ? null : 'ork')}
-              className={`px-2 py-0.5 text-[11px] rounded transition-colors ${placing === 'ork' ? 'bg-[#f59e0b]/20 text-[#f59e0b]' : 'text-[#94a3b8] hover:text-[#e2e8f0]'}`}
-              title="Поставить ОРК — подключится к ближайшей Муфте"
-            >
-              +ОРК
-            </button>
-            <button
-              onClick={() => { setCableDraw(cableDraw ? null : { stage: 'from' }); setPlacing(null); }}
-              className={`px-2 py-0.5 text-[11px] rounded transition-colors ${cableDraw ? 'bg-[#34d399]/20 text-[#34d399]' : 'text-[#94a3b8] hover:text-[#e2e8f0]'}`}
-              title="Нарисовать кабель: клик по первой точке, потом по второй"
-            >
-              +Кабель
-            </button>
-          </div>
-          <button
-            onClick={() => setShowCatalog(true)}
-            disabled={!net.dbEnabled}
-            className="px-2 py-1 text-xs border border-[#1e3a5f] rounded-lg text-[#94a3b8] hover:text-[#e2e8f0] hover:border-[#38bdf8]/40 transition-colors disabled:opacity-30"
-            title="Каталог оборудования"
-          >
-            📦 Каталог
-          </button>
-          <button
-            onClick={() => setShowProjects(true)}
-            className="px-2 py-1 text-xs border border-[#1e3a5f] rounded-lg text-[#94a3b8] hover:text-[#e2e8f0] hover:border-[#38bdf8]/40 transition-colors"
-            title="Список проектов"
-          >
-            {net.dbEnabled ? '☁' : '🗂'} Проекты
-          </button>
-          <button
-            onClick={() => net.saveProject()}
-            disabled={net.districts.length === 0 && net.annotations.length === 0}
-            className="px-3 py-1 text-xs border border-[#1e3a5f] rounded-lg text-[#94a3b8] hover:text-[#e2e8f0] hover:border-[#38bdf8]/40 transition-colors disabled:opacity-40"
-            title="Сохранить (Ctrl+S)"
-          >
-            💾 Сохранить
-          </button>
-          {/* «Построить» — кластеризация подгруженных абонентов в OLT/Муфты/ОРК.
-              Видимо только когда есть «сырые» подписчики без сети (raw-import). */}
-          {net.allSubscribers.length > 0 && net.districts.length === 0 && (
-            <button
-              onClick={() => net.rebuildFromCurrent()}
-              className="px-3 py-1 text-xs bg-[#fbbf24] hover:bg-[#fde68a] text-[#0a0e1a] font-semibold rounded-lg transition-colors animate-pulse"
-              title="Запустить авто-построение сети (kmeans → OSRM → консолидация)"
-            >
-              🔨 Построить
-            </button>
-          )}
-          {/* Selection rectangle: toggle drawing mode, or show "clear" pill when active. */}
-          {selectionBBox ? (
-            <button
-              onClick={() => { setSelectionBBox(null); setSelectionStage('idle'); setSelectionFirstPt(null); }}
-              className="px-2 py-1 text-[11px] bg-[#fbbf24]/20 border border-[#fbbf24]/60 text-[#fbbf24] font-mono rounded-lg transition-colors hover:bg-[#fbbf24]/30"
-              title="Снять выделение"
-            >
-              🔲 Выделено  ✕
-            </button>
-          ) : (
-            <button
-              onClick={() => {
-                if (selectionStage === 'idle') { setSelectionStage('waiting-first'); setPlacing(null); setCableDraw(null); }
-                else { setSelectionStage('idle'); setSelectionFirstPt(null); }
-              }}
-              className={`px-2 py-1 text-[11px] rounded-lg transition-colors ${
-                selectionStage !== 'idle'
-                  ? 'bg-[#fbbf24]/30 border border-[#fbbf24] text-[#fbbf24]'
-                  : 'text-[#94a3b8] border border-[#1e3a5f] hover:text-[#e2e8f0] hover:border-[#fbbf24]/50'
-              }`}
-              title="Выделить прямоугольник для экспорта"
-            >
-              {selectionStage === 'waiting-first'
-                ? '🔲 Кликни первый угол'
-                : selectionStage === 'waiting-second'
-                ? '🔲 Кликни второй угол'
-                : '🔲 Выделить'}
-            </button>
-          )}
-          <button
-            onClick={() => setShowImport(true)}
-            className="px-3 py-1 text-xs bg-[#38bdf8] hover:bg-[#7dd3fc] text-[#0a0e1a] font-semibold rounded-lg transition-colors"
-            title="Импорт (Ctrl+I)"
-          >
-            📂 Импорт
-          </button>
-        </div>
-      </header>
-
-      <div className="flex flex-1 overflow-hidden">
+            type="button"
+            className="drawer-backdrop md:hidden"
+            aria-label="Закрыть меню"
+            onClick={() => setMobileMenuOpen(false)}
+          />
+        )}
+        <div className={`sidebar-drawer shrink-0 h-full md:relative md:translate-x-0 ${mobileMenuOpen ? 'is-open' : ''}`}>
         <Sidebar
+          onMobileClose={goHomeMobile}
+          mobilePersist
           districts={net.districts}
           cables={net.cables}
           joints={net.joints}
           selectionBBox={selectionBBox}
+          selectionPoly={selectionPoly}
           cableReserve={net.settings.cableReserve}
           materials={net.materials}
           layers={net.layers}
@@ -489,7 +770,15 @@ export default function HomePage() {
           lastSavedAt={net.lastSavedAt}
           autoSaveEnabled={net.autoSaveEnabled}
           setAutoSaveEnabled={net.setAutoSaveEnabled}
-          saveProject={net.saveProject}
+          saveProject={async () => {
+            try {
+              return await net.saveProject({ audit: true });
+            } catch (e) {
+              if (isProjectSaveConflict(e)) {
+                setSaveConflict({ serverUpdatedAt: e.serverUpdatedAt, serverName: e.serverName });
+              }
+            }
+          }}
           loadProject={net.loadProject}
           deleteProject={net.deleteProject}
           newProject={net.newProject}
@@ -503,8 +792,8 @@ export default function HomePage() {
           setHeatmapEnabled={setHeatmapEnabled}
           onExportPDF={onExportPDF}
           onPrintMap={onPrintMap}
-          onRerouteOSRM={() => net.rerouteWithOSRM(selectionBBox)}
-          onReconsolidate={() => net.reconsolidate(selectionBBox)}
+          onRerouteOSRM={() => net.rerouteWithOSRM(selectionBBox, selectionPoly)}
+          onReconsolidate={() => net.reconsolidate(selectionBBox, selectionPoly)}
           osrmStatus={net.status}
           powerBudgets={net.powerBudgets}
           powerBudgetStats={net.powerBudgetStats}
@@ -516,9 +805,57 @@ export default function HomePage() {
           takeSnapshot={net.takeSnapshot}
           restoreSnapshot={net.restoreSnapshot}
           deleteSnapshot={net.deleteSnapshot}
+          hasNetwork={net.districts.length > 0}
+          settings={net.settings}
+          onSearchHit={handleSearchHit}
+          scenarios={net.scenarios}
+          saveScenarioSlot={net.saveScenarioSlot}
+          restoreScenarioSlot={net.restoreScenarioSlot}
+          readOnly={readOnly}
+          onCopyShareViewLink={copyShareViewLink}
+          onCopyShareFieldLink={() => {
+            navigator.clipboard?.writeText(buildShareFieldUrl(net.projectId)).catch(() => {});
+          }}
+          auditLog={net.auditLog}
+          scenarioDiffOn={scenarioDiffOn}
+          onToggleScenarioDiff={() => setScenarioDiffOn((v) => !v)}
+          placing={placing}
+          onSetPlacing={setPlacing}
+          cableDrawActive={!!cableLink && !cableLink.allowMap}
+          pointCableActive={!!cableLink && !!cableLink.allowMap}
+          connectModeActive={connectMode}
+          onToggleConnectMode={() => {
+            setConnectMode((v) => !v);
+            setConnectCableId(null);
+            setCableLink(null);
+            setPlacing(null);
+          }}
+          onToggleCableDraw={() => {
+            setCableLink(cableLink && !cableLink.allowMap ? null : { allowMap: false });
+            setConnectMode(false);
+            setPlacing(null);
+          }}
+          onTogglePointCable={() => {
+            setCableLink(cableLink?.allowMap ? null : { allowMap: true });
+            setConnectMode(false);
+            setPlacing(null);
+          }}
+          selecting={selecting}
+          selectionCount={selectionPoints.length}
+          hasSelectionPoly={!!selectionPoly}
+          onStartSelection={() => { setSelecting(true); setSelectionPoints([]); setPlacing(null); setCableLink(null); setConnectMode(false); }}
+          onFinishSelection={finishSelection}
+          onClearSelection={clearSelection}
+          showAddCameras={net.districts.length > 0}
+          onAddCameras={() => setShowAddCameras(true)}
+          editMode={!readOnly && net.editMode}
+          onToggleEditMode={() => !readOnly && net.setEditMode(!net.editMode)}
+          showBuild={net.allSubscribers.length > 0 && net.districts.length === 0}
+          onBuild={() => net.rebuildFromCurrent()}
         />
+        </div>
 
-        <main className="flex-1 relative overflow-hidden isolate">
+        <main className={`flex-1 relative overflow-hidden isolate min-w-0 max-md:pb-[calc(var(--mobile-dock-h)+max(8px,var(--sab)))] md:pb-0 ${(entitySelection || interiorView) ? 'md:pr-[min(400px,42vw)]' : ''}`}>
           <LeafletMap
             districts={net.districts}
             cables={net.cables}
@@ -533,31 +870,62 @@ export default function HomePage() {
             activeAnnotationType={activeAnnotationType}
             addAnnotation={net.addAnnotation}
             deleteAnnotation={net.deleteAnnotation}
-            editMode={net.editMode}
+            editMode={!readOnly && net.editMode}
             placingMode={!!placing}
-            selectingMode={selectionStage !== 'idle'}
+            selectingMode={selecting || !!cableLink?.allowMap}
             onMapClick={handleMapClickAddSub}
             onMapContextMenu={(lat, lon, x, y) => setContextMenu({ lat, lon, x, y })}
             selectionBBox={selectionBBox}
+            selectionPoints={selectionPoints}
+            selectionPoly={selectionPoly}
+            highlightCableIds={highlightCableIds}
+            scenarioMapDiff={scenarioMapDiff}
+            presencePeers={presencePeers}
+            onPresenceCursorMove={publishCursor}
+            onShowBranchSub={(id) => setBranchSel({ kind: 'sub', id })}
             moveEntity={handleMoveEntity}
             deleteSubscriber={net.deleteSubscriber}
+            moveEntityTarget={moveEntityTarget}
+            onEntityDoubleClick={(kind, id) => {
+              handleNavigateInterior(kind, id);
+              setSelectedCableId(null);
+              setMoveEntityTarget((prev) =>
+                prev?.kind === kind && prev.id === id ? null : { kind, id },
+              );
+            }}
+            onJointClick={handleJointClick}
             onEntityClick={(kind, id) => {
-              // Cable-drawing flow takes priority
-              if (cableDraw) {
-                if (cableDraw.stage === 'from') {
-                  setCableDraw({ stage: 'to', fromId: id });
-                } else if (cableDraw.stage === 'to' && cableDraw.fromId) {
-                  if (cableDraw.fromId !== id) net.addCableBetween(cableDraw.fromId, id);
-                  setCableDraw(null);
-                }
+              if (connectMode && connectCableId) {
+                net.recordAction('Соединить кабель');
+                net.connectCableToEntity(connectCableId, id);
+                setConnectCableId(null);
                 return;
               }
-              setEntitySelection({ kind, id } as EntitySelection);
-              setSelectedCableId(null);
+              if (cableLink) {
+                const end: CableLinkEnd = { type: 'entity', id };
+                if (!cableLink.from) setCableLink({ ...cableLink, from: end });
+                else finishCableLink(cableLink.from, end);
+                return;
+              }
+              handleNavigateInterior(kind, id);
+              handleFlyToEntity(kind, id);
             }}
-            onCableClick={(id) => { setSelectedCableId(id); setEntitySelection(null); }}
+            onCableClick={(id) => {
+              if (connectMode) {
+                setConnectCableId(id);
+                setSelectedCableId(id);
+                setEntitySelection(null);
+                return;
+              }
+              setSelectedCableId(id);
+              setEntitySelection(null);
+            }}
+            snapHighlightIds={snapHighlightIds}
             editingCableId={editingCableId}
-            onUpdateCableCoords={(id, coords) => net.updateCable(id, { coords })}
+            onUpdateCableCoords={(id, coords) => net.updateCable(id, { coords, lengthM: recalcLengthM(coords) })}
+            onCableEndpointSnap={(id, end, entityId) => net.connectCableEndpoint(id, end, entityId)}
+            onSnapHighlight={setSnapHighlightId}
+            snapHighlightId={snapHighlightId}
             measureMode={measureMode}
             setMeasureMode={setMeasureMode}
             heatmapEnabled={heatmapEnabled}
@@ -565,10 +933,50 @@ export default function HomePage() {
             budgetColoring={budgetColoring}
           />
 
+          {moveEntityTarget && (
+            <div className="map-hint absolute top-2 md:top-3 left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#a78bfa]/50 rounded-lg px-3 py-1.5 text-xs text-[#a78bfa] shadow-2xl flex items-center gap-2 animate-fade-in max-w-none md:max-w-lg">
+              <span>
+                ↔ Перетащите {moveEntityTarget.kind === 'olt' ? 'OLT' : moveEntityTarget.kind === 'tb' ? 'муфту' : 'ОРК'} на карте
+                <span className="text-[#64748b] ml-1">({moveEntityTarget.id})</span>
+              </span>
+              <button
+                onClick={() => setMoveEntityTarget(null)}
+                className="text-[#94a3b8] hover:text-white border border-[#a78bfa]/30 rounded px-1.5 py-0.5 text-[10px]"
+              >
+                Готово
+              </button>
+            </div>
+          )}
+
           <EntityEditor
             selection={entitySelection}
+            interiorView={interiorView}
+            projectId={net.projectId}
+            appMode={appMode}
+            onAudit={net.recordAudit}
             districts={net.districts}
-            onClose={() => setEntitySelection(null)}
+            cables={net.cables}
+            joints={net.joints}
+            powerBudgets={net.powerBudgets}
+            onClose={() => {
+              setEntitySelection(null);
+              setInteriorView(null);
+              setMoveEntityTarget(null);
+            }}
+            onNavigateInterior={handleNavigateInterior}
+            onFlyToEntity={handleFlyToEntity}
+            onFlyToSubscriber={handleFlyToSubscriber}
+            moveActive={
+              !!moveEntityTarget
+              && !!entitySelection
+              && moveEntityTarget.kind === entitySelection.kind
+              && moveEntityTarget.id === entitySelection.id
+            }
+            onStartMove={() => {
+              if (!entitySelection) return;
+              setMoveEntityTarget({ kind: entitySelection.kind, id: entitySelection.id });
+            }}
+            onStopMove={() => setMoveEntityTarget(null)}
             onUpdateOLT={net.updateOLT}
             onUpdateTB={net.updateTB}
             onUpdateORK={net.updateORK}
@@ -576,7 +984,8 @@ export default function HomePage() {
             onDeleteTB={net.deleteTB}
             onDeleteORK={net.deleteORK}
             onReassignORK={net.reassignORK}
-            onOpenSplicePlan={(tbId) => { setSplicePlanTbId(tbId); setEntitySelection(null); }}
+            onOpenSplicePlan={(tbId) => { setSplicePlanTbId(tbId); }}
+            onShowBranch={(kind, id) => setBranchSel({ kind, id })}
           />
 
           <SplicePlan
@@ -588,82 +997,115 @@ export default function HomePage() {
 
           <CableEditor
             cable={selectedCableId ? (net.cables.find((c) => c.id === selectedCableId) ?? null) : null}
+            districts={net.districts}
             onClose={() => { setSelectedCableId(null); setEditingCableId(null); }}
             onUpdateType={(id, type) => net.updateCable(id, { type })}
+            onUpdateMeta={(id, patch) => net.updateCable(id, patch)}
             onRerouteOSRM={(id) => net.rerouteSingleCable(id)}
             onToggleWaypoints={(id) => setEditingCableId(id)}
             onDelete={net.deleteCable}
             waypointEditing={editingCableId === selectedCableId && !!editingCableId}
             rerouteStatus={net.status}
+            onStartConnect={(id) => {
+              setConnectMode(true);
+              setConnectCableId(id);
+              setCableLink(null);
+            }}
           />
 
+          {scenarioDiffOn && scenarioMapDiff && (
+            <div className="map-hint absolute top-12 left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#fbbf24]/50 rounded-lg px-2 py-1.5 text-[11px] text-[#fbbf24] shadow-2xl">
+              A↔B: <span className="text-[#34d399]">+{scenarioMapDiff.added.length}</span>
+              {' · '}
+              <span className="text-[#f87171]">−{scenarioMapDiff.removed.length}</span>
+              {' · '}
+              <span className="text-[#fbbf24]">Δ{scenarioMapDiff.modified.length}</span>
+              <span className="text-[#64748b] ml-1">— выкл. в Инструменты</span>
+            </div>
+          )}
+
           {placing && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#a78bfa]/50 rounded-lg px-3 py-1.5 text-xs text-[#a78bfa] shadow-2xl flex items-center gap-2 animate-fade-in">
-              <span>🎯 Клик по карте — поставить {placing === 'olt' ? 'OLT' : placing === 'tb' ? 'Муфту' : 'ОРК'}</span>
+            <div className="map-hint absolute top-2 md:top-3 left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#a78bfa]/50 rounded-lg px-2 py-1.5 text-[11px] md:text-xs text-[#a78bfa] shadow-2xl flex items-center gap-2 animate-fade-in">
+              <span>
+                🎯 {placing === 'tb'
+                  ? 'Муфта на перекрёстке — клик по кабелю (магнит ~35 м), без автокабеля к OLT'
+                  : placing === 'box'
+                    ? 'Клик по карте — Бокс / камера (абонент)'
+                    : `Клик по карте — поставить ${placing === 'olt' ? 'OLT' : 'ОРК'}`}
+              </span>
               <button onClick={() => setPlacing(null)} className="text-[#94a3b8] hover:text-white border border-[#a78bfa]/30 rounded px-1.5 py-0.5 text-[10px]">Esc</button>
             </div>
           )}
 
-          {cableDraw && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#34d399]/50 rounded-lg px-3 py-1.5 text-xs text-[#34d399] shadow-2xl flex items-center gap-2 animate-fade-in">
+          {connectMode && (
+            <div className="map-hint absolute top-2 md:top-3 left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#34d399]/50 rounded-lg px-2 py-1.5 text-[11px] md:text-xs text-[#34d399] shadow-2xl flex items-center gap-2 animate-fade-in">
               <span>
-                〰 {cableDraw.stage === 'from'
-                    ? 'Клик на первой точке (OLT/Муфта/ОРК)'
-                    : 'Клик на второй точке — кабель будет создан'}
+                🔗 {connectCableId
+                  ? 'Клик по OLT / муфте / ОРК — привязать конец (зелёная подсветка)'
+                  : 'Клик по кабелю на карте, затем по узлу'}
               </span>
-              <button onClick={() => setCableDraw(null)} className="text-[#94a3b8] hover:text-white border border-[#34d399]/30 rounded px-1.5 py-0.5 text-[10px]">Esc</button>
+              <button type="button" onClick={() => { setConnectMode(false); setConnectCableId(null); }} className="text-[#94a3b8] hover:text-white border border-[#34d399]/30 rounded px-1.5 py-0.5 text-[10px]">Esc</button>
             </div>
           )}
 
-          {net.status === 'routing' && (
-            <div className="absolute inset-0 flex items-end justify-center pb-8 z-[500] pointer-events-none">
-              <div className="bg-[#0d1b2a]/98 border border-[#38bdf8]/40 rounded-2xl p-5 shadow-2xl min-w-[340px] max-w-[420px] pointer-events-auto animate-fade-in">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-5 h-5 border-2 border-[#38bdf8] border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                  <span className="text-sm font-semibold text-[#e2e8f0]">Прокладка кабелей по дорогам</span>
-                </div>
-                {net.osrmProgress.total > 0 && (
-                  <>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-[11px] text-[#94a3b8] truncate mr-3">{net.osrmProgress.current || 'Запрос к OSRM...'}</span>
-                      <span className="text-xs font-mono text-[#38bdf8] flex-shrink-0">{net.osrmProgress.done} / {net.osrmProgress.total}</span>
-                    </div>
-                    <div className="h-2 bg-[#1e3a5f] rounded-full overflow-hidden mb-2">
-                      <div className="progress-bar h-full" style={{ width: `${osrmPercent}%` }} />
-                    </div>
-                  </>
-                )}
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] text-[#64748b]">router.project-osrm.org — бесплатный сервер</span>
-                  <button onClick={net.stopOSRM} className="text-xs text-[#f87171] hover:text-[#fca5a5] transition-colors border border-[#f87171]/30 rounded px-2 py-0.5 ml-3">
-                    ✕ Стоп
+          {cableLink && (
+            <div className="map-hint absolute top-2 md:top-3 left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 z-[500] bg-[#0d1b2a]/97 border border-[#34d399]/50 rounded-lg px-2 py-1.5 text-[11px] md:text-xs text-[#34d399] shadow-2xl flex items-center gap-2 animate-fade-in">
+              <span>
+                〰 {!cableLink.from
+                  ? (cableLink.allowMap
+                    ? 'Точка A или OLT/муфта/ОРК'
+                    : 'Первый узел (OLT / муфта / ОРК)')
+                  : (cableLink.allowMap
+                    ? 'Точка B или второй узел на карте'
+                    : 'Второй узел — кабель будет создан')}
+              </span>
+              <button type="button" onClick={() => setCableLink(null)} className="text-[#94a3b8] hover:text-white border border-[#34d399]/30 rounded px-1.5 py-0.5 text-[10px]">Esc</button>
+            </div>
+          )}
+
+          {pendingCable && (
+            <div className="map-hint absolute top-2 md:top-3 left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 z-[600] bg-[#0d1b2a]/98 border border-[#38bdf8]/50 rounded-xl px-3 md:px-4 py-3 shadow-2xl animate-fade-in max-h-[50vh] overflow-y-auto">
+              <div className="text-xs text-[#e2e8f0] mb-2 text-center">Выбери тип кабеля ОК</div>
+              <div className="flex flex-wrap gap-1.5 max-w-[320px] justify-center">
+                {CABLE_SIZES.filter((t) => t !== 'ОК-96').map((t: CableType) => (
+                  <button
+                    key={t}
+                    onClick={() => {
+                      if ('fromId' in pendingCable) {
+                        net.recordAction('Кабель между узлами');
+                        void net.addCableBetween(pendingCable.fromId, pendingCable.toId, t);
+                      } else if ('link' in pendingCable) {
+                        void net.addCableLink(pendingCable.link.from, pendingCable.link.to, t);
+                      } else {
+                        net.recordAction('Кабель A→B');
+                        void net.addCableByPoints(pendingCable.a, pendingCable.b, t);
+                      }
+                      setPendingCable(null);
+                    }}
+                    className="px-2.5 py-1 text-[11px] rounded-lg border border-[#1e3a5f] text-[#e2e8f0] hover:bg-[#38bdf8]/20 hover:border-[#38bdf8]/50 transition-colors"
+                  >
+                    {t}
                   </button>
-                </div>
+                ))}
+                <button onClick={() => setPendingCable(null)} className="px-2.5 py-1 text-[11px] rounded-lg text-[#94a3b8] hover:text-white">Отмена</button>
               </div>
             </div>
           )}
 
           {net.districts.length === 0 && net.annotations.length === 0 && net.status === 'idle' && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="text-center bg-[#0d1b2a]/90 backdrop-blur-sm border border-[#1e3a5f] rounded-2xl p-8 pointer-events-auto shadow-2xl">
-                <div className="text-5xl mb-4">📡</div>
-                <h2 className="text-lg font-semibold text-[#e2e8f0] mb-2">GPON Network Designer</h2>
-                <p className="text-sm text-[#94a3b8] mb-4 max-w-xs">
-                  Загружайте Excel/KMZ файлы — карта будет накапливаться. Делайте заметки прямо на ней.
-                </p>
-                <div className="flex gap-2 justify-center">
-                  <button onClick={() => setShowImport(true)} className="px-5 py-2 bg-[#38bdf8] hover:bg-[#7dd3fc] text-[#0a0e1a] font-semibold rounded-xl text-sm transition-colors">
-                    📂 Импорт
-                  </button>
-                  <button onClick={() => setShowHelp(true)} className="px-5 py-2 border border-[#1e3a5f] hover:border-[#38bdf8] text-[#94a3b8] hover:text-[#e2e8f0] rounded-xl text-sm transition-colors">
-                    ? Справка
-                  </button>
-                </div>
-              </div>
-            </div>
+            <EmptyState onImport={() => setShowImport(true)} onHelp={() => setShowHelp(true)} />
           )}
         </main>
       </div>
+
+      {(net.status === 'routing' || net.status === 'clustering' || net.status === 'importing' || net.status === 'calculating') && (
+        <RoutingProgressOverlay
+          status={net.status}
+          progress={net.osrmProgress}
+          percent={osrmPercent}
+          onStop={net.status === 'routing' ? net.stopOSRM : undefined}
+        />
+      )}
 
       {showImport && (
         <ImportModal
@@ -736,7 +1178,7 @@ export default function HomePage() {
             <div className="my-1 border-t border-[#1e3a5f]/50" />
             <button
               onClick={() => {
-                setCableDraw({ stage: 'from' });
+                setCableLink({ allowMap: true });
                 setPlacing(null);
                 setContextMenu(null);
               }}
@@ -877,16 +1319,77 @@ A3: ...`}
         </div>
       )}
 
-      {/* AI assistant — floating button + side panel */}
-      {!showChat && (
-        <button
-          onClick={() => setShowChat(true)}
-          className="fixed right-4 bottom-4 z-[8999] w-12 h-12 rounded-full bg-[#38bdf8] hover:bg-[#7dd3fc] text-[#0a0e1a] text-xl font-bold shadow-2xl flex items-center justify-center transition-colors"
-          title="ИИ-ассистент"
-        >
-          🤖
-        </button>
+      {/* Brownfield Excel → add cameras to existing network */}
+      {showAddCameras && (
+        <AddCamerasModal
+          onClose={() => setShowAddCameras(false)}
+          onAdd={async (rows) => {
+            // Use existing addSubscriberAt — it finds the nearest ORK, attaches
+            // the camera with its kind/side/bandwidth, and OSRM-routes the
+            // drop cable.  Sequential so the public OSRM server doesn't 429.
+            const district = net.districts[0]?.name ?? 'Импорт';
+            for (const r of rows) {
+              await net.addSubscriberAt(r.lat, r.lon, district, r.desc, r.kind);
+            }
+          }}
+        />
       )}
+
+      <PwaInstallBanner />
+
+      <MobileActionSheet
+        open={mobileSheetOpen}
+        onClose={() => setMobileSheetOpen(false)}
+        actions={[
+          { id: 'import', label: 'Импорт', icon: '📥', onClick: () => setShowImport(true) },
+          { id: 'olt', label: 'OLT', icon: '📡', onClick: () => { setPlacing('olt'); net.setEditMode(true); } },
+          { id: 'tb', label: 'Муфта', icon: '🔷', onClick: () => { setPlacing('tb'); net.setEditMode(true); } },
+          { id: 'ork', label: 'ОРК', icon: '📦', onClick: () => { setPlacing('ork'); net.setEditMode(true); } },
+          { id: 'cable', label: 'Кабель', icon: '〰', onClick: () => { setCableLink({ allowMap: false }); setConnectMode(false); } },
+          { id: 'ab', label: 'A→B', icon: '✏️', onClick: () => { setCableLink({ allowMap: true }); setConnectMode(false); } },
+        ]}
+      />
+
+      <MobileDock
+        menuOpen={mobileMenuOpen}
+        onHome={goHomeMobile}
+        onMenu={() => {
+          setMobileSheetOpen(false);
+          setMobileMenuOpen((v) => !v);
+        }}
+        onAdd={() => {
+          setMobileMenuOpen(false);
+          setMobileSheetOpen(true);
+        }}
+        onShare={shareProject}
+      />
+
+      {saveConflict && (
+        <SaveConflictModal
+          serverName={saveConflict.serverName}
+          serverUpdatedAt={saveConflict.serverUpdatedAt}
+          mergeBusy={mergeBusy}
+          onMerge={net.dbEnabled ? async (strategy) => {
+            setMergeBusy(true);
+            try {
+              await net.mergeProjectWithServer(strategy);
+              setSaveConflict(null);
+            } finally {
+              setMergeBusy(false);
+            }
+          } : undefined}
+          onLoadServer={async () => {
+            await net.reloadProjectFromServer();
+            setSaveConflict(null);
+          }}
+          onOverwrite={async () => {
+            await handleSaveProject({ audit: true, force: true });
+            setSaveConflict(null);
+          }}
+          onCancel={() => setSaveConflict(null)}
+        />
+      )}
+
       {showChat && (
         <ChatPanel
           net={{

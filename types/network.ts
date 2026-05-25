@@ -1,3 +1,38 @@
+// In the Sergek-cameras project a "subscriber" is one camera.  Three types
+// of cameras drive the design: ЛУ / Перекресток (both АПК side) and ОВН.
+// РРЛ is a radio link, not a fibre subscriber — handled as annotation.
+export type CameraKind = 'lu' | 'intersection' | 'ovn' | 'unknown';
+export type ProjectSide = 'apk' | 'ovn';
+
+// Minimum bandwidth per camera type, used to size GPON splitters.
+//   ЛУ           — baseline + speed             — 26 Мбит/с
+//   Перекресток  — full intersection rig         — 78 Мбит/с
+//   ОВН          — public surveillance, low rate —  5 Мбит/с
+export const CAMERA_MIN_BANDWIDTH_MBPS: Record<CameraKind, number> = {
+  lu: 26,
+  intersection: 78,
+  ovn: 5,
+  unknown: 26,
+};
+
+export function cameraKindToSide(kind: CameraKind): ProjectSide {
+  return kind === 'ovn' ? 'ovn' : 'apk';
+}
+
+export const CAMERA_KIND_LABEL: Record<CameraKind, string> = {
+  lu: 'ЛУ',
+  intersection: 'Перекресток',
+  ovn: 'ОВН',
+  unknown: 'Камера',
+};
+
+export const CAMERA_KIND_COLOR: Record<CameraKind, string> = {
+  lu: '#fbbf24',           // amber — baseline + speed
+  intersection: '#f87171', // red   — full intersection rig
+  ovn: '#38bdf8',          // sky   — public surveillance
+  unknown: '#94a3b8',      // slate — unclassified
+};
+
 export interface Subscriber {
   id: string;
   lat: number;
@@ -6,6 +41,36 @@ export interface Subscriber {
   district: string;
   orkId?: string;
   fibers: { working: number; spare: number };
+  // Camera type — drives bandwidth sizing + colouring.  Optional so existing
+  // saved projects (no kind field) still load; treated as 'unknown' on render.
+  kind?: CameraKind;
+  // АПК / ОВН — derived from kind by default but kept explicit so an Excel
+  // category column ("АПК" / "ОВН") can override even when the subtype is
+  // ambiguous.
+  side?: ProjectSide;
+  // Cached minimum bandwidth in Mbps — used by splitter-sizing logic.
+  minBandwidthMbps?: number;
+}
+
+/** Монтажный чеклист на объекте (ОРК / муфта) — для выездной приёмки. */
+export interface FieldChecklistItem {
+  id: string;
+  label: string;
+  done: boolean;
+}
+
+export interface FieldChecklist {
+  items: FieldChecklistItem[];
+  updatedAt?: string;
+}
+
+/** Фото с объекта (Supabase Storage или data URL в офлайне). */
+export interface EntityFieldPhoto {
+  id: string;
+  url: string;
+  storagePath?: string;
+  caption?: string;
+  takenAt: string;
 }
 
 export interface ORK {
@@ -18,6 +83,8 @@ export interface ORK {
   subscribers: Subscriber[];
   cableType: CableType;
   boxType: BoxType;
+  fieldChecklist?: FieldChecklist;
+  fieldPhotos?: EntityFieldPhoto[];
 }
 
 export type MuftaType = 'МТОК-96А' | 'МТОК-48А' | 'МТОК-32А' | 'FOSC-400' | 'ОМС-3В' | string;
@@ -35,6 +102,8 @@ export interface TransitBox {
   inCable: CableType;
   outCable: CableType;
   muftaType: MuftaType;
+  fieldChecklist?: FieldChecklist;
+  fieldPhotos?: EntityFieldPhoto[];
 }
 
 export interface OLT {
@@ -52,7 +121,7 @@ export type CableType = 'ОК-4' | 'ОК-8' | 'ОК-12' | 'ОК-16' | 'ОК-24' 
 
 export const CABLE_SIZES: CableType[] = ['ОК-4', 'ОК-8', 'ОК-12', 'ОК-16', 'ОК-24', 'ОК-32', 'ОК-48', 'ОК-96'];
 export const CABLE_COLORS: Record<CableType, string> = {
-  'ОК-4': '#99d499', 'ОК-8': '#4ade80', 'ОК-12': '#3a92fb', 'ОК-16': '#60a5fa',
+  'ОК-4': '#60a5fa', 'ОК-8': '#4ade80', 'ОК-12': '#a78bfa', 'ОК-16': '#f472b6',
   'ОК-24': '#f59e0b', 'ОК-32': '#fbbf24', 'ОК-48': '#ec8a00', 'ОК-96': '#f87171',
 };
 export const CABLE_FIBERS: Record<CableType, number> = {
@@ -67,6 +136,14 @@ export function selectCableType(subs: number, sparePerSub = 1): CableType {
   return allowed.find((t) => CABLE_FIBERS[t] >= needed) ?? MAX_CABLE_TYPE;
 }
 
+export type CableInstallType = 'aerial' | 'duct' | 'ground';
+
+export const CABLE_INSTALL_LABELS: Record<CableInstallType, string> = {
+  aerial: 'Воздушная',
+  duct: 'В канализации',
+  ground: 'В грунте',
+};
+
 export interface Cable {
   id: string;
   type: CableType;
@@ -76,6 +153,11 @@ export interface Cable {
   coords: [number, number][];
   lengthM: number;
   routedByOSRM: boolean;
+  /** Человекочитаемое имя линии (для сметы и полевых бригад). */
+  displayName?: string;
+  installType?: CableInstallType;
+  /** Опоры для воздушной прокладки (≈1 на 40 м, если не задано). */
+  poleCount?: number;
 }
 
 export interface District {
@@ -115,9 +197,44 @@ export interface ProjectSnapshot {
   };
 }
 
+/** Снимок сети для сравнения вариантов A/B. */
+export interface ScenarioSlotData {
+  takenAt: string;
+  districts: District[];
+  cables: Cable[];
+  joints?: InlineJoint[];
+}
+
+export interface ProjectScenarios {
+  a?: ScenarioSlotData;
+  b?: ScenarioSlotData;
+}
+
+export type AppViewMode = 'edit' | 'view' | 'field';
+
+/** Роль пользователя (до полноценного Supabase Auth). */
+export type UserRole = 'engineer' | 'field' | 'viewer';
+
+export const USER_ROLE_LABELS: Record<UserRole, string> = {
+  engineer: 'Инженер',
+  field: 'Монтажник',
+  viewer: 'Просмотр',
+};
+
+export interface AuditEntry {
+  id: string;
+  at: string;
+  action: string;
+  detail?: string;
+  entityId?: string;
+  actor?: string;
+}
+
 export interface Project {
   id: string;
   name: string;
+  /** UUID организации для RLS в Supabase (опционально). */
+  orgId?: string;
   status?: ProjectStatus;
   createdAt: string;
   updatedAt: string;
@@ -128,6 +245,8 @@ export interface Project {
   importHistory: ImportRecord[];
   settings: ProjectSettings;
   snapshots?: ProjectSnapshot[];
+  scenarios?: ProjectScenarios;
+  auditLog?: AuditEntry[];
 }
 
 export interface ImportRecord {
@@ -167,10 +286,21 @@ export const ANNOTATION_PRESETS: Record<AnnotationType, { icon: string; color: s
 export interface ProjectSettings {
   maxPerORK: number;
   maxORKperTB: number;
+  // Макс. радиус кластера ОРКСП (м): камера не должна быть дальше этого от своего
+  // ОРКСП — иначе кластер дробится. Держит дропы короткими (≤~300 м по дороге) и
+  // убирает «висящие» длинные прямые линии. Не обязателен (старые сейвы → 250).
+  maxOrkRadiusM?: number;
   spareFiresPerSub: number;
   cableReserve: number;
   useOSRM: boolean;
   osrmDelay: number;
+  // Default L2-сплиттер для свежесозданных ОРКСП.  Меняется при импорте
+  // (диалог) и при ручной правке ОРК.  Не обязательно — старые сейвы без
+  // него грузятся со значением '1:8'.
+  defaultSplitter?: SplitterRatio;
+  // Камер на один OLT, при превышении сеть разбивается на N OLT через
+  // kmeans.  Vendor default — 512 (1×OLT GPON: 8 ports × 64 splitter).
+  maxCamerasPerOlt?: number;
 }
 
 export interface Materials {
@@ -264,6 +394,8 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
   cableReserve: 1.10,
   useOSRM: true,
   osrmDelay: 100,
+  defaultSplitter: '1:8',
+  maxCamerasPerOlt: 512,
 };
 
 export interface PriceCatalog {

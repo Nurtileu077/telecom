@@ -4,17 +4,31 @@ import {
   District, Cable, Subscriber, ProjectSettings, Materials, LayerVisibility,
   DEFAULT_SETTINGS, Project, MapAnnotation, ImportRecord, ValidationIssue,
   PriceCatalog, DEFAULT_PRICES, InlineJoint, OLT, TransitBox, ORK, CABLE_FIBERS, DISTRICT_COLORS,
-  ProjectStatus, ProjectSnapshot,
+  ProjectStatus, ProjectSnapshot, ProjectScenarios, ScenarioSlotData, AuditEntry,
+  CameraKind, ProjectSide, CAMERA_MIN_BANDWIDTH_MBPS,
 } from '@/types/network';
 import { buildNetwork, OltLocationMap } from '@/components/Network/AutoBuild';
 import { calculateMaterials, validateNetwork } from '@/components/Network/MaterialCalc';
 import { routeCables, getRoute, snapBatch } from '@/components/Network/OSRMRouter';
 import { planRepair, buildDropCable, type RepairReport } from '@/components/Network/NetworkRepair';
-import { filterByBBox, polylineTouchesBBox, pointInBBox, type BBox } from '@/components/Network/Selection';
+import {
+  filterByBBox, polylineTouchesBBox, pointInBBox, pointInPolygon, polylineTouchesPolygon, type BBox, type Poly,
+} from '@/components/Network/Selection';
 import { consolidateCables } from '@/components/Network/Consolidation';
 import { haversineM } from '@/components/Network/KMeans';
+import {
+  findCablesNearPoint, splitCableAt, nearestEntity, nearestCableEnd,
+} from '@/components/Network/SnapConnect';
 import { calculateSubscriberBudgets, budgetStats } from '@/components/Network/PowerBudget';
-import { dbListProjects, dbSaveProject, dbDeleteProject, dbLoadProject, supabase } from '@/lib/supabase';
+import {
+  dbListProjects, dbSaveProject, dbDeleteProject, dbLoadProject, dbLoadProjectRow,
+  dbFetchProjectRevision, supabase,
+} from '@/lib/supabase';
+import { ProjectSaveConflict } from '@/lib/projectConflict';
+import { appendAudit, newAuditEntry } from '@/lib/audit';
+import { getActorName } from '@/lib/appRole';
+import { getDefaultOrgId } from '@/lib/orgId';
+import { applyMergeStrategy, type MergeStrategy } from '@/lib/projectMerge';
 
 export type BuildStatus = 'idle' | 'importing' | 'clustering' | 'routing' | 'calculating' | 'done' | 'error';
 
@@ -29,6 +43,10 @@ const DEFAULT_LAYERS: LayerVisibility = {
   cableOK4: true, cableOK8: true, cableOK12: true, cableOK16: true,
   cableOK24: true, cableOK32: true, cableOK48: true, cableOK96: true,
 };
+
+export type CableLinkEnd =
+  | { type: 'entity'; id: string }
+  | { type: 'map'; coord: [number, number] };
 
 const STORAGE_KEY = 'gpon-projects-v2';
 const CURRENT_KEY = 'gpon-current-project';
@@ -70,15 +88,38 @@ export function useNetwork() {
   const [dbEnabled, setDbEnabled] = useState(false);
   const [status_, setProjectStatus] = useState<ProjectStatus>('draft');
   const [snapshots, setSnapshots] = useState<ProjectSnapshot[]>([]);
+  const [scenarios, setScenarios] = useState<ProjectScenarios>({});
+  const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
+  const [orgId, setOrgId] = useState<string | undefined>(() => getDefaultOrgId());
+  const createdAtRef = useRef<string>(new Date().toISOString());
+  /** Полевой режим: autosave также пишет в Supabase (с merge поля). */
+  const fieldRemoteSaveRef = useRef(false);
+  /** Последняя известная ревизия в Supabase (updated_at строки). */
+  const serverUpdatedAtRef = useRef<string | null>(null);
+
+  const setFieldRemoteSave = useCallback((enabled: boolean) => {
+    fieldRemoteSaveRef.current = enabled;
+  }, []);
+
+  const recordAudit = useCallback((action: string, detail?: string, entityId?: string) => {
+    const entry = newAuditEntry(action, { detail, entityId, actor: getActorName() });
+    setAuditLog((prev) => appendAudit(prev, entry));
+  }, []);
 
   // Undo/Redo: serialized history of (districts, cables, joints) snapshots
-  type HistEntry = { districts: District[]; cables: Cable[]; joints: InlineJoint[] };
+  type HistEntry = { districts: District[]; cables: Cable[]; joints: InlineJoint[]; label: string };
   const historyRef = useRef<HistEntry[]>([]);
   const historyCursor = useRef<number>(-1);
   const skipNextSnapshot = useRef(false);
+  const pendingHistoryLabel = useRef('Изменение');
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
+  const [undoLabel, setUndoLabel] = useState<string | null>(null);
   const HISTORY_MAX = 40;
+
+  const recordAction = useCallback((label: string) => {
+    pendingHistoryLabel.current = label;
+  }, []);
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -90,14 +131,22 @@ export function useNetwork() {
   // History: push current state to stack on every change to districts/cables/joints
   useEffect(() => {
     if (skipNextSnapshot.current) { skipNextSnapshot.current = false; return; }
-    const entry: HistEntry = { districts, cables, joints };
+    const label = pendingHistoryLabel.current || 'Изменение';
+    pendingHistoryLabel.current = 'Изменение';
+    const entry: HistEntry = {
+      districts: JSON.parse(JSON.stringify(districts)),
+      cables: JSON.parse(JSON.stringify(cables)),
+      joints: JSON.parse(JSON.stringify(joints)),
+      label,
+    };
     const cur = historyCursor.current;
-    // truncate future, push new
     historyRef.current = historyRef.current.slice(0, cur + 1).concat([entry]);
     if (historyRef.current.length > HISTORY_MAX) historyRef.current.shift();
     historyCursor.current = historyRef.current.length - 1;
     setCanUndo(historyCursor.current > 0);
     setCanRedo(false);
+    const prev = historyRef.current[historyCursor.current - 1];
+    setUndoLabel(prev?.label ?? null);
   }, [districts, cables, joints]);
 
   const undo = useCallback(() => {
@@ -138,8 +187,9 @@ export function useNetwork() {
       },
     };
     setSnapshots((prev) => [snap, ...prev].slice(0, 30));
+    recordAudit('Снимок', name.trim() || snap.name);
     return snap;
-  }, [districts, cables, joints, annotations]);
+  }, [districts, cables, joints, annotations, recordAudit]);
 
   const restoreSnapshot = useCallback((id: string) => {
     const snap = snapshots.find((s) => s.id === id);
@@ -149,22 +199,53 @@ export function useNetwork() {
     setCables(snap.snapshot.cables);
     setJoints(snap.snapshot.joints ?? []);
     setAnnotations(snap.snapshot.annotations);
-  }, [snapshots]);
+    recordAudit('Восстановление снимка', snap.name);
+  }, [snapshots, recordAudit]);
 
   const deleteSnapshot = useCallback((id: string) => {
     setSnapshots((prev) => prev.filter((s) => s.id !== id));
   }, []);
 
-  // Auto-load last project on mount
+  const captureScenarioSlot = useCallback((): ScenarioSlotData => ({
+    takenAt: new Date().toISOString(),
+    districts: JSON.parse(JSON.stringify(districts)),
+    cables: JSON.parse(JSON.stringify(cables)),
+    joints: JSON.parse(JSON.stringify(joints)),
+  }), [districts, cables, joints]);
+
+  const saveScenarioSlot = useCallback((slot: 'a' | 'b') => {
+    setScenarios((prev) => ({ ...prev, [slot]: captureScenarioSlot() }));
+    recordAudit('Сценарий сохранён', `Слот ${slot.toUpperCase()}`);
+  }, [captureScenarioSlot, recordAudit]);
+
+  const restoreScenarioSlot = useCallback((slot: 'a' | 'b') => {
+    const data = scenarios[slot];
+    if (!data) return;
+    if (!confirm(`Восстановить сценарий ${slot.toUpperCase()}? Текущая сеть будет заменена.`)) return;
+    setDistricts(data.districts);
+    setCables(data.cables);
+    setJoints(data.joints ?? []);
+    recordAudit('Восстановление сценария', slot.toUpperCase());
+  }, [scenarios, recordAudit]);
+
+  // Auto-load last project on mount (не перебиваем ?project= из URL)
   useEffect(() => {
     (async () => {
       try {
+        if (typeof window !== 'undefined') {
+          const urlPid = new URLSearchParams(window.location.search).get('project');
+          if (urlPid) return;
+        }
         const lastId = localStorage.getItem(CURRENT_KEY);
         if (!lastId) return;
         // Try Supabase first, fall back to localStorage
         if (supabase) {
-          const p = await dbLoadProject(lastId);
-          if (p) { loadProjectInternal(p); return; }
+          const row = await dbLoadProjectRow(lastId);
+          if (row?.data) {
+            loadProjectInternal(row.data);
+            serverUpdatedAtRef.current = row.updated_at;
+            return;
+          }
         }
         const projects = loadProjects();
         const p = projects.find((x) => x.id === lastId);
@@ -388,7 +469,13 @@ export function useNetwork() {
   // current district structure (preserving any existing routed coords for
   // direct entity-to-entity pairs), then consolidate. This works even after
   // previous consolidation (where trunk cables go through joint IDs).
-  const reconsolidate = useCallback(async (bbox?: BBox | null) => {
+  const cableTouchesSelection = useCallback((coords: [number, number][], bbox?: BBox | null, poly?: Poly | null) => {
+    if (poly && poly.length >= 3) return polylineTouchesPolygon(coords, poly);
+    if (bbox) return polylineTouchesBBox(coords, bbox);
+    return true;
+  }, []);
+
+  const reconsolidate = useCallback(async (bbox?: BBox | null, poly?: Poly | null) => {
     if (districts.length === 0) return;
 
     // Reconstruct OSRM-routed paths between direct entity pairs, EVEN when
@@ -463,21 +550,23 @@ export function useNetwork() {
 
     // Consolidate (optionally only the subset that touches the bbox).
     if (bbox) {
-      // Scope-limited consolidation: run consolidate over a filtered district
-      // set + filtered cables, then splice the result back into full state.
-      // Outside-bbox cables/joints are preserved.
-      const scope = filterByBBox(districts, routed, joints, bbox);
-      const { cables: newConsolidated, joints: newJoints } = consolidateCables(routed.filter((c) => polylineTouchesBBox(c.coords, bbox)), scope.districts);
-      // Replace bbox cables with the consolidated set; keep the rest untouched.
+      const scope = filterByBBox(districts, routed, joints, bbox, poly);
+      const inScope = routed.filter((c) => cableTouchesSelection(c.coords, bbox, poly));
+      const { cables: newConsolidated, joints: newJoints } = consolidateCables(inScope, scope.districts);
       setCables((prev) => [
-        ...prev.filter((c) => !polylineTouchesBBox(c.coords, bbox)),
+        ...prev.filter((c) => !cableTouchesSelection(c.coords, bbox, poly)),
         ...newConsolidated,
       ]);
+      const jointInside = (j: InlineJoint) =>
+        poly && poly.length >= 3
+          ? pointInPolygon(j.lat, j.lon, poly)
+          : pointInBBox(j.lat, j.lon, bbox!);
       setJoints((prev) => [
-        ...prev.filter((j) => !pointInBBox(j.lat, j.lon, bbox)),
+        ...prev.filter((j) => !jointInside(j)),
         ...newJoints,
       ]);
       setStatus('done');
+      recordAction(poly && poly.length >= 3 ? 'Объединение (лассо)' : 'Объединение (выделение)');
       return;
     }
     const { cables: consolidated, joints: newJoints } = consolidateCables(routed, districts);
@@ -485,14 +574,14 @@ export function useNetwork() {
     setJoints(newJoints);
     setMaterials(calculateMaterials(districts, consolidated, settings, newJoints.length));
     setStatus('done');
-  }, [districts, cables, joints, settings, buildExistingCoordsMap]);
+  }, [districts, cables, joints, settings, buildExistingCoordsMap, cableTouchesSelection, recordAction]);
 
   // Re-route existing cables with OSRM (without re-clustering)
   // bbox: if provided, only re-route cables whose polyline touches the
   // rectangle.  In that mode we route IN PLACE on the current cables —
   // works correctly even after consolidation (where cables go through
   // joints and don't have direct entity-pair ids).
-  const rerouteWithOSRM = useCallback(async (bbox?: BBox | null) => {
+  const rerouteWithOSRM = useCallback(async (bbox?: BBox | null, poly?: Poly | null) => {
     if (districts.length === 0 && cables.length === 0) return;
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
@@ -511,7 +600,7 @@ export function useNetwork() {
       // cable's coords are replaced with the OSRM route between its current
       // endpoints.  Anything outside the bbox is preserved as-is.
       if (bbox) {
-        const affected = cables.filter((c) => polylineTouchesBBox(c.coords, bbox));
+        const affected = cables.filter((c) => cableTouchesSelection(c.coords, bbox, poly));
         if (affected.length === 0) {
           setStatus('done');
           return;
@@ -526,6 +615,7 @@ export function useNetwork() {
         setCables((prev) => prev.map((c) => byId.get(c.id) ?? c));
         setMaterials(calculateMaterials(districts, cables, settings, joints.length));
         setStatus('done');
+        recordAction(poly && poly.length >= 3 ? 'OSRM (лассо)' : 'OSRM (выделение)');
         return;
       }
 
@@ -611,7 +701,18 @@ export function useNetwork() {
   // re-route every cable, making the map flash through a "spaghetti"
   // state for ~30 s with 600+ subs.  Instead: find the nearest existing
   // ORK, attach the new sub to it, and add ONE drop cable.
-  const addSubscriberAt = useCallback(async (lat: number, lon: number, district: string, desc: string) => {
+  const addSubscriberAt = useCallback(async (
+    lat: number,
+    lon: number,
+    district: string,
+    desc: string,
+    cameraKind?: CameraKind,
+  ) => {
+    // Camera-type extras — Sergek-domain: drives colouring + bandwidth load.
+    const kind: CameraKind = cameraKind ?? 'unknown';
+    const side: ProjectSide = kind === 'ovn' ? 'ovn' : 'apk';
+    const bw = CAMERA_MIN_BANDWIDTH_MBPS[kind];
+
     // Find nearest existing ORK.  If the project has no ORKs yet, fall back
     // to the legacy full-rebuild path so the user gets some structure.
     let nearestOrk: { id: string; lat: number; lon: number; tbId: string; district: string } | null = null;
@@ -634,6 +735,7 @@ export function useNetwork() {
         id: newId('sub'),
         lat, lon, desc, district,
         fibers: { working: 2, spare: 1 },
+        kind, side, minBandwidthMbps: bw,
       };
       const merged = [...allSubscribers, sub];
       setAllSubscribers(merged);
@@ -647,6 +749,7 @@ export function useNetwork() {
       district: nearestOrk.district,
       orkId: nearestOrk.id,
       fibers: { working: 2, spare: 1 },
+      kind, side, minBandwidthMbps: bw,
     };
 
     // Insert sub into the matching ORK + into the district subscribers list.
@@ -704,25 +807,42 @@ export function useNetwork() {
   }, [allSubscribers, runBuild]);
 
   // Move a TB or ORK (manual edit): update coords and rebuild cables only (no re-cluster)
-  const moveEntity = useCallback((kind: 'tb' | 'ork' | 'olt', id: string, lat: number, lon: number) => {
-    setDistricts((prev) => prev.map((d) => {
-      if (kind === 'olt' && d.olt.id === id) {
-        return { ...d, olt: { ...d.olt, lat, lon } };
-      }
-      return {
-        ...d,
-        olt: {
-          ...d.olt,
-          transitBoxes: d.olt.transitBoxes.map((tb) => {
-            if (kind === 'tb' && tb.id === id) return { ...tb, lat, lon };
-            return {
-              ...tb,
-              orks: tb.orks.map((ork) => kind === 'ork' && ork.id === id ? { ...ork, lat, lon } : ork),
-            };
-          }),
-        },
-      };
-    }));
+  const moveEntity = useCallback((kind: 'tb' | 'ork' | 'olt' | 'sub' | 'joint', id: string, lat: number, lon: number) => {
+    if (kind === 'joint') {
+      setJoints((prev) => prev.map((j) => (j.id === id ? { ...j, lat, lon } : j)));
+    } else {
+      setDistricts((prev) => prev.map((d) => {
+        if (kind === 'olt' && d.olt.id === id) {
+          return { ...d, olt: { ...d.olt, lat, lon } };
+        }
+        const subs = kind === 'sub'
+          ? d.subscribers.map((s) => (s.id === id ? { ...s, lat, lon } : s))
+          : d.subscribers;
+        return {
+          ...d,
+          subscribers: subs,
+          olt: {
+            ...d.olt,
+            transitBoxes: d.olt.transitBoxes.map((tb) => {
+              if (kind === 'tb' && tb.id === id) return { ...tb, lat, lon };
+              return {
+                ...tb,
+                orks: tb.orks.map((ork) => {
+                  if (kind === 'ork' && ork.id === id) return { ...ork, lat, lon };
+                  if (kind === 'sub') {
+                    return {
+                      ...ork,
+                      subscribers: ork.subscribers.map((s) => (s.id === id ? { ...s, lat, lon } : s)),
+                    };
+                  }
+                  return ork;
+                }),
+              };
+            }),
+          },
+        };
+      }));
+    }
     // Update cable endpoints touching this id
     setCables((prev) => prev.map((c) => {
       if (c.fromId === id || c.toId === id) {
@@ -746,11 +866,18 @@ export function useNetwork() {
     }));
   }, []);
 
-  const updateCable = useCallback((id: string, patch: Partial<Pick<Cable, 'type' | 'coords' | 'lengthM'>>) => {
+  const updateCable = useCallback((id: string, patch: Partial<Pick<Cable, 'type' | 'coords' | 'lengthM' | 'fromId' | 'toId' | 'displayName' | 'installType' | 'poleCount'>>) => {
     setCables((prev) => prev.map((c) => {
       if (c.id !== id) return c;
       const updated = { ...c, ...patch };
       if (patch.type) updated.fibers = CABLE_FIBERS[patch.type];
+      if (patch.coords && patch.lengthM == null) {
+        let len = 0;
+        for (let i = 1; i < patch.coords.length; i++) {
+          len += haversineM(patch.coords[i - 1][0], patch.coords[i - 1][1], patch.coords[i][0], patch.coords[i][1]);
+        }
+        updated.lengthM = len;
+      }
       return updated;
     }));
   }, []);
@@ -1026,6 +1153,76 @@ export function useNetwork() {
     setCables((prev) => [...prev, cable]);
   }, [findEntityCoords, inferCableType, settings.useOSRM]);
 
+  // Ручной кабель между двумя ПРОИЗВОЛЬНЫМИ точками карты (A→B) по OSRM, тип
+  // выбирает пользователь. Концы — синтетические id (не сущности).
+  const addCableByPoints = useCallback(async (
+    a: [number, number], b: [number, number], type: Cable['type'],
+  ) => {
+    let coords: [number, number][] = [a, b];
+    let routed = false;
+    if (settings.useOSRM) {
+      try {
+        const route = await getRoute(a[0], a[1], b[0], b[1]);
+        if (route && route.length > 2) { coords = route; routed = true; }
+      } catch { /* fall back to straight line */ }
+    }
+    const lengthM = coords.slice(1).reduce(
+      (acc, c, i) => acc + haversineM(coords[i][0], coords[i][1], c[0], c[1]), 0,
+    );
+    const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const cable: Cable = {
+      id: `cable-man-${stamp}`,
+      type,
+      fibers: CABLE_FIBERS[type],
+      fromId: `pt-${stamp}-a`,
+      toId: `pt-${stamp}-b`,
+      coords,
+      lengthM,
+      routedByOSRM: routed,
+    };
+    setCables((prev) => [...prev, cable]);
+  }, [settings.useOSRM]);
+
+  const addCableLink = useCallback(async (
+    from: CableLinkEnd,
+    to: CableLinkEnd,
+    typeArg?: Cable['type'],
+  ) => {
+    const fromCoord = from.type === 'entity' ? findEntityCoords(from.id) : from.coord;
+    const toCoord = to.type === 'entity' ? findEntityCoords(to.id) : to.coord;
+    if (!fromCoord || !toCoord) return;
+    const fromId = from.type === 'entity' ? from.id : `pt-${Date.now()}-a`;
+    const toId = to.type === 'entity' ? to.id : `pt-${Date.now()}-b`;
+    const type = typeArg
+      ?? (from.type === 'entity' && to.type === 'entity'
+        ? inferCableType(from.id, to.id)
+        : 'ОК-12');
+
+    let coords: [number, number][] = [fromCoord, toCoord];
+    let routed = false;
+    if (settings.useOSRM) {
+      try {
+        const route = await getRoute(fromCoord[0], fromCoord[1], toCoord[0], toCoord[1]);
+        if (route && route.length > 2) { coords = route; routed = true; }
+      } catch { /* straight */ }
+    }
+    const lengthM = coords.slice(1).reduce(
+      (acc, c, i) => acc + haversineM(coords[i][0], coords[i][1], c[0], c[1]), 0,
+    );
+    const cable: Cable = {
+      id: `cable-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      type,
+      fibers: CABLE_FIBERS[type],
+      fromId,
+      toId,
+      coords,
+      lengthM,
+      routedByOSRM: routed,
+    };
+    setCables((prev) => [...prev, cable]);
+    recordAction(`Кабель ${fromId} → ${toId}`);
+  }, [findEntityCoords, inferCableType, settings.useOSRM, recordAction]);
+
   // Manual placement of entities ----------------------------------------------
 
   const addOLTAt = useCallback((lat: number, lon: number, districtName: string) => {
@@ -1043,7 +1240,6 @@ export function useNetwork() {
   }, []);
 
   const addTBAt = useCallback((lat: number, lon: number, oltId?: string) => {
-    // Auto-pick nearest OLT if not specified
     let chosen: { d: typeof districts[number]; olt: OLT } | null = null;
     if (oltId) {
       const d = districts.find((x) => x.olt.id === oltId);
@@ -1056,9 +1252,15 @@ export function useNetwork() {
       }
     }
     if (!chosen) return;
+
+    const hits = findCablesNearPoint(lat, lon, cables);
+    const snap = hits[0];
+    const placeLat = snap ? snap.point[0] : lat;
+    const placeLon = snap ? snap.point[1] : lon;
+
     const tbId = `Муфта-${chosen.d.name.slice(0, 4).replace(/\s/g, '')}-${chosen.olt.transitBoxes.length + 1}`;
     const newTB: TransitBox = {
-      id: tbId, lat, lon, district: chosen.d.name,
+      id: tbId, lat: placeLat, lon: placeLon, district: chosen.d.name,
       oltId: chosen.olt.id, orks: [],
       inCable: 'ОК-12', outCable: 'ОК-4', muftaType: 'МТОК-96А',
     };
@@ -1067,17 +1269,88 @@ export function useNetwork() {
         ? { ...d, olt: { ...d.olt, transitBoxes: [...d.olt.transitBoxes, newTB] } }
         : d,
     ));
-    // Auto-create OLT→TB straight-line cable
-    const cable: Cable = {
-      id: `cable-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      type: 'ОК-12', fibers: CABLE_FIBERS['ОК-12'],
-      fromId: chosen.olt.id, toId: tbId,
-      coords: [[chosen.olt.lat, chosen.olt.lon], [lat, lon]],
-      lengthM: haversineM(chosen.olt.lat, chosen.olt.lon, lat, lon),
-      routedByOSRM: false,
-    };
-    setCables((prev) => [...prev, cable]);
-  }, [districts]);
+
+    if (hits.length === 0) return;
+
+    setCables((prev) => {
+      let next = [...prev];
+      const splitIds = new Set<string>();
+      for (const hit of hits) {
+        if (splitIds.has(hit.cableId)) continue;
+        const cable = next.find((c) => c.id === hit.cableId);
+        if (!cable) continue;
+        const { removedId, added } = splitCableAt(cable, hit, tbId);
+        if (added.length === 0) continue;
+        splitIds.add(hit.cableId);
+        next = next.filter((c) => c.id !== removedId);
+        next.push(...added);
+      }
+      return next;
+    });
+  }, [districts, cables]);
+
+  /** Магнит: привязать конец кабеля к узлу (OLT/муфта/ОРК). */
+  const connectCableEndpoint = useCallback((
+    cableId: string,
+    end: 'from' | 'to',
+    entityId: string,
+  ) => {
+    const coords = findEntityCoords(entityId);
+    if (!coords) return;
+    setCables((prev) => prev.map((c) => {
+      if (c.id !== cableId) return c;
+      const pts = [...c.coords] as [number, number][];
+      if (end === 'from') {
+        pts[0] = coords;
+        return {
+          ...c,
+          fromId: entityId,
+          coords: pts,
+          routedByOSRM: false,
+          lengthM: pts.slice(1).reduce(
+            (acc, p, i) => acc + haversineM(pts[i][0], pts[i][1], p[0], p[1]), 0,
+          ),
+        };
+      }
+      pts[pts.length - 1] = coords;
+      return {
+        ...c,
+        toId: entityId,
+        coords: pts,
+        routedByOSRM: false,
+        lengthM: pts.slice(1).reduce(
+          (acc, p, i) => acc + haversineM(pts[i][0], pts[i][1], p[0], p[1]), 0,
+        ),
+      };
+    }));
+  }, [findEntityCoords]);
+
+  const connectCableToEntity = useCallback((cableId: string, entityId: string) => {
+    const cable = cables.find((c) => c.id === cableId);
+    const ec = findEntityCoords(entityId);
+    if (!cable || !ec) return;
+    const end = nearestCableEnd(cable, ec[0], ec[1]);
+    connectCableEndpoint(cableId, end, entityId);
+    recordAction(`Соединить ${cableId} → ${entityId}`);
+  }, [cables, findEntityCoords, connectCableEndpoint, recordAction]);
+
+  /** Позиция для клика: магнит к кабелю или узлу при установке муфты. */
+  const snapPlaceTB = useCallback((lat: number, lon: number): { lat: number; lon: number; hint?: string } => {
+    const cableHits = findCablesNearPoint(lat, lon, cables);
+    if (cableHits[0]) {
+      const h = cableHits[0];
+      return {
+        lat: h.point[0],
+        lon: h.point[1],
+        hint: `На кабель ${h.fromId} → ${h.toId}`,
+      };
+    }
+    const ent = nearestEntity(lat, lon, districts, 40);
+    if (ent) {
+      return { lat: ent.lat, lon: ent.lon, hint: ent.label };
+    }
+    return { lat, lon };
+  }, [cables, districts]);
 
   const addORKAt = useCallback((lat: number, lon: number, tbId?: string) => {
     // Auto-pick nearest TB
@@ -1339,29 +1612,96 @@ export function useNetwork() {
     return loadProjects();
   }, []);
 
-  const saveProject = useCallback(async () => {
-    const project: Project = {
+  const buildCurrentProject = useCallback((): Project => {
+    const now = new Date().toISOString();
+    return {
       id: projectId,
       name: projectName,
+      orgId: orgId ?? getDefaultOrgId(),
       status: status_,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: createdAtRef.current,
+      updatedAt: now,
       districts, cables, joints, annotations, importHistory, settings,
       snapshots,
+      scenarios,
+      auditLog,
     };
-    // Always save to localStorage as offline backup
+  }, [projectId, projectName, orgId, status_, districts, cables, joints, annotations, importHistory, settings, snapshots, scenarios, auditLog]);
+
+  const saveProject = useCallback(async (opts?: {
+    audit?: boolean;
+    force?: boolean;
+    skipRemote?: boolean;
+    /** Полевой режим: merge поле в облако, не затирать чужую топологию */
+    fieldSave?: boolean;
+  }) => {
+    const now = new Date().toISOString();
+    let project: Project = { ...buildCurrentProject(), updatedAt: now };
     saveToLocalStorage(project);
-    // Save to Supabase if available
-    if (supabase) {
+    if (opts?.audit) recordAudit('Сохранение проекта', projectName);
+    const skipRemote = opts?.skipRemote ?? false;
+    const allowRemote = !skipRemote || fieldRemoteSaveRef.current;
+    if (supabase && allowRemote) {
+      if (opts?.fieldSave) {
+        const row = await dbLoadProjectRow(projectId);
+        if (row?.data) {
+          project = applyMergeStrategy(project, row.data, 'local_network_server_field');
+          loadProjectInternal(project);
+          serverUpdatedAtRef.current = row.updated_at;
+        }
+      }
+      const baseline = serverUpdatedAtRef.current;
+      if (!opts?.force && baseline) {
+        const remote = await dbFetchProjectRevision(projectId);
+        if (remote && remote.updated_at !== baseline) {
+          throw new ProjectSaveConflict(remote.updated_at, remote.name);
+        }
+      }
       try {
         await dbSaveProject(project);
+        const after = await dbFetchProjectRevision(projectId);
+        serverUpdatedAtRef.current = after?.updated_at ?? now;
       } catch (e) {
+        if (e instanceof ProjectSaveConflict) throw e;
         console.warn('[DB] save failed, using localStorage only', e);
       }
     }
-    setLastSavedAt(new Date().toISOString());
+    setLastSavedAt(now);
     return project;
-  }, [projectId, projectName, districts, cables, joints, annotations, importHistory, settings]);
+  }, [buildCurrentProject, recordAudit]);
+
+  const mergeProjectWithServer = useCallback(async (strategy: MergeStrategy) => {
+    if (!supabase) return;
+    const row = await dbLoadProjectRow(projectId);
+    if (!row?.data) return;
+    const local = buildCurrentProject();
+    const merged = applyMergeStrategy(local, row.data, strategy);
+    loadProjectInternal(merged);
+    serverUpdatedAtRef.current = row.updated_at;
+    await saveProject({ force: true, audit: true });
+  }, [projectId, buildCurrentProject, saveProject]);
+
+  const reloadProjectFromServer = useCallback(async () => {
+    if (!supabase) return;
+    const row = await dbLoadProjectRow(projectId);
+    if (!row?.data) return;
+    loadProjectInternal(row.data);
+    serverUpdatedAtRef.current = row.updated_at;
+    setLastSavedAt(row.updated_at);
+    recordAudit('Загрузка с сервера', 'конфликт версий');
+  }, [projectId, recordAudit]);
+
+  /** Подтянуть облако после сохранения коллеги: снимок → reload. */
+  const syncFromServer = useCallback(async (source?: string) => {
+    if (!supabase) return;
+    takeSnapshot('Авто: до облачной синхронизации');
+    const row = await dbLoadProjectRow(projectId);
+    if (!row?.data) return;
+    loadProjectInternal(row.data);
+    serverUpdatedAtRef.current = row.updated_at;
+    setLastSavedAt(row.updated_at);
+    recordAudit('Синхронизация с облака', source || row.name);
+  }, [projectId, takeSnapshot, recordAudit]);
 
   function loadProjectInternal(p: Project) {
     setProjectId(p.id);
@@ -1374,6 +1714,10 @@ export function useNetwork() {
     setSettings({ ...DEFAULT_SETTINGS, ...p.settings });
     setProjectStatus(p.status ?? 'draft');
     setSnapshots(p.snapshots ?? []);
+    setScenarios(p.scenarios ?? {});
+    setAuditLog(p.auditLog ?? []);
+    setOrgId(p.orgId ?? getDefaultOrgId());
+    createdAtRef.current = p.createdAt || p.updatedAt || new Date().toISOString();
     const subs = (p.districts || []).flatMap((d) => d.subscribers);
     setAllSubscribers(subs);
     if (p.districts?.length) {
@@ -1387,14 +1731,19 @@ export function useNetwork() {
   }
 
   const loadProject = useCallback(async (p: Project) => {
-    // If we have Supabase, load the freshest copy from DB
     if (supabase) {
       try {
-        const fresh = await dbLoadProject(p.id);
-        if (fresh) { loadProjectInternal(fresh); localStorage.setItem(CURRENT_KEY, p.id); return; }
+        const row = await dbLoadProjectRow(p.id);
+        if (row?.data) {
+          loadProjectInternal(row.data);
+          serverUpdatedAtRef.current = row.updated_at;
+          localStorage.setItem(CURRENT_KEY, p.id);
+          return;
+        }
       } catch {}
     }
     loadProjectInternal(p);
+    serverUpdatedAtRef.current = null;
     localStorage.setItem(CURRENT_KEY, p.id);
   }, []);
 
@@ -1411,6 +1760,10 @@ export function useNetwork() {
     setProjectName('Новый проект');
     setProjectStatus('draft');
     setSnapshots([]);
+    setScenarios({});
+    setAuditLog([]);
+    setOrgId(getDefaultOrgId());
+    createdAtRef.current = new Date().toISOString();
     setDistricts([]);
     setCables([]);
     setJoints([]);
@@ -1424,15 +1777,11 @@ export function useNetwork() {
     historyCursor.current = -1;
     setCanUndo(false); setCanRedo(false);
     localStorage.removeItem(CURRENT_KEY);
+    serverUpdatedAtRef.current = null;
   }, []);
 
   const exportProjectJSON = useCallback(() => {
-    const project: Project = {
-      id: projectId, name: projectName,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      districts, cables, joints, annotations, importHistory, settings,
-    };
+    const project = buildCurrentProject();
     const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1440,7 +1789,12 @@ export function useNetwork() {
     a.download = `${projectName.replace(/[^\w\s-]/g, '_')}.json`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [projectId, projectName, districts, cables, annotations, importHistory, settings]);
+  }, [buildCurrentProject, projectName]);
+
+  const setProjectStatusWithAudit = useCallback((s: ProjectStatus) => {
+    setProjectStatus(s);
+    recordAudit('Статус проекта', s);
+  }, [recordAudit]);
 
   const importProjectJSON = useCallback(async (file: File) => {
     const text = await file.text();
@@ -1452,7 +1806,13 @@ export function useNetwork() {
   useEffect(() => {
     if (!autoSaveEnabled) return;
     if (districts.length === 0 && annotations.length === 0) return;
-    const t = setInterval(() => { saveProject(); }, AUTOSAVE_INTERVAL_MS);
+    const t = setInterval(() => {
+      const skipRemote = !fieldRemoteSaveRef.current;
+      saveProject({
+        skipRemote,
+        fieldSave: fieldRemoteSaveRef.current,
+      });
+    }, AUTOSAVE_INTERVAL_MS);
     return () => clearInterval(t);
   }, [autoSaveEnabled, districts.length, annotations.length, saveProject]);
 
@@ -1484,7 +1844,8 @@ export function useNetwork() {
     buildFromSubscribers, appendSubscribers,
     addAnnotation, updateAnnotation, deleteAnnotation,
     addSubscriberAt, deleteSubscriber, moveEntity, rebuildFromCurrent, autoRepair, loadRaw, loadStructured,
-    saveProject, loadProject, deleteProject, listProjects, newProject,
+    saveProject, setFieldRemoteSave, mergeProjectWithServer, reloadProjectFromServer, syncFromServer, loadProject, deleteProject, listProjects, newProject,
+    serverUpdatedAt: serverUpdatedAtRef.current,
     exportProjectJSON, importProjectJSON,
     totalSubscribers, totalCableKm, totalOrks,
     powerBudgets, powerBudgetStats,
@@ -1492,11 +1853,15 @@ export function useNetwork() {
     updateOLT, updateTB, updateORK,
     updateCable, rerouteSingleCable,
     deleteOLT, deleteTB, deleteORK, deleteCable,
-    addOLTAt, addTBAt, addORKAt, addCableBetween,
+    addOLTAt, addTBAt, addORKAt, addCableBetween, addCableByPoints,
+    connectCableEndpoint, connectCableToEntity, addCableLink, snapPlaceTB,
+    recordAction, undoLabel,
     reassignORK, reassignSubscriber,
     undo, redo, canUndo, canRedo,
     takeSnapshot, restoreSnapshot, deleteSnapshot, snapshots,
-    projectStatus: status_, setProjectStatus,
+    scenarios, saveScenarioSlot, restoreScenarioSlot,
+    projectStatus: status_, setProjectStatus: setProjectStatusWithAudit,
+    auditLog, recordAudit,
     reconsolidate,
   };
 }

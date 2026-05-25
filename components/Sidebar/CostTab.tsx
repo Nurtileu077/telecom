@@ -1,15 +1,21 @@
 'use client';
-import { useState } from 'react';
-import { Materials, PriceCatalog } from '@/types/network';
+import { useState, useMemo } from 'react';
+import { Materials, PriceCatalog, District, Cable, InlineJoint, ProjectSettings } from '@/types/network';
 import { calculateCost, formatMoney } from '@/components/Network/CostCalc';
+import { districtCostRows } from '@/components/Network/districtCost';
+import DistrictCostChart from '@/components/Sidebar/DistrictCostChart';
 
 interface Props {
   materials: Materials | null;
   prices: PriceCatalog;
   setPrices: (p: PriceCatalog) => void;
+  districts?: District[];
+  cables?: Cable[];
+  joints?: InlineJoint[];
+  settings?: ProjectSettings;
 }
 
-export default function CostTab({ materials, prices, setPrices }: Props) {
+export default function CostTab({ materials, prices, setPrices, districts = [], cables = [], joints = [], settings }: Props) {
   const [showEditor, setShowEditor] = useState(false);
 
   if (!materials) {
@@ -22,6 +28,10 @@ export default function CostTab({ materials, prices, setPrices }: Props) {
   }
 
   const cost = calculateCost(materials, prices);
+  const districtRows = useMemo(() => {
+    if (!districts.length || !settings) return [];
+    return districtCostRows(districts, cables, joints, settings, prices);
+  }, [districts, cables, joints, settings, prices]);
 
   const updatePrice = (path: string, value: number) => {
     const next = { ...prices };
@@ -45,6 +55,10 @@ export default function CostTab({ materials, prices, setPrices }: Props) {
           </div>
         </div>
 
+        {districtRows.length > 1 && (
+          <DistrictCostChart rows={districtRows} currency={cost.currency} />
+        )}
+
         {/* Subtotals */}
         <div className="grid grid-cols-2 gap-2 mb-3">
           <div className="bg-[#0a0e1a] border border-[#1e3a5f] rounded p-2 text-center">
@@ -61,10 +75,13 @@ export default function CostTab({ materials, prices, setPrices }: Props) {
         <h3 className="text-[10px] uppercase tracking-widest text-[#64748b] mb-1 mt-3">Кабели</h3>
         <div className="space-y-0.5 mb-3">
           {cost.cables.map((c) => (
-            <div key={c.type} className="flex items-center justify-between text-[10px] py-0.5">
+            <div key={c.type} className="flex items-center justify-between text-[10px] py-0.5 gap-1">
               <span className="text-[#e2e8f0] flex-1 truncate">{c.type}</span>
-              <span className="font-mono text-[#64748b] w-16 text-right">{c.qty.toLocaleString('ru')} {c.unit}</span>
-              <span className="font-mono text-[#94a3b8] w-24 text-right">{formatMoney(c.total, cost.currency)}</span>
+              <span className="font-mono text-[#64748b] w-14 text-right shrink-0">{c.qty.toLocaleString('ru')} {c.unit}</span>
+              <span className="font-mono text-[#475569] w-16 text-right shrink-0" title="Цена за ед.">
+                {formatMoney(c.unitPrice, cost.currency)}
+              </span>
+              <span className="font-mono text-[#94a3b8] w-20 text-right shrink-0">{formatMoney(c.total, cost.currency)}</span>
             </div>
           ))}
         </div>

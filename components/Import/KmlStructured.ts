@@ -4,8 +4,9 @@
 // annotations and left the AI / consolidation / export systems blind to it.
 
 import {
-  District, Cable, OLT, TransitBox, ORK, Subscriber, CableType,
+  District, Cable, OLT, TransitBox, ORK, Subscriber, CableType, SplitterRatio,
   CABLE_FIBERS, DISTRICT_COLORS,
+  CameraKind, ProjectSide, CAMERA_MIN_BANDWIDTH_MBPS, cameraKindToSide,
 } from '@/types/network';
 import { haversineM } from '../Network/KMeans';
 
@@ -31,28 +32,37 @@ export interface KmlLine {
   extData?: Record<string, string>;
 }
 
-// Entity kinds we map.  'support' covers physical infrastructure (поддерживающие
-// опоры ОВН, столбы) and 'joint' covers cable junction points (Линейный
-// участок, Перекресток).  Neither becomes a subscriber — they live in a
-// separate snap-target list so cable endpoints still match them.
-// 'radio' is for РРЛ (радиорелейная линия) — drawn as an annotation, not as
-// a fibre cable.  'skip' is anything else we know to ignore (polygons, etc.).
-export type EntityKind = 'olt' | 'tb' | 'ork' | 'sub' | 'support' | 'joint' | 'radio' | 'skip';
+// In Sergek-cameras projects every Placemark is one of:
+//   olt   — узел связи / ЦОД / АМС
+//   tb    — ОМСП-муфта / транзитная муфта МТОК (L1-сплиттер)
+//   ork   — ОРКСП-шкаф / Бокс на столбе (L2-сплиттер + ONT)
+//   joint — сварная муфта, точка соединения 3+ кабелей
+//   cam_lu        — камера ЛУ (линейный участок, baseline + скорость)
+//   cam_intersect — камера на перекрёстке (полный комплекс)
+//   cam_ovn       — камера ОВН (общественное видеонаблюдение)
+//   radio         — РРЛ (радиорелейная линия) — НЕ оптический кабель, игнор
+//   skip          — декоративные сущности (полигоны и т.п.)
+export type EntityKind =
+  | 'olt' | 'tb' | 'ork' | 'joint'
+  | 'cam_lu' | 'cam_intersect' | 'cam_ovn'
+  | 'radio' | 'skip';
 
-// JS \b doesn't work for Cyrillic.  We anchor on either start/whitespace/-
-// or end/whitespace/-(/)  using lookaheads.  In practice each placemark's
-// folder name is short enough that simple substring match is fine for the
-// non-ambiguous cases (муфт, орк, опора), and for ambiguous short tokens
-// (овн, цод, амс, ррл, олт, тб) we require a non-letter neighbour so e.g.
-// "ОВН" matches but "Дровника" doesn't.
+// JS \b doesn't work for Cyrillic — explicit non-letter neighbours instead.
 const NONL = '(?:^|[^а-яА-Яa-zA-Z0-9])';
 const NONR = '(?:[^а-яА-Яa-zA-Z0-9]|$)';
-const RE_OLT     = new RegExp(`${NONL}(?:olt|цод|амс|узел[\\s_-]*связ|data[\\s-]?center)${NONR}|magistral`, 'i');
-const RE_TB      = new RegExp(`муфт|${NONL}(?:tb|sleeve|транзит)${NONR}`, 'i');
-const RE_ORK     = new RegExp(`${NONL}(?:орк|бокс|nap|шкаф)${NONR}|distribu`, 'i');
-const RE_SUPPORT = new RegExp(`${NONL}овн${NONR}|опора|столб|поддерж`, 'i');
-const RE_JOINT   = new RegExp(`линейн.+участок|перекрест|перекрёст|${NONL}joint${NONR}`, 'i');
-const RE_RADIO   = new RegExp(`${NONL}ррл${NONR}|радиорелей|wireless[\\s-]?link`, 'i');
+
+const RE_OLT          = new RegExp(`${NONL}(?:olt|цод|амс|узел[\\s_-]*связ|data[\\s-]?center)${NONR}|magistral`, 'i');
+const RE_TB           = new RegExp(`мток|омсп|транзит[нaаыое]*[\\s_-]+муфт|${NONL}(?:tb|sleeve)${NONR}`, 'i');
+const RE_ORK          = new RegExp(`${NONL}(?:орк|оркс|бокс|nap|шкаф)${NONR}|distribu`, 'i');
+const RE_JOINT        = new RegExp(`${NONL}муфт|${NONL}joint${NONR}|splice|сварн`, 'i');
+const RE_RADIO        = new RegExp(`${NONL}ррл${NONR}|радиорелей|wireless[\\s-]?link`, 'i');
+
+// Camera-type regexes — checked BEFORE joint/support so "Перекресток" /
+// "ЛУ" / "ОВН" don't get demoted to junctions/poles.
+const RE_CAM_INTERSECT = new RegExp(`перекрест|перекрёст|intersection|crossroad`, 'i');
+const RE_CAM_LU        = new RegExp(`${NONL}лу${NONR}|линейн.+участок|baseline`, 'i');
+// ОВН matches both "ОВН" and "ОВН (с)" — vendors use both for surveillance cams.
+const RE_CAM_OVN       = new RegExp(`${NONL}овн${NONR}|обществ.*видео|public[\\s-]*surveil`, 'i');
 
 function joinText(folderPath: string[], name: string, extData?: Record<string, string>): string {
   const parts: string[] = [...folderPath, name];
@@ -68,15 +78,44 @@ export function classifyEntity(
   extData?: Record<string, string>,
 ): EntityKind {
   const t = joinText(folderPath, name, extData);
-  // Order matters — support/joint/radio checked first so a folder name like
-  // "Опора ОК-8" doesn't accidentally classify as a cable / subscriber.
-  if (RE_RADIO.test(t))   return 'radio';
-  if (RE_SUPPORT.test(t)) return 'support';
-  if (RE_JOINT.test(t))   return 'joint';
-  if (RE_OLT.test(t))     return 'olt';
-  if (RE_TB.test(t))      return 'tb';
-  if (RE_ORK.test(t))     return 'ork';
-  return 'sub';
+  // Order matters — cameras and infrastructure share root words:
+  //   "Перекресток" → camera (NOT joint)
+  //   "ЛУ" / "Линейный участок" → camera (NOT joint, despite the "линейн" root)
+  //   "ОВН" / "ОВН (с)" → camera (NOT support pole)
+  // Therefore we check camera-types FIRST, then infrastructure.
+  // РРЛ wins over everything (it's a radio link, not a fibre subscriber).
+  if (RE_RADIO.test(t))         return 'radio';
+  if (RE_CAM_INTERSECT.test(t)) return 'cam_intersect';
+  if (RE_CAM_LU.test(t))        return 'cam_lu';
+  if (RE_CAM_OVN.test(t))       return 'cam_ovn';
+  // TB before joint so "Транзитная муфта МТОК" wins over plain "муфт"→joint.
+  if (RE_TB.test(t))            return 'tb';
+  if (RE_JOINT.test(t))         return 'joint';
+  if (RE_OLT.test(t))           return 'olt';
+  if (RE_ORK.test(t))           return 'ork';
+  // Anything else — pessimistically treat as ОВН camera (low-rate fallback)
+  // so we don't drop it.  The user can re-classify on the map.
+  return 'cam_ovn';
+}
+
+// Map a classified camera kind to the EntityKind enum.
+export function cameraEntityKind(kind: CameraKind): EntityKind {
+  switch (kind) {
+    case 'lu':           return 'cam_lu';
+    case 'intersection': return 'cam_intersect';
+    case 'ovn':          return 'cam_ovn';
+    default:             return 'cam_ovn';
+  }
+}
+
+// Inverse — for the Subscriber.kind field.
+export function entityToCameraKind(ek: EntityKind): CameraKind {
+  switch (ek) {
+    case 'cam_lu':        return 'lu';
+    case 'cam_intersect': return 'intersection';
+    case 'cam_ovn':       return 'ovn';
+    default:              return 'unknown';
+  }
 }
 
 export function classifyCableType(
@@ -109,13 +148,16 @@ export function isRadioLine(
   return RE_RADIO.test(joinText(folderPath, name, extData));
 }
 
+interface CameraPoint extends KmlPoint {
+  cameraKind: CameraKind;
+}
+
 interface DistrictBuckets {
   olts: KmlPoint[];
   tbs: KmlPoint[];
   orks: KmlPoint[];
-  subs: KmlPoint[];
-  supports: KmlPoint[]; // опоры / столбы — snap-targets only, not entities
-  joints: KmlPoint[];   // линейные узлы / перекрёстки — also snap-targets
+  cameras: CameraPoint[]; // ЛУ / Перекр / ОВН — типизированные камеры
+  joints: KmlPoint[];     // сварные муфты — snap-targets, не сущности
   lines: KmlLine[];
   radioLines: KmlLine[];
 }
@@ -130,10 +172,11 @@ interface BuildOutcome {
   // Lines that aren't fibre cables (РРЛ) — caller renders as annotations.
   radioLines: Array<{ coords: [number, number][]; name: string; district: string }>;
   stats: {
-    olt: number; tb: number; ork: number; sub: number;
-    supports: number; joints: number; radio: number;
+    olt: number; tb: number; ork: number;
+    camLu: number; camIntersect: number; camOvn: number;
+    joints: number; radio: number;
     cablesMatched: number;
-    cablesOrphan: number; // line endpoints didn't snap to any entity
+    cablesOrphan: number;
   };
 }
 
@@ -156,10 +199,23 @@ function snapEndpoint(
 export function buildStructured(
   rawPoints: KmlPoint[],
   rawLines: KmlLine[],
-  opts: { snapMaxM?: number; mergeAll?: boolean; mergedName?: string } = {},
+  opts: {
+    snapMaxM?: number;
+    mergeAll?: boolean;
+    mergedName?: string;
+    // Default L2-splitter for every ORKSP created in this build.  When the
+    // user picked something other than 1:8 in the import dialog, we honour
+    // it here so the BoM / power budget reflect the real hardware choice.
+    defaultSplitter?: SplitterRatio;
+  } = {},
 ): BuildOutcome {
   const SNAP_M = opts.snapMaxM ?? 75; // endpoints often a few metres off the icon
-  const stats = { olt: 0, tb: 0, ork: 0, sub: 0, supports: 0, joints: 0, radio: 0, cablesMatched: 0, cablesOrphan: 0 };
+  const stats = {
+    olt: 0, tb: 0, ork: 0,
+    camLu: 0, camIntersect: 0, camOvn: 0,
+    joints: 0, radio: 0,
+    cablesMatched: 0, cablesOrphan: 0,
+  };
 
   // When the user imports several KML files in one go, each file would
   // normally become its own district — but vendors split a single project
@@ -173,7 +229,7 @@ export function buildStructured(
   const byDistrict = new Map<string, DistrictBuckets>();
   const bucket = (name: string) => {
     if (!byDistrict.has(name)) {
-      byDistrict.set(name, { olts: [], tbs: [], orks: [], subs: [], supports: [], joints: [], lines: [], radioLines: [] });
+      byDistrict.set(name, { olts: [], tbs: [], orks: [], cameras: [], joints: [], lines: [], radioLines: [] });
     }
     return byDistrict.get(name)!;
   };
@@ -181,13 +237,22 @@ export function buildStructured(
   for (const p of rawPoints) {
     const kind = classifyEntity(p.folderPath, p.name, p.extData);
     const b = bucket(partitionKey(p));
-    if      (kind === 'olt')     b.olts.push(p);
-    else if (kind === 'tb')      b.tbs.push(p);
-    else if (kind === 'ork')     b.orks.push(p);
-    else if (kind === 'support') { b.supports.push(p); stats.supports++; }
-    else if (kind === 'joint')   { b.joints.push(p);   stats.joints++; }
-    else if (kind === 'skip' || kind === 'radio') { /* drop */ }
-    else                          b.subs.push(p);
+    if      (kind === 'olt') b.olts.push(p);
+    else if (kind === 'tb')  b.tbs.push(p);
+    else if (kind === 'ork') b.orks.push(p);
+    else if (kind === 'joint') { b.joints.push(p); stats.joints++; }
+    else if (kind === 'skip' || kind === 'radio') { /* drop from fibre tree */ }
+    else if (kind === 'cam_lu' || kind === 'cam_intersect' || kind === 'cam_ovn') {
+      const ck = entityToCameraKind(kind);
+      b.cameras.push({ ...p, cameraKind: ck });
+      if      (ck === 'lu')           stats.camLu++;
+      else if (ck === 'intersection') stats.camIntersect++;
+      else                            stats.camOvn++;
+    } else {
+      // unknown → treat as ОВН camera (low-rate default)
+      b.cameras.push({ ...p, cameraKind: 'unknown' });
+      stats.camOvn++;
+    }
   }
   for (const l of rawLines) {
     const b = bucket(partitionKey(l));
@@ -204,131 +269,208 @@ export function buildStructured(
   let cableSeq = 0;
   let colorIdx = 0;
 
+  // Global entity index used for cable snap-matching across ALL districts /
+  // OLT subtrees.  Vendor magistral cables routinely connect points that we
+  // assigned to different Voronoi partitions — without a global index those
+  // would become orphans.
+  const globalEntityIndex: Array<{ id: string; lat: number; lon: number }> = [];
+
   for (const [districtName, b] of byDistrict.entries()) {
-    if (b.olts.length === 0 && b.tbs.length === 0 && b.orks.length === 0 && b.subs.length === 0) continue;
+    if (b.olts.length === 0 && b.tbs.length === 0 && b.orks.length === 0 && b.cameras.length === 0 && b.joints.length === 0 && b.lines.length === 0) continue;
 
-    // ── Synthesize a single OLT for this district ──
-    // If the KML had an OLT use the first one; else put it at the TB/sub centroid
-    // so the rest of the tree still has a root.
-    let oltLat: number;
-    let oltLon: number;
+    // ── 1. Determine OLT positions ──
+    // KML may have multiple OLTs (ЦОД + АМС etc.) — each becomes its own
+    // sub-district.  No explicit OLT → one virtual at the entity centroid.
+    type OltPos = { lat: number; lon: number; name: string };
+    let oltPositions: OltPos[];
     if (b.olts.length > 0) {
-      oltLat = b.olts[0].lat;
-      oltLon = b.olts[0].lon;
+      oltPositions = b.olts.map((o) => ({ lat: o.lat, lon: o.lon, name: o.name || 'OLT' }));
     } else {
-      const refs = b.tbs.length > 0 ? b.tbs : (b.orks.length > 0 ? b.orks : b.subs);
+      const refs: KmlPoint[] = b.tbs.length > 0 ? b.tbs : (b.orks.length > 0 ? b.orks : b.cameras);
       if (refs.length === 0) continue;
-      oltLat = refs.reduce((s, p) => s + p.lat, 0) / refs.length;
-      oltLon = refs.reduce((s, p) => s + p.lon, 0) / refs.length;
+      oltPositions = [{
+        lat: refs.reduce((s, p) => s + p.lat, 0) / refs.length,
+        lon: refs.reduce((s, p) => s + p.lon, 0) / refs.length,
+        name: 'OLT-auto',
+      }];
     }
-    const slug = slugForId(districtName);
-    const oltId = `OLT-${slug}`;
-    stats.olt++;
 
-    // ── Transit boxes ──
-    // If KML had explicit TBs use them.  Otherwise create a single virtual TB
-    // co-located with the OLT so the ORK→TB→OLT chain still exists.
-    const tbInput = b.tbs.length > 0
-      ? b.tbs
-      : (b.orks.length > 0
-          ? [{ lat: oltLat, lon: oltLon, name: 'TB-auto', desc: '', folderPath: [], fileDistrict: districtName } as KmlPoint]
-          : []);
-
-    const tbs: TransitBox[] = tbInput.map((t, i) => ({
-      id: `TB-${slug}-${i + 1}`,
-      lat: t.lat, lon: t.lon,
-      district: districtName,
-      oltId,
-      orks: [],
-      inCable: 'ОК-48',
-      outCable: 'ОК-4',
-      muftaType: 'МТОК-96А',
-    }));
-    stats.tb += tbs.length;
-
-    // ── ORKs ── each ORK joins the nearest TB.
-    const orks: ORK[] = b.orks.map((o, i) => {
-      let nearest = tbs[0];
-      let bestD = nearest ? haversineM(o.lat, o.lon, nearest.lat, nearest.lon) : Infinity;
-      for (const tb of tbs) {
-        const d = haversineM(o.lat, o.lon, tb.lat, tb.lon);
-        if (d < bestD) { bestD = d; nearest = tb; }
+    // ── 1a. Auto-2-OLT for large projects ──
+    // GPON OLT typical capacity = 8 ports × 64 subscribers/port = 512.  When
+    // the user's file has more cameras than that AND only one OLT was given,
+    // split the area into two kmeans-clusters and synthesise the second OLT.
+    // (Vendor practice: if >512 clients, install two OLTs side by side, both
+    // serving АПК and ОВН.)
+    const MAX_PER_OLT = 512;
+    if (oltPositions.length === 1 && b.cameras.length > MAX_PER_OLT) {
+      const pts = b.cameras.map((p) => ({ lat: p.lat, lon: p.lon }));
+      const need = Math.ceil(b.cameras.length / MAX_PER_OLT);
+      const centers: OltPos[] = [];
+      // simple farthest-first init for k centroids — deterministic given input
+      centers.push({ lat: pts[0].lat, lon: pts[0].lon, name: 'OLT-1' });
+      while (centers.length < need) {
+        let bestI = 0, bestD = -1;
+        for (let i = 0; i < pts.length; i++) {
+          let minD = Infinity;
+          for (const c of centers) {
+            const d = haversineM(pts[i].lat, pts[i].lon, c.lat, c.lon);
+            if (d < minD) minD = d;
+          }
+          if (minD > bestD) { bestD = minD; bestI = i; }
+        }
+        centers.push({ lat: pts[bestI].lat, lon: pts[bestI].lon, name: `OLT-${centers.length + 1}` });
       }
-      return {
-        id: `ORK-${slug}-${i + 1}`,
-        lat: o.lat, lon: o.lon,
-        district: districtName,
-        splitter: '1:8' as const,
-        tbId: nearest?.id ?? '',
-        subscribers: [],
-        cableType: 'ОК-4' as CableType,
-        boxType: 'Бокс-16',
-      };
-    });
-    stats.ork += orks.length;
-
-    // ── Subscribers ── attached to nearest ORK if one exists.
-    const subs: Subscriber[] = b.subs.map((s, i) => {
-      let nearest = orks[0];
-      let bestD = nearest ? haversineM(s.lat, s.lon, nearest.lat, nearest.lon) : Infinity;
-      for (const o of orks) {
-        const d = haversineM(s.lat, s.lon, o.lat, o.lon);
-        if (d < bestD) { bestD = d; nearest = o; }
+      // 5 iterations of Lloyd
+      for (let iter = 0; iter < 5; iter++) {
+        const sums = centers.map(() => ({ lat: 0, lon: 0, n: 0 }));
+        for (const p of pts) {
+          let bi = 0, bd = Infinity;
+          for (let i = 0; i < centers.length; i++) {
+            const d = haversineM(p.lat, p.lon, centers[i].lat, centers[i].lon);
+            if (d < bd) { bd = d; bi = i; }
+          }
+          sums[bi].lat += p.lat; sums[bi].lon += p.lon; sums[bi].n++;
+        }
+        for (let i = 0; i < centers.length; i++) {
+          if (sums[i].n > 0) {
+            centers[i] = { lat: sums[i].lat / sums[i].n, lon: sums[i].lon / sums[i].n, name: centers[i].name };
+          }
+        }
       }
-      return {
-        id: `sub-${slug}-${i + 1}`,
-        lat: s.lat, lon: s.lon,
-        desc: s.name || s.desc || `Або. ${i + 1}`,
-        district: districtName,
-        orkId: nearest?.id,
-        fibers: { working: 2, spare: 1 },
-      };
-    });
-    stats.sub += subs.length;
-
-    for (const o of orks) {
-      o.subscribers = subs.filter((s) => s.orkId === o.id);
-    }
-    for (const tb of tbs) {
-      tb.orks = orks.filter((o) => o.tbId === tb.id);
+      // Place the centres co-located with the original (single) OLT first if
+      // there was one, then add the rest as synthesised OLT-N entries.
+      const userOlt = oltPositions[0];
+      oltPositions = centers.map((c, i) => i === 0
+        ? { lat: userOlt.lat, lon: userOlt.lon, name: userOlt.name }
+        : c,
+      );
     }
 
-    const olt: OLT = {
-      id: oltId,
-      lat: oltLat, lon: oltLon,
-      district: districtName,
-      model: 'Huawei MA5800-X7',
-      capacity: 64,
-      transitBoxes: tbs,
-      l1Splitter: '1:4',
+    // ── 2. Voronoi-assign every other entity to its nearest OLT ──
+    const nearestOltIdx = (lat: number, lon: number): number => {
+      let bestI = 0;
+      let bestD = Infinity;
+      for (let i = 0; i < oltPositions.length; i++) {
+        const d = haversineM(lat, lon, oltPositions[i].lat, oltPositions[i].lon);
+        if (d < bestD) { bestD = d; bestI = i; }
+      }
+      return bestI;
     };
+    const assignedTBs: KmlPoint[][] = oltPositions.map(() => []);
+    const assignedOrks: KmlPoint[][] = oltPositions.map(() => []);
+    const assignedCams: CameraPoint[][] = oltPositions.map(() => []);
+    const assignedJoints: KmlPoint[][] = oltPositions.map(() => []);
+    for (const p of b.tbs)     assignedTBs[nearestOltIdx(p.lat, p.lon)].push(p);
+    for (const p of b.orks)    assignedOrks[nearestOltIdx(p.lat, p.lon)].push(p);
+    for (const p of b.cameras) assignedCams[nearestOltIdx(p.lat, p.lon)].push(p);
+    for (const p of b.joints)  assignedJoints[nearestOltIdx(p.lat, p.lon)].push(p);
 
-    outDistricts.push({
-      name: districtName,
-      color: DISTRICT_COLORS[colorIdx++ % DISTRICT_COLORS.length],
-      olt,
-      subscribers: subs,
-    });
+    // ── 3. Build subtree per OLT ──
+    for (let oi = 0; oi < oltPositions.length; oi++) {
+      const oltPos = oltPositions[oi];
+      const subName = oltPositions.length === 1 ? districtName : `${districtName}-${oi + 1}`;
+      const slug = slugForId(subName);
+      const oltId = `OLT-${slug}`;
+      stats.olt++;
 
-    // ── Cables — match each LineString to a pair of entities by snap-to-nearest.
-    // Supports (опоры/столбы) and joints (перекрёстки) are added as snap
-    // targets with synthetic ids so the cable still has named endpoints — the
-    // alternative (orphan cable) loses the line completely.
-    const entityIndex = [
-      { id: oltId, lat: olt.lat, lon: olt.lon },
-      ...tbs.map((t) => ({ id: t.id, lat: t.lat, lon: t.lon })),
-      ...orks.map((o) => ({ id: o.id, lat: o.lat, lon: o.lon })),
-      ...subs.map((s) => ({ id: s.id, lat: s.lat, lon: s.lon })),
-      ...b.supports.map((p, i) => ({ id: `pole-${slug}-${i + 1}`, lat: p.lat, lon: p.lon })),
-      ...b.joints.map((p, i) => ({ id: `J-${slug}-${i + 1}`,    lat: p.lat, lon: p.lon })),
-    ];
+      // Transit boxes: explicit, else one virtual at the OLT so ORK→TB→OLT exists.
+      const tbInput = assignedTBs[oi].length > 0
+        ? assignedTBs[oi]
+        : (assignedOrks[oi].length > 0
+            ? [{ lat: oltPos.lat, lon: oltPos.lon, name: 'TB-auto', desc: '', folderPath: [], fileDistrict: subName } as KmlPoint]
+            : []);
+      const tbs: TransitBox[] = tbInput.map((t, i) => ({
+        id: `TB-${slug}-${i + 1}`,
+        lat: t.lat, lon: t.lon,
+        district: subName,
+        oltId,
+        orks: [],
+        inCable: 'ОК-48',
+        outCable: 'ОК-4',
+        muftaType: 'МТОК-96А',
+      }));
+      stats.tb += tbs.length;
 
+      const orks: ORK[] = assignedOrks[oi].map((o, i) => {
+        let nearest = tbs[0];
+        let bestD = nearest ? haversineM(o.lat, o.lon, nearest.lat, nearest.lon) : Infinity;
+        for (const tb of tbs) {
+          const d = haversineM(o.lat, o.lon, tb.lat, tb.lon);
+          if (d < bestD) { bestD = d; nearest = tb; }
+        }
+        return {
+          id: `ORK-${slug}-${i + 1}`,
+          lat: o.lat, lon: o.lon,
+          district: subName,
+          splitter: (opts.defaultSplitter ?? '1:8'),
+          tbId: nearest?.id ?? '',
+          subscribers: [],
+          cableType: 'ОК-4' as CableType,
+          boxType: 'Бокс-16',
+        };
+      });
+      stats.ork += orks.length;
+
+      const subs: Subscriber[] = assignedCams[oi].map((s, i) => {
+        let nearest = orks[0];
+        let bestD = nearest ? haversineM(s.lat, s.lon, nearest.lat, nearest.lon) : Infinity;
+        for (const o of orks) {
+          const d = haversineM(s.lat, s.lon, o.lat, o.lon);
+          if (d < bestD) { bestD = d; nearest = o; }
+        }
+        const ck = s.cameraKind;
+        return {
+          id: `sub-${slug}-${i + 1}`,
+          lat: s.lat, lon: s.lon,
+          desc: s.name || s.desc || `Камера ${i + 1}`,
+          district: subName,
+          orkId: nearest?.id,
+          fibers: { working: 2, spare: 1 },
+          kind: ck,
+          side: cameraKindToSide(ck),
+          minBandwidthMbps: CAMERA_MIN_BANDWIDTH_MBPS[ck],
+        };
+      });
+
+      for (const o of orks) o.subscribers = subs.filter((s) => s.orkId === o.id);
+      for (const tb of tbs) tb.orks = orks.filter((o) => o.tbId === tb.id);
+
+      const olt: OLT = {
+        id: oltId,
+        lat: oltPos.lat, lon: oltPos.lon,
+        district: subName,
+        model: 'Huawei MA5800-X7',
+        capacity: 64,
+        transitBoxes: tbs,
+        l1Splitter: '1:4',
+      };
+      outDistricts.push({
+        name: subName,
+        color: DISTRICT_COLORS[colorIdx++ % DISTRICT_COLORS.length],
+        olt,
+        subscribers: subs,
+      });
+
+      // Add this subtree's entities + its support poles / joints to the global
+      // snap index so any cable from any district can attach to them.
+      globalEntityIndex.push({ id: oltId, lat: olt.lat, lon: olt.lon });
+      for (const tb of tbs)  globalEntityIndex.push({ id: tb.id, lat: tb.lat, lon: tb.lon });
+      for (const o  of orks) globalEntityIndex.push({ id: o.id, lat: o.lat, lon: o.lon });
+      for (const s  of subs) globalEntityIndex.push({ id: s.id, lat: s.lat, lon: s.lon });
+      assignedJoints[oi].forEach((p, i) => globalEntityIndex.push({ id: `J-${slug}-${i + 1}`, lat: p.lat, lon: p.lon }));
+    }
+  }
+
+  // ── 4. Cable matching — pass over ALL lines from ALL districts using the
+  // global index built above.  Each line's endpoints snap to the nearest
+  // known entity within SNAP_M; unmatched ends → orphan.
+  for (const [, b] of byDistrict.entries()) {
     for (const line of b.lines) {
       if (line.coords.length < 2) continue;
       const start = line.coords[0];
       const end = line.coords[line.coords.length - 1];
-      const a = snapEndpoint(start, entityIndex, SNAP_M);
-      const c = snapEndpoint(end, entityIndex, SNAP_M);
+      const a = snapEndpoint(start, globalEntityIndex, SNAP_M);
+      const c = snapEndpoint(end, globalEntityIndex, SNAP_M);
       if (!a || !c || a.id === c.id) {
         stats.cablesOrphan++;
         continue;
@@ -346,8 +488,6 @@ export function buildStructured(
         toId: c.id,
         coords: line.coords,
         lengthM,
-        // KML-drawn paths are pre-routed by whoever made the file — treat them
-        // as routed so the per-cable renderer doesn't dash them as "straight".
         routedByOSRM: true,
       });
       stats.cablesMatched++;

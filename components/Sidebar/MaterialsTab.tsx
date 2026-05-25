@@ -1,7 +1,8 @@
 'use client';
+import { useState } from 'react';
 import { Materials, District, Cable, CABLE_SIZES, InlineJoint } from '@/types/network';
 import { exportExcel } from '@/components/Export/ExportExcel';
-import { exportKMZ } from '@/components/Export/ExportKMZ';
+import { exportKMZ, ALL_LAYERS, LAYER_LABEL, type KmzLayer } from '@/components/Export/ExportKMZ';
 import { filterByBBox, type BBox } from '@/components/Network/Selection';
 import { calculateMaterials } from '@/components/Network/MaterialCalc';
 
@@ -11,6 +12,7 @@ interface Props {
   cables: Cable[];
   joints?: InlineJoint[];
   selectionBBox?: BBox | null;
+  selectionPoly?: [number, number][] | null;
   // Settings is needed to recalculate materials for the filtered subset.
   cableReserve?: number;
 }
@@ -48,7 +50,12 @@ function Section({ title, rows }: { title: string; rows: Row[] }) {
   );
 }
 
-export default function MaterialsTab({ materials, districts, cables, joints, selectionBBox, cableReserve = 1.10 }: Props) {
+export default function MaterialsTab({ materials, districts, cables, joints, selectionBBox, selectionPoly, cableReserve = 1.10 }: Props) {
+  const [kmzLayers, setKmzLayers] = useState<KmzLayer[]>([...ALL_LAYERS]);
+  const [kmzSeparate, setKmzSeparate] = useState(false);
+  const toggleKmzLayer = (l: KmzLayer) =>
+    setKmzLayers((prev) => (prev.includes(l) ? prev.filter((x) => x !== l) : [...prev, l]));
+
   if (!materials) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-center p-6">
@@ -63,7 +70,7 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
   // cableReserve so reserve-padded totals stay consistent with the sidebar.
   const exportSet = (): { districts: District[]; cables: Cable[]; materials: Materials } => {
     if (!selectionBBox) return { districts, cables, materials: materials! };
-    const f = filterByBBox(districts, cables, joints ?? [], selectionBBox);
+    const f = filterByBBox(districts, cables, joints ?? [], selectionBBox, selectionPoly);
     const m = calculateMaterials(
       f.districts, f.cables,
       { maxPerORK: 8, maxORKperTB: 4, spareFiresPerSub: 1, cableReserve, useOSRM: true, osrmDelay: 100 },
@@ -78,18 +85,20 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = selectionBBox ? 'gpon-materials-выделение.xlsx' : 'gpon-materials.xlsx';
+    a.download = selectionBBox ? 'OPTIQ-материалы-выделение.xlsx' : 'OPTIQ-материалы.xlsx';
     a.click();
     URL.revokeObjectURL(url);
   };
 
   const handleKMZExport = async () => {
+    if (kmzLayers.length === 0) return;
     const { districts: d, cables: c } = exportSet();
-    const blob = await exportKMZ(d, c);
+    const blob = await exportKMZ(d, c, { layers: kmzLayers, separate: kmzSeparate });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = selectionBBox ? 'gpon-network-выделение.kmz' : 'gpon-network.kmz';
+    const suffix = selectionBBox ? '-выделение' : '';
+    a.download = kmzSeparate ? `OPTIQ-сеть-слои${suffix}.zip` : `OPTIQ-сеть${suffix}.kmz`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -144,7 +153,7 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
       {/* Export buttons */}
       <div className="p-3 border-t border-[#1e3a5f] space-y-2">
         {selectionBBox && (() => {
-          const f = filterByBBox(districts, cables, joints ?? [], selectionBBox);
+          const f = filterByBBox(districts, cables, joints ?? [], selectionBBox, selectionPoly);
           return (
             <div className="p-2 bg-[#fbbf24]/10 border border-[#fbbf24]/40 rounded text-[10px] text-[#fbbf24]">
               🔲 Выделено: <b>{f.counts.olt}</b> OLT · <b>{f.counts.tb}</b> Муфт · <b>{f.counts.ork}</b> ОРК · <b>{f.counts.sub}</b> Аб. · <b>{f.counts.cable}</b> кабелей
@@ -158,11 +167,37 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
         >
           📊 {selectionBBox ? 'Excel (выделение)' : 'Экспорт в Excel'}
         </button>
+        <div className="p-2 bg-[#0d1b2a] border border-[#1e3a5f] rounded-lg space-y-1.5">
+          <div className="text-[10px] uppercase tracking-widest text-[#64748b]">Слои KMZ</div>
+          <div className="grid grid-cols-2 gap-1">
+            {ALL_LAYERS.map((l) => (
+              <label key={l} className="flex items-center gap-1.5 text-[11px] text-[#e2e8f0] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={kmzLayers.includes(l)}
+                  onChange={() => toggleKmzLayer(l)}
+                  className="accent-[#38bdf8]"
+                />
+                {LAYER_LABEL[l]}
+              </label>
+            ))}
+          </div>
+          <label className="flex items-center gap-1.5 text-[11px] text-[#94a3b8] cursor-pointer pt-1 border-t border-[#1e3a5f]">
+            <input
+              type="checkbox"
+              checked={kmzSeparate}
+              onChange={(e) => setKmzSeparate(e.target.checked)}
+              className="accent-[#38bdf8]"
+            />
+            Отдельными файлами по слоям (.zip)
+          </label>
+        </div>
         <button
           onClick={handleKMZExport}
-          className="w-full py-2 px-3 bg-[#0d1b2a] hover:bg-[#1a2744] border border-[#1e3a5f] rounded-lg text-xs text-[#e2e8f0] transition-colors flex items-center gap-2"
+          disabled={kmzLayers.length === 0}
+          className="w-full py-2 px-3 bg-[#0d1b2a] hover:bg-[#1a2744] border border-[#1e3a5f] rounded-lg text-xs text-[#e2e8f0] transition-colors flex items-center gap-2 disabled:opacity-40"
         >
-          🗺 {selectionBBox ? 'KMZ (выделение)' : 'Экспорт в KMZ'}
+          🗺 {kmzSeparate ? 'Экспорт KMZ по слоям' : selectionBBox ? 'KMZ (выделение)' : 'Экспорт в KMZ'}
         </button>
       </div>
     </div>

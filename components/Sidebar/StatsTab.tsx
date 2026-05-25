@@ -19,6 +19,9 @@ export default function StatsTab({ districts, cables, issues }: Props) {
 
   const totalSubs = districts.reduce((s, d) => s + d.subscribers.length, 0);
   const totalCableM = cables.reduce((s, c) => s + c.lengthM, 0);
+  const routedM = cables.filter((c) => c.routedByOSRM).reduce((s, c) => s + c.lengthM, 0);
+  const routedPct = totalCableM > 0 ? Math.round((routedM / totalCableM) * 100) : 0;
+  const totalTbs = districts.reduce((s, d) => s + d.olt.transitBoxes.length, 0);
 
   const cableByType = cables.reduce((m, c) => {
     m[c.type] = (m[c.type] || 0) + c.lengthM;
@@ -61,22 +64,26 @@ export default function StatsTab({ districts, cables, issues }: Props) {
     <div className="overflow-y-auto h-full p-3 space-y-4">
       {/* Big stats */}
       <div className="grid grid-cols-2 gap-2">
-        <div className="bg-[#0a0e1a] border border-[#1e3a5f] rounded-lg p-2 text-center">
+        <div className="bg-gradient-to-br from-[#0a0e1a] to-[#0f172a] border border-[#1e3a5f] rounded-lg p-2.5 text-center">
           <div className="text-xl font-mono font-bold text-[#38bdf8]">{totalSubs}</div>
-          <div className="text-[10px] text-[#64748b]">всего або.</div>
+          <div className="text-[10px] text-[#64748b]">абонентов</div>
         </div>
-        <div className="bg-[#0a0e1a] border border-[#1e3a5f] rounded-lg p-2 text-center">
+        <div className="bg-gradient-to-br from-[#0a0e1a] to-[#0f172a] border border-[#1e3a5f] rounded-lg p-2.5 text-center">
           <div className="text-xl font-mono font-bold text-[#34d399]">{districts.length}</div>
-          <div className="text-[10px] text-[#64748b]">район(ов)</div>
+          <div className="text-[10px] text-[#64748b]">районов · {totalTbs} муфт</div>
         </div>
-        <div className="bg-[#0a0e1a] border border-[#1e3a5f] rounded-lg p-2 text-center">
+        <div className="bg-gradient-to-br from-[#0a0e1a] to-[#0f172a] border border-[#1e3a5f] rounded-lg p-2.5 text-center">
           <div className="text-xl font-mono font-bold text-[#f59e0b]">{orkLoads.length}</div>
           <div className="text-[10px] text-[#64748b]">ОРК шкафов</div>
         </div>
-        <div className="bg-[#0a0e1a] border border-[#1e3a5f] rounded-lg p-2 text-center">
+        <div className="bg-gradient-to-br from-[#0a0e1a] to-[#0f172a] border border-[#1e3a5f] rounded-lg p-2.5 text-center">
           <div className="text-xl font-mono font-bold text-[#a78bfa]">{(totalCableM / 1000).toFixed(1)}</div>
           <div className="text-[10px] text-[#64748b]">км кабеля</div>
         </div>
+      </div>
+      <div className="bg-[#0a0e1a] border border-[#38bdf8]/30 rounded-lg px-3 py-2 flex items-center justify-between text-[11px]">
+        <span className="text-[#94a3b8]">По дороге (OSRM)</span>
+        <span className="font-mono text-[#38bdf8]">{routedPct}% · {(routedM / 1000).toFixed(2)} км</span>
       </div>
 
       {/* Cable breakdown */}

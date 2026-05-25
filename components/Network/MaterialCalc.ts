@@ -1,4 +1,5 @@
 import { District, Cable, Materials, ProjectSettings, ValidationIssue, CABLE_SIZES, CableType } from '@/types/network';
+import { bandwidthReport } from './Bandwidth';
 import { haversineM } from './KMeans';
 
 export function calculateMaterials(
@@ -12,10 +13,12 @@ export function calculateMaterials(
   // Build cables object dynamically
   const cablesByType = {} as Record<CableType, number>;
   for (const t of CABLE_SIZES) cablesByType[t] = 0;
+  let aerialInstallM = 0;
   for (const c of cables) {
     if (cablesByType[c.type] !== undefined) {
       cablesByType[c.type] = (cablesByType[c.type] || 0) + c.lengthM * reserve;
     }
+    if (c.installType === 'aerial') aerialInstallM += c.lengthM * reserve;
   }
   const totalM = Object.values(cablesByType).reduce((a, b) => a + b, 0);
   const totalKm = totalM / 1000;
@@ -50,10 +53,15 @@ export function calculateMaterials(
   const pigtailSCAPC = totalMufta * 12 + subCount;
   const kdzsGilzy = Math.ceil(totalKm * 4) + 200;
   // Use distribution cables (ОК-8 and above) for clamp estimation
-  const aerialM = (cablesByType['ОК-8'] || 0) + (cablesByType['ОК-12'] || 0) +
-    (cablesByType['ОК-16'] || 0) + (cablesByType['ОК-24'] || 0) +
-    (cablesByType['ОК-32'] || 0) + (cablesByType['ОК-48'] || 0) + (cablesByType['ОК-96'] || 0);
-  const clamps = Math.ceil(aerialM / 50);
+  const aerialM = aerialInstallM > 0
+    ? aerialInstallM
+    : (cablesByType['ОК-8'] || 0) + (cablesByType['ОК-12'] || 0) +
+      (cablesByType['ОК-16'] || 0) + (cablesByType['ОК-24'] || 0) +
+      (cablesByType['ОК-32'] || 0) + (cablesByType['ОК-48'] || 0) + (cablesByType['ОК-96'] || 0);
+  const poleClamps = cables
+    .filter((c) => c.installType === 'aerial' && c.poleCount)
+    .reduce((s, c) => s + (c.poleCount ?? 0), 0);
+  const clamps = poleClamps > 0 ? poleClamps : Math.ceil(aerialM / 50);
   const cable_reserve_m = totalM - (totalM / reserve);
 
   return {
@@ -202,6 +210,44 @@ export function validateNetwork(districts: District[], cables: Cable[]): Validat
         message: `${c.type} ${c.id} соединяет разные районы: ${fD} → ${tD}. Удали или пересобери — это межрайонный кабель.`,
         entityId: c.id,
         entityType: 'cable',
+      });
+    }
+  }
+
+  // ─── Bandwidth / load validation ──────────────────────────────────
+  // Per-OLT: warn if >80% of MAX_PER_OLT cameras, error if exceeded.
+  // Per-ORKSP: error if max camera bandwidth > splitter per-port capacity
+  // OR if cameras exceed the splitter's port count.
+  const bw = bandwidthReport(districts, 512);
+  for (const o of bw.olts) {
+    const pct = Math.round((o.cameras / o.maxCamerasPerOlt) * 100);
+    if (o.overcapacity) {
+      issues.push({
+        type: 'error',
+        message: `${o.id}: ${o.cameras} камер > ${o.maxCamerasPerOlt} (порог OLT) — нужен ещё один OLT`,
+        entityId: o.id, entityType: 'olt',
+      });
+    } else if (pct > 80) {
+      issues.push({
+        type: 'warning',
+        message: `${o.id}: загрузка ${o.cameras}/${o.maxCamerasPerOlt} камер (${pct}%) — стоит планировать второй OLT`,
+        entityId: o.id, entityType: 'olt',
+      });
+    }
+  }
+  for (const r of bw.orks) {
+    if (r.overloaded) {
+      const ports = Number(r.splitter.replace('1:', '')) || 0;
+      const portOverflow = ports > 0 && r.cameras > ports;
+      const message = portOverflow
+        ? `${r.id}: камер ${r.cameras} > портов сплиттера ${r.splitter} (${ports}) — добавь ОРКСП или разнеси камеры`
+        : `${r.id}: сплиттер ${r.splitter} (~${Math.round(r.capacityMbps)} Мбит/абон.) не тянет камеру ${r.maxCamBwMbps} Мбит/с — нужен меньший сплиттер (например 1:${Math.max(2, Math.floor(2500 / Math.max(1, r.maxCamBwMbps)))})`;
+      issues.push({ type: 'error', message, entityId: r.id });
+    } else if (r.utilisation > 90) {
+      issues.push({
+        type: 'warning',
+        message: `${r.id}: занято ${r.cameras}/${r.splitter.replace('1:', '')} портов (${r.utilisation}%)`,
+        entityId: r.id,
       });
     }
   }

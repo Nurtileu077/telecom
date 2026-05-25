@@ -3,6 +3,7 @@
 // read back.
 
 import type { District, Cable, ValidationIssue } from '@/types/network';
+import { bandwidthReport } from '@/components/Network/Bandwidth';
 import type { AITool } from './tools';
 
 // Minimal interface — we type only what we actually use rather than coupling
@@ -314,6 +315,28 @@ export async function executeTool(
       case 'rebuild_network': {
         await net.rebuildFromCurrent();
         return 'Пересобрал сеть из текущих абонентов + OLT-координат. Ручные правки кабелей могли быть утеряны — это ожидаемо.';
+      }
+      case 'bandwidth_report': {
+        const r = bandwidthReport(net.districts, 512);
+        return JSON.stringify({
+          totals: r.totals,
+          olts: r.olts.map((o) => ({
+            id: o.id, district: o.district,
+            cameras: o.cameras, byKind: o.load, bySide: o.bySide,
+            totalBwMbps: o.totalBwMbps,
+            utilisation: Math.round((o.cameras / o.maxCamerasPerOlt) * 100),
+            overcapacity: o.overcapacity,
+          })),
+          orks: r.orks.map((o) => ({
+            id: o.id, district: o.district,
+            splitter: o.splitter,
+            cameras: o.cameras,
+            capacityMbps: Math.round(o.capacityMbps),
+            maxCamBwMbps: o.maxCamBwMbps,
+            utilisation: o.utilisation,
+            overloaded: o.overloaded,
+          })),
+        });
       }
       case 'auto_repair': {
         const r = await net.autoRepair(net.selectionBBox);

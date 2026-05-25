@@ -9,7 +9,7 @@ interface Props {
   lastSavedAt: string | null;
   autoSaveEnabled: boolean;
   setAutoSaveEnabled: (v: boolean) => void;
-  saveProject: () => Promise<Project> | void;
+  saveProject: () => Promise<Project | void> | void;
   loadProject: (p: Project) => Promise<void> | void;
   deleteProject: (id: string) => Promise<void> | void;
   newProject: () => void;

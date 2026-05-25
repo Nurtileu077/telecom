@@ -1,5 +1,6 @@
 'use client';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { Route, Merge, Flame, Activity, Printer, FileDown } from 'lucide-react';
 import { OpticalBudgetInputs } from '@/types/network';
 import { calculateOpticalBudget } from '@/components/Network/OpticalBudget';
 
@@ -13,7 +14,32 @@ const DEFAULT_INPUTS: OpticalBudgetInputs = {
   reserveDb: 3,
 };
 
+import ScenarioPanel from './ScenarioPanel';
+import type { ProjectScenarios, ProjectSettings, PriceCatalog } from '@/types/network';
+import {
+  isOfflineTilesEnabled, setOfflineTilesEnabled, syncOfflineTileWorker,
+} from '@/lib/offlineMap';
+import { bboxFromProject } from '@/lib/projectBounds';
+import { preloadTilesForBBox, type TilePreloadProgress } from '@/lib/tilePreload';
+import type { District, Cable, MapAnnotation } from '@/types/network';
+
 interface Props {
+  scenarios?: ProjectScenarios;
+  settings?: ProjectSettings;
+  prices?: PriceCatalog;
+  onSaveScenarioA?: () => void;
+  onSaveScenarioB?: () => void;
+  onRestoreScenarioA?: () => void;
+  onRestoreScenarioB?: () => void;
+  scenarioDiffOn?: boolean;
+  onToggleScenarioDiff?: () => void;
+  readOnly?: boolean;
+  projectId?: string;
+  districts?: District[];
+  cables?: Cable[];
+  annotations?: MapAnnotation[];
+  onCopyShareViewLink?: () => void;
+  onCopyShareFieldLink?: () => void;
   onShowHeatmap: () => void;
   heatmapEnabled: boolean;
   onExportPDF: () => void;
@@ -27,30 +53,146 @@ interface Props {
   onToggleBudgetColoring: () => void;
 }
 
-export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onRerouteOSRM, onReconsolidate, selectionBBox, osrmStatus, hasCables, budgetColoring, onToggleBudgetColoring }: Props) {
+export default function ToolsTab({
+  scenarios = {}, settings, prices, onSaveScenarioA, onSaveScenarioB, onRestoreScenarioA, onRestoreScenarioB,
+  scenarioDiffOn, onToggleScenarioDiff,
+  readOnly, projectId, districts = [], cables = [], annotations = [],
+  onCopyShareViewLink, onCopyShareFieldLink,
+  onShowHeatmap, heatmapEnabled, onExportPDF, onPrintMap, onRerouteOSRM, onReconsolidate, selectionBBox, osrmStatus, hasCables, budgetColoring, onToggleBudgetColoring,
+}: Props) {
   const [inputs, setInputs] = useState<OpticalBudgetInputs>(DEFAULT_INPUTS);
+  const [offlineTiles, setOfflineTiles] = useState(false);
+  const [tilePreload, setTilePreload] = useState<TilePreloadProgress | null>(null);
+  const [preloading, setPreloading] = useState(false);
+  const preloadAbort = useRef<AbortController | null>(null);
+  useEffect(() => {
+    setOfflineTiles(isOfflineTilesEnabled());
+  }, []);
+
   const result = useMemo(() => calculateOpticalBudget(inputs), [inputs]);
+
+  const projectBbox = useMemo(
+    () => bboxFromProject(districts, cables, annotations),
+    [districts, cables, annotations],
+  );
+
+  const startTilePreload = async () => {
+    if (!projectBbox || preloading) return;
+    if (!offlineTiles) {
+      setOfflineTiles(true);
+      setOfflineTilesEnabled(true);
+      await syncOfflineTileWorker();
+      setOfflineTiles(true);
+    }
+    preloadAbort.current?.abort();
+    const ac = new AbortController();
+    preloadAbort.current = ac;
+    setPreloading(true);
+    setTilePreload({ done: 0, total: 0, failed: 0 });
+    try {
+      await preloadTilesForBBox(projectBbox, {
+        signal: ac.signal,
+        onProgress: setTilePreload,
+      });
+    } finally {
+      setPreloading(false);
+    }
+  };
+
+  const toggleOfflineTiles = async () => {
+    const next = !offlineTiles;
+    setOfflineTiles(next);
+    setOfflineTilesEnabled(next);
+    await syncOfflineTileWorker();
+  };
 
   return (
     <div className="overflow-y-auto h-full p-3 space-y-4">
+      <section>
+        <h3 className="section-title mb-2">Офлайн-карта</h3>
+        <button
+          type="button"
+          onClick={toggleOfflineTiles}
+          className={`w-full py-1.5 text-[10px] rounded border ${
+            offlineTiles ? 'border-[#34d399]/50 bg-[#34d399]/15 text-[#34d399]' : 'border-[#1e3a5f] text-[#94a3b8]'
+          }`}
+        >
+          {offlineTiles ? '✓ Кэш тайлов включён' : 'Кэшировать тайлы карты'}
+        </button>
+        <p className="text-[9px] text-[#64748b] mt-1">
+          Прокрутите нужный район онлайн — тайлы сохранятся для просмотра без сети (Carto/Esri).
+        </p>
+        <button
+          type="button"
+          onClick={startTilePreload}
+          disabled={!projectBbox || preloading}
+          className="w-full mt-2 py-1.5 text-[10px] rounded border border-[#38bdf8]/40 text-[#38bdf8] disabled:opacity-40"
+        >
+          {preloading
+            ? `Предзагрузка… ${tilePreload?.done ?? 0}/${tilePreload?.total ?? '…'}`
+            : 'Предзагрузить тайлы проекта'}
+        </button>
+        {!projectBbox && (
+          <p className="text-[9px] text-[#64748b] mt-1">Нужны объекты на карте (OLT, кабели, заметки).</p>
+        )}
+        {tilePreload && !preloading && tilePreload.total > 0 && (
+          <p className="text-[9px] text-[#64748b] mt-1">
+            Готово: {tilePreload.done - tilePreload.failed} из {tilePreload.total}
+            {tilePreload.failed > 0 ? `, ошибок: ${tilePreload.failed}` : ''}.
+          </p>
+        )}
+      </section>
+
+      {onSaveScenarioA && onSaveScenarioB && (
+        <ScenarioPanel
+          scenarios={scenarios}
+          settings={settings}
+          prices={prices}
+          onSaveA={onSaveScenarioA}
+          onSaveB={onSaveScenarioB}
+          onRestoreA={onRestoreScenarioA ?? (() => {})}
+          onRestoreB={onRestoreScenarioB ?? (() => {})}
+          readOnly={readOnly}
+          scenarioDiffOn={scenarioDiffOn}
+          onToggleScenarioDiff={onToggleScenarioDiff}
+        />
+      )}
+      {projectId && !readOnly && (onCopyShareViewLink || onCopyShareFieldLink) && (
+        <section>
+          <h3 className="section-title mb-2">Ссылки для команды</h3>
+          {onCopyShareViewLink && (
+            <button type="button" className="btn btn-secondary w-full text-[10px] mb-1.5" onClick={onCopyShareViewLink}>
+              🔗 Просмотр (read-only)
+            </button>
+          )}
+          {onCopyShareFieldLink && (
+            <button type="button" className="btn btn-secondary w-full text-[10px]" onClick={onCopyShareFieldLink}>
+              📷 Поле (чеклист + фото)
+            </button>
+          )}
+          <p className="text-[9px] text-[#64748b] mt-1">С параметрами <code>project</code> и <code>role</code>.</p>
+        </section>
+      )}
       {/* OSRM routing */}
       <section>
-        <h3 className="text-[10px] uppercase tracking-widest text-[#64748b] mb-2">Маршрутизация кабелей</h3>
+        <h3 className="section-title mb-2">Маршрутизация кабелей</h3>
         {selectionBBox && (
           <div className="mb-2 p-1.5 bg-[#fbbf24]/10 border border-[#fbbf24]/40 rounded text-[10px] text-[#fbbf24]">
             🔲 Операции применятся только в выделенной области.
           </div>
         )}
         <button
+          type="button"
           onClick={onRerouteOSRM}
-          disabled={!hasCables || osrmStatus === 'routing'}
-          className="w-full py-2 px-3 text-xs font-semibold rounded-lg border transition-all disabled:opacity-40 disabled:cursor-not-allowed bg-[#38bdf8]/10 border-[#38bdf8]/50 text-[#38bdf8] hover:bg-[#38bdf8]/20"
+          disabled={readOnly || !hasCables || osrmStatus === 'routing'}
+          className="btn btn-secondary w-full"
         >
+          <Route size={14} />
           {osrmStatus === 'routing'
-            ? '⏳ Маршрутизация...'
+            ? 'Маршрутизация…'
             : selectionBBox
-              ? '🛣 Проложить (выделение)'
-              : '🛣 Проложить по дорогам (OSRM)'}
+              ? 'Проложить (выделение)'
+              : 'Проложить по дорогам (OSRM)'}
         </button>
         <p className="text-[9px] text-[#64748b] mt-1">
           {selectionBBox
@@ -58,16 +200,18 @@ export default function ToolsTab({ onShowHeatmap, heatmapEnabled, onExportPDF, o
             : 'Перестраивает все кабели по дорогам через router.project-osrm.org. Занимает 1–2 мин.'}
         </p>
         <button
+          type="button"
           onClick={onReconsolidate}
-          disabled={!hasCables}
-          className="mt-2 w-full py-2 px-3 text-xs font-semibold rounded-lg border transition-all disabled:opacity-40 bg-[#a78bfa]/10 border-[#a78bfa]/50 text-[#a78bfa] hover:bg-[#a78bfa]/20"
+          disabled={readOnly || !hasCables}
+          className="btn btn-secondary w-full mt-2 text-[var(--accent-2)]"
         >
-          {selectionBBox ? '🔁 Объединить (выделение)' : '🔁 Объединить кабели на общих дорогах'}
+          <Merge size={14} />
+          {selectionBBox ? 'Объединить (выделение)' : 'Объединить на общих дорогах'}
         </button>
         <p className="text-[9px] text-[#64748b] mt-1">
           {selectionBBox
             ? 'Консолидация и муфты только в выбранной области, остальная сеть не трогается.'
-            : 'Снэп вершин к сетке 25м, объединение параллельных кабелей, муфты в развилках. Используй после ручных правок.'}
+            : 'Слияние узлов в радиусе 30м (оборудование защищено), объединение параллельных кабелей одной дороги, муфты в развилках. Используй после ручных правок.'}
         </p>
       </section>
 

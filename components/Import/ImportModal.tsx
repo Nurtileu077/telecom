@@ -1,6 +1,6 @@
 'use client';
-import { useState, useRef, useCallback, useMemo } from 'react';
-import { Subscriber, ProjectSettings, Project } from '@/types/network';
+import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
+import { Subscriber, ProjectSettings, Project, SplitterRatio } from '@/types/network';
 import { importExcel } from './ExcelImporter';
 import { importKmz, importKmzBatch, importKmzRaw, importKmzBatchRaw, type KmlRawLine } from './KmzImporter';
 import { buildStructured, type KmlPoint, type KmlLine } from './KmlStructured';
@@ -91,6 +91,11 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
   // Raw mode: load KML 1:1 (points + LineStrings) without running the build.
   const [rawMode, setRawMode] = useState(true);
   const [rawLines, setRawLines] = useState<KmlRawLine[]>([]);
+  // L2-сплиттер по умолчанию для всех новых ОРКСП в этом импорте.
+  // ЛУ (26 Мбит) и ОВН (5 Мбит) комфортно живут на 1:32 и 1:64; Перекрёсток
+  // (78 Мбит) требует 1:16 или меньше.  Пользователь выбирает на основании
+  // фактической нагрузки или политики оператора.
+  const [defaultSplitter, setDefaultSplitter] = useState<SplitterRatio>(currentSettings.defaultSplitter ?? '1:8');
   // Structured KML data — populated when the file has classifiable
   // folder structure (OLT/Муфта/ОРК/Кабель…).  When non-null and rawMode
   // is on, submitting builds a real District tree instead of dumping flat.
@@ -100,7 +105,12 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
     districts: District[];
     cables: Cable[];
     radioLines: Array<{ coords: [number, number][]; name: string; district: string }>;
-    stats: { olt: number; tb: number; ork: number; sub: number; supports: number; joints: number; radio: number; cablesMatched: number; cablesOrphan: number };
+    stats: {
+      olt: number; tb: number; ork: number;
+      camLu: number; camIntersect: number; camOvn: number;
+      joints: number; radio: number;
+      cablesMatched: number; cablesOrphan: number;
+    };
   } | null>(null);
 
   const handleFiles = useCallback(async (rawFiles: FileList | File[]) => {
@@ -129,7 +139,7 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
         // Кабели-ОК-48.kml / Абоненты.kml) — without merging, cables from
         // one file can't snap to entities in another.
         const mergedName = files.length === 1 ? undefined : 'Сеть';
-        const preview = buildStructured(sp, sl, { mergeAll: true, mergedName });
+        const preview = buildStructured(sp, sl, { mergeAll: true, mergedName, defaultSplitter });
         if (preview.stats.olt + preview.stats.tb + preview.stats.ork > 0 || preview.stats.cablesMatched > 0) {
           setStructuredPreview(preview);
         }
@@ -152,7 +162,7 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
         setRawLines(lines);
         setStructuredPoints(sp);
         setStructuredLines(sl);
-        const preview = buildStructured(sp, sl);
+        const preview = buildStructured(sp, sl, { defaultSplitter });
         if (preview.stats.olt + preview.stats.tb + preview.stats.ork > 0 || preview.stats.cablesMatched > 0) {
           setStructuredPreview(preview);
         }
@@ -184,7 +194,7 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
     try {
       const text = await file.text();
       const p = JSON.parse(text) as Project;
-      if (!p.districts || !Array.isArray(p.districts)) throw new Error('Не похоже на экспорт проекта GPON');
+      if (!p.districts || !Array.isArray(p.districts)) throw new Error('Не похоже на экспорт проекта OPTIQ');
       setNetProject(p);
       setNetFileName(file.name);
     } catch (e: any) {
@@ -253,9 +263,25 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
   const districtCount = Object.keys(byDistrict).length;
   const districtsWithOlt = Object.keys(parsedOlts).length;
 
+  // Recompute the structured preview when the user switches splitter — keeps
+  // the «Распознана структура» card consistent with what will actually build.
+  useEffect(() => {
+    if (structuredPoints.length === 0 && structuredLines.length === 0) return;
+    const mergeAll = structuredPoints[0]?.fileDistrict !== fileName;
+    const preview = buildStructured(structuredPoints, structuredLines, {
+      mergeAll,
+      mergedName: 'Сеть',
+      defaultSplitter,
+    });
+    if (preview.stats.olt + preview.stats.tb + preview.stats.ork > 0 || preview.stats.cablesMatched > 0) {
+      setStructuredPreview(preview);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultSplitter]);
+
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
-      <div className="bg-[#0d1b2a] border border-[#1e3a5f] rounded-xl shadow-2xl w-[500px] max-h-[90vh] overflow-y-auto">
+      <div className="modal-sheet bg-[#0d1b2a] border border-[#1e3a5f] rounded-xl shadow-2xl w-[500px] max-h-[90vh] overflow-y-auto mx-2">
         <div className="flex items-center justify-between p-4 border-b border-[#1e3a5f]">
           <h2 className="text-sm font-semibold text-[#e2e8f0]">Импорт данных</h2>
           <button onClick={onClose} className="text-[#64748b] hover:text-[#e2e8f0] transition-colors">✕</button>
@@ -580,34 +606,62 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
                   <div className="text-[9px] text-[#64748b] mt-0.5">Кластеризация + кабели</div>
                 </button>
               </div>
+
+              {/* L2-сплиттер по умолчанию — применится к каждому ОРКСП в этом
+                  импорте.  Можно переопределить вручную на каждом ОРКСП после
+                  загрузки.  Подсказка справа показывает полосу на абонента. */}
+              <div className="mt-2 flex items-center gap-2">
+                <span className="text-[10px] text-[#64748b] w-24">L2-сплиттер ОРКСП:</span>
+                <select
+                  value={defaultSplitter}
+                  onChange={(e) => setDefaultSplitter(e.target.value as SplitterRatio)}
+                  className="flex-1 bg-[#0a0e1a] border border-[#1e3a5f] rounded px-2 py-1 text-[11px] text-[#e2e8f0] focus:outline-none focus:border-[#38bdf8]"
+                >
+                  <option value="1:2">1:2 — ~1250 Мбит/абон.</option>
+                  <option value="1:4">1:4 — ~625 Мбит/абон.</option>
+                  <option value="1:8">1:8 — ~312 Мбит/абон. (Перекр./ЛУ комфортно)</option>
+                  <option value="1:16">1:16 — ~156 Мбит/абон. (для Перекрёстков)</option>
+                  <option value="1:32">1:32 — ~78 Мбит/абон. (ЛУ норм)</option>
+                  <option value="1:64">1:64 — ~39 Мбит/абон. (ОВН / ЛУ ок)</option>
+                </select>
+              </div>
+
               {rawLines.length > 0 && rawMode && !structuredPreview && (
                 <p className="mt-2 text-[10px] text-[#fbbf24]">
                   📐 В файле найдено {rawLines.length} линий — покажу как нарисовано.
                 </p>
               )}
-              {structuredPreview && rawMode && (
+              {structuredPreview && rawMode && (() => {
+                const s = structuredPreview.stats;
+                const totalCams = s.camLu + s.camIntersect + s.camOvn;
+                return (
                 <div className="mt-2 p-2 bg-[#34d399]/10 border border-[#34d399]/40 rounded text-[10px] text-[#34d399] space-y-0.5">
                   <div>✓ Распознана структура сети:</div>
-                  <div className="grid grid-cols-5 gap-1 font-mono text-center mt-1">
-                    <div><b>{structuredPreview.stats.olt}</b> OLT</div>
-                    <div><b>{structuredPreview.stats.tb}</b> Муфт</div>
-                    <div><b>{structuredPreview.stats.ork}</b> ОРК</div>
-                    <div><b>{structuredPreview.stats.sub}</b> Аб.</div>
-                    <div><b>{structuredPreview.stats.cablesMatched}</b> кабелей</div>
+                  <div className="grid grid-cols-4 gap-1 font-mono text-center mt-1">
+                    <div><b>{s.olt}</b> OLT</div>
+                    <div><b>{s.tb}</b> Муфт-TB</div>
+                    <div><b>{s.ork}</b> ОРКСП</div>
+                    <div><b>{s.cablesMatched}</b> кабелей</div>
                   </div>
-                  {(structuredPreview.stats.supports > 0 || structuredPreview.stats.joints > 0 || structuredPreview.stats.radio > 0) && (
+                  <div className="grid grid-cols-3 gap-1 font-mono text-center mt-1 text-[#cbd5e1]">
+                    <div title="Линейный участок: 26 Мбит/с"><span className="text-[#fbbf24]">●</span> <b>{s.camLu}</b> ЛУ</div>
+                    <div title="Перекрёсток: 78 Мбит/с"><span className="text-[#f87171]">●</span> <b>{s.camIntersect}</b> Перекр</div>
+                    <div title="ОВН: 5 Мбит/с"><span className="text-[#38bdf8]">●</span> <b>{s.camOvn}</b> ОВН</div>
+                  </div>
+                  <div className="mt-1 text-[#94a3b8]">Всего камер: <b>{totalCams}</b>{totalCams > 512 ? ' (потребуется 2 OLT)' : ''}</div>
+                  {(s.joints > 0 || s.radio > 0) && (
                     <div className="mt-1 text-[#94a3b8]">
-                      Доп.: {structuredPreview.stats.supports} опор, {structuredPreview.stats.joints} узлов
-                      {structuredPreview.stats.radio > 0 ? `, ${structuredPreview.stats.radio} РРЛ` : ''} (точки крепления для кабелей)
+                      Доп.: {s.joints} сварных муфт{s.radio > 0 ? `, ${s.radio} РРЛ (игнор)` : ''}
                     </div>
                   )}
-                  {structuredPreview.stats.cablesOrphan > 0 && (
+                  {s.cablesOrphan > 0 && (
                     <div className="text-[#fbbf24] mt-1">
-                      ⚠️ {structuredPreview.stats.cablesOrphan} линий не привязалось к сущностям (расстояние &gt;75м)
+                      ⚠️ {s.cablesOrphan} линий не привязалось к сущностям (расстояние &gt;75м)
                     </div>
                   )}
                 </div>
-              )}
+                );
+              })()}
             </div>
           )}
 
@@ -669,7 +723,9 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
                     onLoadRaw(subscribers, rawLines, fileName);
                   }
                 } else {
-                  onBuild(subscribers, settings, fileName, mode, parsedOlts);
+                  // Persist the chosen splitter into project settings so the
+                  // AutoBuild flow uses the same ratio when creating ORKs.
+                  onBuild(subscribers, { ...settings, defaultSplitter }, fileName, mode, parsedOlts);
                 }
               }}
               disabled={!subscribers}

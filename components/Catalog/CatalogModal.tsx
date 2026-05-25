@@ -50,7 +50,7 @@ export default function CatalogModal({ onClose }: Props) {
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-[#0d1b2a] border border-[#1e3a5f] rounded-xl shadow-2xl w-[820px] max-h-[88vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-sheet bg-[#0d1b2a] border border-[#1e3a5f] rounded-xl shadow-2xl w-[820px] max-h-[88vh] flex flex-col mx-2" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-[#1e3a5f]">
           <div>

@@ -3,8 +3,13 @@ import { useEffect, useRef, useState } from 'react';
 import {
   District, Cable, LayerVisibility, MapAnnotation, AnnotationType,
   ANNOTATION_PRESETS, InlineJoint, CABLE_COLORS as CABLE_COLORS_MAP,
+  CAMERA_KIND_COLOR, CAMERA_KIND_LABEL, CAMERA_MIN_BANDWIDTH_MBPS,
 } from '@/types/network';
 import type { DrawingTool } from '@/components/Sidebar/NotesTab';
+import { nearestTbToJoint } from '@/components/Network/entityInterior';
+import GpsLocateButton from '@/components/Map/GpsLocateButton';
+import PresenceCursors from '@/components/Map/PresenceCursors';
+import { buildMapEntityLabels } from '@/lib/mapEntityLabels';
 
 interface Props {
   districts: District[];
@@ -33,12 +38,21 @@ interface Props {
   selectingMode?: boolean;
   onMapClick?: (lat: number, lon: number) => void;
   onMapContextMenu?: (lat: number, lon: number, screenX: number, screenY: number) => void;
-  moveEntity?: (kind: 'tb' | 'ork' | 'olt', id: string, lat: number, lon: number) => void;
+  moveEntity?: (kind: 'tb' | 'ork' | 'olt' | 'sub' | 'joint', id: string, lat: number, lon: number) => void;
   deleteSubscriber?: (id: string) => void;
   onEntityClick?: (kind: 'olt' | 'tb' | 'ork', id: string) => void;
+  onEntityDoubleClick?: (kind: 'olt' | 'tb' | 'ork', id: string) => void;
+  onJointClick?: (jointId: string) => void;
+  /** Узел в режиме перетаскивания (двойной клик или кнопка в инспекторе). */
+  moveEntityTarget?: { kind: 'olt' | 'tb' | 'ork' | 'sub' | 'joint'; id: string } | null;
   onCableClick?: (id: string) => void;
   editingCableId?: string | null;
   onUpdateCableCoords?: (id: string, coords: [number, number][]) => void;
+  onCableEndpointSnap?: (cableId: string, end: 'from' | 'to', entityId: string) => void;
+  onSnapHighlight?: (entityId: string | null) => void;
+  snapHighlightId?: string | null;
+  /** Несколько узлов (режим «Соединить», совместимые цели). */
+  snapHighlightIds?: Set<string> | null;
 
   // Power-budget colouring of subscribers
   budgetMap?: Map<string, 'ok' | 'warn' | 'fail'>;
@@ -51,6 +65,17 @@ interface Props {
   // Bounding-box overlay for "export selection".  Drawn as a translucent
   // amber rectangle so the user can see what's about to be exported.
   selectionBBox?: { latMin: number; lonMin: number; latMax: number; lonMax: number } | null;
+  // Лассо-выделение: вершины в процессе рисования и финальный полигон.
+  selectionPoints?: [number, number][];
+  selectionPoly?: [number, number][] | null;
+  // «Показать ветку»: id кабелей выбранной ветки. Остальные кабели приглушаются.
+  highlightCableIds?: Set<string> | null;
+  /** Diff сценариев A↔B: пунктирные линии поверх карты */
+  scenarioMapDiff?: import('@/lib/scenarioDiff').ScenarioMapDiff | null;
+  onShowBranchSub?: (id: string) => void;
+  /** Курсоры коллег (Supabase Realtime presence) */
+  presencePeers?: import('@/hooks/useProjectPresence').PresenceCursor[];
+  onPresenceCursorMove?: (lat: number, lon: number) => void;
 }
 
 const CABLE_COLORS: Record<string, string> = CABLE_COLORS_MAP as Record<string, string>;
@@ -220,6 +245,8 @@ function offsetPolyline(coords: [number, number][], offsetM: number): [number, n
 
 export default function LeafletMap(props: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const gpsMarkerRef = useRef<any>(null);
+  const gpsCircleRef = useRef<any>(null);
   const mapRef = useRef<any>(null);
   const tileLayerRef = useRef<any>(null);
   const hybridLabelsRef = useRef<any>(null);
@@ -231,8 +258,10 @@ export default function LeafletMap(props: Props) {
   const drawStateRef = useRef<{ coords: [number, number][]; tempLayer?: any }>({ coords: [] });
   const measureStateRef = useRef<{ coords: [number, number][]; layer?: any; total: number }>({ coords: [], total: 0 });
   const waypointGroupRef = useRef<any>(null);
+  const entityDragRef = useRef(false);
 
   const [baseMap, setBaseMap] = useState<BaseMap>('dark');
+  const [mapReady, setMapReady] = useState(false);
 
   // Stable refs for callbacks (so we don't re-init map)
   const propsRef = useRef(props);
@@ -264,10 +293,13 @@ export default function LeafletMap(props: Props) {
       measureGroupRef.current = L.layerGroup().addTo(map);
       waypointGroupRef.current = L.layerGroup().addTo(map);
       mapRef.current = map;
+      setMapReady(true);
 
       // Force Leaflet to recalculate container size after layout settles
       setTimeout(() => { map.invalidateSize(); }, 100);
-      setTimeout(() => { map.invalidateSize(); }, 500);
+
+      const onResize = () => { map.invalidateSize(); };
+      window.addEventListener('resize', onResize);
 
       if (propsRef.current.flyToRef) {
         propsRef.current.flyToRef.current = (lat, lon, zoom = 16) => {
@@ -327,6 +359,14 @@ export default function LeafletMap(props: Props) {
         }
       });
 
+      let lastPresenceSend = 0;
+      map.on('mousemove', (e: any) => {
+        const now = Date.now();
+        if (now - lastPresenceSend < 80) return;
+        lastPresenceSend = now;
+        propsRef.current.onPresenceCursorMove?.(e.latlng.lat, e.latlng.lng);
+      });
+
       // Re-render on zoom (for drop visibility threshold)
       map.on('zoomend', () => {
         renderData();
@@ -353,11 +393,16 @@ export default function LeafletMap(props: Props) {
       }, 200);
     });
 
+    const onResize = () => mapRef.current?.invalidateSize();
+    window.addEventListener('resize', onResize);
+
     return () => {
+      window.removeEventListener('resize', onResize);
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
       }
+      setMapReady(false);
     };
   }, []);
 
@@ -412,14 +457,65 @@ export default function LeafletMap(props: Props) {
     }
   }, [props.activeTool, props.editMode, props.measureMode, props.placingMode, props.selectingMode]);
 
+  function entityDraggable(kind: 'olt' | 'tb' | 'ork', id: string): boolean {
+    const p = propsRef.current;
+    const t = p.moveEntityTarget;
+    if (t?.kind === kind && t.id === id) return true;
+    return !!p.editMode;
+  }
+
+  function wireEntityMarker(marker: any, kind: 'olt' | 'tb' | 'ork', id: string) {
+    let dragged = false;
+    marker.on('dragstart', () => {
+      dragged = true;
+      entityDragRef.current = true;
+    });
+    marker.on('dragend', (e: any) => {
+      const ll = e.target.getLatLng();
+      propsRef.current.moveEntity?.(kind, id, ll.lat, ll.lng);
+      window.setTimeout(() => {
+        dragged = false;
+        entityDragRef.current = false;
+      }, 50);
+    });
+    marker.on('dblclick', (e: any) => {
+      e.originalEvent?.stopPropagation?.();
+      propsRef.current.onEntityDoubleClick?.(kind, id);
+    });
+    marker.on('click', (e: any) => {
+      if (dragged || entityDragRef.current) return;
+      e.originalEvent?.stopPropagation?.();
+      propsRef.current.onEntityClick?.(kind, id);
+    });
+    marker.on('contextmenu', (e: any) => {
+      e.originalEvent?.preventDefault?.();
+      propsRef.current.onEntityClick?.(kind, id);
+    });
+  }
+
   function renderData() {
     const map = mapRef.current;
     const group = dataGroupRef.current;
     if (!map || !group) return;
     import('leaflet').then((L) => {
       group.clearLayers();
-      const { districts, cables, layers, joints } = propsRef.current;
+      const { districts, cables, layers, joints, moveEntityTarget, snapHighlightId, snapHighlightIds } = propsRef.current;
+      const isSnapTarget = (id: string) =>
+        snapHighlightId === id || (snapHighlightIds?.has(id) ?? false);
       const zoom = map.getZoom();
+      const entityLabels = buildMapEntityLabels(districts);
+      const addMapLabel = (lat: number, lon: number, id: string, color: string) => {
+        if (zoom < 14) return;
+        const text = entityLabels.get(id);
+        if (!text) return;
+        const labelIcon = L.divIcon({
+          className: '',
+          iconSize: [1, 1],
+          iconAnchor: [0, 0],
+          html: `<div style="margin-top:6px;padding:1px 4px;font-size:9px;font-weight:600;font-family:system-ui,sans-serif;color:${color};background:rgba(13,27,42,0.92);border:1px solid ${color}55;border-radius:3px;white-space:nowrap;max-width:140px;overflow:hidden;text-overflow:ellipsis;pointer-events:none">${text.replace(/</g, '')}</div>`,
+        });
+        L.marker([lat, lon], { icon: labelIcon, interactive: false }).addTo(group);
+      };
 
       if (layers.cables) {
         // ── Параллельные кабели на одной дороге ──
@@ -437,6 +533,11 @@ export default function LeafletMap(props: Props) {
           if (cable.type === 'ОК-4' && zoom < 14) continue;
 
           const isEditing = propsRef.current.editingCableId === cable.id;
+          const hl = propsRef.current.highlightCableIds;
+          const diffMode = !!propsRef.current.scenarioMapDiff;
+          const dimmed = !!hl && !hl.has(cable.id);
+          const inBranch = !!hl && hl.has(cable.id);
+          const inDiff = diffMode && hl?.has(cable.id);
           const lane = lanes.get(cable.id) ?? 0;
           // 0.6 m между параллельными «полосами» — компактно, помещается в ширину
           // полосы дороги.  Знакочередование вокруг центра, кап на 4 полосе.
@@ -448,34 +549,107 @@ export default function LeafletMap(props: Props) {
           const drawnCoords = offsetM === 0 ? cable.coords : offsetPolyline(cable.coords, offsetM);
 
           const poly = L.polyline(drawnCoords, {
-            color: isEditing ? '#c4b5fd' : (CABLE_COLORS[cable.type] || '#888'),
-            weight: isEditing ? (CABLE_WEIGHTS[cable.type] || 2) + 2 : (CABLE_WEIGHTS[cable.type] || 2),
-            opacity: cable.type === 'ОК-4' ? 0.6 : 0.85,
+            color: dimmed
+              ? '#334155'
+              : inDiff
+                ? '#fbbf24'
+                : isEditing
+                  ? '#c4b5fd'
+                  : (CABLE_COLORS[cable.type] || '#888'),
+            weight: dimmed
+              ? 1
+              : (CABLE_WEIGHTS[cable.type] || 2) + (isEditing ? 2 : inDiff ? 2 : inBranch ? 1 : 0),
+            opacity: dimmed ? 0.12 : inDiff || inBranch ? 1 : (cable.type === 'ОК-4' ? 0.6 : 0.85),
           });
+          const cableTitle = cable.displayName
+            ? `<b>${cable.displayName}</b><br/><span style="font-size:10px;color:#94a3b8">${cable.type}</span>`
+            : `<b>${cable.type}</b>`;
+          const installNote = cable.installType
+            ? `<br/>Прокладка: ${({ aerial: 'Воздушная', duct: 'В канализации', ground: 'В грунте' } as Record<string, string>)[cable.installType] ?? cable.installType}`
+            : '';
           poly.bindTooltip(
-            `<b>${cable.type}</b><br/>${cable.fromId} → ${cable.toId}<br/>Длина: ${Math.round(cable.lengthM)} м${lane > 0 ? `<br/><i style=\"color:#94a3b8\">полоса ${lane}</i>` : ''}`,
+            `${cableTitle}<br/>${cable.fromId} → ${cable.toId}<br/>Длина: ${Math.round(cable.lengthM)} м${installNote}${lane > 0 ? `<br/><i style=\"color:#94a3b8\">полоса ${lane}</i>` : ''}`,
             { sticky: true, className: 'text-xs' },
           );
-          poly.on('click', (e: any) => {
+          const onCablePick = (e: any) => {
             e.originalEvent?.stopPropagation?.();
             propsRef.current.onCableClick?.(cable.id);
+          };
+          poly.on('click', onCablePick);
+          const hitLine = L.polyline(drawnCoords, {
+            color: '#000',
+            weight: 20,
+            opacity: 0.001,
+            interactive: true,
           });
+          hitLine.on('click', onCablePick);
+          group.addLayer(hitLine);
           group.addLayer(poly);
+        }
+
+        const diff = propsRef.current.scenarioMapDiff;
+        if (diff) {
+          const dash = '10 8';
+          for (const d of diff.removed) {
+            if (d.cable.coords.length < 2) continue;
+            L.polyline(d.cable.coords, {
+              color: '#f87171', weight: 4, opacity: 0.85, dashArray: dash,
+            }).bindTooltip(
+              `<b>− Сценарий A</b><br/>${d.cable.type} · ${Math.round(d.cable.lengthM)} м<br/><span style="color:#94a3b8">нет в B</span>`,
+              { sticky: true, className: 'text-xs' },
+            ).addTo(group);
+          }
+          for (const d of diff.added) {
+            if (d.cable.coords.length < 2) continue;
+            L.polyline(d.cable.coords, {
+              color: '#34d399', weight: 4, opacity: 0.9, dashArray: dash,
+            }).bindTooltip(
+              `<b>+ Сценарий B</b><br/>${d.cable.type} · ${Math.round(d.cable.lengthM)} м`,
+              { sticky: true, className: 'text-xs' },
+            ).addTo(group);
+          }
+          for (const d of diff.modified) {
+            if (d.cable.coords.length < 2) continue;
+            L.polyline(d.cable.coords, {
+              color: '#fbbf24', weight: 5, opacity: 0.95,
+            }).bindTooltip(
+              `<b>Δ A→B</b><br/>${d.deltaLengthM != null && d.deltaLengthM >= 0 ? '+' : ''}${d.deltaLengthM ?? 0} м<br/>${d.cable.type}`,
+              { sticky: true, className: 'text-xs' },
+            ).addTo(group);
+            if (d.other && d.other.coords.length >= 2) {
+              L.polyline(d.other.coords, {
+                color: '#f87171', weight: 2, opacity: 0.35, dashArray: '4 6',
+              }).addTo(group);
+            }
+          }
         }
       }
 
       // In-line муфты — точки расхождения магистрали (создаются консолидацией)
       if (layers.tb && joints && zoom >= 13) {
         for (const j of joints) {
+          if (nearestTbToJoint(j, districts, 8)) continue;
           const icon = L.divIcon({
             html: `<div style="width:14px;height:14px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;background:#0d1b2a;border:1.5px solid #38bdf8;border-radius:50%;color:#38bdf8;box-shadow:0 0 4px rgba(56,189,248,0.6)">⊕</div>`,
             className: '', iconSize: [14, 14], iconAnchor: [7, 7],
           });
-          const m = L.marker([j.lat, j.lon], { icon });
+          const moveHere = moveEntityTarget?.kind === 'joint' && moveEntityTarget.id === j.id;
+          const m = L.marker([j.lat, j.lon], {
+            icon,
+            draggable: moveHere || !!propsRef.current.editMode,
+          });
           m.bindTooltip(
-            `<b>Транзитная муфта</b><br/>${j.id}<br/>Ответвлений: ${j.branchCount}`,
+            `<b>Транзитная муфта</b><br/>${j.id}<br/>Ответвлений: ${j.branchCount}<br/><i style="font-size:10px;color:#94a3b8">Двойной клик / перетаскивание — переместить</i>`,
             { sticky: true, className: 'text-xs' },
           );
+          m.on('click', (e: any) => {
+            e.originalEvent?.stopPropagation?.();
+            propsRef.current.onJointClick?.(j.id);
+          });
+          m.on('dragend', (e: any) => {
+            const ll = e.target.getLatLng();
+            propsRef.current.moveEntity?.('joint', j.id, ll.lat, ll.lng);
+          });
           group.addLayer(m);
         }
       }
@@ -483,93 +657,101 @@ export default function LeafletMap(props: Props) {
       for (const district of districts) {
         const { olt } = district;
         if (layers.olt) {
+          const moveHere = moveEntityTarget?.kind === 'olt' && moveEntityTarget.id === olt.id;
+          const snapHere = isSnapTarget(olt.id);
           const icon = L.divIcon({
-            html: `<div style="width:40px;height:22px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;font-family:monospace;background:linear-gradient(135deg,#f59e0b,#fbbf24);border:2px solid #f59e0b;border-radius:4px;color:#0a0e1a;box-shadow:0 2px 8px rgba(0,0,0,0.5)">OLT</div>`,
+            html: `<div style="width:40px;height:22px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;font-family:monospace;background:linear-gradient(135deg,#f59e0b,#fbbf24);border:2px solid ${snapHere ? '#34d399' : moveHere ? '#a78bfa' : '#f59e0b'};border-radius:4px;color:#0a0e1a;box-shadow:0 ${snapHere || moveHere ? '0 12px' : '2px 8px'} rgba(${snapHere ? '52,211,153' : moveHere ? '167,139,250' : '0,0,0'},0.55)">OLT</div>`,
             className: '', iconSize: [40, 22], iconAnchor: [20, 11],
           });
-          const draggable = !!propsRef.current.editMode;
-          const m = L.marker([olt.lat, olt.lon], { icon, draggable });
-          m.bindPopup(`<b>${olt.id}</b><br/>${olt.model}<br/>Район: ${district.name}<br/>Ёмкость: ${olt.capacity}<br/>TB: ${olt.transitBoxes.length}`);
-          m.on('click', () => { propsRef.current.onEntityClick?.('olt', olt.id); });
-          m.on('contextmenu', (e: any) => {
-            e.originalEvent.preventDefault();
-            propsRef.current.onEntityClick?.('olt', olt.id);
-          });
-          if (draggable) {
-            m.on('dragend', (e: any) => {
-              const ll = e.target.getLatLng();
-              propsRef.current.moveEntity?.('olt', olt.id, ll.lat, ll.lng);
-            });
-          }
+          const canDrag = entityDraggable('olt', olt.id);
+          const m = L.marker([olt.lat, olt.lon], { icon, draggable: canDrag });
+          m.bindPopup(`<b>${olt.id}</b><br/>${olt.model}<br/>Район: ${district.name}<br/>Ёмкость: ${olt.capacity}<br/>TB: ${olt.transitBoxes.length}<br/><i style="font-size:10px;color:#94a3b8">Двойной клик — режим перемещения</i>`);
+          wireEntityMarker(m, 'olt', olt.id);
           group.addLayer(m);
+          addMapLabel(olt.lat, olt.lon, olt.id, '#fbbf24');
         }
         for (const tb of olt.transitBoxes) {
           if (layers.tb) {
-            const icon = L.divIcon({
-              html: `<div style="width:30px;height:18px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;font-family:monospace;background:#1a2744;border:2px solid #38bdf8;border-radius:3px;color:#38bdf8;box-shadow:0 1px 4px rgba(0,0,0,0.4)">TB</div>`,
-              className: '', iconSize: [30, 18], iconAnchor: [15, 9],
+            const moveHere = moveEntityTarget?.kind === 'tb' && moveEntityTarget.id === tb.id;
+            const snapHere = isSnapTarget(tb.id);
+            const canDrag = entityDraggable('tb', tb.id);
+            const iconTb = L.divIcon({
+              html: `<div style="width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:#0d1b2a;border:2px solid ${snapHere ? '#34d399' : moveHere ? '#a78bfa' : '#38bdf8'};border-radius:50%;color:#38bdf8;box-shadow:0 0 ${snapHere || moveHere ? '10px' : '5px'} rgba(${snapHere ? '52,211,153' : '56,189,248'},0.75)">⊕</div>`,
+              className: '', iconSize: [18, 18], iconAnchor: [9, 9],
             });
-            const draggable = !!propsRef.current.editMode;
-            const m = L.marker([tb.lat, tb.lon], { icon, draggable });
-            m.bindPopup(`<b>${tb.id}</b><br/>OLT: ${olt.id}<br/>ОРК: ${tb.orks.length}<br/>Муфта: ${tb.muftaType}${draggable ? '<br/><i style="color:#64748b;font-size:10px">Перетащи для перемещения</i>' : ''}`);
-            m.on('click', () => { propsRef.current.onEntityClick?.('tb', tb.id); });
-            m.on('contextmenu', (e: any) => {
-              e.originalEvent.preventDefault();
-              propsRef.current.onEntityClick?.('tb', tb.id);
-            });
-            if (draggable) {
-              m.on('dragend', (e: any) => {
-                const ll = e.target.getLatLng();
-                propsRef.current.moveEntity?.('tb', tb.id, ll.lat, ll.lng);
-              });
-            }
+            const m = L.marker([tb.lat, tb.lon], { icon: iconTb, draggable: canDrag });
+            m.bindPopup(`<b>${tb.id}</b><br/>OLT: ${olt.id}<br/>ОРК: ${tb.orks.length}<br/>Муфта: ${tb.muftaType}<br/><i style="color:#64748b;font-size:10px">Двойной клик — переместить</i>`);
+            wireEntityMarker(m, 'tb', tb.id);
             group.addLayer(m);
+            addMapLabel(tb.lat, tb.lon, tb.id, '#38bdf8');
           }
           for (const ork of tb.orks) {
             if (layers.ork) {
-              const icon = L.divIcon({
-                html: `<div style="width:32px;height:18px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;font-family:monospace;background:#1a2744;border:2px solid #f59e0b;border-radius:3px;color:#f59e0b;box-shadow:0 1px 4px rgba(0,0,0,0.4)">ОРК</div>`,
+              const moveHere = moveEntityTarget?.kind === 'ork' && moveEntityTarget.id === ork.id;
+              const snapHere = isSnapTarget(ork.id);
+              const canDrag = entityDraggable('ork', ork.id);
+              const iconOrk = L.divIcon({
+                html: `<div style="width:32px;height:18px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;font-family:monospace;background:#1a2744;border:2px solid ${snapHere ? '#34d399' : moveHere ? '#a78bfa' : '#f59e0b'};border-radius:3px;color:#f59e0b;box-shadow:0 1px 4px rgba(0,0,0,0.4)">ОРК</div>`,
                 className: '', iconSize: [32, 18], iconAnchor: [16, 9],
               });
-              const draggable = !!propsRef.current.editMode;
-              const m = L.marker([ork.lat, ork.lon], { icon, draggable });
-              m.bindPopup(`<b>${ork.id}</b><br/>Сплиттер: ${ork.splitter}<br/>Або.: ${ork.subscribers.length}<br/>Муфта: ${tb.id}${draggable ? '<br/><i style="color:#64748b;font-size:10px">Перетащи для перемещения</i>' : ''}`);
-              m.on('click', () => { propsRef.current.onEntityClick?.('ork', ork.id); });
-              m.on('contextmenu', (e: any) => {
-                e.originalEvent.preventDefault();
-                propsRef.current.onEntityClick?.('ork', ork.id);
-              });
-              if (draggable) {
-                m.on('dragend', (e: any) => {
-                  const ll = e.target.getLatLng();
-                  propsRef.current.moveEntity?.('ork', ork.id, ll.lat, ll.lng);
-                });
-              }
+              const m = L.marker([ork.lat, ork.lon], { icon: iconOrk, draggable: canDrag });
+              m.bindPopup(`<b>${ork.id}</b><br/>Сплиттер: ${ork.splitter}<br/>Або.: ${ork.subscribers.length}<br/>Муфта: ${tb.id}<br/><i style="color:#64748b;font-size:10px">Двойной клик — переместить</i>`);
+              wireEntityMarker(m, 'ork', ork.id);
               group.addLayer(m);
+              addMapLabel(ork.lat, ork.lon, ork.id, '#f59e0b');
             }
             if (layers.subscribers && zoom >= 13) {
               const budgetMap = propsRef.current.budgetMap;
               const colorByBudget = propsRef.current.budgetColoring;
               for (const sub of ork.subscribers) {
-                let fillColor = district.color;
+                // Camera + pole-mounted ONT box (Бокс на столбе): on the
+                // physical layout every camera has its own small box on
+                // the pole — the cable enters it, ONT lives inside, and
+                // 2 fibers (working + spare) feed up to the camera.  We
+                // render this as a small filled square with a coloured
+                // dot inside, where the colour = camera-type:
+                //   amber = ЛУ, red = Перекрёсток, sky = ОВН.
+                // If kind is missing (old project / build flow), we fall
+                // back to the district colour so the camera doesn't end
+                // up indistinguishable gray.
+                const camKind = sub.kind ?? 'unknown';
+                let dotColor = camKind === 'unknown' ? district.color : CAMERA_KIND_COLOR[camKind];
                 if (colorByBudget && budgetMap) {
                   const s = budgetMap.get(sub.id);
-                  if (s === 'ok')   fillColor = '#34d399';
-                  if (s === 'warn') fillColor = '#f59e0b';
-                  if (s === 'fail') fillColor = '#f87171';
+                  if (s === 'ok')   dotColor = '#34d399';
+                  if (s === 'warn') dotColor = '#f59e0b';
+                  if (s === 'fail') dotColor = '#f87171';
                 }
-                const c = L.circleMarker([sub.lat, sub.lon], {
-                  radius: 4, fillColor, fillOpacity: 0.85,
-                  color: fillColor, weight: 1,
+                // Larger box for intersection cameras so the busiest type
+                // pops on the map.
+                const boxPx = camKind === 'intersection' ? 12 : 10;
+                const dotPx = camKind === 'intersection' ? 5 : 4;
+                const camLabel = CAMERA_KIND_LABEL[camKind];
+                const bw = sub.minBandwidthMbps ?? CAMERA_MIN_BANDWIDTH_MBPS[camKind];
+                const icon = L.divIcon({
+                  className: '',
+                  iconSize: [boxPx, boxPx],
+                  iconAnchor: [boxPx / 2, boxPx / 2],
+                  html: `<div style="
+                    width:${boxPx}px;height:${boxPx}px;
+                    background:#0d1b2a;
+                    border:1.5px solid ${dotColor};
+                    border-radius:2px;
+                    box-shadow:0 0 3px rgba(0,0,0,0.6);
+                    display:flex;align-items:center;justify-content:center
+                  "><div style="width:${dotPx}px;height:${dotPx}px;background:${dotColor};border-radius:50%"></div></div>`,
                 });
-                c.bindPopup(`<b>${sub.desc}</b><br/>ОРК: ${ork.id}<br/>Волокна: ${sub.fibers.working}+${sub.fibers.spare}${propsRef.current.editMode ? '<br/><button onclick="window.__deleteSub__(\'' + sub.id + '\')" style="margin-top:6px;padding:2px 8px;background:#f87171;color:#fff;border:none;border-radius:3px;font-size:10px;cursor:pointer">Удалить</button>' : ''}`);
-                c.on('contextmenu', (e: any) => {
+                const m = L.marker([sub.lat, sub.lon], { icon });
+                const branchBtn = `<button onclick="window.__showBranchSub__('${sub.id}')" style="margin-top:6px;padding:2px 8px;background:#38bdf8;color:#0a0e1a;border:none;border-radius:3px;font-size:10px;cursor:pointer;font-weight:600">🌿 Показать ветку</button>`;
+                const delBtn = propsRef.current.editMode ? '<br/><button onclick="window.__deleteSub__(\'' + sub.id + '\')" style="margin-top:6px;padding:2px 8px;background:#f87171;color:#fff;border:none;border-radius:3px;font-size:10px;cursor:pointer">Удалить</button>' : '';
+                m.bindPopup(`<b>${sub.desc}</b><br/>Тип: <b>${camLabel}</b> · ${bw} Мбит/с<br/>📦 Бокс на столбе → ОРК: ${ork.id}<br/>Волокна: ${sub.fibers.working}+${sub.fibers.spare}<br/>${branchBtn}${delBtn}`);
+                m.on('contextmenu', (e: any) => {
                   e.originalEvent.preventDefault();
                   if (propsRef.current.editMode && confirm(`Удалить абонента «${sub.desc}»?`)) {
                     propsRef.current.deleteSubscriber?.(sub.id);
                   }
                 });
-                group.addLayer(c);
+                group.addLayer(m);
               }
             }
           }
@@ -588,16 +770,19 @@ export default function LeafletMap(props: Props) {
       const unassigned = (propsRef.current.unassignedSubscribers ?? [])
         .filter((s) => !assigned.has(s.id));
       if (layers.subscribers && unassigned.length > 0) {
-        const radius = zoom >= 16 ? 3.5 : zoom >= 13 ? 2.5 : 1.5;
+        const baseR = zoom >= 16 ? 3.5 : zoom >= 13 ? 2.5 : 1.5;
         for (const s of unassigned) {
+          const camKind = s.kind ?? 'unknown';
+          const color = CAMERA_KIND_COLOR[camKind] ?? '#94a3b8';
           const c = L.circleMarker([s.lat, s.lon], {
-            radius,
-            color: '#94a3b8',
-            fillColor: '#94a3b8',
-            fillOpacity: 0.6,
+            radius: camKind === 'intersection' ? baseR + 1 : baseR,
+            color,
+            fillColor: color,
+            fillOpacity: 0.7,
             weight: 1,
           });
-          c.bindTooltip(`<b>${s.desc}</b><br/>${s.district}<br/><i style="color:#64748b">не привязан — нажми «Построить»</i>`, { sticky: true, className: 'text-xs' });
+          const camLabel = CAMERA_KIND_LABEL[camKind];
+          c.bindTooltip(`<b>${s.desc}</b><br/>Тип: ${camLabel} · ${s.minBandwidthMbps ?? CAMERA_MIN_BANDWIDTH_MBPS[camKind]} Мбит/с<br/>${s.district}`, { sticky: true, className: 'text-xs' });
           group.addLayer(c);
         }
       }
@@ -754,73 +939,135 @@ export default function LeafletMap(props: Props) {
   }
 
   // Re-render whenever data changes
-  useEffect(() => { renderData(); }, [props.districts, props.cables, props.joints, props.layers, props.editMode, props.editingCableId, props.budgetColoring, props.budgetMap]);
+  useEffect(() => {
+    renderData();
+  }, [props.districts, props.cables, props.joints, props.layers, props.editMode, props.editingCableId, props.budgetColoring, props.budgetMap, props.highlightCableIds, props.scenarioMapDiff, props.moveEntityTarget, props.snapHighlightId, props.snapHighlightIds]);
 
-  // Waypoint editing: show draggable handles for the selected cable
+  // Waypoint editing: drag moves one vertex (no perpendicular inserts)
   useEffect(() => {
     const group = waypointGroupRef.current;
     if (!group) return;
     group.clearLayers();
-    const { editingCableId, cables, onUpdateCableCoords } = propsRef.current;
+    const { editingCableId, onUpdateCableCoords } = propsRef.current;
     if (!editingCableId || !onUpdateCableCoords) return;
-    const cable = cables.find((c) => c.id === editingCableId);
-    if (!cable) return;
+
     import('leaflet').then((L) => {
-      const coords: [number, number][] = cable.coords.map((c) => [c[0], c[1]]);
-      const icon = L.divIcon({
-        html: '<div style="width:10px;height:10px;background:#a78bfa;border:2px solid #fff;border-radius:50%;cursor:grab"></div>',
-        className: '', iconSize: [10, 10], iconAnchor: [5, 5],
-      });
-      const markers: any[] = coords.map((coord, idx) => {
-        const m = L.marker(coord, { icon, draggable: true });
-        m.on('dragend', () => {
-          const ll = m.getLatLng();
-          coords[idx] = [ll.lat, ll.lng];
-          const newCoords: [number, number][] = coords.map((c) => [c[0], c[1]]);
-          // recalc length
-          let len = 0;
-          const R = 6371000;
-          for (let i = 1; i < newCoords.length; i++) {
-            const [la, lo] = newCoords[i - 1];
-            const [lb, lob] = newCoords[i];
-            const dLat = ((lb - la) * Math.PI) / 180;
-            const dLon = ((lob - lo) * Math.PI) / 180;
-            const a = Math.sin(dLat / 2) ** 2 + Math.cos((la * Math.PI) / 180) * Math.cos((lb * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
-            len += R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-          }
+      Promise.all([
+        import('@/components/Network/cableWaypoints'),
+        import('@/components/Network/SnapConnect'),
+      ]).then(([{ updateWaypointAt, moveEndpointRigid }, { nearestEntity, SNAP_ENTITY_M, compatibleTargetsForCable }]) => {
+        const readCoords = (): [number, number][] => {
+          const c = propsRef.current.cables.find((x) => x.id === editingCableId);
+          return c ? c.coords.map((p) => [p[0], p[1]] as [number, number]) : [];
+        };
+
+        const coords = readCoords();
+        if (coords.length < 2) return;
+
+        const makeIcon = (kind: 'end' | 'mid') =>
+          L.divIcon({
+            html: kind === 'end'
+              ? '<div style="width:12px;height:12px;background:#2dd4bf;border:2px solid #fff;border-radius:2px;cursor:grab;box-shadow:0 0 8px rgba(45,212,191,0.5)"></div>'
+              : '<div style="width:10px;height:10px;background:#a78bfa;border:2px solid #fff;border-radius:50%;cursor:grab"></div>',
+            className: '',
+            iconSize: kind === 'end' ? [12, 12] : [10, 10],
+            iconAnchor: kind === 'end' ? [6, 6] : [5, 5],
+          });
+
+        const applyCoords = (newCoords: [number, number][]) => {
           propsRef.current.onUpdateCableCoords?.(editingCableId, newCoords);
-          // update marker position in coords array for subsequent drags
-          markers[idx].setLatLng([ll.lat, ll.lng]);
+        };
+
+        const n = coords.length;
+        coords.forEach((coord, idx) => {
+          const kind = idx === 0 || idx === n - 1 ? 'end' : 'mid';
+          const m = L.marker(coord, { icon: makeIcon(kind), draggable: true });
+          const isEnd = idx === 0 || idx === n - 1;
+          const end: 'from' | 'to' = idx === 0 ? 'from' : 'to';
+
+          m.on('drag', () => {
+            if (!isEnd) return;
+            const ll = m.getLatLng();
+            const cable = propsRef.current.cables.find((x) => x.id === editingCableId);
+            if (cable) {
+              const allowed = new Set(compatibleTargetsForCable(cable, end, propsRef.current.districts));
+              const hit = nearestEntity(ll.lat, ll.lng, propsRef.current.districts, SNAP_ENTITY_M);
+              if (hit && allowed.has(hit.id)) {
+                m.setLatLng([hit.lat, hit.lon]);
+                propsRef.current.onSnapHighlight?.(hit.id);
+                return;
+              }
+            }
+            propsRef.current.onSnapHighlight?.(null);
+          });
+
+          m.on('dragend', () => {
+            const ll = m.getLatLng();
+            const latest = readCoords();
+            if (idx < 0 || idx >= latest.length) return;
+            propsRef.current.onSnapHighlight?.(null);
+
+            if (isEnd) {
+              const cable = propsRef.current.cables.find((x) => x.id === editingCableId);
+              if (cable) {
+                const allowed = new Set(compatibleTargetsForCable(cable, end, propsRef.current.districts));
+                const hit = nearestEntity(
+                  ll.lat, ll.lng, propsRef.current.districts, SNAP_ENTITY_M,
+                );
+                if (hit && allowed.has(hit.id)) {
+                  propsRef.current.onCableEndpointSnap?.(editingCableId, end, hit.id);
+                  return;
+                }
+              }
+              applyCoords(moveEndpointRigid(latest, idx, ll.lat, ll.lng));
+              return;
+            }
+            applyCoords(updateWaypointAt(latest, idx, ll.lat, ll.lng));
+          });
+          group.addLayer(m);
         });
-        group.addLayer(m);
-        return m;
       });
     });
   }, [props.editingCableId, props.cables]);
   useEffect(() => { renderAnnotations(); }, [props.annotations]);
 
-  // Draw the selection-rectangle overlay (independent layer so it doesn't
-  // get cleared by the data-layer rerender).
+  // Draw the lasso selection overlay (independent layer so it doesn't get
+  // cleared by the data-layer rerender): in-progress vertices + closed polygon.
   const selectionLayerRef = useRef<any>(null);
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     import('leaflet').then((L) => {
-      // Remove the previous overlay regardless — even if no new bbox.
       if (selectionLayerRef.current) {
         map.removeLayer(selectionLayerRef.current);
         selectionLayerRef.current = null;
       }
-      const bb = props.selectionBBox;
-      if (!bb) return;
-      const rect = L.rectangle(
-        [[bb.latMin, bb.lonMin], [bb.latMax, bb.lonMax]] as any,
-        { color: '#fbbf24', weight: 2, dashArray: '6,4', fillColor: '#fbbf24', fillOpacity: 0.08 } as any,
-      );
-      rect.addTo(map);
-      selectionLayerRef.current = rect;
+      const poly = props.selectionPoly;
+      const pts = props.selectionPoints ?? [];
+      const group = L.layerGroup();
+      if (poly && poly.length >= 3) {
+        // Финальный замкнутый полигон выделения.
+        L.polygon(poly as any, {
+          color: '#fbbf24', weight: 2, dashArray: '6,4',
+          fillColor: '#fbbf24', fillOpacity: 0.08,
+        } as any).addTo(group);
+      } else if (pts.length > 0) {
+        // В процессе: пунктирная линия по вершинам + точки-маркеры.
+        if (pts.length >= 2) {
+          L.polyline(pts as any, { color: '#fbbf24', weight: 2, dashArray: '6,4' } as any).addTo(group);
+        }
+        for (const [la, lo] of pts) {
+          L.circleMarker([la, lo], {
+            radius: 4, color: '#fbbf24', fillColor: '#fbbf24', fillOpacity: 1, weight: 1,
+          } as any).addTo(group);
+        }
+      } else {
+        return;
+      }
+      group.addTo(map);
+      selectionLayerRef.current = group;
     });
-  }, [props.selectionBBox]);
+  }, [props.selectionPoly, props.selectionPoints]);
 
   // Heatmap
   useEffect(() => {
@@ -851,15 +1098,44 @@ export default function LeafletMap(props: Props) {
   // Expose delete subscriber to window for popup buttons
   useEffect(() => {
     (window as any).__deleteSub__ = (id: string) => propsRef.current.deleteSubscriber?.(id);
-    return () => { delete (window as any).__deleteSub__; };
+    (window as any).__showBranchSub__ = (id: string) => propsRef.current.onShowBranchSub?.(id);
+    return () => { delete (window as any).__deleteSub__; delete (window as any).__showBranchSub__; };
   }, []);
 
   return (
     <div className="relative w-full h-full" style={{ position: 'absolute', inset: 0 }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'absolute', inset: 0 }} />
 
+      {mapReady && (
+        <PresenceCursors map={mapRef.current} peers={props.presencePeers ?? []} />
+      )}
+
+      <GpsLocateButton
+        className="absolute bottom-[calc(118px+env(safe-area-inset-bottom))] md:bottom-auto md:top-14 right-2 md:right-3 z-[400]"
+        onLocated={(lat, lon, accuracyM) => {
+          propsRef.current.flyToRef?.current?.(lat, lon, 18);
+          import('leaflet').then((L) => {
+            const map = mapRef.current;
+            if (!map) return;
+            gpsMarkerRef.current?.remove();
+            gpsCircleRef.current?.remove();
+            const icon = L.divIcon({
+              className: '',
+              html: '<div style="width:14px;height:14px;border-radius:50%;background:#38bdf8;border:2px solid #fff;box-shadow:0 0 8px #38bdf8"></div>',
+              iconSize: [14, 14],
+              iconAnchor: [7, 7],
+            });
+            gpsMarkerRef.current = L.marker([lat, lon], { icon }).addTo(map)
+              .bindPopup('<b>Вы здесь</b>');
+            if (accuracyM && accuracyM < 200) {
+              gpsCircleRef.current = L.circle([lat, lon], { radius: accuracyM, color: '#38bdf8', fillOpacity: 0.08, weight: 1 }).addTo(map);
+            }
+          });
+        }}
+      />
+
       {/* Basemap switcher */}
-      <div className="absolute top-3 right-3 flex flex-col gap-1 z-[400]">
+      <div className="absolute bottom-[calc(58px+env(safe-area-inset-bottom))] md:bottom-auto md:top-3 right-2 md:right-3 flex flex-col gap-1 z-[400]">
         <div className="bg-[#0d1b2a] border border-[#1e3a5f] rounded-lg p-1 flex gap-0.5 shadow-xl">
           {(['dark', 'light', 'satellite', 'hybrid'] as BaseMap[]).map((bm) => (
             <button
@@ -875,7 +1151,7 @@ export default function LeafletMap(props: Props) {
       </div>
 
       {/* Measure / Edit mode indicator */}
-      <div className="absolute top-3 left-3 z-[400] flex flex-col gap-1">
+      <div className="absolute top-2 left-2 md:top-3 md:left-3 z-[400] flex flex-col gap-1 max-md:max-w-[140px]">
         <button
           onClick={() => {
             const next = !props.measureMode;
