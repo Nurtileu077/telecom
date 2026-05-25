@@ -418,6 +418,8 @@ export interface PriceCatalog {
   kdzs: number;
   clamp: number;
   installLabor: number;
+  /** Ручные правки количества по строкам сметы (id строки → шт/метры). */
+  qtyOverrides?: Record<string, number>;
 }
 
 export const DEFAULT_PRICES: PriceCatalog = {
