@@ -79,15 +79,15 @@ export default function AuthLoginForm({ compact, onSuccess }: Props) {
   };
 
   const tabCls = (m: Mode) =>
-    `px-2.5 py-1 text-[10px] rounded-md transition-colors ${
+    `flex-1 px-3 py-2 text-xs rounded-md transition-colors ${
       mode === m
-        ? 'bg-[#38bdf8]/20 text-[#38bdf8] font-semibold'
+        ? 'bg-[#38bdf8]/20 text-[#38bdf8] font-semibold shadow-sm'
         : 'text-[#64748b] hover:text-[#94a3b8]'
     }`;
 
   return (
     <div className={compact ? 'w-full' : 'w-full max-w-md'}>
-      <div className="flex gap-1 mb-2">
+      <div className="flex gap-1 mb-4 p-1 rounded-lg bg-[#0a0e1a] border border-[#1e3a5f]">
         <button type="button" className={tabCls('password')} onClick={() => { setMode('password'); setMsg(null); }}>
           Пароль
         </button>
@@ -96,27 +96,27 @@ export default function AuthLoginForm({ compact, onSuccess }: Props) {
         </button>
       </div>
 
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-3.5">
         <label className="block">
-          <span className="sr-only">Email</span>
+          <span className="block text-[11px] font-medium text-[#94a3b8] mb-1.5">Email</span>
           <div className="relative">
-            <Mail size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#64748b]" />
+            <Mail size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#64748b]" />
             <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="name@company.kz"
               autoComplete="email"
-              className="input-optiq w-full min-w-[200px] h-10 pl-9 pr-3 text-sm rounded-lg border-[#1e3a5f] bg-[#0a0e1a]"
+              className="input-optiq w-full min-w-[200px] h-11 pl-10 pr-3 text-sm rounded-lg border-[#1e3a5f] bg-[#0a0e1a]"
             />
           </div>
         </label>
 
         {mode === 'password' && (
           <label className="block">
-            <span className="sr-only">Пароль</span>
+            <span className="block text-[11px] font-medium text-[#94a3b8] mb-1.5">Пароль</span>
             <div className="relative">
-              <Lock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#64748b]" />
+              <Lock size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#64748b]" />
               <input
                 type="password"
                 value={password}
@@ -124,7 +124,7 @@ export default function AuthLoginForm({ compact, onSuccess }: Props) {
                 placeholder="Пароль"
                 autoComplete="current-password"
                 onKeyDown={(e) => e.key === 'Enter' && submit()}
-                className="input-optiq w-full min-w-[200px] h-10 pl-9 pr-3 text-sm rounded-lg border-[#1e3a5f] bg-[#0a0e1a]"
+                className="input-optiq w-full min-w-[200px] h-11 pl-10 pr-3 text-sm rounded-lg border-[#1e3a5f] bg-[#0a0e1a]"
               />
             </div>
           </label>
@@ -135,7 +135,7 @@ export default function AuthLoginForm({ compact, onSuccess }: Props) {
             type="button"
             disabled={busy}
             onClick={resetPassword}
-            className="btn h-10 w-full text-sm font-semibold bg-[#fbbf24]/90 hover:bg-[#fbbf24] text-[#0a0e1a] border-0 rounded-lg"
+            className="btn h-11 w-full text-sm font-semibold bg-[#fbbf24]/90 hover:bg-[#fbbf24] text-[#0a0e1a] border-0 rounded-lg mt-0.5"
           >
             {busy ? 'Отправка…' : 'Отправить сброс пароля'}
           </button>
@@ -144,7 +144,7 @@ export default function AuthLoginForm({ compact, onSuccess }: Props) {
             type="button"
             disabled={busy}
             onClick={submit}
-            className="btn h-10 w-full text-sm font-semibold bg-[#38bdf8] hover:bg-[#7dd3fc] text-[#0a0e1a] border-0 rounded-lg disabled:opacity-50"
+            className="btn h-11 w-full text-sm font-semibold bg-[#38bdf8] hover:bg-[#7dd3fc] text-[#0a0e1a] border-0 rounded-lg disabled:opacity-50 mt-0.5"
           >
             {mode === 'password' ? (
               <><LogIn size={16} className="inline mr-1.5 -mt-0.5" />{busy ? 'Вход…' : 'Войти'}</>
@@ -175,7 +175,11 @@ export default function AuthLoginForm({ compact, onSuccess }: Props) {
       </div>
 
       {msg && (
-        <p className={`mt-2 text-[11px] ${msg.type === 'ok' ? 'text-[#34d399]' : 'text-[#f87171]'}`}>
+        <p className={`mt-3 text-xs leading-relaxed rounded-md px-2.5 py-2 ${
+          msg.type === 'ok'
+            ? 'text-[#34d399] bg-[#34d399]/10'
+            : 'text-[#f87171] bg-[#f87171]/10'
+        }`}>
           {msg.text}
         </p>
       )}

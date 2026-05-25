@@ -3,10 +3,12 @@ import { useState, useEffect } from 'react';
 import { Cable, CABLE_SIZES, CABLE_COLORS, CableInstallType, CABLE_INSTALL_LABELS } from '@/types/network';
 import { suggestCableDisplayName, defaultPoleCount } from '@/lib/cableNaming';
 import { TIA_598_COLORS, tubeCount, fibersPerTube } from '@/components/Network/FiberColors';
+import { endpointLabel } from '@/components/Network/entityInterior';
 
 interface Props {
   cable: Cable | null;
   districts?: import('@/types/network').District[];
+  joints?: import('@/types/network').InlineJoint[];
   onClose: () => void;
   onUpdateType: (id: string, type: Cable['type']) => void;
   onUpdateMeta?: (id: string, patch: Partial<Pick<Cable, 'displayName' | 'installType' | 'poleCount'>>) => void;
@@ -27,7 +29,7 @@ function Dot({ type }: { type: string }) {
 const INSTALL_TYPES: CableInstallType[] = ['aerial', 'duct', 'ground'];
 
 export default function CableEditor({
-  cable, districts = [], onClose, onUpdateType, onUpdateMeta, onRerouteOSRM, onToggleWaypoints, onDelete, waypointEditing, rerouteStatus, onStartConnect,
+  cable, districts = [], joints = [], onClose, onUpdateType, onUpdateMeta, onRerouteOSRM, onToggleWaypoints, onDelete, waypointEditing, rerouteStatus, onStartConnect,
 }: Props) {
   const [type, setType] = useState<Cable['type']>(cable?.type ?? 'ОК-4');
   const [displayName, setDisplayName] = useState('');
@@ -49,6 +51,11 @@ export default function CableEditor({
 
   const lengthKm = (cable.lengthM / 1000).toFixed(2);
   const isRouting = rerouteStatus === 'routing';
+  const fromL = endpointLabel(districts, cable.fromId, joints);
+  const toL = endpointLabel(districts, cable.toId, joints);
+  const start = cable.coords[0];
+  const end = cable.coords[cable.coords.length - 1];
+  const fmtCoord = (p?: [number, number]) => (p ? `${p[0].toFixed(5)}, ${p[1].toFixed(5)}` : '—');
 
   return (
     <div className="absolute z-[510] left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 bottom-[calc(58px+env(safe-area-inset-bottom))] md:bottom-6 w-auto md:w-80 max-w-lg mx-auto bg-[#0d1b2a]/97 border border-[#1e3a5f] rounded-xl shadow-2xl backdrop-blur-sm animate-fade-in max-h-[45dvh] overflow-y-auto">
@@ -79,6 +86,32 @@ export default function CableEditor({
           <div className="flex-1 bg-[#0a0e1a] rounded-lg px-2.5 py-2 text-center">
             <div className="font-mono font-bold text-[#a78bfa]">{cable.coords.length}</div>
             <div className="text-[#64748b] mt-0.5">точек</div>
+          </div>
+        </div>
+
+        {/* Маршрут: откуда → куда + начало/конец */}
+        <div className="bg-[#0a0e1a] rounded-lg p-2.5 space-y-2">
+          <div className="text-[10px] uppercase tracking-wide text-[#64748b]">Маршрут</div>
+          <div className="flex items-center gap-2 text-[11px]">
+            <div className="flex-1 min-w-0">
+              <div className="text-[#94a3b8]">{fromL.label}</div>
+              <div className="font-mono text-[10px] text-[#64748b] truncate">{fromL.shortId}</div>
+            </div>
+            <span className="text-[#38bdf8] shrink-0">→</span>
+            <div className="flex-1 min-w-0 text-right">
+              <div className="text-[#94a3b8]">{toL.label}</div>
+              <div className="font-mono text-[10px] text-[#64748b] truncate">{toL.shortId}</div>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-[10px] border-t border-[#1e3a5f] pt-1.5">
+            <div>
+              <div className="text-[#64748b]">Начало</div>
+              <div className="font-mono text-[#94a3b8]">{fmtCoord(start)}</div>
+            </div>
+            <div className="text-right">
+              <div className="text-[#64748b]">Конец</div>
+              <div className="font-mono text-[#94a3b8]">{fmtCoord(end)}</div>
+            </div>
           </div>
         </div>
 

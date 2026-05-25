@@ -261,6 +261,21 @@ export function cableLinksForEntity(
   });
 }
 
+// Человекочитаемая метка конца кабеля по его id: тип объекта + короткий id.
+// Используется и в попапе кабеля на карте, и в редакторе кабеля.
+export function endpointLabel(
+  districts: District[],
+  id: string,
+  joints: InlineJoint[] = [],
+): { kind: PeerKind; label: string; shortId: string } {
+  const kind = peerKindForId(districts, id, joints);
+  return {
+    kind,
+    label: peerLabel(kind, id),
+    shortId: id.length > 16 ? `${id.slice(0, 14)}…` : id,
+  };
+}
+
 function splitterPortCount(ratio: string): number {
   const n = parseInt(ratio.split(':')[1] ?? '8', 10);
   return Number.isFinite(n) ? n : 8;

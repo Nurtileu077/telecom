@@ -976,6 +976,7 @@ export default function HomePage() {
           <CableEditor
             cable={selectedCableId ? (net.cables.find((c) => c.id === selectedCableId) ?? null) : null}
             districts={net.districts}
+            joints={net.joints}
             onClose={() => { setSelectedCableId(null); setEditingCableId(null); }}
             onUpdateType={(id, type) => net.updateCable(id, { type })}
             onUpdateMeta={(id, patch) => net.updateCable(id, patch)}

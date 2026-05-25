@@ -25,9 +25,9 @@ export default function AuthGateScreen({ requireCloud = true }: Props) {
           </p>
         </div>
 
-        <div className="w-full max-w-[400px] rounded-2xl border border-[#1e3a5f] bg-[#0d1b2a]/90 p-6 shadow-2xl backdrop-blur-sm">
-          <h2 className="text-[15px] font-semibold text-[#e2e8f0] mb-1">Вход в систему</h2>
-          <p className="text-[11px] text-[#64748b] mb-4">
+        <div className="w-full max-w-[400px] rounded-2xl border border-[#1e3a5f] bg-[#0d1b2a]/90 p-7 shadow-2xl backdrop-blur-sm">
+          <h2 className="text-lg font-semibold text-[#e2e8f0] mb-1.5">Вход в систему</h2>
+          <p className="text-xs leading-relaxed text-[#64748b] mb-5">
             {requireCloud
               ? 'Для работы с облачными проектами нужен аккаунт вашей организации'
               : 'Войдите, чтобы продолжить'}

@@ -6,7 +6,7 @@ import {
   CAMERA_KIND_COLOR, CAMERA_KIND_LABEL, CAMERA_MIN_BANDWIDTH_MBPS,
 } from '@/types/network';
 import type { DrawingTool } from '@/components/Sidebar/NotesTab';
-import { nearestTbToJoint } from '@/components/Network/entityInterior';
+import { nearestTbToJoint, endpointLabel } from '@/components/Network/entityInterior';
 import GpsLocateButton from '@/components/Map/GpsLocateButton';
 import PresenceCursors from '@/components/Map/PresenceCursors';
 
@@ -556,6 +556,20 @@ export default function LeafletMap(props: Props) {
           poly.bindTooltip(
             `${cableTitle}<br/>${cable.fromId} → ${cable.toId}<br/>Длина: ${Math.round(cable.lengthM)} м${installNote}${lane > 0 ? `<br/><i style=\"color:#94a3b8\">полоса ${lane}</i>` : ''}`,
             { sticky: true, className: 'text-xs' },
+          );
+          // Попап по клику (как у ОРК/муфты): откуда → куда, тип, начало/конец.
+          const fromL = endpointLabel(districts, cable.fromId, joints);
+          const toL = endpointLabel(districts, cable.toId, joints);
+          const start = cable.coords[0];
+          const end = cable.coords[cable.coords.length - 1];
+          const fmt = (p: [number, number]) => `${p[0].toFixed(5)}, ${p[1].toFixed(5)}`;
+          poly.bindPopup(
+            `<b>${cable.displayName || cable.type}</b>`
+            + `<br/>Тип: <b>${cable.type}</b> · ${cable.fibers} вол.`
+            + `<br/>Откуда: ${fromL.label} <span style="color:#94a3b8;font-size:10px">${fromL.shortId}</span>`
+            + `<br/>Куда: ${toL.label} <span style="color:#94a3b8;font-size:10px">${toL.shortId}</span>`
+            + `<br/>Длина: ${Math.round(cable.lengthM)} м${installNote}`
+            + `<br/><span style="color:#64748b;font-size:10px">Начало: ${fmt(start)}<br/>Конец: ${fmt(end)}</span>`,
           );
           poly.on('click', (e: any) => {
             e.originalEvent?.stopPropagation?.();
