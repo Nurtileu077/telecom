@@ -169,7 +169,7 @@ export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Prop
   const pipelineStep = props.hasNetwork ? (props.osrmStatus === 'routing' ? 2 : 3) : props.materials ? 1 : 0;
 
   return (
-    <aside className="flex shrink-0 h-full min-h-0 border-r border-[var(--border)] bg-[var(--bg-surface)]">
+    <aside className="flex flex-1 min-h-0 border-r border-[var(--border)] bg-[var(--bg-surface)]">
       <nav className="w-11 md:w-12 flex flex-col items-center py-2 gap-1 border-r border-[var(--border)] bg-[var(--bg-canvas)] shrink-0">
         {GROUPS.map((g) => {
           const Icon = g.icon;
