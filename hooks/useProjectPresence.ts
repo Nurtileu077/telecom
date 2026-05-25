@@ -7,6 +7,7 @@ import { colorForUserId } from '@/lib/presenceColors';
 export interface PresenceCursor {
   userId: string;
   name: string;
+  email?: string;
   color: string;
   lat: number;
   lon: number;
@@ -15,6 +16,7 @@ export interface PresenceCursor {
 
 type PresencePayload = {
   name: string;
+  email?: string;
   lat: number;
   lon: number;
   ts: number;
@@ -33,6 +35,7 @@ function peersFromState(
     out.push({
       userId: key,
       name: last.name || key.slice(0, 8),
+      email: last.email,
       color: colorForUserId(key),
       lat: last.lat,
       lon: last.lon,
@@ -44,7 +47,7 @@ function peersFromState(
 
 export function useProjectPresence(
   projectId: string | null,
-  self: { key: string; name: string } | null,
+  self: { key: string; name: string; email?: string } | null,
   enabled: boolean,
 ) {
   const [peers, setPeers] = useState<PresenceCursor[]>([]);
@@ -60,6 +63,7 @@ export function useProjectPresence(
     lastPosRef.current = { lat, lon };
     ch.track({
       name: self.name,
+      email: self.email,
       lat,
       lon,
       ts: Date.now(),
@@ -75,6 +79,7 @@ export function useProjectPresence(
     if (!ch || !self) return;
     ch.track({
       name: self.name,
+      email: self.email,
       lat: lastPosRef.current.lat,
       lon: lastPosRef.current.lon,
       ts: Date.now(),
@@ -105,6 +110,7 @@ export function useProjectPresence(
       if (status === 'SUBSCRIBED') {
         await channel.track({
           name: self.name,
+          email: self.email,
           lat: 0,
           lon: 0,
           ts: Date.now(),

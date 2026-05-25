@@ -90,13 +90,13 @@ export default function CostTab({ materials, prices, setPrices, districts = [], 
           />
         </div>
 
-        {/* Editable detailed table */}
+        {/* Editable detailed table — секции раскрываются по клику */}
         <CostSection title="Кабели" lines={cost.cables} currency={cost.currency}
-          onQty={updateQty} onPrice={updatePrice} />
+          onQty={updateQty} onPrice={updatePrice} defaultOpen={false} />
         <CostSection title="Оборудование" lines={cost.equipment} currency={cost.currency}
-          onQty={updateQty} onPrice={updatePrice} />
+          onQty={updateQty} onPrice={updatePrice} defaultOpen={false} />
         <CostSection title="Монтаж" lines={[cost.labor]} currency={cost.currency}
-          onQty={updateQty} onPrice={updatePrice} />
+          onQty={updateQty} onPrice={updatePrice} defaultOpen={false} />
       </div>
 
       {hasOverrides && (
@@ -124,20 +124,33 @@ function SubtotalCard({ label, value, pct, currency, color }: { label: string; v
 }
 
 function CostSection({
-  title, lines, currency, onQty, onPrice,
+  title, lines, currency, onQty, onPrice, defaultOpen = true,
 }: {
   title: string;
   lines: CostLine[];
   currency: string;
   onQty: (id: string, v: number) => void;
   onPrice: (priceKey: string, v: number) => void;
+  defaultOpen?: boolean;
 }) {
+  const [open, setOpen] = useState(defaultOpen);
   const visible = lines.filter((l) => l.qty > 0 || l.autoQty > 0);
   if (visible.length === 0) return null;
+  const sectionTotal = visible.reduce((s, l) => s + l.total, 0);
   return (
     <div className="mb-3">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2 text-[10px] font-semibold text-[#cbd5e1] mb-1 px-1 py-1 rounded hover:bg-[#1e3a5f]/30"
+      >
+        <span className="text-[8px]">{open ? '▼' : '▸'}</span>
+        <span className="flex-1 text-left uppercase tracking-wider">{title}</span>
+        <span className="font-mono text-[#94a3b8]">{formatMoney(sectionTotal, currency)}</span>
+      </button>
+      {!open ? null : (
+      <>
       <div className="flex items-center gap-2 text-[9px] uppercase tracking-widest text-[#64748b] mb-1 px-0.5">
-        <span className="flex-1">{title}</span>
+        <span className="flex-1" />
         <span className="w-14 text-right">кол-во</span>
         <span className="w-16 text-right">цена</span>
         <span className="w-20 text-right">сумма</span>
@@ -169,6 +182,8 @@ function CostSection({
           );
         })}
       </div>
+      </>
+      )}
     </div>
   );
 }

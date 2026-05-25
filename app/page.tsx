@@ -160,7 +160,7 @@ export default function HomePage() {
       || getActorName()
       || 'Гость';
     const baseKey = authUser?.id ?? getGuestPresenceKey();
-    return { key: `${baseKey}:${presenceSessionRef.current}`, name };
+    return { key: `${baseKey}:${presenceSessionRef.current}`, name, email: authUser?.email ?? undefined };
   }, [authUser]);
 
   const presenceEnabled = net.dbEnabled && net.districts.length > 0 && !cloudBlocked;
@@ -706,7 +706,7 @@ export default function HomePage() {
   return (
     <div className="app-shell flex flex-col overflow-hidden">
       <ReadOnlyBanner mode={appMode} role={userRole} onCopyShareLink={readOnly ? copyShareViewLink : undefined} />
-      {presenceEnabled && <PresenceBar onlineCount={onlineCount} peers={presencePeers} />}
+      {presenceEnabled && <PresenceBar onlineCount={onlineCount} peers={presencePeers} selfName={presenceSelf.email || presenceSelf.name} />}
       {net.remoteChange && (
         <div className="shrink-0 flex items-center justify-center gap-3 px-3 py-1.5 text-center text-[12px] text-[#fde68a] border-b border-[#f59e0b]/40 bg-[#f59e0b]/15">
           <span>

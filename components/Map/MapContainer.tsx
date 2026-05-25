@@ -737,20 +737,24 @@ export default function LeafletMap(props: Props) {
                 const dotPx = camKind === 'intersection' ? 5 : 4;
                 const camLabel = CAMERA_KIND_LABEL[camKind];
                 const bw = sub.minBandwidthMbps ?? CAMERA_MIN_BANDWIDTH_MBPS[camKind];
+                const canDragSub = !!propsRef.current.editMode;
+                // Прозрачная обёртка увеличивает зону захвата/клика по боксу,
+                // особенно в режиме редактирования (легче перетаскивать).
+                const hitPx = canDragSub ? 24 : 18;
                 const icon = L.divIcon({
                   className: '',
-                  iconSize: [boxPx, boxPx],
-                  iconAnchor: [boxPx / 2, boxPx / 2],
-                  html: `<div style="
+                  iconSize: [hitPx, hitPx],
+                  iconAnchor: [hitPx / 2, hitPx / 2],
+                  html: `<div style="width:${hitPx}px;height:${hitPx}px;display:flex;align-items:center;justify-content:center;${canDragSub ? 'cursor:move;' : ''}">
+                    <div style="
                     width:${boxPx}px;height:${boxPx}px;
                     background:#0d1b2a;
                     border:1.5px solid ${dotColor};
                     border-radius:2px;
                     box-shadow:0 0 3px rgba(0,0,0,0.6);
                     display:flex;align-items:center;justify-content:center
-                  "><div style="width:${dotPx}px;height:${dotPx}px;background:${dotColor};border-radius:50%"></div></div>`,
+                  "><div style="width:${dotPx}px;height:${dotPx}px;background:${dotColor};border-radius:50%"></div></div></div>`,
                 });
-                const canDragSub = !!propsRef.current.editMode;
                 const m = L.marker([sub.lat, sub.lon], { icon, draggable: canDragSub });
                 if (canDragSub) wireDragOnly(m, 'sub', sub.id);
                 const branchBtn = `<button onclick="window.__showBranchSub__('${sub.id}')" style="margin-top:6px;padding:2px 8px;background:#38bdf8;color:#0a0e1a;border:none;border-radius:3px;font-size:10px;cursor:pointer;font-weight:600">🌿 Показать ветку</button>`;

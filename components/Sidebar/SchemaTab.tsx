@@ -15,15 +15,15 @@ export default function SchemaTab({ districts, flyTo }: Props) {
   const [view, setView] = useState<SchemaView>('tree');
 
   const flat = useMemo(() => {
-    const rows: { kind: string; id: string; parent?: string; lat: number; lon: number; extra?: string }[] = [];
+    const rows: { kind: string; id: string; name: string; parent?: string; lat: number; lon: number; extra?: string }[] = [];
     for (const d of districts) {
-      rows.push({ kind: 'OLT', id: d.olt.id, lat: d.olt.lat, lon: d.olt.lon, extra: d.name });
+      rows.push({ kind: 'OLT', id: d.olt.id, name: d.olt.displayName || d.olt.id, lat: d.olt.lat, lon: d.olt.lon, extra: d.name });
       for (const tb of d.olt.transitBoxes) {
-        rows.push({ kind: 'Муфта', id: tb.id, parent: d.olt.id, lat: tb.lat, lon: tb.lon });
+        rows.push({ kind: 'Муфта', id: tb.id, name: tb.displayName || tb.id, parent: d.olt.id, lat: tb.lat, lon: tb.lon });
         for (const ork of tb.orks) {
-          rows.push({ kind: 'ОРК', id: ork.id, parent: tb.id, lat: ork.lat, lon: ork.lon, extra: `${ork.subscribers.length} кам.` });
+          rows.push({ kind: 'ОРК', id: ork.id, name: ork.displayName || ork.id, parent: tb.id, lat: ork.lat, lon: ork.lon, extra: `${ork.subscribers.length} кам.` });
           for (const sub of ork.subscribers) {
-            rows.push({ kind: 'Бокс', id: sub.id, parent: ork.id, lat: sub.lat, lon: sub.lon, extra: sub.desc });
+            rows.push({ kind: 'Бокс', id: sub.id, name: sub.desc || sub.id, parent: ork.id, lat: sub.lat, lon: sub.lon, extra: sub.desc });
           }
         }
       }
@@ -75,16 +75,16 @@ export default function SchemaTab({ districts, flyTo }: Props) {
                   <span className="w-2 h-2 rounded-full shrink-0" style={{ background: d.color }} />
                   <span className="text-[#e2e8f0] font-semibold">{d.name}</span>
                 </button>
-                <div className="ml-3 text-[#f59e0b]">📡 {d.olt.id}</div>
+                <div className="ml-3 text-[#f59e0b]">📡 {d.olt.displayName || d.olt.id}</div>
                 {d.olt.transitBoxes.map((tb, ti) => (
                   <div key={tb.id} className="ml-3">
                     <button type="button" onClick={() => flyTo?.(tb.lat, tb.lon, 15)} className="text-[#38bdf8] hover:text-[#7dd3fc] text-left">
-                      {ti < d.olt.transitBoxes.length - 1 ? '├─' : '└─'} 🔷 {tb.id}
+                      {ti < d.olt.transitBoxes.length - 1 ? '├─' : '└─'} 🔷 {tb.displayName || tb.id}
                     </button>
                     {tb.orks.map((ork, oi) => (
                       <div key={ork.id} className="ml-5">
                         <button type="button" onClick={() => flyTo?.(ork.lat, ork.lon, 17)} className="text-[#a78bfa] hover:text-[#c4b5fd] text-left">
-                          {oi < tb.orks.length - 1 ? '├─' : '└─'} 📦 {ork.id}
+                          {oi < tb.orks.length - 1 ? '├─' : '└─'} 📦 {ork.displayName || ork.id}
                         </button>
                       </div>
                     ))}
@@ -113,7 +113,7 @@ export default function SchemaTab({ districts, flyTo }: Props) {
                     onClick={() => flyTo?.(r.lat, r.lon, r.kind === 'Бокс' ? 18 : 15)}
                   >
                     <td className="py-1.5 text-[#94a3b8]">{r.kind}</td>
-                    <td className="py-1.5 text-[#e2e8f0] font-mono">{r.id}</td>
+                    <td className="py-1.5 text-[#e2e8f0] font-mono truncate max-w-[110px]" title={r.id}>{r.name}</td>
                     <td className="py-1.5 text-[#64748b] truncate max-w-[80px]">{r.parent ?? r.extra ?? '—'}</td>
                   </tr>
                 ))}
@@ -130,16 +130,16 @@ export default function SchemaTab({ districts, flyTo }: Props) {
                   {d.name}
                 </p>
                 <div className="flex flex-col items-center gap-1">
-                  <DiagNode label="OLT" id={d.olt.id} color="#f59e0b" onClick={() => flyTo?.(d.olt.lat, d.olt.lon, 14)} />
+                  <DiagNode label="OLT" id={d.olt.displayName || d.olt.id} color="#f59e0b" onClick={() => flyTo?.(d.olt.lat, d.olt.lon, 14)} />
                   {d.olt.transitBoxes.map((tb) => (
                     <div key={tb.id} className="flex flex-col items-center w-full">
                       <div className="w-px h-2 bg-[#38bdf8]/50" />
-                      <DiagNode label="Муфта" id={tb.id} color="#38bdf8" onClick={() => flyTo?.(tb.lat, tb.lon, 15)} />
+                      <DiagNode label="Муфта" id={tb.displayName || tb.id} color="#38bdf8" onClick={() => flyTo?.(tb.lat, tb.lon, 15)} />
                       <div className="flex flex-wrap justify-center gap-2 mt-1 w-full">
                         {tb.orks.map((ork) => (
                           <div key={ork.id} className="flex flex-col items-center">
                             <div className="w-px h-1.5 bg-[#a78bfa]/50" />
-                            <DiagNode label="ОРК" id={ork.id} color="#a78bfa" small onClick={() => flyTo?.(ork.lat, ork.lon, 16)} />
+                            <DiagNode label="ОРК" id={ork.displayName || ork.id} color="#a78bfa" small onClick={() => flyTo?.(ork.lat, ork.lon, 16)} />
                             <span className="text-[8px] text-[#64748b]">{ork.subscribers.length} бокс.</span>
                           </div>
                         ))}

@@ -206,7 +206,7 @@ function OltBody({
                   className="text-[11px] font-mono text-[#38bdf8] hover:underline w-full text-left"
                   onClick={() => onOpenEntity?.('tb', tb.id)}
                 >
-                  🔷 {tb.id} → {tb.orks.length} ОРК
+                  🔷 {tb.displayName || tb.id} → {tb.orks.length} ОРК
                 </button>
                 <div className="mt-1 pl-2 border-l border-[#1e3a5f]/50 space-y-0.5">
                   {tb.orks.map((o) => (
@@ -216,7 +216,7 @@ function OltBody({
                       className="block text-[10px] font-mono text-[#a78bfa] hover:underline"
                       onClick={() => onOpenEntity?.('ork', o.id)}
                     >
-                      📦 {o.id} · {o.subscribers.length} кам.
+                      📦 {o.displayName || o.id} · {o.subscribers.length} кам.
                     </button>
                   ))}
                 </div>
@@ -272,7 +272,7 @@ function TbBody({
                 onClick={() => onOpenEntity?.('ork', o.id)}
                 className="text-[10px] font-mono px-2 py-1 rounded border border-[#a78bfa]/40 text-[#a78bfa] hover:bg-[#a78bfa]/10"
               >
-                {o.id}
+                {o.displayName || o.id}
               </button>
             ))}
           </div>
@@ -344,9 +344,9 @@ function OrkBody({
           ↑ от{' '}
           {data.tb && onOpenEntity ? (
             <button type="button" className="text-[#38bdf8] hover:underline" onClick={() => onOpenEntity('tb', data.tb!.id)}>
-              {data.tb.id}
+              {data.tb.displayName || data.tb.id}
             </button>
-          ) : (data.tb?.id ?? '—')}
+          ) : (data.tb?.displayName || data.tb?.id || '—')}
           : {data.uplink.type} · {Math.round(data.uplink.lengthM)} м
         </div>
       )}

@@ -100,6 +100,8 @@ export function useNetwork() {
   /** Realtime: коллега сохранил новую версию, ждём решения пользователя. */
   const [remoteChange, setRemoteChange] = useState<{ updatedAt: string; name: string; by: string | null } | null>(null);
   const editModeRef = useRef(false);
+  /** Канал broadcast для оповещения о сохранении. */
+  const syncChannelRef = useRef<ReturnType<NonNullable<typeof supabase>['channel']> | null>(null);
 
   const setFieldRemoteSave = useCallback((enabled: boolean) => {
     fieldRemoteSaveRef.current = enabled;
@@ -1663,6 +1665,12 @@ export function useNetwork() {
         // updated_at в БД = project.updatedAt (= now), поэтому собственное
         // realtime-событие совпадёт с baseline и будет проигнорировано.
         serverUpdatedAtRef.current = project.updatedAt;
+        // Оповещаем коллег о новой версии (broadcast надёжнее postgres_changes).
+        syncChannelRef.current?.send({
+          type: 'broadcast',
+          event: 'saved',
+          payload: { updatedAt: project.updatedAt, name: project.name, by: getActorName() },
+        });
       } catch (e) {
         if (e instanceof ProjectSaveConflict) throw e;
         console.warn('[DB] save failed, using localStorage only', e);
@@ -1693,29 +1701,31 @@ export function useNetwork() {
     recordAudit('Загрузка с сервера', 'обновление от коллеги');
   }, [projectId, recordAudit]);
 
-  // Realtime: слушаем изменения строки проекта. Когда коллега сохраняет —
-  // в режиме просмотра подтягиваем автоматически, в режиме правки показываем
-  // баннер (чтобы не затереть несохранённые изменения).
+  // Realtime: синхронизация через broadcast (тот же транспорт, что presence —
+  // надёжнее postgres_changes, не зависит от RLS realtime). Когда коллега
+  // сохраняет, он шлёт broadcast 'saved'; в просмотре подтягиваем автоматически,
+  // в режиме правки показываем баннер (чтобы не затереть несохранённое).
   useEffect(() => {
     if (!supabase || !dbEnabled || !projectId) return;
-    const channel = supabase
-      .channel(`optiq-project:${projectId}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'gpon_projects', filter: `id=eq.${projectId}` },
-        (payload) => {
-          const next = payload.new as { updated_at?: string; name?: string; last_editor_email?: string };
-          const ua = next?.updated_at;
-          if (!ua || ua === serverUpdatedAtRef.current) return; // собственное / устаревшее
-          if (!editModeRef.current) {
-            reloadProjectFromServer();
-          } else {
-            setRemoteChange({ updatedAt: ua, name: next?.name ?? '', by: next?.last_editor_email ?? null });
-          }
-        },
-      )
-      .subscribe();
-    return () => { supabase?.removeChannel(channel); };
+    const channel = supabase.channel(`optiq-sync:${projectId}`, {
+      config: { broadcast: { self: false } },
+    });
+    channel.on('broadcast', { event: 'saved' }, (msg) => {
+      const p = (msg.payload ?? {}) as { updatedAt?: string; name?: string; by?: string };
+      const ua = p.updatedAt;
+      if (!ua || ua === serverUpdatedAtRef.current) return;
+      if (!editModeRef.current) {
+        reloadProjectFromServer();
+      } else {
+        setRemoteChange({ updatedAt: ua, name: p.name ?? '', by: p.by ?? null });
+      }
+    });
+    channel.subscribe();
+    syncChannelRef.current = channel;
+    return () => {
+      supabase?.removeChannel(channel);
+      syncChannelRef.current = null;
+    };
   }, [projectId, dbEnabled, reloadProjectFromServer]);
 
   const dismissRemoteChange = useCallback(() => setRemoteChange(null), []);
