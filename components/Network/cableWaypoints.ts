@@ -95,6 +95,28 @@ export function moveEndpointPreserveFractions(
   return out;
 }
 
+/**
+ * Перетащить видимую ручку в точку (lat, lon), схлопнув «спрятанные» вершины её
+ * пролёта между соседними ручками в одну точку. prevH/nextH — индексы соседних
+ * ВИДИМЫХ ручек в исходном массиве (или null, если ручка крайняя = конец A/B).
+ *
+ * Это даёт два нужных эффекта на длинной OSRM-трассе с прорежёнными ручками:
+ *  - конец реально укорачивает/удлиняет кабель (а не переносит его целиком);
+ *  - серединная ручка не оставляет зигзаг между плотными промежуточными точками.
+ * Когда ручки идут подряд (prevH=idx-1, nextH=idx+1) — это обычный сдвиг вершины.
+ */
+export function collapseWaypoint(
+  coords: LatLon[],
+  prevH: number | null,
+  nextH: number | null,
+  lat: number,
+  lon: number,
+): LatLon[] {
+  const left = prevH == null ? [] : coords.slice(0, prevH + 1).map((c) => [...c] as LatLon);
+  const right = nextH == null ? [] : coords.slice(nextH).map((c) => [...c] as LatLon);
+  return [...left, [lat, lon] as LatLon, ...right];
+}
+
 export function recalcLengthM(coords: LatLon[]): number {
   let len = 0;
   for (let i = 1; i < coords.length; i++) {

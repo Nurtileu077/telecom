@@ -7,6 +7,7 @@ import {
 } from '@/types/network';
 import type { DrawingTool } from '@/components/Sidebar/NotesTab';
 import { nearestTbToJoint, endpointLabel } from '@/components/Network/entityInterior';
+import { collapseWaypoint } from '@/components/Network/cableWaypoints';
 import GpsLocateButton from '@/components/Map/GpsLocateButton';
 import PresenceCursors from '@/components/Map/PresenceCursors';
 
@@ -932,10 +933,7 @@ export default function LeafletMap(props: Props) {
     if (!editingCableId || !onUpdateCableCoords) return;
 
     import('leaflet').then((L) => {
-      Promise.all([
-        import('@/components/Network/cableWaypoints'),
-        import('@/components/Network/SnapConnect'),
-      ]).then(([{ updateWaypointAt, moveEndpointRigid }, { nearestEntity, SNAP_ENTITY_M, compatibleTargetsForCable }]) => {
+      import('@/components/Network/SnapConnect').then(({ nearestEntity, SNAP_ENTITY_M, compatibleTargetsForCable }) => {
         const readCoords = (): [number, number][] => {
           const c = propsRef.current.cables.find((x) => x.id === editingCableId);
           return c ? c.coords.map((p) => [p[0], p[1]] as [number, number]) : [];
@@ -959,11 +957,36 @@ export default function LeafletMap(props: Props) {
         };
 
         const n = coords.length;
-        coords.forEach((coord, idx) => {
+        // На длинной OSRM-трассе вершин десятки/сотни — показывать ручку на
+        // каждой неудобно. Всегда даём ручки на концах (A/B), а промежуточные
+        // прореживаем до ≤ MAX_MID равномерно вдоль линии.
+        const MAX_MID = 10;
+        const handleIndices: number[] = [0];
+        const interior = n - 2;
+        if (interior > 0 && interior <= MAX_MID) {
+          for (let i = 1; i < n - 1; i++) handleIndices.push(i);
+        } else if (interior > MAX_MID) {
+          const step = (n - 1) / (MAX_MID + 1);
+          for (let k = 1; k <= MAX_MID; k++) {
+            const i = Math.round(k * step);
+            if (i > 0 && i < n - 1 && handleIndices[handleIndices.length - 1] !== i) {
+              handleIndices.push(i);
+            }
+          }
+        }
+        if (n - 1 > 0) handleIndices.push(n - 1);
+
+        handleIndices.forEach((idx, hpos) => {
+          const coord = coords[idx];
           const kind = idx === 0 || idx === n - 1 ? 'end' : 'mid';
           const m = L.marker(coord, { icon: makeIcon(kind), draggable: true });
           const isEnd = idx === 0 || idx === n - 1;
           const end: 'from' | 'to' = idx === 0 ? 'from' : 'to';
+          // Соседние ручки: «спрятанные» вершины между ними схлопываем при
+          // перетаскивании, чтобы конец реально укорачивал кабель, а серединная
+          // ручка не давала зигзаг между плотными OSRM-точками.
+          const prevH = hpos > 0 ? handleIndices[hpos - 1] : null;
+          const nextH = hpos < handleIndices.length - 1 ? handleIndices[hpos + 1] : null;
 
           m.on('drag', () => {
             if (!isEnd) return;
@@ -999,10 +1022,10 @@ export default function LeafletMap(props: Props) {
                   return;
                 }
               }
-              applyCoords(moveEndpointRigid(latest, idx, ll.lat, ll.lng));
-              return;
             }
-            applyCoords(updateWaypointAt(latest, idx, ll.lat, ll.lng));
+            // Двигаем выбранную точку и схлопываем спрятанные вершины её пролёта:
+            // конец реально укорачивает кабель, серединная ручка — без зигзагов.
+            applyCoords(collapseWaypoint(coords, prevH, nextH, ll.lat, ll.lng));
           });
           group.addLayer(m);
         });
