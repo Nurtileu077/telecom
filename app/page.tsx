@@ -152,12 +152,15 @@ export default function HomePage() {
     net.setFieldRemoteSave(appMode === 'field');
   }, [appMode, net]);
 
+  // Уникальный ключ на вкладку: иначе две сессии под одним аккаунтом
+  // схлопываются в одну запись presence (счётчик и курсоры показывали бы 1).
+  const presenceSessionRef = useRef<string>(Math.random().toString(36).slice(2, 10));
   const presenceSelf = useMemo(() => {
     const name = authUser?.email?.split('@')[0]
       || getActorName()
       || 'Гость';
-    const key = authUser?.id ?? getGuestPresenceKey();
-    return { key, name };
+    const baseKey = authUser?.id ?? getGuestPresenceKey();
+    return { key: `${baseKey}:${presenceSessionRef.current}`, name };
   }, [authUser]);
 
   const presenceEnabled = net.dbEnabled && net.districts.length > 0 && !cloudBlocked;
