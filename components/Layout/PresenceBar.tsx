@@ -19,7 +19,7 @@ export default function PresenceBar({ onlineCount, peers }: Props) {
           className="shrink-0 px-1.5 py-0.5 rounded border"
           style={{ borderColor: `${p.color}66`, color: p.color }}
         >
-          {p.name}
+          {p.name}{p.activity ? <span className="text-[#94a3b8]"> · {p.activity}</span> : null}
         </span>
       ))}
     </div>

@@ -161,11 +161,31 @@ export default function HomePage() {
   }, [authUser]);
 
   const presenceEnabled = net.dbEnabled && net.districts.length > 0 && !cloudBlocked;
-  const { peers: presencePeers, onlineCount, publishCursor } = useProjectPresence(
+  const { peers: presencePeers, onlineCount, publishCursor, publishActivity } = useProjectPresence(
     net.projectId,
     presenceSelf,
     presenceEnabled,
   );
+
+  // Транслируем коллегам, что пользователь сейчас делает (рядом с курсором).
+  useEffect(() => {
+    if (!presenceEnabled) return;
+    const kindLabel = (k?: string) =>
+      k === 'olt' ? 'OLT'
+        : k === 'tb' || k === 'joint' ? 'муфту'
+          : k === 'ork' ? 'ОРК'
+            : k === 'sub' ? 'камеру' : 'объект';
+    let activity: string | null = null;
+    if (moveEntityTarget) activity = `двигает ${kindLabel(moveEntityTarget.kind)}`;
+    else if (editingCableId) activity = 'правит кабель';
+    else if (connectMode) activity = 'соединяет узлы';
+    else if (measureMode) activity = 'измеряет';
+    else if (placing) activity = 'добавляет объект';
+    else if (selectedCableId) activity = 'смотрит кабель';
+    else if (entitySelection) activity = `смотрит ${kindLabel(entitySelection.kind)}`;
+    else if (net.editMode) activity = 'редактирует';
+    publishActivity(activity);
+  }, [presenceEnabled, moveEntityTarget, editingCableId, connectMode, measureMode, placing, selectedCableId, entitySelection, net.editMode, publishActivity]);
 
   const handleSaveProject = useCallback(async (opts?: { audit?: boolean; force?: boolean }) => {
     setSaveError(null);

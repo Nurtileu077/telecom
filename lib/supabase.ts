@@ -60,6 +60,56 @@ export async function dbDeleteProject(id: string): Promise<void> {
   if (error) throw error;
 }
 
+// ── Project sharing by email ────────────────────────────────────────────────
+// Доступ к проекту, помимо организации (org_id), можно выдать конкретному email.
+// RLS на стороне БД: получатель видит/редактирует проект, если его email есть в
+// gpon_project_shares. Управлять шерами может только владелец (по org_id).
+export interface ProjectShare {
+  id: string;
+  project_id: string;
+  email: string;
+  role: 'editor' | 'viewer';
+  created_at: string;
+}
+
+export async function dbListShares(projectId: string): Promise<ProjectShare[]> {
+  if (!supabase) return [];
+  await assertSupabaseAccess();
+  const { data, error } = await supabase
+    .from('gpon_project_shares')
+    .select('id, project_id, email, role, created_at')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as ProjectShare[];
+}
+
+export async function dbShareProject(
+  projectId: string,
+  email: string,
+  role: 'editor' | 'viewer' = 'editor',
+): Promise<void> {
+  if (!supabase) throw new Error('Supabase не настроен');
+  await assertSupabaseAccess();
+  const clean = email.trim().toLowerCase();
+  if (!clean.includes('@')) throw new Error('Введите корректный email');
+  const { error } = await supabase
+    .from('gpon_project_shares')
+    .upsert({ project_id: projectId, email: clean, role }, { onConflict: 'project_id,email' });
+  if (error) throw error;
+}
+
+export async function dbUnshareProject(projectId: string, email: string): Promise<void> {
+  if (!supabase) return;
+  await assertSupabaseAccess();
+  const { error } = await supabase
+    .from('gpon_project_shares')
+    .delete()
+    .eq('project_id', projectId)
+    .eq('email', email.trim().toLowerCase());
+  if (error) throw error;
+}
+
 export async function dbLoadProject(id: string): Promise<Project | null> {
   const row = await dbLoadProjectRow(id);
   return row?.data ?? null;
