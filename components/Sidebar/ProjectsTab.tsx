@@ -2,6 +2,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { Project, ProjectSnapshot, ProjectStatus, PROJECT_STATUS_LABELS } from '@/types/network';
 import SnapshotsPanel from './SnapshotsPanel';
+import ServerHistoryPanel from './ServerHistoryPanel';
+import type { ProjectHistoryEntry } from '@/lib/supabase';
 
 interface Props {
   projectId: string;
@@ -24,6 +26,9 @@ interface Props {
   takeSnapshot: (name: string) => ProjectSnapshot;
   restoreSnapshot: (id: string) => void;
   deleteSnapshot: (id: string) => void;
+  listProjectHistory?: () => Promise<ProjectHistoryEntry[]>;
+  restoreHistoryVersion?: (id: string) => Promise<void>;
+  dbEnabled?: boolean;
 }
 
 export default function ProjectsTab({
@@ -32,6 +37,7 @@ export default function ProjectsTab({
   exportProjectJSON, importProjectJSON, importHistory,
   projectStatus, setProjectStatus,
   snapshots, takeSnapshot, restoreSnapshot, deleteSnapshot,
+  listProjectHistory, restoreHistoryVersion, dbEnabled,
 }: Props) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [refreshTick, setRefreshTick] = useState(0);
@@ -118,6 +124,14 @@ export default function ProjectsTab({
           restoreSnapshot={restoreSnapshot}
           deleteSnapshot={deleteSnapshot}
         />
+
+        {dbEnabled && listProjectHistory && restoreHistoryVersion && (
+          <ServerHistoryPanel
+            listProjectHistory={listProjectHistory}
+            restoreHistoryVersion={restoreHistoryVersion}
+            refreshKey={lastSavedAt}
+          />
+        )}
       </div>
 
       {/* Import history */}

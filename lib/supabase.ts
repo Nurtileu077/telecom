@@ -41,11 +41,14 @@ export async function dbSaveProject(project: Project): Promise<void> {
   if (!supabase) return;
   await assertSupabaseAccess();
   const orgId = project.orgId ?? getDefaultOrgId();
+  // updated_at детерминированный (= project.updatedAt): так клиент знает точную
+  // ревизию, которую он записал, и игнорирует собственное realtime-событие.
+  const stamp = project.updatedAt ?? new Date().toISOString();
   const row: Record<string, unknown> = {
     id: project.id,
     name: project.name,
     data: project,
-    updated_at: new Date().toISOString(),
+    updated_at: stamp,
   };
   if (project.createdAt) row.created_at = project.createdAt;
   if (orgId) row.org_id = orgId;
@@ -141,6 +144,40 @@ export async function dbFetchProjectRevision(id: string): Promise<{ updated_at: 
     .single();
   if (error || !data) return null;
   return { updated_at: data.updated_at as string, name: data.name as string };
+}
+
+// ── Project history (audit snapshots) ───────────────────────────────────────
+// Снимки пишутся БД-триггером при каждом изменении data. Здесь только чтение.
+export interface ProjectHistoryEntry {
+  id: string;
+  project_id: string;
+  name: string | null;
+  saved_by_email: string | null;
+  created_at: string;
+}
+
+export async function dbListProjectHistory(projectId: string): Promise<ProjectHistoryEntry[]> {
+  if (!supabase) return [];
+  await assertSupabaseAccess();
+  const { data, error } = await supabase
+    .from('gpon_project_history')
+    .select('id, project_id, name, saved_by_email, created_at')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as ProjectHistoryEntry[];
+}
+
+export async function dbLoadHistorySnapshot(historyId: string): Promise<Project | null> {
+  if (!supabase) return null;
+  await assertSupabaseAccess();
+  const { data, error } = await supabase
+    .from('gpon_project_history')
+    .select('data')
+    .eq('id', historyId)
+    .single();
+  if (error || !data) return null;
+  return (data as { data: Project }).data;
 }
 
 // ── Equipment catalog ─────────────────────────────────────────────────────────

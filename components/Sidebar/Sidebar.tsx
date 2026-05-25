@@ -109,6 +109,9 @@ interface Props {
   takeSnapshot: (name: string) => ProjectSnapshot;
   restoreSnapshot: (id: string) => void;
   deleteSnapshot: (id: string) => void;
+  listProjectHistory?: () => Promise<import('@/lib/supabase').ProjectHistoryEntry[]>;
+  restoreHistoryVersion?: (id: string) => Promise<void>;
+  dbEnabled?: boolean;
   hasNetwork: boolean;
   settings?: ProjectSettings;
   scenarios?: ProjectScenarios;
@@ -388,6 +391,9 @@ export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Prop
               takeSnapshot={props.takeSnapshot}
               restoreSnapshot={props.restoreSnapshot}
               deleteSnapshot={props.deleteSnapshot}
+              listProjectHistory={props.listProjectHistory}
+              restoreHistoryVersion={props.restoreHistoryVersion}
+              dbEnabled={props.dbEnabled}
             />
           )}
         </div>
