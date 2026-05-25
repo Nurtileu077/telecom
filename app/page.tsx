@@ -347,7 +347,12 @@ export default function HomePage() {
   // For subscribers: if dropped near another ORK (≤120m), reassign.
   const SNAP_TB_M = 80;
   const SNAP_ORK_M = 120;
-  const handleMoveEntity = useCallback(async (kind: 'tb' | 'ork' | 'olt', id: string, lat: number, lon: number) => {
+  const handleMoveEntity = useCallback(async (kind: 'tb' | 'ork' | 'olt' | 'joint' | 'sub', id: string, lat: number, lon: number) => {
+    // Муфты и абоненты двигаем как есть, без снаппинга/репарентинга.
+    if (kind === 'joint' || kind === 'sub') {
+      net.moveEntity(kind, id, lat, lon);
+      return;
+    }
     const { nearestEntity, SNAP_ENTITY_M } = await import('@/components/Network/SnapConnect');
     const snap = nearestEntity(lat, lon, net.districts, SNAP_ENTITY_M, id);
     const placeLat = snap?.lat ?? lat;

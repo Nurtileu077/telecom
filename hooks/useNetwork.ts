@@ -813,7 +813,10 @@ export function useNetwork() {
   }, [allSubscribers, runBuild]);
 
   // Move a TB or ORK (manual edit): update coords and rebuild cables only (no re-cluster)
-  const moveEntity = useCallback((kind: 'tb' | 'ork' | 'olt', id: string, lat: number, lon: number) => {
+  const moveEntity = useCallback((kind: 'tb' | 'ork' | 'olt' | 'joint' | 'sub', id: string, lat: number, lon: number) => {
+    if (kind === 'joint') {
+      setJoints((prev) => prev.map((j) => (j.id === id ? { ...j, lat, lon } : j)));
+    }
     setDistricts((prev) => prev.map((d) => {
       if (kind === 'olt' && d.olt.id === id) {
         return { ...d, olt: { ...d.olt, lat, lon } };
@@ -826,12 +829,21 @@ export function useNetwork() {
             if (kind === 'tb' && tb.id === id) return { ...tb, lat, lon };
             return {
               ...tb,
-              orks: tb.orks.map((ork) => kind === 'ork' && ork.id === id ? { ...ork, lat, lon } : ork),
+              orks: tb.orks.map((ork) => {
+                if (kind === 'ork' && ork.id === id) return { ...ork, lat, lon };
+                if (kind === 'sub') {
+                  return { ...ork, subscribers: ork.subscribers.map((s) => (s.id === id ? { ...s, lat, lon } : s)) };
+                }
+                return ork;
+              }),
             };
           }),
         },
       };
     }));
+    if (kind === 'sub') {
+      setAllSubscribers((prev) => prev.map((s) => (s.id === id ? { ...s, lat, lon } : s)));
+    }
     // Update cable endpoints touching this id
     setCables((prev) => prev.map((c) => {
       if (c.fromId === id || c.toId === id) {

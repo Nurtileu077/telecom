@@ -38,7 +38,7 @@ interface Props {
   selectingMode?: boolean;
   onMapClick?: (lat: number, lon: number) => void;
   onMapContextMenu?: (lat: number, lon: number, screenX: number, screenY: number) => void;
-  moveEntity?: (kind: 'tb' | 'ork' | 'olt', id: string, lat: number, lon: number) => void;
+  moveEntity?: (kind: 'tb' | 'ork' | 'olt' | 'joint' | 'sub', id: string, lat: number, lon: number) => void;
   deleteSubscriber?: (id: string) => void;
   onEntityClick?: (kind: 'olt' | 'tb' | 'ork', id: string) => void;
   onEntityDoubleClick?: (kind: 'olt' | 'tb' | 'ork', id: string) => void;
@@ -493,6 +493,17 @@ export default function LeafletMap(props: Props) {
     });
   }
 
+  // Перетаскивание для объектов без полноценного инспектора (муфты, абоненты):
+  // вешаем только drag, существующий click/contextmenu сохраняется.
+  function wireDragOnly(marker: any, kind: 'joint' | 'sub', id: string) {
+    marker.on('dragstart', () => { entityDragRef.current = true; });
+    marker.on('dragend', (e: any) => {
+      const ll = e.target.getLatLng();
+      propsRef.current.moveEntity?.(kind, id, ll.lat, ll.lng);
+      window.setTimeout(() => { entityDragRef.current = false; }, 50);
+    });
+  }
+
   function renderData() {
     const map = mapRef.current;
     const group = dataGroupRef.current;
@@ -547,6 +558,9 @@ export default function LeafletMap(props: Props) {
               ? 1
               : (CABLE_WEIGHTS[cable.type] || 2) + (isEditing ? 2 : inDiff ? 2 : inBranch ? 1 : 0),
             opacity: dimmed ? 0.12 : inDiff || inBranch ? 1 : (cable.type === 'ОК-4' ? 0.6 : 0.85),
+            // Клики ловит широкая «hit»-линия ниже, чтобы по кабелю было легко
+            // попасть без приближения карты.
+            interactive: false,
           });
           const cableTitle = cable.displayName
             ? `<b>${cable.displayName}</b><br/><span style="font-size:10px;color:#94a3b8">${cable.type}</span>`
@@ -554,29 +568,37 @@ export default function LeafletMap(props: Props) {
           const installNote = cable.installType
             ? `<br/>Прокладка: ${({ aerial: 'Воздушная', duct: 'В канализации', ground: 'В грунте' } as Record<string, string>)[cable.installType] ?? cable.installType}`
             : '';
-          poly.bindTooltip(
-            `${cableTitle}<br/>${cable.fromId} → ${cable.toId}<br/>Длина: ${Math.round(cable.lengthM)} м${installNote}${lane > 0 ? `<br/><i style=\"color:#94a3b8\">полоса ${lane}</i>` : ''}`,
-            { sticky: true, className: 'text-xs' },
-          );
           // Попап по клику (как у ОРК/муфты): откуда → куда, тип, начало/конец.
           const fromL = endpointLabel(districts, cable.fromId, joints);
           const toL = endpointLabel(districts, cable.toId, joints);
           const start = cable.coords[0];
           const end = cable.coords[cable.coords.length - 1];
           const fmt = (p: [number, number]) => `${p[0].toFixed(5)}, ${p[1].toFixed(5)}`;
-          poly.bindPopup(
-            `<b>${cable.displayName || cable.type}</b>`
+          const tooltipHtml = `${cableTitle}<br/>${cable.fromId} → ${cable.toId}<br/>Длина: ${Math.round(cable.lengthM)} м${installNote}${lane > 0 ? `<br/><i style=\"color:#94a3b8\">полоса ${lane}</i>` : ''}`;
+          const popupHtml = `<b>${cable.displayName || cable.type}</b>`
             + `<br/>Тип: <b>${cable.type}</b> · ${cable.fibers} вол.`
             + `<br/>Откуда: ${fromL.label} <span style="color:#94a3b8;font-size:10px">${fromL.shortId}</span>`
             + `<br/>Куда: ${toL.label} <span style="color:#94a3b8;font-size:10px">${toL.shortId}</span>`
             + `<br/>Длина: ${Math.round(cable.lengthM)} м${installNote}`
-            + `<br/><span style="color:#64748b;font-size:10px">Начало: ${fmt(start)}<br/>Конец: ${fmt(end)}</span>`,
-          );
-          poly.on('click', (e: any) => {
-            e.originalEvent?.stopPropagation?.();
-            propsRef.current.onCableClick?.(cable.id);
-          });
+            + `<br/><span style="color:#64748b;font-size:10px">Начало: ${fmt(start)}<br/>Конец: ${fmt(end)}</span>`;
           group.addLayer(poly);
+          // Широкая прозрачная линия-«хваталка»: увеличивает зону клика по кабелю.
+          if (!dimmed) {
+            const hit = L.polyline(drawnCoords, {
+              color: '#ffffff',
+              weight: Math.max(16, (CABLE_WEIGHTS[cable.type] || 2) + 12),
+              opacity: 0,
+              interactive: true,
+              bubblingMouseEvents: false,
+            });
+            hit.bindTooltip(tooltipHtml, { sticky: true, className: 'text-xs' });
+            hit.bindPopup(popupHtml);
+            hit.on('click', (e: any) => {
+              e.originalEvent?.stopPropagation?.();
+              propsRef.current.onCableClick?.(cable.id);
+            });
+            group.addLayer(hit);
+          }
         }
 
         const diff = propsRef.current.scenarioMapDiff;
@@ -625,15 +647,18 @@ export default function LeafletMap(props: Props) {
             html: `<div style="width:14px;height:14px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;background:#0d1b2a;border:1.5px solid #38bdf8;border-radius:50%;color:#38bdf8;box-shadow:0 0 4px rgba(56,189,248,0.6)">⊕</div>`,
             className: '', iconSize: [14, 14], iconAnchor: [7, 7],
           });
-          const m = L.marker([j.lat, j.lon], { icon });
+          const canDrag = !!propsRef.current.editMode;
+          const m = L.marker([j.lat, j.lon], { icon, draggable: canDrag });
           m.bindTooltip(
-            `<b>Транзитная муфта</b><br/>${j.id}<br/>Ответвлений: ${j.branchCount}<br/><i style="font-size:10px;color:#94a3b8">Клик — что внутри</i>`,
+            `<b>Транзитная муфта</b><br/>${j.id}<br/>Ответвлений: ${j.branchCount}<br/><i style="font-size:10px;color:#94a3b8">Клик — что внутри${canDrag ? ' · тащи — переместить' : ''}</i>`,
             { sticky: true, className: 'text-xs' },
           );
           m.on('click', (e: any) => {
+            if (entityDragRef.current) return;
             e.originalEvent?.stopPropagation?.();
             propsRef.current.onJointClick?.(j.id);
           });
+          if (canDrag) wireDragOnly(m, 'joint', j.id);
           group.addLayer(m);
         }
       }
@@ -722,7 +747,9 @@ export default function LeafletMap(props: Props) {
                     display:flex;align-items:center;justify-content:center
                   "><div style="width:${dotPx}px;height:${dotPx}px;background:${dotColor};border-radius:50%"></div></div>`,
                 });
-                const m = L.marker([sub.lat, sub.lon], { icon });
+                const canDragSub = !!propsRef.current.editMode;
+                const m = L.marker([sub.lat, sub.lon], { icon, draggable: canDragSub });
+                if (canDragSub) wireDragOnly(m, 'sub', sub.id);
                 const branchBtn = `<button onclick="window.__showBranchSub__('${sub.id}')" style="margin-top:6px;padding:2px 8px;background:#38bdf8;color:#0a0e1a;border:none;border-radius:3px;font-size:10px;cursor:pointer;font-weight:600">🌿 Показать ветку</button>`;
                 const delBtn = propsRef.current.editMode ? '<br/><button onclick="window.__deleteSub__(\'' + sub.id + '\')" style="margin-top:6px;padding:2px 8px;background:#f87171;color:#fff;border:none;border-radius:3px;font-size:10px;cursor:pointer">Удалить</button>' : '';
                 m.bindPopup(`<b>${sub.desc}</b><br/>Тип: <b>${camLabel}</b> · ${bw} Мбит/с<br/>📦 Бокс на столбе → ОРК: ${ork.id}<br/>Волокна: ${sub.fibers.working}+${sub.fibers.spare}<br/>${branchBtn}${delBtn}`);
