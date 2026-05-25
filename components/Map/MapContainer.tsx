@@ -674,7 +674,8 @@ export default function LeafletMap(props: Props) {
           });
           const canDrag = entityDraggable('olt', olt.id);
           const m = L.marker([olt.lat, olt.lon], { icon, draggable: canDrag });
-          m.bindPopup(`<b>${olt.id}</b><br/>${olt.model}<br/>Район: ${district.name}<br/>Ёмкость: ${olt.capacity}<br/>TB: ${olt.transitBoxes.length}<br/><i style="font-size:10px;color:#94a3b8">Двойной клик — режим перемещения</i>`);
+          m.bindPopup(`<b>${olt.displayName || olt.id}</b>${olt.displayName ? `<br/><span style="font-size:10px;color:#64748b">${olt.id}</span>` : ''}<br/>${olt.model}<br/>Район: ${district.name}<br/>Ёмкость: ${olt.capacity}<br/>TB: ${olt.transitBoxes.length}<br/><i style="font-size:10px;color:#94a3b8">Двойной клик — режим перемещения</i>`);
+          if (olt.displayName && zoom >= 15) m.bindTooltip(olt.displayName, { permanent: true, direction: 'right', offset: [12, 0], className: 'entity-label' });
           wireEntityMarker(m, 'olt', olt.id);
           group.addLayer(m);
         }
@@ -688,7 +689,8 @@ export default function LeafletMap(props: Props) {
               className: '', iconSize: [18, 18], iconAnchor: [9, 9],
             });
             const m = L.marker([tb.lat, tb.lon], { icon: iconTb, draggable: canDrag });
-            m.bindPopup(`<b>${tb.id}</b><br/>OLT: ${olt.id}<br/>ОРК: ${tb.orks.length}<br/>Муфта: ${tb.muftaType}<br/><i style="color:#64748b;font-size:10px">Двойной клик — переместить</i>`);
+            m.bindPopup(`<b>${tb.displayName || tb.id}</b>${tb.displayName ? `<br/><span style="font-size:10px;color:#64748b">${tb.id}</span>` : ''}<br/>OLT: ${olt.id}<br/>ОРК: ${tb.orks.length}<br/>Муфта: ${tb.muftaType}<br/><i style="color:#64748b;font-size:10px">Двойной клик — переместить</i>`);
+            if (tb.displayName && zoom >= 15) m.bindTooltip(tb.displayName, { permanent: true, direction: 'right', offset: [10, 0], className: 'entity-label' });
             wireEntityMarker(m, 'tb', tb.id);
             group.addLayer(m);
           }
@@ -702,7 +704,8 @@ export default function LeafletMap(props: Props) {
                 className: '', iconSize: [32, 18], iconAnchor: [16, 9],
               });
               const m = L.marker([ork.lat, ork.lon], { icon: iconOrk, draggable: canDrag });
-              m.bindPopup(`<b>${ork.id}</b><br/>Сплиттер: ${ork.splitter}<br/>Або.: ${ork.subscribers.length}<br/>Муфта: ${tb.id}<br/><i style="color:#64748b;font-size:10px">Двойной клик — переместить</i>`);
+              m.bindPopup(`<b>${ork.displayName || ork.id}</b>${ork.displayName ? `<br/><span style="font-size:10px;color:#64748b">${ork.id}</span>` : ''}<br/>Сплиттер: ${ork.splitter}<br/>Або.: ${ork.subscribers.length}<br/>Муфта: ${tb.id}<br/><i style="color:#64748b;font-size:10px">Двойной клик — переместить</i>`);
+              if (ork.displayName && zoom >= 15) m.bindTooltip(ork.displayName, { permanent: true, direction: 'right', offset: [10, 0], className: 'entity-label' });
               wireEntityMarker(m, 'ork', ork.id);
               group.addLayer(m);
             }
