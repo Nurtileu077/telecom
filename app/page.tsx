@@ -785,7 +785,7 @@ export default function HomePage() {
             onClick={() => setMobileMenuOpen(false)}
           />
         )}
-        <div className={`sidebar-drawer shrink-0 h-full md:relative md:translate-x-0 ${mobileMenuOpen ? 'is-open' : ''}`}>
+        <div className={`sidebar-drawer shrink-0 md:h-full md:relative md:translate-x-0 ${mobileMenuOpen ? 'is-open' : ''}`}>
         <Sidebar
           onMobileClose={goHomeMobile}
           mobilePersist
