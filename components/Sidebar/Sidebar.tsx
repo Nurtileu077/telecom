@@ -195,15 +195,19 @@ export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Prop
         <div className="px-3 py-2 border-b border-[var(--border)] flex items-start justify-between gap-2 shrink-0">
           <div className="min-w-0 flex-1">
           <p className="section-title">{currentGroup.label}</p>
-          <div className="flex flex-wrap gap-1 mt-2">
+          <div
+            className="grid gap-1 mt-2 p-1 rounded-lg bg-[var(--bg-canvas)]"
+            style={{ gridTemplateColumns: `repeat(${currentGroup.tabs.length === 4 ? 2 : currentGroup.tabs.length}, minmax(0, 1fr))` }}
+          >
             {currentGroup.tabs.map((t) => (
               <button
                 key={t.id}
                 type="button"
                 onClick={() => selectTab(t.id)}
-                className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition-colors ${
+                title={t.label}
+                className={`px-2 py-1 text-[11px] font-medium rounded-md transition-colors truncate text-center ${
                   activeTab === t.id
-                    ? 'bg-[var(--accent-dim)] text-[var(--accent)]'
+                    ? 'bg-[var(--accent-dim)] text-[var(--accent)] shadow-sm'
                     : 'text-[var(--text-2)] hover:bg-[var(--bg-hover)]'
                 }`}
               >
