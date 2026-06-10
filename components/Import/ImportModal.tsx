@@ -73,6 +73,9 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
   const [oltInputs, setOltInputs] = useState<Record<string, string>>({});
   const [oltBulkText, setOltBulkText] = useState('');
   const [oltError, setOltError] = useState('');
+  const [oltFileLoading, setOltFileLoading] = useState(false);
+  const [oltFileSummary, setOltFileSummary] = useState<string>('');
+  const oltFileRef = useRef<HTMLInputElement>(null);
 
   const parsePaste = useCallback(() => {
     setError('');
@@ -243,6 +246,68 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
     });
     if (bad > 0) setOltError(`${bad} строк не распознано. Формат: «Район: lat, lng»`);
   }, [oltBulkText, byDistrict]);
+
+  /**
+   * Импорт OLT-координат из файла (Excel/KMZ/KML/CSV/TSV).
+   * Каждый лист Excel или папка KML = район. Найденные точки распределяем
+   * по полям oltInputs так же, как обычная вставка/добавление.
+   * Если у точки имя района совпадает с уже существующим — кладём туда;
+   * иначе создаём строку «<district>:» которую пользователь подтвердит на сабмите.
+   */
+  const handleOltFile = useCallback(async (file: File) => {
+    setOltError(''); setOltFileSummary(''); setOltFileLoading(true);
+    try {
+      const ext = file.name.toLowerCase();
+      let points: { lat: number; lon: number; district: string }[] = [];
+      if (ext.endsWith('.xlsx') || ext.endsWith('.xls')) {
+        const subs = await importExcel(file);
+        points = subs.map((s) => ({ lat: s.lat, lon: s.lon, district: s.district }));
+      } else if (ext.endsWith('.kml') || ext.endsWith('.kmz')) {
+        const subs = await importKmz(file);
+        points = subs.map((s) => ({ lat: s.lat, lon: s.lon, district: s.district }));
+      } else if (ext.endsWith('.csv') || ext.endsWith('.tsv') || ext.endsWith('.txt')) {
+        const subs = await importCsv(file);
+        points = subs.map((s) => ({ lat: s.lat, lon: s.lon, district: s.district }));
+      } else {
+        throw new Error('Поддерживаются .xlsx, .kml, .kmz, .csv, .tsv');
+      }
+      if (points.length === 0) throw new Error('В файле не найдено корректных координат');
+
+      // Группируем по району. Если в файле районов нет (всё в «Imported»/«Импорт»)
+      // и в текущих абонентах ровно один район — распределяем все точки в него.
+      const grouped: Record<string, string[]> = {};
+      const targetDistricts = Object.keys(byDistrict);
+      const singleTarget = targetDistricts.length === 1 ? targetDistricts[0] : null;
+      const norm = (s: string) => s.trim().toLowerCase();
+      const matchTarget = (d: string): string => {
+        const n = norm(d);
+        const hit = targetDistricts.find((t) => norm(t) === n);
+        if (hit) return hit;
+        // «Imported» / «Импорт» / пусто — в единственный район, если он есть
+        if ((!d || /^(imported|импорт)$/i.test(d)) && singleTarget) return singleTarget;
+        return d;
+      };
+      for (const p of points) {
+        const dst = matchTarget(p.district || singleTarget || 'Импорт');
+        (grouped[dst] ||= []).push(`${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}`);
+      }
+
+      setOltInputs((prev) => {
+        const next = { ...prev };
+        for (const [d, lns] of Object.entries(grouped)) {
+          const existing = next[d]?.trim();
+          next[d] = existing ? `${existing}\n${lns.join('\n')}` : lns.join('\n');
+        }
+        return next;
+      });
+      const matched = Object.keys(grouped).filter((d) => targetDistricts.includes(d)).length;
+      setOltFileSummary(`✓ Загружено ${points.length} точек в ${Object.keys(grouped).length} р-нах (${matched} совпали с абонентскими)`);
+    } catch (e: any) {
+      setOltError(e?.message || 'Ошибка чтения файла');
+    } finally {
+      setOltFileLoading(false);
+    }
+  }, [byDistrict]);
 
   // Each district's textarea may contain multiple lines = multiple OLTs.
   // Returns a map district → array of valid {lat, lon}, dropping invalid lines.
@@ -538,6 +603,32 @@ export default function ImportModal({ onClose, onBuild, onLoadRaw, onLoadStructu
                 Абоненты автоматически разойдутся по ближайшему OLT (Voronoi).<br/>
                 Пусто → один OLT в центре района (как раньше).
               </p>
+
+              <details className="bg-[#0d1b2a] rounded border border-[#1e3a5f]/50">
+                <summary className="text-[10px] text-[#94a3b8] px-2 py-1.5 cursor-pointer hover:text-[#e2e8f0]">
+                  📂 Загрузить из файла (Excel / KMZ / KML / CSV)
+                </summary>
+                <div className="p-2 space-y-1.5">
+                  <input
+                    ref={oltFileRef}
+                    type="file"
+                    accept=".xlsx,.xls,.kml,.kmz,.csv,.tsv,.txt"
+                    className="hidden"
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) handleOltFile(f); }}
+                  />
+                  <button
+                    onClick={() => oltFileRef.current?.click()}
+                    disabled={oltFileLoading}
+                    className="w-full py-1.5 bg-[#38bdf8]/15 hover:bg-[#38bdf8]/25 disabled:opacity-30 text-[#38bdf8] text-[10px] rounded transition-colors"
+                  >
+                    {oltFileLoading ? '⏳ Чтение…' : '📂 Выбрать файл с OLT'}
+                  </button>
+                  <p className="text-[9px] text-[#64748b] leading-snug">
+                    Лист Excel или папка KML = район; имя совпадает с районом абонентов → добавим туда. Иначе создадим новую строку района.
+                  </p>
+                  {oltFileSummary && <p className="text-[10px] text-[#34d399]">{oltFileSummary}</p>}
+                </div>
+              </details>
 
               <details className="bg-[#0d1b2a] rounded border border-[#1e3a5f]/50">
                 <summary className="text-[10px] text-[#94a3b8] px-2 py-1.5 cursor-pointer hover:text-[#e2e8f0]">

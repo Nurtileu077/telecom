@@ -101,6 +101,9 @@ export const LAYER_LABEL: Record<KmzLayer, string> = {
 export interface KmzExportOpts {
   layers?: KmzLayer[];   // какие слои включать (по умолчанию все)
   separate?: boolean;    // true → zip из отдельных .kmz по слоям
+  /** В режиме separate: слой «cables» разбить на отдельные .kmz по типам
+   *  (ОК-4, ОК-8, ОК-12 …). Удобно подрядчику — кабели одного сечения одним файлом. */
+  splitCablesByType?: boolean;
 }
 
 export async function exportKMZ(districts: District[], cables: Cable[], opts?: KmzExportOpts): Promise<Blob> {
@@ -289,56 +292,56 @@ ${html(SPECS.sub)}`;
   const cableDistrict = (c: Cable): string =>
     entityDistrict.get(c.fromId) ?? entityDistrict.get(c.toId) ?? 'Без района';
 
-  const buildCables = (): string => {
-    let s = '';
-    let skippedCables = 0;
-    for (const type of cableTypeOrder) {
-      const typeCables = cables.filter((c) => c.type === type);
-      if (typeCables.length === 0) continue;
-      const styleInfo = CABLE_STYLES[type];
-      const totalTypeM = typeCables.reduce((a, c) => a + c.lengthM, 0);
+  // Один тип кабеля → одна «верхушка» (по районам внутри).  Выделено в
+  // отдельную функцию, чтобы separate-режим мог построить файл на каждый тип.
+  const buildCablesOfType = (type: Cable['type']): string => {
+    const typeCables = cables.filter((c) => c.type === type);
+    if (typeCables.length === 0) return '';
+    const styleInfo = CABLE_STYLES[type];
+    const totalTypeM = typeCables.reduce((a, c) => a + c.lengthM, 0);
 
-      const byDist = new Map<string, Cable[]>();
-      for (const c of typeCables) {
-        const dn = cableDistrict(c);
-        if (!byDist.has(dn)) byDist.set(dn, []);
-        byDist.get(dn)!.push(c);
-      }
+    const byDist = new Map<string, Cable[]>();
+    for (const c of typeCables) {
+      const dn = cableDistrict(c);
+      if (!byDist.has(dn)) byDist.set(dn, []);
+      byDist.get(dn)!.push(c);
+    }
 
-      s += `<Folder><name>${styleInfo.label} — ${typeCables.length} уч. / ${fmtLen(totalTypeM)}</name>\n`;
-      for (const [distName, distCables] of byDist.entries()) {
-        s += `<Folder><name>${esc(distName)} (${distCables.length} уч.)</name>\n`;
-        for (const cable of distCables) {
-          const routed = cable.routedByOSRM ? '✅ по дороге (OSRM)' : '⚠️ прямая линия';
-          const lenM = Math.round(cable.lengthM);
-          const desc = `<b>${esc(cable.fromId)} → ${esc(cable.toId)}</b><br/>
+    let s = `<Folder><name>${styleInfo.label} — ${typeCables.length} уч. / ${fmtLen(totalTypeM)}</name>\n`;
+    let skipped = 0;
+    for (const [distName, distCables] of byDist.entries()) {
+      s += `<Folder><name>${esc(distName)} (${distCables.length} уч.)</name>\n`;
+      for (const cable of distCables) {
+        const routed = cable.routedByOSRM ? '✅ по дороге (OSRM)' : '⚠️ прямая линия';
+        const lenM = Math.round(cable.lengthM);
+        const desc = `<b>${esc(cable.fromId)} → ${esc(cable.toId)}</b><br/>
 Тип: ${esc(cable.type)}<br/>
 Длина: ${fmtLen(cable.lengthM)}<br/>
 Маршрут: ${routed}<br/>
 Точек: ${cable.coords.length}`;
-          // Метраж в НАЗВАНИЕ + в ExtendedData, чтобы он был виден сразу при
-          // загрузке (а не только в описании после редактирования).
-          const cableName = `${cable.type} · ${fmtLen(cable.lengthM)} · ${cable.fromId}→${cable.toId}`;
-          const ext = {
-            'Тип': cable.type,
-            'Длина_м': lenM,
-            'Длина': fmtLen(cable.lengthM),
-            'Жил': cable.fibers,
-            'От': cable.fromId,
-            'До': cable.toId,
-            'Маршрут': cable.routedByOSRM ? 'OSRM' : 'прямая',
-          };
-          const placemark = line(cableName, cable.coords, `cable-${type}`, desc, ext);
-          if (!placemark) { skippedCables++; continue; }
-          s += placemark;
-        }
-        s += `</Folder>\n`;
+        const cableName = `${cable.type} · ${fmtLen(cable.lengthM)} · ${cable.fromId}→${cable.toId}`;
+        const ext = {
+          'Тип': cable.type,
+          'Длина_м': lenM,
+          'Длина': fmtLen(cable.lengthM),
+          'Жил': cable.fibers,
+          'От': cable.fromId,
+          'До': cable.toId,
+          'Маршрут': cable.routedByOSRM ? 'OSRM' : 'прямая',
+        };
+        const placemark = line(cableName, cable.coords, `cable-${type}`, desc, ext);
+        if (!placemark) { skipped++; continue; }
+        s += placemark;
       }
       s += `</Folder>\n`;
     }
-    if (skippedCables > 0) console.warn(`[KMZ] Пропущено ${skippedCables} кабелей с битыми координатами`);
+    s += `</Folder>\n`;
+    if (skipped > 0) console.warn(`[KMZ] ${type}: пропущено ${skipped} кабелей с битыми координатами`);
     return s;
   };
+
+  const buildCables = (): string =>
+    cableTypeOrder.map((t) => buildCablesOfType(t)).join('');
 
   // ---- Assemble document(s) per options ----
   const builders: Record<KmzLayer, () => string> = {
@@ -359,13 +362,33 @@ ${withSummary ? summaryCDATA : ''}${body}</Document></kml>`;
 
   if (opts?.separate) {
     // Каждый слой — отдельный .kmz внутри одного .zip (готово к раздаче).
+    // При splitCablesByType слой «cables» дополнительно разбиваем по типам.
     const outer = new JSZip();
-    for (const layer of selected) {
-      const kml = wrapDoc(`OPTIQ — ${LAYER_LABEL[layer]} (${date})`, builders[layer](), false);
+    const addKmz = async (filename: string, kml: string) => {
       const inner = new JSZip();
       inner.file('doc.kml', kml);
-      const kmz = await inner.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 9 } });
-      outer.file(`OPTIQ-${LAYER_LABEL[layer]}.kmz`, kmz);
+      const kmz = await inner.generateAsync({
+        type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 9 },
+      });
+      outer.file(filename, kmz);
+    };
+    // ASCII в именах файлов — чтобы Windows-архиваторы не калечили кириллицу
+    const layerFile: Record<KmzLayer, string> = {
+      olt: 'OLT', tb: 'Muftas', ork: 'ORKSP', sub: 'Cameras', cables: 'Cables',
+    };
+    for (const layer of selected) {
+      if (layer === 'cables' && opts.splitCablesByType) {
+        for (const type of cableTypeOrder) {
+          const body = buildCablesOfType(type);
+          if (!body) continue; // нет кабелей этого типа — файл не плодим
+          const safeType = type.replace('ОК', 'OK');
+          const kml = wrapDoc(`OPTIQ — Кабели ${type} (${date})`, body, false);
+          await addKmz(`OPTIQ-Cables-${safeType}.kmz`, kml);
+        }
+        continue;
+      }
+      const kml = wrapDoc(`OPTIQ — ${LAYER_LABEL[layer]} (${date})`, builders[layer](), false);
+      await addKmz(`OPTIQ-${layerFile[layer]}.kmz`, kml);
     }
     return outer.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 9 } });
   }

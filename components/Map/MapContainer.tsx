@@ -243,6 +243,12 @@ function offsetPolyline(coords: [number, number][], offsetM: number): [number, n
   return out;
 }
 
+/** Размер маркеров в зависимости от зума — как в Google: точки «растут»
+ *  при приближении и уменьшаются при отдалении. Возвращает множитель ≈ 0.85-1.75. */
+function markerScale(zoom: number): number {
+  return Math.max(0.85, Math.min(1.75, 0.85 + (zoom - 10) * 0.12));
+}
+
 export default function LeafletMap(props: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const gpsMarkerRef = useRef<any>(null);
@@ -503,6 +509,9 @@ export default function LeafletMap(props: Props) {
       const isSnapTarget = (id: string) =>
         snapHighlightId === id || (snapHighlightIds?.has(id) ?? false);
       const zoom = map.getZoom();
+      const ms = markerScale(zoom);
+      // Базовые размеры → пиксели для конкретного зума
+      const px = (base: number) => Math.max(8, Math.round(base * ms));
 
       if (layers.cables) {
         // ── Параллельные кабели на одной дороге ──
@@ -643,9 +652,10 @@ export default function LeafletMap(props: Props) {
         if (layers.olt) {
           const moveHere = moveEntityTarget?.kind === 'olt' && moveEntityTarget.id === olt.id;
           const snapHere = isSnapTarget(olt.id);
+          const wOlt = px(44), hOlt = px(24), fOlt = Math.max(9, Math.round(10 * ms));
           const icon = L.divIcon({
-            html: `<div style="width:40px;height:22px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;font-family:monospace;background:linear-gradient(135deg,#f59e0b,#fbbf24);border:2px solid ${snapHere ? '#34d399' : moveHere ? '#a78bfa' : '#f59e0b'};border-radius:4px;color:#0a0e1a;box-shadow:0 ${snapHere || moveHere ? '0 12px' : '2px 8px'} rgba(${snapHere ? '52,211,153' : moveHere ? '167,139,250' : '0,0,0'},0.55)">OLT</div>`,
-            className: '', iconSize: [40, 22], iconAnchor: [20, 11],
+            html: `<div style="width:${wOlt}px;height:${hOlt}px;display:flex;align-items:center;justify-content:center;font-size:${fOlt}px;font-weight:700;font-family:monospace;background:linear-gradient(135deg,#f59e0b,#fbbf24);border:2px solid ${snapHere ? '#34d399' : moveHere ? '#a78bfa' : '#f59e0b'};border-radius:4px;color:#0a0e1a;box-shadow:0 ${snapHere || moveHere ? '0 12px' : '2px 8px'} rgba(${snapHere ? '52,211,153' : moveHere ? '167,139,250' : '0,0,0'},0.55)">OLT</div>`,
+            className: '', iconSize: [wOlt, hOlt], iconAnchor: [Math.round(wOlt / 2), Math.round(hOlt / 2)],
           });
           const canDrag = entityDraggable('olt', olt.id);
           const m = L.marker([olt.lat, olt.lon], { icon, draggable: canDrag });
@@ -658,9 +668,10 @@ export default function LeafletMap(props: Props) {
             const moveHere = moveEntityTarget?.kind === 'tb' && moveEntityTarget.id === tb.id;
             const snapHere = isSnapTarget(tb.id);
             const canDrag = entityDraggable('tb', tb.id);
+            const tbSize = px(20), tbFont = Math.max(11, Math.round(13 * ms));
             const iconTb = L.divIcon({
-              html: `<div style="width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:#0d1b2a;border:2px solid ${snapHere ? '#34d399' : moveHere ? '#a78bfa' : '#38bdf8'};border-radius:50%;color:#38bdf8;box-shadow:0 0 ${snapHere || moveHere ? '10px' : '5px'} rgba(${snapHere ? '52,211,153' : '56,189,248'},0.75)">⊕</div>`,
-              className: '', iconSize: [18, 18], iconAnchor: [9, 9],
+              html: `<div style="width:${tbSize}px;height:${tbSize}px;display:flex;align-items:center;justify-content:center;font-size:${tbFont}px;font-weight:700;background:#0d1b2a;border:2px solid ${snapHere ? '#34d399' : moveHere ? '#a78bfa' : '#38bdf8'};border-radius:50%;color:#38bdf8;box-shadow:0 0 ${snapHere || moveHere ? '10px' : '5px'} rgba(${snapHere ? '52,211,153' : '56,189,248'},0.75)">⊕</div>`,
+              className: '', iconSize: [tbSize, tbSize], iconAnchor: [Math.round(tbSize / 2), Math.round(tbSize / 2)],
             });
             const m = L.marker([tb.lat, tb.lon], { icon: iconTb, draggable: canDrag });
             m.bindPopup(`<b>${tb.id}</b><br/>OLT: ${olt.id}<br/>ОРК: ${tb.orks.length}<br/>Муфта: ${tb.muftaType}<br/><i style="color:#64748b;font-size:10px">Двойной клик — переместить</i>`);
@@ -672,16 +683,17 @@ export default function LeafletMap(props: Props) {
               const moveHere = moveEntityTarget?.kind === 'ork' && moveEntityTarget.id === ork.id;
               const snapHere = isSnapTarget(ork.id);
               const canDrag = entityDraggable('ork', ork.id);
+              const wOrk = px(36), hOrk = px(20), fOrk = Math.max(9, Math.round(10 * ms));
               const iconOrk = L.divIcon({
-                html: `<div style="width:32px;height:18px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;font-family:monospace;background:#1a2744;border:2px solid ${snapHere ? '#34d399' : moveHere ? '#a78bfa' : '#f59e0b'};border-radius:3px;color:#f59e0b;box-shadow:0 1px 4px rgba(0,0,0,0.4)">ОРК</div>`,
-                className: '', iconSize: [32, 18], iconAnchor: [16, 9],
+                html: `<div style="width:${wOrk}px;height:${hOrk}px;display:flex;align-items:center;justify-content:center;font-size:${fOrk}px;font-weight:600;font-family:monospace;background:#1a2744;border:2px solid ${snapHere ? '#34d399' : moveHere ? '#a78bfa' : '#f59e0b'};border-radius:3px;color:#f59e0b;box-shadow:0 1px 4px rgba(0,0,0,0.4)">ОРК</div>`,
+                className: '', iconSize: [wOrk, hOrk], iconAnchor: [Math.round(wOrk / 2), Math.round(hOrk / 2)],
               });
               const m = L.marker([ork.lat, ork.lon], { icon: iconOrk, draggable: canDrag });
               m.bindPopup(`<b>${ork.id}</b><br/>Сплиттер: ${ork.splitter}<br/>Або.: ${ork.subscribers.length}<br/>Муфта: ${tb.id}<br/><i style="color:#64748b;font-size:10px">Двойной клик — переместить</i>`);
               wireEntityMarker(m, 'ork', ork.id);
               group.addLayer(m);
             }
-            if (layers.subscribers && zoom >= 13) {
+            if (layers.subscribers && zoom >= 11) {
               const budgetMap = propsRef.current.budgetMap;
               const colorByBudget = propsRef.current.budgetColoring;
               for (const sub of ork.subscribers) {
@@ -704,9 +716,12 @@ export default function LeafletMap(props: Props) {
                   if (s === 'fail') dotColor = '#f87171';
                 }
                 // Larger box for intersection cameras so the busiest type
-                // pops on the map.
-                const boxPx = camKind === 'intersection' ? 12 : 10;
-                const dotPx = camKind === 'intersection' ? 5 : 4;
+                // pops on the map. Базовые размеры подняты и масштабируются
+                // от зума: на z11-12 видны как мелкие точки, на z16+ — крупные.
+                const boxBase = camKind === 'intersection' ? 14 : 12;
+                const dotBase = camKind === 'intersection' ? 6 : 5;
+                const boxPx = Math.max(7, Math.round(boxBase * ms));
+                const dotPx = Math.max(3, Math.round(dotBase * ms));
                 const camLabel = CAMERA_KIND_LABEL[camKind];
                 const bw = sub.minBandwidthMbps ?? CAMERA_MIN_BANDWIDTH_MBPS[camKind];
                 const icon = L.divIcon({
@@ -751,7 +766,7 @@ export default function LeafletMap(props: Props) {
       const unassigned = (propsRef.current.unassignedSubscribers ?? [])
         .filter((s) => !assigned.has(s.id));
       if (layers.subscribers && unassigned.length > 0) {
-        const baseR = zoom >= 16 ? 3.5 : zoom >= 13 ? 2.5 : 1.5;
+        const baseR = Math.max(2, Math.round(3.5 * ms));
         for (const s of unassigned) {
           const camKind = s.kind ?? 'unknown';
           const color = CAMERA_KIND_COLOR[camKind] ?? '#94a3b8';

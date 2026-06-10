@@ -1573,16 +1573,28 @@ export function useNetwork() {
     } catch { return []; }
   }
 
-  function saveToLocalStorage(project: Project) {
-    const projects = loadProjects();
-    const idx = projects.findIndex((p) => p.id === project.id);
-    if (idx >= 0) {
-      projects[idx] = { ...projects[idx], ...project, createdAt: projects[idx].createdAt };
-    } else {
-      projects.unshift(project);
+  /**
+   * Запись проекта в localStorage, устойчивая к переполнению.
+   * Текущий проект ставим в начало; при QuotaExceededError вытесняем
+   * самые старые с хвоста, пока не влезет. Один проект сильно крупнее
+   * квоты → возвращаем false (вызывающий покажет alert, без тихой потери).
+   */
+  function saveToLocalStorage(project: Project): boolean {
+    const existing = loadProjects();
+    const prev = existing.find((p) => p.id === project.id);
+    const merged: Project = prev ? { ...project, createdAt: prev.createdAt } : project;
+    let arr: Project[] = [merged, ...existing.filter((p) => p.id !== project.id)].slice(0, 50);
+    while (arr.length > 0) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
+        try { localStorage.setItem(CURRENT_KEY, project.id); } catch {}
+        return true;
+      } catch {
+        if (arr.length === 1) return false;
+        arr = arr.slice(0, arr.length - 1);
+      }
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(projects.slice(0, 50)));
-    localStorage.setItem(CURRENT_KEY, project.id);
+    return false;
   }
 
   const listProjects = useCallback(async (): Promise<Project[]> => {
@@ -1620,7 +1632,12 @@ export function useNetwork() {
   }) => {
     const now = new Date().toISOString();
     let project: Project = { ...buildCurrentProject(), updatedAt: now };
-    saveToLocalStorage(project);
+    const localOk = saveToLocalStorage(project);
+    if (!localOk && !supabase && typeof window !== 'undefined') {
+      // Без Supabase localStorage — единственное место хранения.
+      // Без alert юзер не узнает, что сохранение провалилось.
+      alert('Не удалось сохранить локально: переполнено хранилище браузера. Удалите старые проекты или выгрузите их в JSON («Экспорт JSON»).');
+    }
     if (opts?.audit) recordAudit('Сохранение проекта', projectName);
     const skipRemote = opts?.skipRemote ?? false;
     const allowRemote = !skipRemote || fieldRemoteSaveRef.current;
@@ -1769,7 +1786,19 @@ export function useNetwork() {
   const importProjectJSON = useCallback(async (file: File) => {
     const text = await file.text();
     const p = JSON.parse(text) as Project;
+    // Если id совпадает с уже сохранённым проектом другого юзера — выдаём
+    // новый id, чтобы не затереть его и не показать в списке вместо своего.
+    const existing = loadProjects();
+    if (!p.id || existing.some((x) => x.id === p.id && x.name !== p.name)) {
+      p.id = newId('proj');
+    }
     loadProjectInternal(p);
+    // СРАЗУ персистим: иначе до автосейва проект жил только в памяти —
+    // закрыл вкладку → при перезагрузке открывался старый «текущий».
+    const ok = saveToLocalStorage(p);
+    if (!ok && typeof window !== 'undefined') {
+      alert('Проект загружен, но не сохранён локально: переполнено хранилище браузера. Удалите старые проекты или выгрузите их в JSON.');
+    }
   }, []);
 
   // Auto-save

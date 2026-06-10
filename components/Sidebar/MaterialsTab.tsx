@@ -53,6 +53,7 @@ function Section({ title, rows }: { title: string; rows: Row[] }) {
 export default function MaterialsTab({ materials, districts, cables, joints, selectionBBox, selectionPoly, cableReserve = 1.10 }: Props) {
   const [kmzLayers, setKmzLayers] = useState<KmzLayer[]>([...ALL_LAYERS]);
   const [kmzSeparate, setKmzSeparate] = useState(false);
+  const [kmzSplitCables, setKmzSplitCables] = useState(false);
   const toggleKmzLayer = (l: KmzLayer) =>
     setKmzLayers((prev) => (prev.includes(l) ? prev.filter((x) => x !== l) : [...prev, l]));
 
@@ -93,7 +94,11 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
   const handleKMZExport = async () => {
     if (kmzLayers.length === 0) return;
     const { districts: d, cables: c } = exportSet();
-    const blob = await exportKMZ(d, c, { layers: kmzLayers, separate: kmzSeparate });
+    const blob = await exportKMZ(d, c, {
+      layers: kmzLayers,
+      separate: kmzSeparate,
+      splitCablesByType: kmzSeparate && kmzSplitCables && kmzLayers.includes('cables'),
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -127,8 +132,8 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
   ];
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex-1 overflow-y-auto p-3">
+    <div className="h-full overflow-y-auto">
+      <div className="p-3">
         {/* Summary */}
         <div className="grid grid-cols-2 gap-2 mb-2">
           <div className="bg-[#0d1b2a] border border-[#1e3a5f] rounded-lg p-2 text-center">
@@ -193,6 +198,19 @@ export default function MaterialsTab({ materials, districts, cables, joints, sel
             />
             Отдельными файлами по слоям (.zip)
           </label>
+          {kmzSeparate && kmzLayers.includes('cables') && (
+            <label className="flex items-start gap-1.5 text-[11px] text-[#94a3b8] cursor-pointer pl-4">
+              <input
+                type="checkbox"
+                checked={kmzSplitCables}
+                onChange={(e) => setKmzSplitCables(e.target.checked)}
+                className="accent-[#38bdf8] mt-0.5"
+              />
+              <span className="leading-snug">
+                Кабели — каждый тип отдельно (ОК-4, ОК-8, ОК-16, …)
+              </span>
+            </label>
+          )}
         </div>
         <button
           onClick={handleKMZExport}
