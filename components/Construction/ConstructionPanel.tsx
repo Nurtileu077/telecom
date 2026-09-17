@@ -1,15 +1,21 @@
 'use client';
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
-import { X, Upload, Loader2, AlertTriangle, MapPin, Wrench, Boxes } from 'lucide-react';
+import {
+  X, Upload, Loader2, AlertTriangle, MapPin, Wrench, Boxes,
+  Plus, Download, Trash2, CloudOff,
+} from 'lucide-react';
 import { importJournal, type JournalImportResult } from './JournalImport';
+import { buildJournalWorkbook, journalFileName } from './JournalExport';
+import DailyEntryForm from './DailyEntryForm';
 import {
   JournalState, JournalFilter, emptyJournal, loadJournal, saveJournal, mergeJournal,
   matchesFilter, groundTotals, metersBy, metersByDay, lastWorkDate, distinct,
-  fmtKm, fmtMeters, shiftDays, MATERIAL_LABEL,
+  fmtKm, fmtMeters, shiftDays, MATERIAL_LABEL, addGroundEntry, removeEntry,
 } from './journalStore';
-import { LAY_METHOD_LABEL, MATERIAL_UNIT, type LayMethod, type MaterialKind } from '@/types/construction';
+import { LAY_METHOD_LABEL, MATERIAL_UNIT, type LayMethod, type MaterialKind, type DailyWorkEntry } from '@/types/construction';
 
 type Period = 'day' | 'week' | 'month' | 'all';
+type View = 'summary' | 'entries';
 
 const PERIOD_LABEL: Record<Period, string> = {
   day: 'Последний день', week: '7 дней', month: '30 дней', all: 'Всё время',
@@ -25,9 +31,46 @@ export default function ConstructionPanel({ onClose }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [report, setReport] = useState<JournalImportResult['stats'] | null>(null);
+  const [view, setView] = useState<View>('summary');
+  const [formOpen, setFormOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { setJournal(loadJournal()); }, []);
+
+  /** Общая точка записи: сохраняем и честно сообщаем о переполнении. */
+  const persist = useCallback((next: JournalState) => {
+    setJournal(next);
+    if (!saveJournal(next)) {
+      setError('Данные показаны, но не сохранены: переполнено хранилище браузера. Выгрузите журнал в Excel и очистите старые проекты.');
+    } else {
+      setError('');
+    }
+  }, []);
+
+  const handleAddEntry = useCallback((entry: DailyWorkEntry) => {
+    persist(addGroundEntry(loadJournal(), entry));
+    setReport(null);
+  }, [persist]);
+
+  const handleDelete = useCallback((id: string) => {
+    if (!confirm('Удалить запись?')) return;
+    persist(removeEntry(loadJournal(), id));
+  }, [persist]);
+
+  const handleExport = useCallback(async () => {
+    setBusy(true);
+    try {
+      const blob = await buildJournalWorkbook(journal);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = journalFileName();
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось собрать файл');
+    } finally { setBusy(false); }
+  }, [journal]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -39,16 +82,12 @@ export default function ConstructionPanel({ onClose }: Props) {
     setBusy(true); setError(''); setReport(null);
     try {
       const res = await importJournal(file);
-      const next = mergeJournal(loadJournal(), res);
-      setJournal(next);
+      persist(mergeJournal(loadJournal(), res));
       setReport(res.stats);
-      if (!saveJournal(next)) {
-        setError('Журнал показан, но не сохранён: переполнено хранилище браузера. Выгрузите и удалите старые проекты.');
-      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось прочитать файл');
     } finally { setBusy(false); }
-  }, []);
+  }, [persist]);
 
   // ── Период считаем от последнего рабочего дня, а не от сегодня:
   //    в журнал пишут задним числом, «вчера» от календаря чаще всего пусто.
@@ -90,9 +129,16 @@ export default function ConstructionPanel({ onClose }: Props) {
         <div className="ml-auto flex items-center gap-1.5">
           <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden"
                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }} />
-          <button type="button" className="btn btn-primary text-[11px]" onClick={() => fileRef.current?.click()} disabled={busy}>
-            {busy ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-            <span className="hidden sm:inline">{busy ? 'Читаю…' : 'Загрузить журнал'}</span>
+          <button type="button" className="btn btn-ghost btn-icon" title="Загрузить журнал из Excel"
+                  onClick={() => fileRef.current?.click()} disabled={busy}>
+            {busy ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
+          </button>
+          <button type="button" className="btn btn-ghost btn-icon" title="Выгрузить в Excel"
+                  onClick={handleExport} disabled={busy || empty}>
+            <Download size={15} />
+          </button>
+          <button type="button" className="btn btn-primary text-[11px]" onClick={() => setFormOpen(true)}>
+            <Plus size={15} /><span className="hidden sm:inline">Закрыть день</span>
           </button>
           <button type="button" className="btn btn-ghost btn-icon" onClick={onClose} aria-label="Закрыть"><X size={16} /></button>
         </div>
@@ -101,6 +147,15 @@ export default function ConstructionPanel({ onClose }: Props) {
       {/* Фильтры */}
       {!empty && (
         <div className="flex flex-wrap items-center gap-1.5 px-3 md:px-4 py-2 border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0">
+          <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md mr-1">
+            {([['summary', 'Сводка'], ['entries', 'Записи']] as [View, string][]).map(([v, label]) => (
+              <button key={v} type="button" onClick={() => setView(v)}
+                className={`px-2.5 py-1 text-[11px] rounded transition-colors ${
+                  view === v ? 'bg-[var(--accent-dim)] text-[var(--accent)] font-medium' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
           <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md">
             {(Object.keys(PERIOD_LABEL) as Period[]).map((p) => (
               <button key={p} type="button" onClick={() => setPeriod(p)}
@@ -150,7 +205,9 @@ export default function ConstructionPanel({ onClose }: Props) {
         )}
 
         {empty ? (
-          <EmptyJournal onPick={() => fileRef.current?.click()} busy={busy} />
+          <EmptyJournal onPick={() => fileRef.current?.click()} onAdd={() => setFormOpen(true)} busy={busy} />
+        ) : view === 'entries' ? (
+          <EntriesList rows={ground} onDelete={handleDelete} />
         ) : (
           <div className="flex flex-col gap-4">
             {/* Ключевые цифры */}
@@ -176,6 +233,62 @@ export default function ConstructionPanel({ onClose }: Props) {
           </div>
         )}
       </div>
+
+      {formOpen && (
+        <DailyEntryForm journal={journal} onSave={handleAddEntry} onClose={() => setFormOpen(false)} />
+      )}
+    </div>
+  );
+}
+
+function EntriesList({ rows, onDelete }: { rows: DailyWorkEntry[]; onDelete: (id: string) => void }) {
+  const sorted = useMemo(
+    () => [...rows].sort((a, b) => (b.date || '').localeCompare(a.date || '')),
+    [rows],
+  );
+  if (sorted.length === 0) {
+    return <p className="text-[12px] text-[var(--text-muted)] text-center py-10">За выбранный период записей нет</p>;
+  }
+  return (
+    <div className="flex flex-col gap-1.5">
+      {sorted.slice(0, 300).map((e) => {
+        const meters = Object.values(e.byMethod).reduce((s, v) => s + (v ?? 0), 0);
+        return (
+          <div key={e.id} className="flex items-start gap-3 rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] px-3 py-2">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <span className="font-mono text-[11px] text-[var(--text-muted)] tabular-nums">
+                  {e.date ? new Date(`${e.date}T00:00:00Z`).toLocaleDateString('ru') : '—'}
+                </span>
+                <span className="text-[12.5px] text-[var(--text)] font-medium truncate">{e.uchastok || '—'}</span>
+                {e.tech && <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent-dim)] text-[var(--accent)]">{e.tech}</span>}
+                {e.sync === 'local' && (
+                  <span className="text-[10px] text-[var(--text-muted)] inline-flex items-center gap-1" title="Сохранено локально">
+                    <CloudOff size={11} />локально
+                  </span>
+                )}
+              </div>
+              <div className="mt-0.5 text-[11px] text-[var(--text-muted)] truncate">
+                {[e.smu, e.oblast].filter(Boolean).join(' · ')}
+                {e.note ? ` — ${e.note}` : ''}
+              </div>
+            </div>
+            <div className="text-right shrink-0">
+              <div className="font-mono tabular-nums text-[13px] text-[var(--text)]">{meters.toLocaleString('ru')} м</div>
+              {!!e.drillM && <div className="text-[10px] text-[var(--text-muted)]">ГНБ {e.drillM} м</div>}
+            </div>
+            <button type="button" onClick={() => onDelete(e.id)} title="Удалить"
+                    className="btn btn-ghost btn-icon shrink-0 text-[var(--text-muted)] hover:text-[var(--danger)]">
+              <Trash2 size={14} />
+            </button>
+          </div>
+        );
+      })}
+      {sorted.length > 300 && (
+        <p className="text-[11px] text-[var(--text-muted)] text-center py-2">
+          Показаны последние 300 из {sorted.length}. Сузьте период или фильтры.
+        </p>
+      )}
     </div>
   );
 }
@@ -308,7 +421,7 @@ function MaterialBlock({ byMaterial }: { byMaterial: Record<string, number> }) {
   );
 }
 
-function EmptyJournal({ onPick, busy }: { onPick: () => void; busy: boolean }) {
+function EmptyJournal({ onPick, onAdd, busy }: { onPick: () => void; onAdd: () => void; busy: boolean }) {
   return (
     <div className="h-full flex items-center justify-center py-12">
       <div className="max-w-md text-center flex flex-col items-center gap-3">
@@ -321,9 +434,14 @@ function EmptyJournal({ onPick, busy }: { onPick: () => void; busy: boolean }) {
           «DATA ПОДВЕС» и «ГНБ Журнал». Координаты переходов разбираются в точки на карте,
           даже когда широта и долгота записаны в разном порядке.
         </p>
-        <button type="button" className="btn btn-primary text-[12px]" onClick={onPick} disabled={busy}>
-          <Upload size={15} />Выбрать файл журнала
-        </button>
+        <div className="flex gap-2">
+          <button type="button" className="btn btn-primary text-[12px]" onClick={onPick} disabled={busy}>
+            <Upload size={15} />Выбрать файл журнала
+          </button>
+          <button type="button" className="btn btn-ghost text-[12px]" onClick={onAdd}>
+            <Plus size={15} />Внести день вручную
+          </button>
+        </div>
       </div>
     </div>
   );

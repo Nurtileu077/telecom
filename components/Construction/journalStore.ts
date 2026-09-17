@@ -169,6 +169,48 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
   };
 }
 
+// ── Контекст последней записи ────────────────────────────────────────────────
+
+const LAST_KEY = 'optiq-journal-last-v1';
+
+/** Что подставить в форму завтра, чтобы бригаде осталось вписать цифры. */
+export interface LastContext {
+  smu: string;
+  oblast: string;
+  rayon: string;
+  uchastok: string;
+  kato: string;
+  tech: import('@/types/construction').WorkTech;
+}
+
+export function loadLastContext(): LastContext | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(LAST_KEY);
+    return raw ? (JSON.parse(raw) as LastContext) : null;
+  } catch { return null; }
+}
+
+export function saveLastContext(ctx: LastContext): void {
+  if (typeof window === 'undefined') return;
+  try { localStorage.setItem(LAST_KEY, JSON.stringify(ctx)); } catch { /* приватный режим */ }
+}
+
+/** Добавление дневной записи в журнал. */
+export function addGroundEntry(base: JournalState, entry: DailyWorkEntry): JournalState {
+  return { ...base, ground: [...base.ground, entry], updatedAt: new Date().toISOString() };
+}
+
+export function removeEntry(base: JournalState, id: string): JournalState {
+  return {
+    ...base,
+    ground: base.ground.filter((e) => e.id !== id),
+    aerial: base.aerial.filter((e) => e.id !== id),
+    drills: base.drills.filter((e) => e.id !== id),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 // ── Форматирование ───────────────────────────────────────────────────────────
 
 export function fmtKm(meters: number): string {
