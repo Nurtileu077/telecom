@@ -6,6 +6,7 @@ import {
   submitCorrection, approveCorrection, rejectCorrection, pendingCorrections,
   hasPendingCorrection, diffEntries, suggestContractor, DEFAULT_CONTRACTORS,
   addDeviation, removeDeviation, openDeviations, isDeviationClosed, needsProtocol,
+  documentContractor,
 } from './journalStore';
 import type { DailyWorkEntry, DrillLogEntry, Deviation } from '@/types/construction';
 
@@ -260,6 +261,34 @@ describe('подрядчики', () => {
   it('не выдумывает подрядчика для незнакомого района', () => {
     expect(suggestContractor(DEFAULT_CONTRACTORS, 'Атырауская область', 'Индерский')).toBeUndefined();
     expect(suggestContractor(DEFAULT_CONTRACTORS, '', '')).toBeUndefined();
+  });
+
+  it('субподрядчик оформляет документы именем подрядчика', () => {
+    // Terra Tech выходит на объект от имени СК Фаворит — поэтому в тетрадях
+    // технадзора и актах стоит Фаворит, а не Terra Tech.
+    expect(documentContractor(DEFAULT_CONTRACTORS, 'TERRA TECH')?.name).toBe('СК Фаворит');
+    expect(documentContractor(DEFAULT_CONTRACTORS, 'Модуль Строй')?.name).toBe('СК Фаворит');
+    expect(documentContractor(DEFAULT_CONTRACTORS, 'Дозер')?.name).toBe('СК Фаворит');
+  });
+
+  it('не поднимается до генподрядчика — акты подписывает подрядчик', () => {
+    expect(documentContractor(DEFAULT_CONTRACTORS, 'СК Фаворит')?.name).toBe('СК Фаворит');
+  });
+
+  it('генподрядчик остаётся собой', () => {
+    expect(documentContractor(DEFAULT_CONTRACTORS, 'Транстелеком')?.name).toBe('Транстелеком');
+  });
+
+  it('незнакомый исполнитель не ломает разбор цепочки', () => {
+    expect(documentContractor(DEFAULT_CONTRACTORS, 'Кто-то ещё')).toBeUndefined();
+  });
+
+  it('закольцованный справочник не вешает разбор', () => {
+    const looped = [
+      { id: 'a', name: 'А', worksUnder: 'Б' },
+      { id: 'b', name: 'Б', worksUnder: 'А' },
+    ];
+    expect(() => documentContractor(looped, 'А')).not.toThrow();
   });
 });
 

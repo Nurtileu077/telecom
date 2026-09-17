@@ -31,20 +31,47 @@ export function emptyJournal(): JournalState {
  */
 export const DEFAULT_CONTRACTORS: Contractor[] = [
   {
+    id: 'transtelecom', name: 'Транстелеком',
+    fullName: 'АО «Транстелеком»',
+    note: 'Генподрядчик',
+  },
+  {
+    id: 'favorit', name: 'СК Фаворит',
+    fullName: 'ТОО «СК Фаворит Инжиниринг»',
+    worksUnder: 'Транстелеком',
+    note: 'Подрядчик; его именем оформляются акты и тетради технадзора',
+  },
+  {
     id: 'terra-tech', name: 'TERRA TECH',
+    worksUnder: 'СК Фаворит',
     areas: [{ oblast: 'Акмолинская область', rayon: 'Зерендинский' }],
   },
   {
     id: 'modul-stroy', name: 'Модуль Строй',
+    worksUnder: 'СК Фаворит',
     areas: [{ oblast: 'Акмолинская область', rayon: 'Бурабайский' }],
   },
-  { id: 'dozer', name: 'Дозер' },
-  {
-    id: 'favorit', name: 'СК Фаворит',
-    fullName: 'ТОО «СК Фаворит инжиниринг»',
-    note: 'Значится в тетрадях технадзора по Зерендинскому району',
-  },
+  { id: 'dozer', name: 'Дозер', worksUnder: 'СК Фаворит' },
 ];
+
+/**
+ * От чьего имени оформляются документы по этому исполнителю.
+ * Поднимается по цепочке субподряда до организации, которая значится
+ * в актах. Защищено от закольцованных ссылок в справочнике.
+ */
+export function documentContractor(contractors: Contractor[], name: string): Contractor | undefined {
+  const norm = (s: string) => s.trim().toLowerCase();
+  let current = contractors.find((c) => norm(c.name) === norm(name));
+  const seen = new Set<string>();
+  while (current?.worksUnder && !seen.has(current.id)) {
+    seen.add(current.id);
+    const parent = contractors.find((c) => norm(c.name) === norm(current!.worksUnder!));
+    // Генподрядчик в актах не подписывает работы — останавливаемся на подрядчике.
+    if (!parent || !parent.worksUnder) break;
+    current = parent;
+  }
+  return current;
+}
 
 /** Подсказка подрядчика по области и району. */
 export function suggestContractor(
