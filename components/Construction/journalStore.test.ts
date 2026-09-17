@@ -5,8 +5,9 @@ import {
   emptyJournal, addGroundEntry, removeEntry, type JournalState,
   submitCorrection, approveCorrection, rejectCorrection, pendingCorrections,
   hasPendingCorrection, diffEntries, suggestContractor, DEFAULT_CONTRACTORS,
+  addDeviation, removeDeviation, openDeviations, isDeviationClosed, needsProtocol,
 } from './journalStore';
-import type { DailyWorkEntry, DrillLogEntry } from '@/types/construction';
+import type { DailyWorkEntry, DrillLogEntry, Deviation } from '@/types/construction';
 
 const now = '2026-09-17T00:00:00.000Z';
 
@@ -259,6 +260,81 @@ describe('подрядчики', () => {
   it('не выдумывает подрядчика для незнакомого района', () => {
     expect(suggestContractor(DEFAULT_CONTRACTORS, 'Атырауская область', 'Индерский')).toBeUndefined();
     expect(suggestContractor(DEFAULT_CONTRACTORS, '', '')).toBeUndefined();
+  });
+});
+
+describe('отклонения и протокол мобильной группы', () => {
+  const dev = (over: Partial<Deviation> = {}): Deviation => ({
+    id: `d${Math.random()}`, kind: 'depth', date: '2026-09-05',
+    oblast: 'Акмолинская область', rayon: 'Зерендинский',
+    uchastok: 'от муфты №4 ОК-714 до школы с. Акадыр', kato: '191',
+    lengthM: 250, designDepthM: 1.2, actualDepthM: 1.2,
+    reason: 'Скальный грунт', author: 'Инженер',
+    createdAt: now, updatedAt: now, ...over,
+  });
+
+  it('глубина по проекту — протокол не нужен', () => {
+    const d = dev({ actualDepthM: 1.2 });
+    expect(needsProtocol(d)).toBe(false);
+    expect(isDeviationClosed(d)).toBe(true);
+  });
+
+  it('глубина 0,5 при проектных 1,2 — протокол обязателен', () => {
+    const d = dev({ actualDepthM: 0.5 });
+    expect(needsProtocol(d)).toBe(true);
+    expect(isDeviationClosed(d)).toBe(false);
+  });
+
+  it('с оформленным протоколом отклонение закрыто', () => {
+    const d = dev({ actualDepthM: 0.5, protocol: { number: '14', date: '2026-09-06' } });
+    expect(isDeviationClosed(d)).toBe(true);
+  });
+
+  it('пустой номер протокола не закрывает отклонение', () => {
+    const d = dev({ actualDepthM: 0.5, protocol: { number: '   ', date: '2026-09-06' } });
+    expect(isDeviationClosed(d)).toBe(false);
+  });
+
+  it('глубже проекта — это не отклонение', () => {
+    expect(needsProtocol(dev({ actualDepthM: 1.5 }))).toBe(false);
+  });
+
+  it('разница в полсантиметра не плодит протоколы', () => {
+    // 1.195 против 1.2 — округление замера, а не отклонение.
+    expect(needsProtocol(dev({ actualDepthM: 1.195 }))).toBe(false);
+  });
+
+  it('изменение трассы требует протокола независимо от глубины', () => {
+    const d = dev({ kind: 'route', designDepthM: undefined, actualDepthM: undefined });
+    expect(needsProtocol(d)).toBe(true);
+    expect(isDeviationClosed(d)).toBe(false);
+  });
+
+  it('пока глубина не замерена, протокол не требуем', () => {
+    expect(needsProtocol(dev({ actualDepthM: undefined }))).toBe(false);
+  });
+
+  it('список незакрытых собирает только те, где протокола нет', () => {
+    const s: JournalState = {
+      ...emptyJournal(),
+      deviations: [
+        dev({ id: 'a', actualDepthM: 0.5 }),
+        dev({ id: 'b', actualDepthM: 0.5, protocol: { number: '7', date: '2026-09-06' } }),
+        dev({ id: 'c', actualDepthM: 1.2 }),
+      ],
+    };
+    expect(openDeviations(s).map((d) => d.id)).toEqual(['a']);
+  });
+
+  it('отклонения переживают импорт файла', () => {
+    const s = addDeviation(emptyJournal(), dev({ id: 'keep', actualDepthM: 0.5 }));
+    const merged = mergeJournal(s, { ground: [g()] });
+    expect(merged.deviations).toHaveLength(1);
+  });
+
+  it('удаление убирает отклонение', () => {
+    const s = addDeviation(emptyJournal(), dev({ id: 'x' }));
+    expect(removeDeviation(s, 'x').deviations).toHaveLength(0);
   });
 });
 

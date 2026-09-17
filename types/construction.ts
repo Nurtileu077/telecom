@@ -170,6 +170,94 @@ export interface DrillLogEntry extends WorkEntryBase {
 
 export type ConstructionEntry = DailyWorkEntry | AerialWorkEntry | DrillLogEntry;
 
+// ── Отклонения от проекта ────────────────────────────────────────────────────
+
+/** Проектная глубина прокладки защитной трубы, м (по ПСД). */
+export const DESIGN_DEPTH_M = 1.2;
+
+/**
+ * Протокол мобильной группы.
+ *
+ * Оформляется, когда фактическая глубина меньше проектной или изменена
+ * трасса. Его номер и дата попадают в Приложение 12 (ОДС/П-14-4-4-01),
+ * в пункт «При выполнении допущены отклонения от проектно-сметной
+ * документации». Без протокола отклонение остаётся незакрытым и всплывёт
+ * при сдаче.
+ */
+export interface MobileGroupProtocol {
+  number: string;
+  /** YYYY-MM-DD */
+  date: string;
+  note?: string;
+}
+
+export type DeviationKind = 'depth' | 'route';
+
+export const DEVIATION_KIND_LABEL: Record<DeviationKind, string> = {
+  depth: 'По глубине',
+  route: 'По трассе',
+};
+
+/** Типовые причины — из примечаний журнала ГНБ и отчётов инженера. */
+export const DEVIATION_REASONS: string[] = [
+  'Скальный грунт',
+  'Обход водопровода',
+  'Обход газопровода',
+  'Обход ТТС',
+  'Пересечение автодороги',
+  'Пересечение ж/д',
+  'Существующие коммуникации',
+  'Отказ в согласовании',
+  'Прочее',
+];
+
+/** Отклонение от проекта на конкретном участке трассы. */
+export interface Deviation {
+  id: string;
+  kind: DeviationKind;
+  /** YYYY-MM-DD */
+  date: string;
+  oblast: string;
+  rayon?: string;
+  uchastok: string;
+  kato: string;
+  contractor?: string;
+  /** Начало и конец участка отклонения — как пишут в акте фиксации. */
+  fromPoint?: string;
+  toPoint?: string;
+  /** Протяжённость отклонения, метры. */
+  lengthM: number;
+  /** Глубина по проекту и фактическая, метры. Только для kind = 'depth'. */
+  designDepthM?: number;
+  actualDepthM?: number;
+  /** Координаты начала и конца, если сняли на месте. */
+  coords?: { lat: number; lon: number }[];
+  reason: string;
+  /** Протокол мобильной группы. Пока его нет — отклонение не закрыто. */
+  protocol?: MobileGroupProtocol;
+  author: string;
+  createdAt: string;
+  updatedAt: string;
+  sync?: 'local' | 'synced';
+}
+
+/** Требуется ли протокол мобильной группы. */
+export function needsProtocol(d: Pick<Deviation, 'kind' | 'designDepthM' | 'actualDepthM'>): boolean {
+  if (d.kind === 'route') return true;
+  const design = d.designDepthM ?? DESIGN_DEPTH_M;
+  const actual = d.actualDepthM;
+  if (actual === undefined || actual === null) return false;
+  // Отклонение считаем значимым от сантиметра — иначе округление породит
+  // протоколы там, где фактически уложились в проект.
+  return actual < design - 0.01;
+}
+
+/** Отклонение закрыто, если протокол оформлен там, где он нужен. */
+export function isDeviationClosed(d: Deviation): boolean {
+  if (!needsProtocol(d)) return true;
+  return !!d.protocol?.number?.trim();
+}
+
 // ── Исправление отчёта ───────────────────────────────────────────────────────
 
 /**

@@ -1,7 +1,7 @@
 import {
   DailyWorkEntry, AerialWorkEntry, DrillLogEntry, SettlementOrder,
   LayMethod, MaterialKind, CorrectionRequest, Contractor, JournalRole,
-  LAY_METHOD_LABEL,
+  LAY_METHOD_LABEL, Deviation, isDeviationClosed, needsProtocol,
 } from '@/types/construction';
 
 /** Состояние журнала стройки — Слой 2. */
@@ -12,6 +12,8 @@ export interface JournalState {
   drills: DrillLogEntry[];
   /** Заявки на исправление: применяются только после подтверждения. */
   corrections: CorrectionRequest[];
+  /** Отклонения от проекта: глубина и трасса. */
+  deviations: Deviation[];
   contractors: Contractor[];
   updatedAt: string;
 }
@@ -19,7 +21,7 @@ export interface JournalState {
 export function emptyJournal(): JournalState {
   return {
     orders: [], ground: [], aerial: [], drills: [],
-    corrections: [], contractors: DEFAULT_CONTRACTORS, updatedAt: '',
+    corrections: [], deviations: [], contractors: DEFAULT_CONTRACTORS, updatedAt: '',
   };
 }
 
@@ -178,6 +180,7 @@ export function loadJournal(): JournalState {
       orders: p.orders ?? [], ground: p.ground ?? [],
       aerial: p.aerial ?? [], drills: p.drills ?? [],
       corrections: p.corrections ?? [],
+      deviations: p.deviations ?? [],
       // Пустой справочник заменяем стартовым — иначе подрядчика не из чего выбрать.
       contractors: p.contractors?.length ? p.contractors : DEFAULT_CONTRACTORS,
       updatedAt: p.updatedAt ?? '',
@@ -214,8 +217,9 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     ground: mergeList(base.ground, add.ground ?? []),
     aerial: mergeList(base.aerial, add.aerial ?? []),
     drills: mergeList(base.drills, add.drills ?? []),
-    // Импорт файла не трогает заявки и справочник подрядчиков.
+    // Импорт файла не трогает заявки, отклонения и справочник подрядчиков.
     corrections: base.corrections,
+    deviations: base.deviations,
     contractors: base.contractors.length ? base.contractors : DEFAULT_CONTRACTORS,
     updatedAt: new Date().toISOString(),
   };
@@ -287,6 +291,36 @@ export function saveLastContext(ctx: LastContext): void {
 export function addGroundEntry(base: JournalState, entry: DailyWorkEntry): JournalState {
   return { ...base, ground: [...base.ground, entry], updatedAt: new Date().toISOString() };
 }
+
+// ── Отклонения от проекта ────────────────────────────────────────────────────
+
+export function addDeviation(base: JournalState, d: Deviation): JournalState {
+  return { ...base, deviations: [...base.deviations, d], updatedAt: new Date().toISOString() };
+}
+
+export function updateDeviation(base: JournalState, id: string, patch: Partial<Deviation>): JournalState {
+  const now = new Date().toISOString();
+  return {
+    ...base,
+    deviations: base.deviations.map((d) => (d.id === id ? { ...d, ...patch, updatedAt: now } : d)),
+    updatedAt: now,
+  };
+}
+
+export function removeDeviation(base: JournalState, id: string): JournalState {
+  return {
+    ...base,
+    deviations: base.deviations.filter((d) => d.id !== id),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+/** Отклонения без оформленного протокола мобильной группы. */
+export function openDeviations(base: JournalState): Deviation[] {
+  return base.deviations.filter((d) => !isDeviationClosed(d));
+}
+
+export { isDeviationClosed, needsProtocol };
 
 // ── Исправление отчётов ──────────────────────────────────────────────────────
 

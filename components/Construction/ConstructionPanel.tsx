@@ -3,6 +3,7 @@ import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   X, Upload, Loader2, AlertTriangle, MapPin, Wrench, Boxes,
   Plus, Download, Trash2, CloudOff, Pencil, Check, Ban, Building2, Clock,
+  Ruler, FileWarning,
 } from 'lucide-react';
 import { getActorName } from '@/lib/appRole';
 import { importJournal, type JournalImportResult } from './JournalImport';
@@ -14,15 +15,17 @@ import {
   fmtKm, fmtMeters, shiftDays, MATERIAL_LABEL, addGroundEntry, removeEntry,
   submitCorrection, approveCorrection, rejectCorrection, pendingCorrections,
   hasPendingCorrection, diffEntries, loadJournalRole, saveJournalRole,
+  addDeviation, removeDeviation, openDeviations, isDeviationClosed,
 } from './journalStore';
+import DeviationForm from './DeviationForm';
 import {
-  LAY_METHOD_LABEL, MATERIAL_UNIT, JOURNAL_ROLE_LABEL,
+  LAY_METHOD_LABEL, MATERIAL_UNIT, JOURNAL_ROLE_LABEL, DEVIATION_KIND_LABEL,
   type LayMethod, type MaterialKind, type DailyWorkEntry,
-  type CorrectionRequest, type JournalRole,
+  type CorrectionRequest, type JournalRole, type Deviation,
 } from '@/types/construction';
 
 type Period = 'day' | 'week' | 'month' | 'all';
-type View = 'summary' | 'entries' | 'corrections';
+type View = 'summary' | 'entries' | 'corrections' | 'deviations';
 
 const PERIOD_LABEL: Record<Period, string> = {
   day: 'Последний день', week: '7 дней', month: '30 дней', all: 'Всё время',
@@ -42,6 +45,8 @@ export default function ConstructionPanel({ onClose }: Props) {
   const [formOpen, setFormOpen] = useState(false);
   /** Запись, которую сейчас исправляют. */
   const [editing, setEditing] = useState<DailyWorkEntry | null>(null);
+  const [devFormOpen, setDevFormOpen] = useState(false);
+  const [editingDev, setEditingDev] = useState<Deviation | null>(null);
   const [role, setRole] = useState<JournalRole>('field');
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -87,6 +92,19 @@ export default function ConstructionPanel({ onClose }: Props) {
     persist(rejectCorrection(loadJournal(), id, actor, note));
   }, [persist, actor]);
 
+  const handleSaveDeviation = useCallback((d: Deviation) => {
+    const base = loadJournal();
+    const withAuthor = { ...d, author: d.author || actor };
+    // Правка существующего отклонения = замена по id.
+    persist(addDeviation(removeDeviation(base, d.id), withAuthor));
+    setEditingDev(null);
+  }, [persist, actor]);
+
+  const handleDeleteDeviation = useCallback((id: string) => {
+    if (!confirm('Удалить отклонение?')) return;
+    persist(removeDeviation(loadJournal(), id));
+  }, [persist]);
+
   const handleDelete = useCallback((id: string) => {
     if (!confirm('Удалить запись?')) return;
     persist(removeEntry(loadJournal(), id));
@@ -124,9 +142,15 @@ export default function ConstructionPanel({ onClose }: Props) {
     } finally { setBusy(false); }
   }, [persist]);
 
-  // ── Период считаем от последнего рабочего дня, а не от сегодня:
-  //    в журнал пишут задним числом, «вчера» от календаря чаще всего пусто.
-  const anchor = useMemo(() => lastWorkDate(journal.ground), [journal.ground]);
+  // ── Период считаем от последнего дня, по которому вообще есть данные,
+  //    а не от сегодня: в журнал пишут задним числом, и «вчера» по календарю
+  //    чаще всего пусто. Отклонения учитываем наравне с выработкой — иначе
+  //    только что внесённая запись выпадает за границу окна и «пропадает».
+  const anchor = useMemo(() => {
+    const last = lastWorkDate(journal.ground);
+    const lastDev = journal.deviations.reduce((m, d) => (d.date > m ? d.date : m), '');
+    return lastDev > last ? lastDev : last;
+  }, [journal.ground, journal.deviations]);
   const filter: JournalFilter = useMemo(() => {
     const f: JournalFilter = { oblast: oblast || undefined, smu: smu || undefined };
     if (period !== 'all' && anchor) {
@@ -147,6 +171,11 @@ export default function ConstructionPanel({ onClose }: Props) {
   const drillsWithCoords = useMemo(() => drills.filter((d) => d.points.length > 0).length, [drills]);
 
   const pending = useMemo(() => pendingCorrections(journal), [journal]);
+  const openDevs = useMemo(() => openDeviations(journal), [journal]);
+  const devs = useMemo(
+    () => journal.deviations.filter((d) => matchesFilter({ ...d, smu: '' }, { ...filter, smu: undefined })),
+    [journal.deviations, filter],
+  );
   const byContractor = useMemo(
     () => metersBy(ground, (e) => e.contractor || ''),
     [ground],
@@ -189,18 +218,21 @@ export default function ConstructionPanel({ onClose }: Props) {
       {!empty && (
         <div className="flex flex-wrap items-center gap-1.5 px-3 md:px-4 py-2 border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0">
           <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md mr-1">
-            {([['summary', 'Сводка'], ['entries', 'Записи'], ['corrections', 'Заявки']] as [View, string][]).map(([v, label]) => (
-              <button key={v} type="button" onClick={() => setView(v)}
-                className={`px-2.5 py-1 text-[11px] rounded transition-colors inline-flex items-center gap-1 ${
-                  view === v ? 'bg-[var(--accent-dim)] text-[var(--accent)] font-medium' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}>
-                {label}
-                {v === 'corrections' && pending.length > 0 && (
-                  <span className="min-w-[16px] px-1 rounded-full bg-[var(--warn)] text-[#041016] text-[9.5px] font-semibold leading-[15px] text-center">
-                    {pending.length}
-                  </span>
-                )}
-              </button>
-            ))}
+            {([['summary', 'Сводка'], ['entries', 'Записи'], ['deviations', 'Отклонения'], ['corrections', 'Заявки']] as [View, string][]).map(([v, label]) => {
+              const badge = v === 'corrections' ? pending.length : v === 'deviations' ? openDevs.length : 0;
+              return (
+                <button key={v} type="button" onClick={() => setView(v)}
+                  className={`px-2.5 py-1 text-[11px] rounded transition-colors inline-flex items-center gap-1 ${
+                    view === v ? 'bg-[var(--accent-dim)] text-[var(--accent)] font-medium' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}>
+                  {label}
+                  {badge > 0 && (
+                    <span className="min-w-[16px] px-1 rounded-full bg-[var(--warn)] text-[#041016] text-[9.5px] font-semibold leading-[15px] text-center">
+                      {badge}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
           <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md" title="Кто вы в журнале">
             {(['field', 'office'] as JournalRole[]).map((r) => (
@@ -262,6 +294,13 @@ export default function ConstructionPanel({ onClose }: Props) {
 
         {empty ? (
           <EmptyJournal onPick={() => fileRef.current?.click()} onAdd={() => setFormOpen(true)} busy={busy} />
+        ) : view === 'deviations' ? (
+          <DeviationsList
+            rows={devs}
+            onAdd={() => { setEditingDev(null); setDevFormOpen(true); }}
+            onEdit={(d) => { setEditingDev(d); setDevFormOpen(true); }}
+            onDelete={handleDeleteDeviation}
+          />
         ) : view === 'corrections' ? (
           <CorrectionsList
             rows={[...journal.corrections].reverse()}
@@ -283,8 +322,15 @@ export default function ConstructionPanel({ onClose }: Props) {
               <Kpi label="Проложено за период" value={fmtKm(totals.meters)} unit="км" accent />
               <Kpi label="Всего в журнале" value={fmtKm(allTotals.meters)} unit="км" />
               <Kpi label="Бестраншейно (ГНБ/ГНП)" value={fmtKm(totals.drillM)} unit={`км · ${totals.drillCount} шт`} />
-              <Kpi label="Точек ГНБ на карте" value={String(mappedPoints)}
-                   unit={`в ${drillsWithCoords} из ${drills.length} записей`} />
+              {openDevs.length > 0 ? (
+                <button type="button" onClick={() => setView('deviations')} className="text-left">
+                  <Kpi label="Отклонений без протокола" value={String(openDevs.length)}
+                       unit="нужен протокол МГ" warn />
+                </button>
+              ) : (
+                <Kpi label="Точек ГНБ на карте" value={String(mappedPoints)}
+                     unit={`в ${drillsWithCoords} из ${drills.length} записей`} />
+              )}
             </div>
 
             {/* Выработка по дням */}
@@ -312,6 +358,103 @@ export default function ConstructionPanel({ onClose }: Props) {
           onClose={() => { setFormOpen(false); setEditing(null); }}
         />
       )}
+
+      {devFormOpen && (
+        <DeviationForm
+          journal={journal}
+          initial={editingDev}
+          onSave={handleSaveDeviation}
+          onClose={() => { setDevFormOpen(false); setEditingDev(null); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function DeviationsList({ rows, onAdd, onEdit, onDelete }: {
+  rows: Deviation[];
+  onAdd: () => void;
+  onEdit: (d: Deviation) => void;
+  onDelete: (id: string) => void;
+}) {
+  const sorted = useMemo(
+    () => [...rows].sort((a, b) => (b.date || '').localeCompare(a.date || '')),
+    [rows],
+  );
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <p className="text-[11.5px] text-[var(--text-muted)] flex-1">
+          Отклонение по глубине или трассе требует протокола мобильной группы — его номер уходит в Приложение&nbsp;12.
+        </p>
+        <button type="button" className="btn btn-primary text-[11px] shrink-0" onClick={onAdd}>
+          <Plus size={14} />Зафиксировать
+        </button>
+      </div>
+
+      {sorted.length === 0 ? (
+        <div className="text-center py-12 flex flex-col items-center gap-2">
+          <Ruler size={22} className="text-[var(--text-muted)]" />
+          <p className="text-[12.5px] text-[var(--text-muted)]">Отклонений не зафиксировано</p>
+        </div>
+      ) : sorted.map((d) => {
+        const closed = isDeviationClosed(d);
+        const tone = closed ? 'var(--success)' : 'var(--warn)';
+        return (
+          <div key={d.id} className="rounded-lg border bg-[var(--bg-surface)] p-3 flex flex-col gap-1.5"
+               style={{ borderColor: closed ? 'var(--border)' : 'var(--warn)' }}>
+            <div className="flex items-start gap-2 flex-wrap">
+              <span className="text-[10px] px-1.5 py-0.5 rounded font-medium"
+                    style={{ color: tone, border: `1px solid ${tone}` }}>
+                {closed ? 'Протокол есть' : 'Без протокола'}
+              </span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent-dim)] text-[var(--accent)]">
+                {DEVIATION_KIND_LABEL[d.kind]}
+              </span>
+              <span className="text-[12.5px] text-[var(--text)] font-medium truncate">{d.uchastok || '—'}</span>
+              <span className="font-mono text-[11px] text-[var(--text-muted)]">
+                {d.date ? new Date(`${d.date}T00:00:00Z`).toLocaleDateString('ru') : '—'}
+              </span>
+              <span className="ml-auto font-mono tabular-nums text-[13px] text-[var(--text)]">
+                {d.lengthM.toLocaleString('ru')} м
+              </span>
+            </div>
+
+            <div className="text-[11.5px] text-[var(--text-muted)]">
+              {d.kind === 'depth' && d.actualDepthM !== undefined && (
+                <span className="text-[var(--text)] font-mono mr-2">
+                  глубина {d.actualDepthM} м
+                  <span className="text-[var(--text-muted)]"> / проект {d.designDepthM ?? 1.2} м</span>
+                </span>
+              )}
+              {d.reason}
+              {(d.fromPoint || d.toPoint) && ` · ${d.fromPoint || '?'} → ${d.toPoint || '?'}`}
+              {d.contractor && ` · ${d.contractor}`}
+            </div>
+
+            <div className="flex items-center gap-2">
+              {d.protocol ? (
+                <span className="text-[11px] text-[var(--success)] inline-flex items-center gap-1">
+                  <Check size={12} />Протокол №{d.protocol.number} от{' '}
+                  {d.protocol.date ? new Date(`${d.protocol.date}T00:00:00Z`).toLocaleDateString('ru') : '—'}
+                </span>
+              ) : (
+                <span className="text-[11px] text-[var(--warn)] inline-flex items-center gap-1">
+                  <FileWarning size={12} />Протокол мобильной группы не оформлен
+                </span>
+              )}
+              <button type="button" onClick={() => onEdit(d)} title="Изменить"
+                      className="btn btn-ghost btn-icon ml-auto text-[var(--text-muted)] hover:text-[var(--accent)]">
+                <Pencil size={14} />
+              </button>
+              <button type="button" onClick={() => onDelete(d.id)} title="Удалить"
+                      className="btn btn-ghost btn-icon text-[var(--text-muted)] hover:text-[var(--danger)]">
+                <Trash2 size={14} />
+              </button>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -472,14 +615,20 @@ function EntriesList({ rows, journal, onDelete, onEdit }: {
 
 // ── Составные части ──────────────────────────────────────────────────────────
 
-function Kpi({ label, value, unit, accent }: { label: string; value: string; unit?: string; accent?: boolean }) {
-  return (
-    <div className={`rounded-lg border p-3 ${accent
+function Kpi({ label, value, unit, accent, warn }: {
+  label: string; value: string; unit?: string; accent?: boolean; warn?: boolean;
+}) {
+  const cls = warn
+    ? 'border-[var(--warn)]/50 bg-[var(--warn)]/10'
+    : accent
       ? 'border-[var(--accent)]/35 bg-[var(--accent-dim)]'
-      : 'border-[var(--border)] bg-[var(--bg-surface)]'}`}>
+      : 'border-[var(--border)] bg-[var(--bg-surface)]';
+  const valueColor = warn ? 'text-[var(--warn)]' : accent ? 'text-[var(--accent)]' : 'text-[var(--text)]';
+  return (
+    <div className={`rounded-lg border p-3 h-full ${cls}`}>
       <div className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] leading-tight">{label}</div>
       <div className="mt-1 flex items-baseline gap-1.5">
-        <span className={`text-2xl font-semibold font-mono tabular-nums ${accent ? 'text-[var(--accent)]' : 'text-[var(--text)]'}`}>{value}</span>
+        <span className={`text-2xl font-semibold font-mono tabular-nums ${valueColor}`}>{value}</span>
         {unit && <span className="text-[11px] text-[var(--text-muted)]">{unit}</span>}
       </div>
     </div>
