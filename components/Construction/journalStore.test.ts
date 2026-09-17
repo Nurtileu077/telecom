@@ -3,6 +3,8 @@ import {
   groundTotals, metersBy, metersByDay, lastWorkDate, matchesFilter,
   mergeJournal, drillMapPoints, shiftDays, fmtKm, fmtMeters,
   emptyJournal, addGroundEntry, removeEntry, type JournalState,
+  submitCorrection, approveCorrection, rejectCorrection, pendingCorrections,
+  hasPendingCorrection, diffEntries, suggestContractor, DEFAULT_CONTRACTORS,
 } from './journalStore';
 import type { DailyWorkEntry, DrillLogEntry } from '@/types/construction';
 
@@ -160,6 +162,103 @@ describe('операции над журналом', () => {
     const withEntry = addGroundEntry(emptyJournal(), entry);
     expect(withEntry.ground).toHaveLength(1);
     expect(removeEntry(withEntry, 'new').ground).toHaveLength(0);
+  });
+});
+
+describe('исправление отчёта', () => {
+  const entry = g({ id: 'e1', uchastok: 'Исаковка', byMethod: { 'кабелеукладчик': 11000 } });
+  const base: JournalState = { ...emptyJournal(), ground: [entry] };
+  const proposed = { ...entry, byMethod: { 'кабелеукладчик': 10000 } };
+
+  it('заявка не меняет запись сразу — сводка остаётся прежней', () => {
+    const s = submitCorrection(base, { entry, proposed, reason: 'ошиблись', author: 'Иван' });
+    expect(s.ground[0].byMethod['кабелеукладчик']).toBe(11000);
+    expect(pendingCorrections(s)).toHaveLength(1);
+    expect(groundTotals(s.ground).meters).toBe(11000);
+  });
+
+  it('подтверждение применяет правку', () => {
+    const s = submitCorrection(base, { entry, proposed, reason: 'ошиблись', author: 'Иван' });
+    const id = s.corrections[0].id;
+    const a = approveCorrection(s, id, 'Отчётность');
+    expect(a.ground[0].byMethod['кабелеукладчик']).toBe(10000);
+    expect(a.corrections[0].status).toBe('approved');
+    expect(a.corrections[0].decidedBy).toBe('Отчётность');
+    expect(pendingCorrections(a)).toHaveLength(0);
+  });
+
+  it('отказ оставляет запись прежней и сохраняет причину', () => {
+    const s = submitCorrection(base, { entry, proposed, reason: 'ошиблись', author: 'Иван' });
+    const r = rejectCorrection(s, s.corrections[0].id, 'Отчётность', 'нет подтверждения');
+    expect(r.ground[0].byMethod['кабелеукладчик']).toBe(11000);
+    expect(r.corrections[0].status).toBe('rejected');
+    expect(r.corrections[0].decisionNote).toBe('нет подтверждения');
+  });
+
+  it('повторное решение по закрытой заявке ничего не меняет', () => {
+    const s = submitCorrection(base, { entry, proposed, reason: 'x', author: 'И' });
+    const id = s.corrections[0].id;
+    const once = approveCorrection(s, id, 'Отчётность');
+    const twice = approveCorrection(once, id, 'Кто-то другой');
+    expect(twice.corrections[0].decidedBy).toBe('Отчётность');
+    expect(twice.ground[0].byMethod['кабелеукладчик']).toBe(10000);
+  });
+
+  it('видно, что по записи уже есть незакрытая заявка', () => {
+    const s = submitCorrection(base, { entry, proposed, reason: 'x', author: 'И' });
+    expect(hasPendingCorrection(s, 'e1')).toBe(true);
+    expect(hasPendingCorrection(approveCorrection(s, s.corrections[0].id, 'О'), 'e1')).toBe(false);
+  });
+
+  it('заявка сохраняет id исправляемой записи, даже если в правке он другой', () => {
+    const wrongId = { ...proposed, id: 'подменённый' };
+    const s = submitCorrection(base, { entry, proposed: wrongId, reason: 'x', author: 'И' });
+    expect(s.corrections[0].proposed.id).toBe('e1');
+  });
+
+  it('импорт файла не затирает поданные заявки', () => {
+    const s = submitCorrection(base, { entry, proposed, reason: 'x', author: 'И' });
+    const merged = mergeJournal(s, { ground: [g({ id: 'new' })] });
+    expect(pendingCorrections(merged)).toHaveLength(1);
+  });
+});
+
+describe('разница между версиями записи', () => {
+  it('показывает только изменившиеся поля', () => {
+    const a = g({ uchastok: 'Исаковка', byMethod: { 'кабелеукладчик': 11000 }, materials: { 'МКТ': 11000 } });
+    const b = { ...a, byMethod: { 'кабелеукладчик': 10000 }, materials: { 'МКТ': 11000 } };
+    const diff = diffEntries(a, b);
+    expect(diff).toHaveLength(1);
+    expect(diff[0].before).toBe('11000');
+    expect(diff[0].after).toBe('10000');
+  });
+
+  it('пустое значение показывает как «—»', () => {
+    const a = g({ note: undefined });
+    const diff = diffEntries(a, { ...a, note: 'закончили' });
+    expect(diff[0]).toEqual({ label: 'Примечание', before: '—', after: 'закончили' });
+  });
+
+  it('одинаковые записи дают пустую разницу', () => {
+    const a = g();
+    expect(diffEntries(a, { ...a })).toHaveLength(0);
+  });
+});
+
+describe('подрядчики', () => {
+  it('подсказывает подрядчика по области и району', () => {
+    const c = suggestContractor(DEFAULT_CONTRACTORS, 'Акмолинская область', 'Зерендинский');
+    expect(c?.name).toBe('TERRA TECH');
+  });
+
+  it('различает районы одной области', () => {
+    const c = suggestContractor(DEFAULT_CONTRACTORS, 'Акмолинская область', 'Бурабайский');
+    expect(c?.name).toBe('Модуль Строй');
+  });
+
+  it('не выдумывает подрядчика для незнакомого района', () => {
+    expect(suggestContractor(DEFAULT_CONTRACTORS, 'Атырауская область', 'Индерский')).toBeUndefined();
+    expect(suggestContractor(DEFAULT_CONTRACTORS, '', '')).toBeUndefined();
   });
 });
 

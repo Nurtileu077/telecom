@@ -1,6 +1,7 @@
 import {
   DailyWorkEntry, AerialWorkEntry, DrillLogEntry, SettlementOrder,
-  LayMethod, MaterialKind,
+  LayMethod, MaterialKind, CorrectionRequest, Contractor, JournalRole,
+  LAY_METHOD_LABEL,
 } from '@/types/construction';
 
 /** Состояние журнала стройки — Слой 2. */
@@ -9,11 +10,54 @@ export interface JournalState {
   ground: DailyWorkEntry[];
   aerial: AerialWorkEntry[];
   drills: DrillLogEntry[];
+  /** Заявки на исправление: применяются только после подтверждения. */
+  corrections: CorrectionRequest[];
+  contractors: Contractor[];
   updatedAt: string;
 }
 
 export function emptyJournal(): JournalState {
-  return { orders: [], ground: [], aerial: [], drills: [], updatedAt: '' };
+  return {
+    orders: [], ground: [], aerial: [], drills: [],
+    corrections: [], contractors: DEFAULT_CONTRACTORS, updatedAt: '',
+  };
+}
+
+/**
+ * Известные подрядчики и их районы — со слов заказчика.
+ * Справочник редактируемый: это стартовые значения, а не жёсткий список.
+ */
+export const DEFAULT_CONTRACTORS: Contractor[] = [
+  {
+    id: 'terra-tech', name: 'TERRA TECH',
+    areas: [{ oblast: 'Акмолинская область', rayon: 'Зерендинский' }],
+  },
+  {
+    id: 'modul-stroy', name: 'Модуль Строй',
+    areas: [{ oblast: 'Акмолинская область', rayon: 'Бурабайский' }],
+  },
+  { id: 'dozer', name: 'Дозер' },
+  {
+    id: 'favorit', name: 'СК Фаворит',
+    fullName: 'ТОО «СК Фаворит инжиниринг»',
+    note: 'Значится в тетрадях технадзора по Зерендинскому району',
+  },
+];
+
+/** Подсказка подрядчика по области и району. */
+export function suggestContractor(
+  contractors: Contractor[], oblast: string, rayon?: string,
+): Contractor | undefined {
+  if (!oblast) return undefined;
+  const normalize = (s?: string) => (s ?? '').trim().toLowerCase().replace(/\s*(область|район)\s*/g, '').trim();
+  const o = normalize(oblast);
+  const r = normalize(rayon);
+  // Сначала точное совпадение по району, потом только по области.
+  return contractors.find((c) =>
+    c.areas?.some((a) => normalize(a.oblast) === o && r && normalize(a.rayon) === r),
+  ) ?? contractors.find((c) =>
+    c.areas?.some((a) => normalize(a.oblast) === o && !a.rayon),
+  );
 }
 
 // ── Фильтрация ───────────────────────────────────────────────────────────────
@@ -133,6 +177,9 @@ export function loadJournal(): JournalState {
     return {
       orders: p.orders ?? [], ground: p.ground ?? [],
       aerial: p.aerial ?? [], drills: p.drills ?? [],
+      corrections: p.corrections ?? [],
+      // Пустой справочник заменяем стартовым — иначе подрядчика не из чего выбрать.
+      contractors: p.contractors?.length ? p.contractors : DEFAULT_CONTRACTORS,
       updatedAt: p.updatedAt ?? '',
     };
   } catch { return emptyJournal(); }
@@ -167,6 +214,9 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     ground: mergeList(base.ground, add.ground ?? []),
     aerial: mergeList(base.aerial, add.aerial ?? []),
     drills: mergeList(base.drills, add.drills ?? []),
+    // Импорт файла не трогает заявки и справочник подрядчиков.
+    corrections: base.corrections,
+    contractors: base.contractors.length ? base.contractors : DEFAULT_CONTRACTORS,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -211,6 +261,8 @@ const LAST_KEY = 'optiq-journal-last-v1';
 /** Что подставить в форму завтра, чтобы бригаде осталось вписать цифры. */
 export interface LastContext {
   smu: string;
+  contractor?: string;
+  column?: string;
   oblast: string;
   rayon: string;
   uchastok: string;
@@ -234,6 +286,122 @@ export function saveLastContext(ctx: LastContext): void {
 /** Добавление дневной записи в журнал. */
 export function addGroundEntry(base: JournalState, entry: DailyWorkEntry): JournalState {
   return { ...base, ground: [...base.ground, entry], updatedAt: new Date().toISOString() };
+}
+
+// ── Исправление отчётов ──────────────────────────────────────────────────────
+
+/**
+ * Подать заявку на исправление. Сама запись не меняется — в сводке
+ * продолжают считаться прежние цифры, пока отчётность не подтвердит.
+ */
+export function submitCorrection(
+  base: JournalState,
+  args: { entry: DailyWorkEntry; proposed: DailyWorkEntry; reason: string; author: string },
+): JournalState {
+  const req: CorrectionRequest = {
+    id: `cr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    entryId: args.entry.id,
+    before: args.entry,
+    proposed: { ...args.proposed, id: args.entry.id },
+    reason: args.reason.trim(),
+    author: args.author,
+    createdAt: new Date().toISOString(),
+    status: 'pending',
+  };
+  return { ...base, corrections: [...base.corrections, req], updatedAt: new Date().toISOString() };
+}
+
+/** Подтверждение: правка применяется к записи, заявка закрывается. */
+export function approveCorrection(
+  base: JournalState, id: string, by: string, note?: string,
+): JournalState {
+  const req = base.corrections.find((c) => c.id === id);
+  if (!req || req.status !== 'pending') return base;
+  const now = new Date().toISOString();
+  return {
+    ...base,
+    ground: base.ground.map((e) =>
+      e.id === req.entryId ? { ...req.proposed, updatedAt: now, sync: 'local' } : e,
+    ),
+    corrections: base.corrections.map((c) =>
+      c.id === id ? { ...c, status: 'approved', decidedBy: by, decidedAt: now, decisionNote: note } : c,
+    ),
+    updatedAt: now,
+  };
+}
+
+/** Отказ: запись остаётся прежней, причина отказа сохраняется. */
+export function rejectCorrection(
+  base: JournalState, id: string, by: string, note?: string,
+): JournalState {
+  const now = new Date().toISOString();
+  return {
+    ...base,
+    corrections: base.corrections.map((c) =>
+      c.id === id && c.status === 'pending'
+        ? { ...c, status: 'rejected', decidedBy: by, decidedAt: now, decisionNote: note }
+        : c,
+    ),
+    updatedAt: now,
+  };
+}
+
+export function pendingCorrections(base: JournalState): CorrectionRequest[] {
+  return base.corrections.filter((c) => c.status === 'pending');
+}
+
+/** Есть ли по записи неразобранная заявка — чтобы не плодить дубли. */
+export function hasPendingCorrection(base: JournalState, entryId: string): boolean {
+  return base.corrections.some((c) => c.entryId === entryId && c.status === 'pending');
+}
+
+/** Что именно меняется — для показа проверяющему. */
+export interface FieldDiff { label: string; before: string; after: string }
+
+export function diffEntries(a: DailyWorkEntry, b: DailyWorkEntry): FieldDiff[] {
+  const out: FieldDiff[] = [];
+  const push = (label: string, x: unknown, y: unknown) => {
+    const sx = x === undefined || x === null || x === '' ? '—' : String(x);
+    const sy = y === undefined || y === null || y === '' ? '—' : String(y);
+    if (sx !== sy) out.push({ label, before: sx, after: sy });
+  };
+  push('Дата', a.date, b.date);
+  push('Участок', a.uchastok, b.uchastok);
+  push('КАТО', a.kato, b.kato);
+  push('Область', a.oblast, b.oblast);
+  push('Район', a.rayon, b.rayon);
+  push('СМУ', a.smu, b.smu);
+  push('Подрядчик', a.contractor, b.contractor);
+  push('Колонна', a.column, b.column);
+  push('Технология', a.tech, b.tech);
+  for (const m of new Set([...Object.keys(a.byMethod), ...Object.keys(b.byMethod)])) {
+    const label = LAY_METHOD_LABEL[m as LayMethod] ?? m;
+    push(`${label}, м`, a.byMethod[m as LayMethod], b.byMethod[m as LayMethod]);
+  }
+  push('ГНБ, м', a.drillM, b.drillM);
+  push('Проколов', a.drillCount, b.drillCount);
+  push('Открытых переходов', a.openCrossings, b.openCrossings);
+  push('Задувка, м', a.blowingM, b.blowingM);
+  for (const m of new Set([...Object.keys(a.materials), ...Object.keys(b.materials)])) {
+    push(`Материал: ${m}`, a.materials[m as MaterialKind], b.materials[m as MaterialKind]);
+  }
+  push('Примечание', a.note, b.note);
+  return out;
+}
+
+// ── Роль внутри журнала ──────────────────────────────────────────────────────
+
+const ROLE_KEY = 'optiq-journal-role';
+
+export function loadJournalRole(): JournalRole {
+  if (typeof window === 'undefined') return 'field';
+  try {
+    return localStorage.getItem(ROLE_KEY) === 'office' ? 'office' : 'field';
+  } catch { return 'field'; }
+}
+
+export function saveJournalRole(r: JournalRole): void {
+  try { localStorage.setItem(ROLE_KEY, r); } catch { /* приватный режим */ }
 }
 
 export function removeEntry(base: JournalState, id: string): JournalState {

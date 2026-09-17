@@ -2,8 +2,9 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   X, Upload, Loader2, AlertTriangle, MapPin, Wrench, Boxes,
-  Plus, Download, Trash2, CloudOff,
+  Plus, Download, Trash2, CloudOff, Pencil, Check, Ban, Building2, Clock,
 } from 'lucide-react';
+import { getActorName } from '@/lib/appRole';
 import { importJournal, type JournalImportResult } from './JournalImport';
 import { buildJournalWorkbook, journalFileName } from './JournalExport';
 import DailyEntryForm from './DailyEntryForm';
@@ -11,11 +12,17 @@ import {
   JournalState, JournalFilter, emptyJournal, loadJournal, saveJournal, mergeJournal,
   matchesFilter, groundTotals, metersBy, metersByDay, lastWorkDate, distinct,
   fmtKm, fmtMeters, shiftDays, MATERIAL_LABEL, addGroundEntry, removeEntry,
+  submitCorrection, approveCorrection, rejectCorrection, pendingCorrections,
+  hasPendingCorrection, diffEntries, loadJournalRole, saveJournalRole,
 } from './journalStore';
-import { LAY_METHOD_LABEL, MATERIAL_UNIT, type LayMethod, type MaterialKind, type DailyWorkEntry } from '@/types/construction';
+import {
+  LAY_METHOD_LABEL, MATERIAL_UNIT, JOURNAL_ROLE_LABEL,
+  type LayMethod, type MaterialKind, type DailyWorkEntry,
+  type CorrectionRequest, type JournalRole,
+} from '@/types/construction';
 
 type Period = 'day' | 'week' | 'month' | 'all';
-type View = 'summary' | 'entries';
+type View = 'summary' | 'entries' | 'corrections';
 
 const PERIOD_LABEL: Record<Period, string> = {
   day: 'Последний день', week: '7 дней', month: '30 дней', all: 'Всё время',
@@ -33,9 +40,17 @@ export default function ConstructionPanel({ onClose }: Props) {
   const [report, setReport] = useState<JournalImportResult['stats'] | null>(null);
   const [view, setView] = useState<View>('summary');
   const [formOpen, setFormOpen] = useState(false);
+  /** Запись, которую сейчас исправляют. */
+  const [editing, setEditing] = useState<DailyWorkEntry | null>(null);
+  const [role, setRole] = useState<JournalRole>('field');
   const fileRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { setJournal(loadJournal()); }, []);
+  useEffect(() => {
+    setJournal(loadJournal());
+    setRole(loadJournalRole());
+  }, []);
+
+  const actor = useMemo(() => getActorName() || 'Без имени', []);
 
   /** Общая точка записи: сохраняем и честно сообщаем о переполнении. */
   const persist = useCallback((next: JournalState) => {
@@ -47,10 +62,30 @@ export default function ConstructionPanel({ onClose }: Props) {
     }
   }, []);
 
-  const handleAddEntry = useCallback((entry: DailyWorkEntry) => {
-    persist(addGroundEntry(loadJournal(), entry));
+  /**
+   * Новый день — пишем сразу. Исправление — только заявкой: цифры в сводке
+   * не должны меняться задним числом без ведома отчётности.
+   */
+  const handleFormSave = useCallback((entry: DailyWorkEntry, reason?: string) => {
+    const base = loadJournal();
+    if (editing && reason) {
+      persist(submitCorrection(base, { entry: editing, proposed: entry, reason, author: actor }));
+      setView('corrections');
+    } else {
+      persist(addGroundEntry(base, entry));
+    }
+    setEditing(null);
     setReport(null);
-  }, [persist]);
+  }, [persist, editing, actor]);
+
+  const handleApprove = useCallback((id: string) => {
+    persist(approveCorrection(loadJournal(), id, actor));
+  }, [persist, actor]);
+
+  const handleReject = useCallback((id: string) => {
+    const note = prompt('Причина отказа (необязательно):') ?? undefined;
+    persist(rejectCorrection(loadJournal(), id, actor, note));
+  }, [persist, actor]);
 
   const handleDelete = useCallback((id: string) => {
     if (!confirm('Удалить запись?')) return;
@@ -111,6 +146,11 @@ export default function ConstructionPanel({ onClose }: Props) {
   const mappedPoints = useMemo(() => drills.reduce((s, d) => s + d.points.length, 0), [drills]);
   const drillsWithCoords = useMemo(() => drills.filter((d) => d.points.length > 0).length, [drills]);
 
+  const pending = useMemo(() => pendingCorrections(journal), [journal]);
+  const byContractor = useMemo(
+    () => metersBy(ground, (e) => e.contractor || ''),
+    [ground],
+  );
   const oblasts = useMemo(() => distinct(journal.ground, (e) => e.oblast), [journal.ground]);
   const smus = useMemo(() => distinct(journal.ground, (e) => e.smu), [journal.ground]);
   const empty = journal.ground.length === 0 && journal.orders.length === 0;
@@ -149,11 +189,26 @@ export default function ConstructionPanel({ onClose }: Props) {
       {!empty && (
         <div className="flex flex-wrap items-center gap-1.5 px-3 md:px-4 py-2 border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0">
           <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md mr-1">
-            {([['summary', 'Сводка'], ['entries', 'Записи']] as [View, string][]).map(([v, label]) => (
+            {([['summary', 'Сводка'], ['entries', 'Записи'], ['corrections', 'Заявки']] as [View, string][]).map(([v, label]) => (
               <button key={v} type="button" onClick={() => setView(v)}
-                className={`px-2.5 py-1 text-[11px] rounded transition-colors ${
+                className={`px-2.5 py-1 text-[11px] rounded transition-colors inline-flex items-center gap-1 ${
                   view === v ? 'bg-[var(--accent-dim)] text-[var(--accent)] font-medium' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}>
                 {label}
+                {v === 'corrections' && pending.length > 0 && (
+                  <span className="min-w-[16px] px-1 rounded-full bg-[var(--warn)] text-[#041016] text-[9.5px] font-semibold leading-[15px] text-center">
+                    {pending.length}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md" title="Кто вы в журнале">
+            {(['field', 'office'] as JournalRole[]).map((r) => (
+              <button key={r} type="button"
+                onClick={() => { setRole(r); saveJournalRole(r); }}
+                className={`px-2 py-1 text-[11px] rounded transition-colors ${
+                  role === r ? 'bg-[var(--accent-dim)] text-[var(--accent)]' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}>
+                {JOURNAL_ROLE_LABEL[r]}
               </button>
             ))}
           </div>
@@ -207,8 +262,20 @@ export default function ConstructionPanel({ onClose }: Props) {
 
         {empty ? (
           <EmptyJournal onPick={() => fileRef.current?.click()} onAdd={() => setFormOpen(true)} busy={busy} />
+        ) : view === 'corrections' ? (
+          <CorrectionsList
+            rows={[...journal.corrections].reverse()}
+            canDecide={role === 'office'}
+            onApprove={handleApprove}
+            onReject={handleReject}
+          />
         ) : view === 'entries' ? (
-          <EntriesList rows={ground} onDelete={handleDelete} />
+          <EntriesList
+            rows={ground}
+            journal={journal}
+            onDelete={handleDelete}
+            onEdit={(e) => { setEditing(e); setFormOpen(true); }}
+          />
         ) : (
           <div className="flex flex-col gap-4">
             {/* Ключевые цифры */}
@@ -223,8 +290,9 @@ export default function ConstructionPanel({ onClose }: Props) {
             {/* Выработка по дням */}
             {days.length > 1 && <DayChart days={days} />}
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
               <BarList title="По областям" icon={<MapPin size={13} />} rows={byOblast} />
+              <BarList title="По подрядчикам" icon={<Building2 size={13} />} rows={byContractor} />
               <BarList title="По СМУ" icon={<Wrench size={13} />} rows={bySmu} />
             </div>
 
@@ -237,13 +305,109 @@ export default function ConstructionPanel({ onClose }: Props) {
       </div>
 
       {formOpen && (
-        <DailyEntryForm journal={journal} onSave={handleAddEntry} onClose={() => setFormOpen(false)} />
+        <DailyEntryForm
+          journal={journal}
+          initial={editing}
+          onSave={handleFormSave}
+          onClose={() => { setFormOpen(false); setEditing(null); }}
+        />
       )}
     </div>
   );
 }
 
-function EntriesList({ rows, onDelete }: { rows: DailyWorkEntry[]; onDelete: (id: string) => void }) {
+function CorrectionsList({ rows, canDecide, onApprove, onReject }: {
+  rows: CorrectionRequest[];
+  canDecide: boolean;
+  onApprove: (id: string) => void;
+  onReject: (id: string) => void;
+}) {
+  if (rows.length === 0) {
+    return (
+      <div className="text-center py-12 flex flex-col items-center gap-2">
+        <Check size={22} className="text-[var(--text-muted)]" />
+        <p className="text-[12.5px] text-[var(--text-muted)]">Заявок на исправление нет</p>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      {!canDecide && rows.some((r) => r.status === 'pending') && (
+        <p className="text-[11.5px] text-[var(--text-muted)] px-1">
+          Подтверждать исправления может только отчётность — переключите роль вверху.
+        </p>
+      )}
+      {rows.map((r) => {
+        const diff = diffEntries(r.before, r.proposed);
+        const tone = r.status === 'approved' ? 'var(--success)'
+          : r.status === 'rejected' ? 'var(--danger)' : 'var(--warn)';
+        const label = r.status === 'approved' ? 'Подтверждено'
+          : r.status === 'rejected' ? 'Отклонено' : 'Ждёт подтверждения';
+        return (
+          <div key={r.id} className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-3 flex flex-col gap-2">
+            <div className="flex items-start gap-2 flex-wrap">
+              <span className="text-[10px] px-1.5 py-0.5 rounded font-medium"
+                    style={{ color: tone, border: `1px solid ${tone}` }}>{label}</span>
+              <span className="text-[12.5px] text-[var(--text)] font-medium truncate">
+                {r.before.uchastok || '—'}
+              </span>
+              <span className="font-mono text-[11px] text-[var(--text-muted)]">
+                {r.before.date ? new Date(`${r.before.date}T00:00:00Z`).toLocaleDateString('ru') : '—'}
+              </span>
+              <span className="ml-auto text-[10.5px] text-[var(--text-muted)] inline-flex items-center gap-1">
+                <Clock size={11} />{new Date(r.createdAt).toLocaleString('ru')} · {r.author}
+              </span>
+            </div>
+
+            <p className="text-[12px] text-[var(--text)]">
+              <span className="text-[var(--text-muted)]">Причина: </span>{r.reason}
+            </p>
+
+            {diff.length === 0 ? (
+              <p className="text-[11.5px] text-[var(--text-muted)]">Значения не изменились</p>
+            ) : (
+              <div className="rounded-md border border-[var(--border)] overflow-hidden">
+                {diff.map((d, i) => (
+                  <div key={i} className="flex items-baseline gap-2 px-2 py-1 text-[11.5px] border-b border-[var(--border)] last:border-0">
+                    <span className="text-[var(--text-muted)] flex-1 truncate">{d.label}</span>
+                    <span className="font-mono tabular-nums text-[var(--danger)] line-through">{d.before}</span>
+                    <span className="text-[var(--text-muted)]">→</span>
+                    <span className="font-mono tabular-nums text-[var(--success)]">{d.after}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {r.status === 'pending' ? (
+              canDecide && (
+                <div className="flex gap-2">
+                  <button type="button" className="btn btn-primary text-[11px] flex-1 sm:flex-none sm:px-4" onClick={() => onApprove(r.id)}>
+                    <Check size={14} />Подтвердить
+                  </button>
+                  <button type="button" className="btn btn-ghost text-[11px] flex-1 sm:flex-none sm:px-4" onClick={() => onReject(r.id)}>
+                    <Ban size={14} />Отклонить
+                  </button>
+                </div>
+              )
+            ) : (
+              <p className="text-[11px] text-[var(--text-muted)]">
+                {r.decidedBy} · {r.decidedAt ? new Date(r.decidedAt).toLocaleString('ru') : ''}
+                {r.decisionNote ? ` — ${r.decisionNote}` : ''}
+              </p>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function EntriesList({ rows, journal, onDelete, onEdit }: {
+  rows: DailyWorkEntry[];
+  journal: JournalState;
+  onDelete: (id: string) => void;
+  onEdit: (e: DailyWorkEntry) => void;
+}) {
   const sorted = useMemo(
     () => [...rows].sort((a, b) => (b.date || '').localeCompare(a.date || '')),
     [rows],
@@ -271,7 +435,7 @@ function EntriesList({ rows, onDelete }: { rows: DailyWorkEntry[]; onDelete: (id
                 )}
               </div>
               <div className="mt-0.5 text-[11px] text-[var(--text-muted)] truncate">
-                {[e.smu, e.oblast].filter(Boolean).join(' · ')}
+                {[e.contractor, e.column, e.smu, e.oblast].filter(Boolean).join(' · ')}
                 {e.note ? ` — ${e.note}` : ''}
               </div>
             </div>
@@ -279,6 +443,17 @@ function EntriesList({ rows, onDelete }: { rows: DailyWorkEntry[]; onDelete: (id
               <div className="font-mono tabular-nums text-[13px] text-[var(--text)]">{meters.toLocaleString('ru')} м</div>
               {!!e.drillM && <div className="text-[10px] text-[var(--text-muted)]">ГНБ {e.drillM} м</div>}
             </div>
+            {hasPendingCorrection(journal, e.id) ? (
+              <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-[var(--warn)] text-[var(--warn)] self-center"
+                    title="По записи уже есть заявка на исправление">
+                на согласовании
+              </span>
+            ) : (
+              <button type="button" onClick={() => onEdit(e)} title="Исправить отчёт"
+                      className="btn btn-ghost btn-icon shrink-0 text-[var(--text-muted)] hover:text-[var(--accent)]">
+                <Pencil size={14} />
+              </button>
+            )}
             <button type="button" onClick={() => onDelete(e.id)} title="Удалить"
                     className="btn btn-ghost btn-icon shrink-0 text-[var(--text-muted)] hover:text-[var(--danger)]">
               <Trash2 size={14} />

@@ -5,7 +5,7 @@ import {
   WorkTech, WORK_TECHS, LayMethod, LAY_METHODS, LAY_METHOD_LABEL,
   MaterialKind, MATERIAL_KINDS, MATERIAL_UNIT, DailyWorkEntry,
 } from '@/types/construction';
-import { JournalState, loadLastContext, saveLastContext, MATERIAL_LABEL } from './journalStore';
+import { JournalState, loadLastContext, saveLastContext, MATERIAL_LABEL, suggestContractor } from './journalStore';
 
 /**
  * Закрытие рабочего дня.
@@ -17,29 +17,45 @@ import { JournalState, loadLastContext, saveLastContext, MATERIAL_LABEL } from '
 
 interface Props {
   journal: JournalState;
-  onSave: (entry: DailyWorkEntry) => void;
+  /** Запись, которую исправляют. Пусто — вносим новый день. */
+  initial?: DailyWorkEntry | null;
+  /** В режиме исправления причина обязательна и уходит на согласование. */
+  onSave: (entry: DailyWorkEntry, reason?: string) => void;
   onClose: () => void;
 }
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
+const numToStr = (v?: number): string => (v ? String(v) : '');
 
-export default function DailyEntryForm({ journal, onSave, onClose }: Props) {
-  const last = useMemo(() => loadLastContext(), []);
+export default function DailyEntryForm({ journal, initial, onSave, onClose }: Props) {
+  const correcting = !!initial;
+  const last = useMemo(() => (correcting ? null : loadLastContext()), [correcting]);
 
-  const [date, setDate] = useState(todayIso);
-  const [smu, setSmu] = useState(last?.smu ?? '');
-  const [oblast, setOblast] = useState(last?.oblast ?? '');
-  const [rayon, setRayon] = useState(last?.rayon ?? '');
-  const [uchastok, setUchastok] = useState(last?.uchastok ?? '');
-  const [kato, setKato] = useState(last?.kato ?? '');
-  const [tech, setTech] = useState<WorkTech>(last?.tech ?? 'МКТ');
-  const [byMethod, setByMethod] = useState<Partial<Record<LayMethod, string>>>({});
-  const [drillM, setDrillM] = useState('');
-  const [drillCount, setDrillCount] = useState('');
-  const [openCrossings, setOpenCrossings] = useState('');
-  const [blowingM, setBlowingM] = useState('');
-  const [materials, setMaterials] = useState<Partial<Record<MaterialKind, string>>>({});
-  const [note, setNote] = useState('');
+  const [date, setDate] = useState(initial?.date ?? todayIso);
+  const [smu, setSmu] = useState(initial?.smu ?? last?.smu ?? '');
+  const [contractor, setContractor] = useState(initial?.contractor ?? last?.contractor ?? '');
+  const [column, setColumn] = useState(initial?.column ?? last?.column ?? '');
+  const [oblast, setOblast] = useState(initial?.oblast ?? last?.oblast ?? '');
+  const [rayon, setRayon] = useState(initial?.rayon ?? last?.rayon ?? '');
+  const [uchastok, setUchastok] = useState(initial?.uchastok ?? last?.uchastok ?? '');
+  const [kato, setKato] = useState(initial?.kato ?? last?.kato ?? '');
+  const [tech, setTech] = useState<WorkTech>(initial?.tech ?? last?.tech ?? 'МКТ');
+  const [byMethod, setByMethod] = useState<Partial<Record<LayMethod, string>>>(() => {
+    const init: Partial<Record<LayMethod, string>> = {};
+    if (initial) for (const m of LAY_METHODS) init[m] = numToStr(initial.byMethod[m]);
+    return init;
+  });
+  const [drillM, setDrillM] = useState(numToStr(initial?.drillM));
+  const [drillCount, setDrillCount] = useState(numToStr(initial?.drillCount));
+  const [openCrossings, setOpenCrossings] = useState(numToStr(initial?.openCrossings));
+  const [blowingM, setBlowingM] = useState(numToStr(initial?.blowingM));
+  const [materials, setMaterials] = useState<Partial<Record<MaterialKind, string>>>(() => {
+    const init: Partial<Record<MaterialKind, string>> = {};
+    if (initial) for (const m of MATERIAL_KINDS) init[m] = numToStr(initial.materials[m]);
+    return init;
+  });
+  const [note, setNote] = useState(initial?.note ?? '');
+  const [reason, setReason] = useState('');
   const [touched, setTouched] = useState(false);
 
   useEffect(() => {
@@ -99,8 +115,16 @@ export default function DailyEntryForm({ journal, onSave, onClose }: Props) {
     [byMethod],
   );
 
+  // Подрядчик по району — подсказка, а не автозаполнение: район может вести
+  // субподрядчик, и решать должен человек.
+  const suggested = useMemo(
+    () => suggestContractor(journal.contractors, oblast, rayon),
+    [journal.contractors, oblast, rayon],
+  );
+
   const hasWork = totalMeters > 0 || numOf(drillM) > 0 || numOf(blowingM) > 0;
-  const canSave = !!date && !!uchastok.trim() && hasWork;
+  // Исправление без причины не уходит: проверяющему нужно понимать, что чинят.
+  const canSave = !!date && !!uchastok.trim() && hasWork && (!correcting || !!reason.trim());
 
   const submit = () => {
     setTouched(true);
@@ -120,8 +144,11 @@ export default function DailyEntryForm({ journal, onSave, onClose }: Props) {
 
     onSave({
       kind: 'ground',
-      id: `g-manual-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      date, smu: smu.trim(), oblast: oblast.trim(),
+      id: initial?.id ?? `g-manual-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      date, smu: smu.trim(),
+      contractor: contractor.trim() || undefined,
+      column: column.trim() || undefined,
+      oblast: oblast.trim(),
       rayon: rayon.trim() || undefined,
       uchastok: uchastok.trim(), kato: kato.trim(), tech,
       byMethod: methods,
@@ -131,10 +158,10 @@ export default function DailyEntryForm({ journal, onSave, onClose }: Props) {
       blowingM: Math.round(numOf(blowingM)) || undefined,
       materials: mats,
       note: note.trim() || undefined,
-      createdAt: now, updatedAt: now, sync: 'local',
-    });
+      createdAt: initial?.createdAt ?? now, updatedAt: now, sync: 'local',
+    }, correcting ? reason.trim() : undefined);
 
-    saveLastContext({ smu, oblast, rayon, uchastok, kato, tech });
+    if (!correcting) saveLastContext({ smu, contractor, column, oblast, rayon, uchastok, kato, tech });
     onClose();
   };
 
@@ -146,9 +173,13 @@ export default function DailyEntryForm({ journal, onSave, onClose }: Props) {
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--border)] shrink-0"
              style={{ paddingTop: 'calc(0.75rem + env(safe-area-inset-top, 0px))' }}>
           <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-[var(--text)]">Закрыть день</h3>
+            <h3 className="text-sm font-semibold text-[var(--text)]">
+              {correcting ? 'Исправить отчёт' : 'Закрыть день'}
+            </h3>
             <p className="text-[11px] text-[var(--text-muted)] truncate">
-              {uchastok ? uchastok : 'Выберите участок'}
+              {correcting
+                ? 'Правка вступит в силу после подтверждения отчётностью'
+                : (uchastok || 'Выберите участок')}
             </p>
           </div>
           <button type="button" className="btn btn-ghost btn-icon ml-auto" onClick={onClose} aria-label="Закрыть">
@@ -179,11 +210,35 @@ export default function DailyEntryForm({ journal, onSave, onClose }: Props) {
                 <input id="ce-oblast" list="ce-oblasti" value={oblast} onChange={(e) => setOblast(e.target.value)} className="inp" />
                 <datalist id="ce-oblasti">{oblasti.map((o) => <option key={o} value={o} />)}</datalist>
               </Field>
-              <Field label="КАТО">
-                <input id="ce-kato" value={kato} onChange={(e) => setKato(e.target.value)}
-                       inputMode="numeric" placeholder="подставится сам" className="inp font-mono" />
+              <Field label="Район">
+                <input id="ce-rayon" value={rayon} onChange={(e) => setRayon(e.target.value)}
+                       placeholder="Зерендинский" className="inp" />
               </Field>
             </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Field label="Подрядчик">
+                <input id="ce-contractor" list="ce-contractors" value={contractor}
+                       onChange={(e) => setContractor(e.target.value)}
+                       placeholder={suggested ? `напр. ${suggested.name}` : 'TERRA TECH'} className="inp" />
+                <datalist id="ce-contractors">
+                  {journal.contractors.map((c) => <option key={c.id} value={c.name} />)}
+                </datalist>
+              </Field>
+              <Field label="Колонна">
+                <input id="ce-column" value={column} onChange={(e) => setColumn(e.target.value)}
+                       placeholder="1-колонна" className="inp" />
+              </Field>
+            </div>
+            <Field label="КАТО">
+              <input id="ce-kato" value={kato} onChange={(e) => setKato(e.target.value)}
+                     inputMode="numeric" placeholder="подставится сам" className="inp font-mono" />
+            </Field>
+            {suggested && !contractor.trim() && (
+              <button type="button" onClick={() => setContractor(suggested.name)}
+                      className="self-start text-[11px] text-[var(--accent)] hover:underline">
+                Подставить «{suggested.name}» — работает в этом районе
+              </button>
+            )}
           </Group>
 
           {/* Что делали */}
@@ -240,10 +295,24 @@ export default function DailyEntryForm({ journal, onSave, onClose }: Props) {
                       placeholder="Что мешало, что перешли, особенности" className="inp resize-none" />
           </Field>
 
+          {correcting && (
+            <Field label="Причина исправления" required
+                   error={touched && !reason.trim() ? 'Без причины заявка не уйдёт' : ''}>
+              <textarea id="ce-reason" value={reason} onChange={(e) => setReason(e.target.value)} rows={2}
+                        placeholder="Ошиблись в метраже, перепутали участок…" className="inp resize-none" />
+            </Field>
+          )}
+
           {touched && !canSave && (
             <div className="flex items-start gap-2 p-2.5 rounded-lg border border-[var(--warn)]/40 bg-[var(--warn)]/10 text-[11.5px] text-[var(--warn)]">
               <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-              <span>{!uchastok.trim() ? 'Укажите участок.' : 'Впишите хотя бы одну цифру выработки — метры, ГНБ или задувку.'}</span>
+              <span>
+                {!uchastok.trim()
+                  ? 'Укажите участок.'
+                  : !hasWork
+                    ? 'Впишите хотя бы одну цифру выработки — метры, ГНБ или задувку.'
+                    : 'Укажите причину исправления.'}
+              </span>
             </div>
           )}
         </div>
@@ -253,7 +322,7 @@ export default function DailyEntryForm({ journal, onSave, onClose }: Props) {
              style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}>
           <button type="button" className="btn btn-ghost flex-1" onClick={onClose}>Отмена</button>
           <button type="button" className="btn btn-primary flex-1" onClick={submit} disabled={!canSave}>
-            <Check size={15} />Сохранить день
+            <Check size={15} />{correcting ? 'Отправить на согласование' : 'Сохранить день'}
           </button>
         </div>
       </div>

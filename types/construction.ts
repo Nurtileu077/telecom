@@ -61,13 +61,33 @@ export const CROSSING_KINDS: CrossingKind[] = [
 
 // ── Записи ───────────────────────────────────────────────────────────────────
 
+/**
+ * Подрядная организация. В журнале СМУ заполнено меньше чем в половине
+ * строк — работы ведут подрядчики, и именно их нужно знать, чтобы
+ * ответить «кто тянул этот участок».
+ */
+export interface Contractor {
+  id: string;
+  /** Короткое имя, как говорят в переписке: «TERRA TECH». */
+  name: string;
+  /** Полное наименование для документов: ТОО «СК Фаворит инжиниринг». */
+  fullName?: string;
+  /** Где работает — для подсказки при вводе. */
+  areas?: { oblast: string; rayon?: string }[];
+  note?: string;
+}
+
 /** Общая часть любой дневной записи: где и кто. */
 export interface WorkEntryBase {
   id: string;
   /** YYYY-MM-DD */
   date: string;
-  /** СМУ-1 … СМУ-7 */
+  /** СМУ-1 … СМУ-7. Пусто, когда работы вёл подрядчик. */
   smu: string;
+  /** Подрядная организация, выполнявшая работы. */
+  contractor?: string;
+  /** Номер колонны бригады — «1-колонна», «Колонна-2». */
+  column?: string;
   oblast: string;
   rayon?: string;
   /** «сущ. ОМ - Акбеит» */
@@ -149,6 +169,45 @@ export interface DrillLogEntry extends WorkEntryBase {
 }
 
 export type ConstructionEntry = DailyWorkEntry | AerialWorkEntry | DrillLogEntry;
+
+// ── Исправление отчёта ───────────────────────────────────────────────────────
+
+/**
+ * Заявка на исправление уже сданного отчёта.
+ *
+ * Правка не применяется сразу: она уходит тому, кто ведёт отчётность,
+ * и вступает в силу только после подтверждения. До этого в сводке
+ * продолжают считаться прежние цифры — иначе отчётность «поплывёт»
+ * задним числом, и никто не сможет объяснить расхождение.
+ */
+export type CorrectionStatus = 'pending' | 'approved' | 'rejected';
+
+export interface CorrectionRequest {
+  id: string;
+  /** id исправляемой записи. */
+  entryId: string;
+  /** Значения до правки — чтобы показать, что именно меняется. */
+  before: DailyWorkEntry;
+  /** Предлагаемая версия записи целиком. */
+  proposed: DailyWorkEntry;
+  /** Почему исправляем — обязательно. */
+  reason: string;
+  author: string;
+  createdAt: string;
+  status: CorrectionStatus;
+  decidedBy?: string;
+  decidedAt?: string;
+  /** Комментарий решения — особенно важен при отказе. */
+  decisionNote?: string;
+}
+
+/** Роль внутри журнала: кто вносит и кто подтверждает исправления. */
+export type JournalRole = 'field' | 'office';
+
+export const JOURNAL_ROLE_LABEL: Record<JournalRole, string> = {
+  field: 'Поле',
+  office: 'Отчётность',
+};
 
 /** Строка реестра заказа — лист «Все СНП заказа» (план). */
 export interface SettlementOrder {
