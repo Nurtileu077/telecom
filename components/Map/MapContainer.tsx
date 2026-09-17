@@ -62,6 +62,8 @@ interface Props {
   setMeasureMode: (v: boolean) => void;
   // Heatmap
   heatmapEnabled: boolean;
+  /** Проколы ГНБ/ГНП из журнала стройки — отдельный слой поверх сети. */
+  drillPoints?: import('@/components/Construction/journalStore').DrillMapPoint[];
   // Bounding-box overlay for "export selection".  Drawn as a translucent
   // amber rectangle so the user can see what's about to be exported.
   selectionBBox?: { latMin: number; lonMin: number; latMax: number; lonMax: number } | null;
@@ -258,6 +260,7 @@ export default function LeafletMap(props: Props) {
   const hybridLabelsRef = useRef<any>(null);
   const dataGroupRef = useRef<any>(null);
   const annoGroupRef = useRef<any>(null);
+  const drillGroupRef = useRef<any>(null);
   const drawGroupRef = useRef<any>(null);
   const measureGroupRef = useRef<any>(null);
   const heatLayerRef = useRef<any>(null);
@@ -295,6 +298,7 @@ export default function LeafletMap(props: Props) {
 
       dataGroupRef.current = L.layerGroup().addTo(map);
       annoGroupRef.current = L.layerGroup().addTo(map);
+      drillGroupRef.current = L.layerGroup().addTo(map);
       drawGroupRef.current = L.layerGroup().addTo(map);
       measureGroupRef.current = L.layerGroup().addTo(map);
       waypointGroupRef.current = L.layerGroup().addTo(map);
@@ -830,6 +834,42 @@ export default function LeafletMap(props: Props) {
     });
   }
 
+  /**
+   * Проколы ГНБ/ГНП из журнала стройки.
+   * Отдельная группа слоёв: не очищается перестройкой сети и переживает зум.
+   */
+  function renderDrillPoints() {
+    const group = drillGroupRef.current;
+    if (!mapRef.current || !group) return;
+    import('leaflet').then((L) => {
+      group.clearLayers();
+      const pts = propsRef.current.drillPoints ?? [];
+      if (pts.length === 0) return;
+
+      for (const p of pts) {
+        // ГНБ — бирюзовый ромб, ГНП — янтарный: методы различаются на глаз.
+        const color = p.drillKind === 'ГНП' ? '#fbbf24' : '#2dd4bf';
+        const icon = L.divIcon({
+          className: '',
+          iconSize: [14, 14],
+          iconAnchor: [7, 7],
+          html: `<div style="width:12px;height:12px;background:${color};border:1.5px solid #06080f;
+                 transform:rotate(45deg);box-shadow:0 0 6px ${color}99"></div>`,
+        });
+        const m = L.marker([p.lat, p.lon], { icon });
+        const len = p.meters ? `${p.meters} м` : '—';
+        const when = p.date ? new Date(`${p.date}T00:00:00Z`).toLocaleDateString('ru') : '—';
+        m.bindPopup(
+          `<b>${p.drillKind}</b> · ${len}<br/>` +
+          `${p.uchastok || '—'}<br/>` +
+          `<span style="color:#64748b;font-size:11px">${p.oblast || ''} · ${when}</span>` +
+          (p.note ? `<br/><span style="font-size:11px">${p.note.replace(/</g, '&lt;')}</span>` : ''),
+        );
+        group.addLayer(m);
+      }
+    });
+  }
+
   function handleDrawClick(L: any, lat: number, lon: number) {
     const tool = propsRef.current.activeTool;
     const type = propsRef.current.activeAnnotationType;
@@ -1048,6 +1088,7 @@ export default function LeafletMap(props: Props) {
     });
   }, [props.editingCableId, props.cables]);
   useEffect(() => { renderAnnotations(); }, [props.annotations]);
+  useEffect(() => { renderDrillPoints(); }, [props.drillPoints, mapReady]);
 
   // Draw the lasso selection overlay (independent layer so it doesn't get
   // cleared by the data-layer rerender): in-progress vertices + closed polygon.

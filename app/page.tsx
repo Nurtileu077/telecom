@@ -35,6 +35,7 @@ import {
 } from '@/lib/appRole';
 import { diffScenarioCables, highlightCurrentCableIds } from '@/lib/scenarioDiff';
 import AuthButton from '@/components/Auth/AuthButton';
+import { loadJournal, drillMapPoints, type DrillMapPoint } from '@/components/Construction/journalStore';
 const ConstructionPanel = dynamic(() => import('@/components/Construction/ConstructionPanel'), { ssr: false });
 import { useSupabaseAuth } from '@/hooks/useSupabaseAuth';
 import { roleFromUser } from '@/lib/authSession';
@@ -90,6 +91,12 @@ export default function HomePage() {
   const [showImport, setShowImport] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showJournal, setShowJournal] = useState(false);
+  // Проколы ГНБ из журнала стройки — отдельный слой на карте.
+  const [drillPoints, setDrillPoints] = useState<DrillMapPoint[]>([]);
+  const refreshDrillPoints = useCallback(() => {
+    setDrillPoints(drillMapPoints(loadJournal()));
+  }, []);
+  useEffect(() => { refreshDrillPoints(); }, [refreshDrillPoints]);
   const [showProjects, setShowProjects] = useState(false);
   const [showCatalog, setShowCatalog] = useState(false);
   const [showAddSub, setShowAddSub] = useState<{ lat: number; lon: number } | null>(null);
@@ -927,6 +934,7 @@ export default function HomePage() {
             measureMode={measureMode}
             setMeasureMode={setMeasureMode}
             heatmapEnabled={heatmapEnabled}
+            drillPoints={drillPoints}
             budgetMap={budgetMap.current}
             budgetColoring={budgetColoring}
           />
@@ -1282,7 +1290,9 @@ export default function HomePage() {
       )}
 
       {/* Help modal */}
-      {showJournal && <ConstructionPanel onClose={() => setShowJournal(false)} />}
+      {showJournal && (
+        <ConstructionPanel onClose={() => { setShowJournal(false); refreshDrillPoints(); }} />
+      )}
 
       {showHelp && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in" onClick={() => setShowHelp(false)}>

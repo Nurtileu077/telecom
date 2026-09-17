@@ -109,6 +109,7 @@ export default function ConstructionPanel({ onClose }: Props) {
   const bySmu = useMemo(() => metersBy(ground, (e) => e.smu), [ground]);
   const days = useMemo(() => metersByDay(ground).slice(-30), [ground]);
   const mappedPoints = useMemo(() => drills.reduce((s, d) => s + d.points.length, 0), [drills]);
+  const drillsWithCoords = useMemo(() => drills.filter((d) => d.points.length > 0).length, [drills]);
 
   const oblasts = useMemo(() => distinct(journal.ground, (e) => e.oblast), [journal.ground]);
   const smus = useMemo(() => distinct(journal.ground, (e) => e.smu), [journal.ground]);
@@ -215,7 +216,8 @@ export default function ConstructionPanel({ onClose }: Props) {
               <Kpi label="Проложено за период" value={fmtKm(totals.meters)} unit="км" accent />
               <Kpi label="Всего в журнале" value={fmtKm(allTotals.meters)} unit="км" />
               <Kpi label="Бестраншейно (ГНБ/ГНП)" value={fmtKm(totals.drillM)} unit={`км · ${totals.drillCount} шт`} />
-              <Kpi label="Точек ГНБ на карте" value={String(mappedPoints)} unit={`из ${drills.length} записей`} />
+              <Kpi label="Точек ГНБ на карте" value={String(mappedPoints)}
+                   unit={`в ${drillsWithCoords} из ${drills.length} записей`} />
             </div>
 
             {/* Выработка по дням */}

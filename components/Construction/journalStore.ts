@@ -82,7 +82,9 @@ export function metersBy(
 ): { name: string; meters: number; entries: number }[] {
   const acc = new Map<string, { meters: number; entries: number }>();
   for (const e of list) {
-    const k = key(e) || '—';
+    // Пустое значение показываем явно: в журнале таких строк много,
+    // и «не указано» — это сама по себе управленческая информация.
+    const k = key(e) || 'Не указано';
     const cur = acc.get(k) ?? { meters: 0, entries: 0 };
     for (const v of Object.values(e.byMethod)) cur.meters += v ?? 0;
     cur.entries++;
@@ -167,6 +169,39 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     drills: mergeList(base.drills, add.drills ?? []),
     updatedAt: new Date().toISOString(),
   };
+}
+
+// ── Точки для карты ──────────────────────────────────────────────────────────
+
+/** Прокол ГНБ/ГНП как точка на карте. */
+export interface DrillMapPoint {
+  id: string;
+  lat: number;
+  lon: number;
+  /** Длина этого прокола, метры. */
+  meters?: number;
+  drillKind: 'ГНБ' | 'ГНП';
+  uchastok: string;
+  oblast: string;
+  date: string;
+  note?: string;
+}
+
+/** Разворачивает записи журнала в плоский список точек для отрисовки. */
+export function drillMapPoints(state: JournalState): DrillMapPoint[] {
+  const out: DrillMapPoint[] = [];
+  for (const d of state.drills) {
+    d.points.forEach((p, i) => {
+      out.push({
+        id: `${d.id}#${i}`,
+        lat: p.lat, lon: p.lon, meters: p.meters,
+        drillKind: d.drillKind,
+        uchastok: d.uchastok, oblast: d.oblast, date: d.date,
+        note: d.note,
+      });
+    });
+  }
+  return out;
 }
 
 // ── Контекст последней записи ────────────────────────────────────────────────
