@@ -1,7 +1,9 @@
 import {
   DailyWorkEntry, AerialWorkEntry, DrillLogEntry, SettlementOrder,
   LayMethod, MaterialKind, AerialCableType, AerialMaterialKind,
+  OperationKind, OPERATIONS, OPERATION_KINDS, EQUIPMENT_KINDS,
 } from '@/types/construction';
+import { formatDuctMarks } from './ductMarks';
 
 /**
  * Выгрузка журнала обратно в Excel — в том же виде, в котором его ведут.
@@ -108,6 +110,35 @@ export function drillRow(e: DrillLogEntry): (string | number | Date)[] {
   ];
 }
 
+// ── Детали работ: то, что не помещается в исходные колонки Excel ─────────────
+// Отдельный лист, чтобы формат «DATA» остался привычным. Колонка ID нужна
+// для обратного импорта: без неё подробности терялись бы при обороте файла.
+
+export const DETAIL_HEADERS = [
+  'ID', 'Дата', 'Участок', 'КАТО',
+  ...OPERATION_KINDS.map((k) => `${OPERATIONS[k].label}, ${OPERATIONS[k].unit}`),
+  ...EQUIPMENT_KINDS.map((k) => `Техника: ${k}, шт`),
+  'Метки трубы', 'Тотал за день, м', 'Тотал по участку, м', 'Запас МКТ ГНБ, м',
+  'Причины простоя', 'План на завтра',
+] as const;
+
+/** Есть ли в записи что-то для листа деталей. */
+export function hasDetails(e: DailyWorkEntry): boolean {
+  return !!(e.operations || e.equipment || e.ductMarks?.length
+    || e.totalMktM || e.totalUchastokM || e.reserveMktM || e.downtime || e.tomorrow);
+}
+
+export function detailRow(e: DailyWorkEntry): (string | number | Date)[] {
+  return [
+    e.id, toDate(e.date), e.uchastok, e.kato,
+    ...OPERATION_KINDS.map((k) => n(e.operations?.[k])),
+    ...EQUIPMENT_KINDS.map((k) => n(e.equipment?.[k])),
+    formatDuctMarks(e.ductMarks),
+    n(e.totalMktM), n(e.totalUchastokM), n(e.reserveMktM),
+    e.downtime ?? '', e.tomorrow ?? '',
+  ];
+}
+
 export const ORDER_HEADERS = [
   'КАТО', 'Область', 'Район', 'Сельский округ', 'СНП', 'Год',
   'Начала СМР', 'Завершение СМР', 'Кол-во ГУ', 'Технология',
@@ -156,6 +187,13 @@ export async function buildJournalWorkbook(data: JournalExportInput): Promise<Bl
   addSheet('DATA', GROUND_HEADERS, sortByDate(data.ground).map(groundRow));
   addSheet('ГНБ Журнал', DRILL_HEADERS, sortByDate(data.drills).map(drillRow));
   addSheet('DATA ПОДВЕС', AERIAL_HEADERS, sortByDate(data.aerial).map(aerialRow));
+
+  // Лист деталей добавляем только когда есть что писать — иначе он
+  // просто мешал бы тем, кто привык к четырём листам.
+  const withDetails = sortByDate(data.ground).filter(hasDetails);
+  if (withDetails.length > 0) {
+    addSheet('Детали работ', DETAIL_HEADERS, withDetails.map(detailRow));
+  }
 
   const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
   return new Blob([out], {

@@ -4,6 +4,8 @@ import {
   WorkTech, DrillKind,
 } from '@/types/construction';
 import { parseCoordBlob, hintForOblast } from './coords';
+import { parseDuctMarks } from './ductMarks';
+import { OperationKind, OPERATIONS, OPERATION_KINDS, EQUIPMENT_KINDS } from '@/types/construction';
 
 /**
  * Импорт рабочего журнала СНП из Excel.
@@ -403,6 +405,95 @@ function parseDrills(rows: Row[], now: string) {
   return res;
 }
 
+/**
+ * Лист «Детали работ» — подробности отчёта инженера, которые не помещаются
+ * в исходные колонки листа DATA.
+ *
+ * Привязка идёт по естественному ключу системы — Дата + Участок + КАТО,
+ * а не по колонке ID: при импорте записи получают новые идентификаторы,
+ * поэтому по ID строки не нашли бы своего дня. ID остаётся в файле для
+ * прослеживаемости человеком. Несколько записей с одним ключом (две бригады
+ * на участке) разбираются по порядку.
+ */
+function detailKey(date: string, uchastok: string, kato: string): string {
+  return `${date}|${uchastok.trim().toLowerCase()}|${kato.trim()}`;
+}
+
+function applyDetails(rows: Row[], ground: DailyWorkEntry[]): number {
+  if (rows.length === 0) return 0;
+  const h = headerRowIndex(rows);
+  const H = (rows[h] ?? []).map(normHeader);
+  const dateCol = findCol(H, 'дата');
+  const uchCol = findCol(H, 'участок');
+  const katoCol = findCol(H, 'като');
+  if (dateCol < 0 || uchCol < 0) return 0;
+
+  const opCols = {} as Record<OperationKind, number>;
+  for (const k of OPERATION_KINDS) {
+    opCols[k] = findCol(H, OPERATIONS[k].label.toLowerCase());
+  }
+  const eqCols: Record<string, number> = {};
+  for (const k of EQUIPMENT_KINDS) eqCols[k] = findCol(H, 'техника:', k.toLowerCase());
+
+  const c = {
+    marks:     findCol(H, 'метки трубы'),
+    totalDay:  findCol(H, 'тотал за день'),
+    totalUch:  findCol(H, 'тотал по участку'),
+    reserve:   findCol(H, 'запас мкт'),
+    downtime:  findCol(H, 'причины простоя'),
+    tomorrow:  findCol(H, 'план на завтра'),
+  };
+
+  // Очередь записей на каждый ключ — чтобы две бригады на одном участке
+  // в один день получили свои строки деталей, а не одну на двоих.
+  const queues = new Map<string, DailyWorkEntry[]>();
+  for (const e of ground) {
+    const k = detailKey(e.date, e.uchastok, e.kato);
+    const q = queues.get(k);
+    if (q) q.push(e); else queues.set(k, [e]);
+  }
+  let applied = 0;
+
+  for (let i = h + 1; i < rows.length; i++) {
+    const r = rows[i] ?? [];
+    const key = detailKey(
+      isoDate(r[dateCol]),
+      str(r[uchCol]),
+      katoCol >= 0 ? str(r[katoCol]) : '',
+    );
+    const queue = queues.get(key);
+    const target = queue?.shift();
+    if (!target) continue;
+
+    const ops: Partial<Record<OperationKind, number>> = {};
+    for (const k of OPERATION_KINDS) {
+      const idx = opCols[k];
+      if (idx < 0) continue;
+      const v = num(r[idx]);
+      if (v > 0) ops[k] = v;
+    }
+    const eq: Record<string, number> = {};
+    for (const k of EQUIPMENT_KINDS) {
+      const idx = eqCols[k];
+      if (idx < 0) continue;
+      const v = num(r[idx]);
+      if (v > 0) eq[k] = v;
+    }
+    const marks = c.marks >= 0 ? parseDuctMarks(String(r[c.marks] ?? '')) : [];
+
+    if (Object.keys(ops).length) target.operations = ops;
+    if (Object.keys(eq).length) target.equipment = eq;
+    if (marks.length) target.ductMarks = marks;
+    if (c.totalDay >= 0 && num(r[c.totalDay]) > 0) target.totalMktM = num(r[c.totalDay]);
+    if (c.totalUch >= 0 && num(r[c.totalUch]) > 0) target.totalUchastokM = num(r[c.totalUch]);
+    if (c.reserve >= 0 && num(r[c.reserve]) > 0) target.reserveMktM = num(r[c.reserve]);
+    if (c.downtime >= 0 && str(r[c.downtime])) target.downtime = str(r[c.downtime]);
+    if (c.tomorrow >= 0 && str(r[c.tomorrow])) target.tomorrow = str(r[c.tomorrow]);
+    applied++;
+  }
+  return applied;
+}
+
 // ── Точка входа ──────────────────────────────────────────────────────────────
 
 export async function parseJournalBuffer(buf: ArrayBuffer): Promise<JournalImportResult> {
@@ -422,6 +513,13 @@ export async function parseJournalBuffer(buf: ArrayBuffer): Promise<JournalImpor
   const ground = parseGround(readSheet('DATA'), now);
   const aerial = parseAerial(readSheet('DATA ПОДВЕС'), now);
   const drillRes = parseDrills(readSheet('ГНБ Журнал'), now);
+
+  // Лист деталей необязателен: его нет в исходной книге заказчика,
+  // он появляется только в наших выгрузках.
+  const detailRows = sheetByName(names, 'Детали работ')
+    ? (XLSX.utils.sheet_to_json(wb.Sheets[sheetByName(names, 'Детали работ')!], { header: 1, defval: '' }) as Row[])
+    : [];
+  applyDetails(detailRows, ground);
 
   return {
     orders, ground, aerial, drills: drillRes.list,

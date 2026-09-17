@@ -102,6 +102,70 @@ export interface WorkEntryBase {
   sync?: 'local' | 'synced';
 }
 
+// ── Подробный отчёт инженера по контролю строительства ───────────────────────
+
+/**
+ * Операции из ежедневного отчёта инженера. В отличие от пяти обобщённых
+ * колонок Excel, это то, что реально пишут в поле.
+ *
+ * ВАЖНО: операции НЕ складываются в дневной прогресс. «Прокладка МКТ 4100 м»
+ * и «Прокладка сигнальной ленты 4100 м» — один и тот же участок трассы,
+ * пройденный дважды разными работами. Итог за день ведётся отдельным полем
+ * totalMktM, как в самом отчёте («Тотал МКТ за сегодня: 4100 м»).
+ */
+export type OperationKind =
+  | 'kirkovka' | 'proporka'
+  | 'trench_excavator' | 'trench_bar' | 'trench_manual'
+  | 'lay_mkt_heavy' | 'lay_mkt' | 'lay_tape'
+  | 'backfill_excavator' | 'backfill_half'
+  | 'obvalovka_tractor' | 'obvalovka'
+  | 'install_kod';
+
+export interface OperationSpec {
+  label: string;
+  unit: 'м' | 'шт';
+  group: 'Подготовка' | 'Траншея' | 'Прокладка' | 'Завершение';
+}
+
+export const OPERATIONS: Record<OperationKind, OperationSpec> = {
+  kirkovka:           { label: 'Кирковка тяжёлой техникой',        unit: 'м',  group: 'Подготовка' },
+  proporka:           { label: 'Пропорка тяжёлой техникой',        unit: 'м',  group: 'Подготовка' },
+  trench_excavator:   { label: 'Траншея экскаватором 3в1',         unit: 'м',  group: 'Траншея' },
+  trench_bar:         { label: 'Траншея баровым трактором',        unit: 'м',  group: 'Траншея' },
+  trench_manual:      { label: 'Траншея вручную',                  unit: 'м',  group: 'Траншея' },
+  lay_mkt_heavy:      { label: 'МКТ и лента тяжёлой техникой',     unit: 'м',  group: 'Прокладка' },
+  lay_mkt:            { label: 'Прокладка МКТ',                    unit: 'м',  group: 'Прокладка' },
+  lay_tape:           { label: 'Прокладка сигнальной ленты',       unit: 'м',  group: 'Прокладка' },
+  backfill_excavator: { label: 'Обратная засыпка экскаватором',    unit: 'м',  group: 'Завершение' },
+  backfill_half:      { label: 'Обратная засыпка наполовину',      unit: 'м',  group: 'Завершение' },
+  obvalovka_tractor:  { label: 'Обваловка трактором',              unit: 'м',  group: 'Завершение' },
+  obvalovka:          { label: 'Обваловка',                        unit: 'м',  group: 'Завершение' },
+  install_kod:        { label: 'Установка КОД',                    unit: 'шт', group: 'Завершение' },
+};
+
+export const OPERATION_KINDS = Object.keys(OPERATIONS) as OperationKind[];
+
+export const OPERATION_GROUPS: OperationSpec['group'][] =
+  ['Подготовка', 'Траншея', 'Прокладка', 'Завершение'];
+
+/** Техника на смене — «Кабелеукладчик — 1 шт». */
+export const EQUIPMENT_KINDS: string[] = [
+  'Кабелеукладчик', 'Манипулятор', 'Экскаватор 3/1', 'Пропорщик',
+  'Бульдозер', 'Баровый трактор', 'Трактор', 'Самосвал',
+];
+
+/**
+ * Метка трубы: с какой отметки на какую ушла бухта МКТ.
+ * В отчёте пишут «4000 — 2490 м». Без этого метраж нечем подтвердить,
+ * а расход бухт не сходится с длиной участка.
+ */
+export interface DuctMark {
+  /** Номер бухты или метка на трубе. */
+  coil: string;
+  /** Метраж по метке. */
+  meters: number;
+}
+
 /** Дневная выработка подземки — строка листа DATA. */
 export interface DailyWorkEntry extends WorkEntryBase {
   kind: 'ground';
@@ -117,6 +181,24 @@ export interface DailyWorkEntry extends WorkEntryBase {
   blowingM?: number;
   /** Расход материалов: метры для 'м', штуки для 'шт'. */
   materials: Partial<Record<MaterialKind, number>>;
+
+  // ── Подробная часть (отчёт инженера по контролю строительства) ──
+  /** Операции за смену. НЕ суммируются в прогресс — см. OperationKind. */
+  operations?: Partial<Record<OperationKind, number>>;
+  /** Техника на смене: название → количество. */
+  equipment?: Record<string, number>;
+  /** Метки трубы — чем подтверждается метраж. */
+  ductMarks?: DuctMark[];
+  /** Итог по МКТ за день, как его пишут в отчёте. */
+  totalMktM?: number;
+  /** Нарастающий итог по участку. */
+  totalUchastokM?: number;
+  /** Запас МКТ под ГНБ, метры. */
+  reserveMktM?: number;
+  /** Причины простоя или невыполнения. */
+  downtime?: string;
+  /** План работы на завтра. */
+  tomorrow?: string;
 }
 
 /** Тип подвешиваемого кабеля — колонки листа DATA ПОДВЕС. */

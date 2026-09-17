@@ -4,6 +4,8 @@ import { X, Check, AlertTriangle } from 'lucide-react';
 import {
   WorkTech, WORK_TECHS, LayMethod, LAY_METHODS, LAY_METHOD_LABEL,
   MaterialKind, MATERIAL_KINDS, MATERIAL_UNIT, DailyWorkEntry,
+  OperationKind, OPERATIONS, OPERATION_KINDS, OPERATION_GROUPS,
+  EQUIPMENT_KINDS, DuctMark,
 } from '@/types/construction';
 import { JournalState, loadLastContext, saveLastContext, MATERIAL_LABEL, suggestContractor } from './journalStore';
 
@@ -57,6 +59,30 @@ export default function DailyEntryForm({ journal, initial, onSave, onClose }: Pr
   const [note, setNote] = useState(initial?.note ?? '');
   const [reason, setReason] = useState('');
   const [touched, setTouched] = useState(false);
+
+  // Подробная часть — отчёт инженера. По умолчанию свёрнута, чтобы быстрый
+  // путь бригадира оставался коротким.
+  const [detailed, setDetailed] = useState(
+    !!(initial?.operations || initial?.equipment || initial?.ductMarks?.length),
+  );
+  const [operations, setOperations] = useState<Partial<Record<OperationKind, string>>>(() => {
+    const init: Partial<Record<OperationKind, string>> = {};
+    if (initial?.operations) for (const k of OPERATION_KINDS) init[k] = numToStr(initial.operations[k]);
+    return init;
+  });
+  const [equipment, setEquipment] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    if (initial?.equipment) for (const [k, v] of Object.entries(initial.equipment)) init[k] = String(v);
+    return init;
+  });
+  const [ductMarks, setDuctMarks] = useState<{ coil: string; meters: string }[]>(
+    () => (initial?.ductMarks ?? []).map((m) => ({ coil: m.coil, meters: String(m.meters) })),
+  );
+  const [totalMkt, setTotalMkt] = useState(numToStr(initial?.totalMktM));
+  const [totalUchastok, setTotalUchastok] = useState(numToStr(initial?.totalUchastokM));
+  const [reserveMkt, setReserveMkt] = useState(numToStr(initial?.reserveMktM));
+  const [downtime, setDowntime] = useState(initial?.downtime ?? '');
+  const [tomorrow, setTomorrow] = useState(initial?.tomorrow ?? '');
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -122,7 +148,12 @@ export default function DailyEntryForm({ journal, initial, onSave, onClose }: Pr
     [journal.contractors, oblast, rayon],
   );
 
-  const hasWork = totalMeters > 0 || numOf(drillM) > 0 || numOf(blowingM) > 0;
+  const anyOperation = useMemo(
+    () => OPERATION_KINDS.some((k) => numOf(operations[k]) > 0),
+    [operations],
+  );
+  const hasWork = totalMeters > 0 || numOf(drillM) > 0 || numOf(blowingM) > 0
+    || numOf(totalMkt) > 0 || anyOperation;
   // Исправление без причины не уходит: проверяющему нужно понимать, что чинят.
   const canSave = !!date && !!uchastok.trim() && hasWork && (!correcting || !!reason.trim());
 
@@ -158,6 +189,33 @@ export default function DailyEntryForm({ journal, initial, onSave, onClose }: Pr
       blowingM: Math.round(numOf(blowingM)) || undefined,
       materials: mats,
       note: note.trim() || undefined,
+      operations: (() => {
+        const o: Partial<Record<OperationKind, number>> = {};
+        for (const k of OPERATION_KINDS) {
+          const v = numOf(operations[k]);
+          if (v > 0) o[k] = OPERATIONS[k].unit === 'м' ? Math.round(v) : v;
+        }
+        return Object.keys(o).length ? o : undefined;
+      })(),
+      equipment: (() => {
+        const e: Record<string, number> = {};
+        for (const [k, v] of Object.entries(equipment)) {
+          const n = numOf(v);
+          if (n > 0) e[k] = n;
+        }
+        return Object.keys(e).length ? e : undefined;
+      })(),
+      ductMarks: (() => {
+        const list: DuctMark[] = ductMarks
+          .filter((m) => m.coil.trim())
+          .map((m) => ({ coil: m.coil.trim(), meters: Math.round(numOf(m.meters)) }));
+        return list.length ? list : undefined;
+      })(),
+      totalMktM: Math.round(numOf(totalMkt)) || undefined,
+      totalUchastokM: Math.round(numOf(totalUchastok)) || undefined,
+      reserveMktM: Math.round(numOf(reserveMkt)) || undefined,
+      downtime: downtime.trim() || undefined,
+      tomorrow: tomorrow.trim() || undefined,
       createdAt: initial?.createdAt ?? now, updatedAt: now, sync: 'local',
     }, correcting ? reason.trim() : undefined);
 
@@ -289,6 +347,105 @@ export default function DailyEntryForm({ journal, initial, onSave, onClose }: Pr
               ))}
             </div>
           </Group>
+
+          {/* Подробная часть — отчёт инженера по контролю строительства */}
+          <div className="border-t border-[var(--border)] pt-3">
+            <button type="button" onClick={() => setDetailed((v) => !v)}
+                    className="flex items-center gap-2 text-[11.5px] text-[var(--accent)] hover:underline">
+              {detailed ? '▾' : '▸'} Подробный отчёт инженера
+              <span className="text-[var(--text-muted)]">
+                операции, техника, метки трубы, тоталы
+              </span>
+            </button>
+          </div>
+
+          {detailed && (
+            <>
+              <Group title="Операции за смену">
+                <p className="text-[10.5px] text-[var(--text-muted)] leading-snug -mt-1">
+                  Операции не складываются в дневной прогресс: прокладка МКТ и ленты — это один участок.
+                  Итог ведите в поле «Тотал МКТ за день».
+                </p>
+                {OPERATION_GROUPS.map((grp) => {
+                  const keys = OPERATION_KINDS.filter((k) => OPERATIONS[k].group === grp);
+                  return (
+                    <div key={grp} className="flex flex-col gap-1.5">
+                      <span className="text-[9.5px] uppercase tracking-wider text-[var(--text-muted)]">{grp}</span>
+                      <div className="grid grid-cols-2 gap-2">
+                        {keys.map((k) => (
+                          <NumField key={k} id={`ce-op-${k}`} label={OPERATIONS[k].label}
+                                    unit={OPERATIONS[k].unit} value={operations[k] ?? ''}
+                                    onChange={(v) => setOperations((p) => ({ ...p, [k]: v }))} />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </Group>
+
+              <Group title="Итоги по МКТ">
+                <div className="grid grid-cols-3 gap-2">
+                  <NumField id="ce-total-day" label="Тотал за день" unit="м" value={totalMkt} onChange={setTotalMkt} />
+                  <NumField id="ce-total-uch" label="Тотал по участку" unit="м" value={totalUchastok} onChange={setTotalUchastok} />
+                  <NumField id="ce-reserve" label="Запас МКТ ГНБ" unit="м" value={reserveMkt} onChange={setReserveMkt} />
+                </div>
+              </Group>
+
+              <Group title="Состав техники">
+                <div className="grid grid-cols-2 gap-2">
+                  {EQUIPMENT_KINDS.map((k) => (
+                    <NumField key={k} id={`ce-eq-${k}`} label={k} unit="шт"
+                              value={equipment[k] ?? ''}
+                              onChange={(v) => setEquipment((p) => ({ ...p, [k]: v }))} />
+                  ))}
+                </div>
+              </Group>
+
+              <Group title="Метки трубы">
+                <p className="text-[10.5px] text-[var(--text-muted)] leading-snug -mt-1">
+                  С какой отметки на какую ушла бухта — этим подтверждается метраж.
+                </p>
+                {ductMarks.map((m, i) => (
+                  <div key={i} className="flex gap-2 items-end">
+                    <label className="flex flex-col gap-1 flex-1">
+                      <span className="text-[10.5px] text-[var(--text-muted)]">Бухта / метка</span>
+                      <input value={m.coil} placeholder="4003"
+                             onChange={(e) => setDuctMarks((p) => p.map((x, j) => j === i ? { ...x, coil: e.target.value } : x))}
+                             className="inp font-mono" />
+                    </label>
+                    <label className="flex flex-col gap-1 flex-1">
+                      <span className="text-[10.5px] text-[var(--text-muted)]">Метраж</span>
+                      <div className="relative">
+                        <input value={m.meters} inputMode="decimal" placeholder="0000"
+                               onChange={(e) => setDuctMarks((p) => p.map((x, j) => j === i ? { ...x, meters: e.target.value.replace(/[^\d.,]/g, '') } : x))}
+                               className="inp pr-7 font-mono tabular-nums" />
+                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[var(--text-muted)]">м</span>
+                      </div>
+                    </label>
+                    <button type="button" title="Убрать"
+                            onClick={() => setDuctMarks((p) => p.filter((_, j) => j !== i))}
+                            className="btn btn-ghost btn-icon mb-0.5 text-[var(--text-muted)] hover:text-[var(--danger)]">
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))}
+                <button type="button" onClick={() => setDuctMarks((p) => [...p, { coil: '', meters: '' }])}
+                        className="self-start text-[11px] text-[var(--accent)] hover:underline">
+                  + Добавить метку
+                </button>
+              </Group>
+
+              <Field label="Причины простоя / невыполнения">
+                <textarea id="ce-downtime" value={downtime} onChange={(e) => setDowntime(e.target.value)} rows={2}
+                          placeholder="Ждали согласование, скальный грунт, поломка техники" className="inp resize-none" />
+              </Field>
+
+              <Field label="План работы на завтра">
+                <textarea id="ce-tomorrow" value={tomorrow} onChange={(e) => setTomorrow(e.target.value)} rows={2}
+                          placeholder="Продолжение протяжки МКТ в сторону п. Кызылегис" className="inp resize-none" />
+              </Field>
+            </>
+          )}
 
           <Field label="Примечание">
             <textarea id="ce-note" value={note} onChange={(e) => setNote(e.target.value)} rows={2}

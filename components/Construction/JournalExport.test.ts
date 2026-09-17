@@ -149,3 +149,73 @@ describe('выгрузка журнала в Excel', () => {
     expect(r.warnings).toHaveLength(0);
   });
 });
+
+describe('подробный отчёт инженера', () => {
+  const detailed = (): ReturnType<typeof sample> => {
+    const s = sample();
+    s.ground[0] = {
+      ...s.ground[0],
+      operations: {
+        proporka: 3850,
+        lay_mkt_heavy: 3850,
+        trench_excavator: 250,
+        lay_mkt: 4100,
+        lay_tape: 4100,
+        obvalovka_tractor: 4100,
+        install_kod: 2,
+      },
+      equipment: { 'Кабелеукладчик': 1, 'Манипулятор': 1, 'Экскаватор 3/1': 1, 'Пропорщик': 1 },
+      ductMarks: [{ coil: '2590', meters: 0 }, { coil: '4000', meters: 2490 }],
+      totalMktM: 4100,
+      totalUchastokM: 12658,
+      downtime: 'Ждали согласование',
+      tomorrow: 'Продолжение протяжки МКТ в сторону п. Кызылегис',
+    };
+    return s;
+  };
+
+  it('добавляет лист «Детали работ», когда есть что писать', async () => {
+    const blob = await buildJournalWorkbook(detailed());
+    const wb = XLSX.read(await blob.arrayBuffer(), { type: 'array' });
+    expect(wb.SheetNames).toContain('Детали работ');
+  });
+
+  it('не плодит лишний лист, когда подробностей нет', async () => {
+    const blob = await buildJournalWorkbook(sample());
+    const wb = XLSX.read(await blob.arrayBuffer(), { type: 'array' });
+    expect(wb.SheetNames).not.toContain('Детали работ');
+  });
+
+  it('операции переживают оборот и не суммируются в прогресс', async () => {
+    const r = await roundTrip(detailed());
+    const ops = r.ground[0].operations!;
+    expect(ops.lay_mkt).toBe(4100);
+    expect(ops.lay_tape).toBe(4100);
+    expect(ops.install_kod).toBe(2);
+    // Прогресс по способам прокладки остался прежним — операции в него не влились.
+    expect(r.ground[0].byMethod['кабелеукладчик']).toBe(1234);
+    expect(r.ground[0].totalMktM).toBe(4100);
+  });
+
+  it('состав техники переживает оборот', async () => {
+    const r = await roundTrip(detailed());
+    expect(r.ground[0].equipment).toEqual({
+      'Кабелеукладчик': 1, 'Манипулятор': 1, 'Экскаватор 3/1': 1, 'Пропорщик': 1,
+    });
+  });
+
+  it('метки трубы переживают оборот, включая нулевой метраж', async () => {
+    const r = await roundTrip(detailed());
+    expect(r.ground[0].ductMarks).toEqual([
+      { coil: '2590', meters: 0 }, { coil: '4000', meters: 2490 },
+    ]);
+  });
+
+  it('тоталы, простои и план на завтра переживают оборот', async () => {
+    const r = await roundTrip(detailed());
+    const g = r.ground[0];
+    expect(g.totalUchastokM).toBe(12658);
+    expect(g.downtime).toBe('Ждали согласование');
+    expect(g.tomorrow).toContain('Кызылегис');
+  });
+});
