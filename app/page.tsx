@@ -35,6 +35,7 @@ import {
 } from '@/lib/appRole';
 import { diffScenarioCables, highlightCurrentCableIds } from '@/lib/scenarioDiff';
 import AuthButton from '@/components/Auth/AuthButton';
+const ConstructionPanel = dynamic(() => import('@/components/Construction/ConstructionPanel'), { ssr: false });
 import { useSupabaseAuth } from '@/hooks/useSupabaseAuth';
 import { roleFromUser } from '@/lib/authSession';
 import { dbLoadProject } from '@/lib/supabase';
@@ -88,6 +89,7 @@ export default function HomePage() {
   const canChangeStatus = roleAllowsStatusChange(userRole);
   const [showImport, setShowImport] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [showJournal, setShowJournal] = useState(false);
   const [showProjects, setShowProjects] = useState(false);
   const [showCatalog, setShowCatalog] = useState(false);
   const [showAddSub, setShowAddSub] = useState<{ lat: number; lon: number } | null>(null);
@@ -715,6 +717,7 @@ export default function HomePage() {
         undoHint={net.undoLabel}
         dbEnabled={net.dbEnabled}
         onCatalog={() => setShowCatalog(true)}
+        onJournal={() => setShowJournal(true)}
         onProjects={() => setShowProjects(true)}
         onSave={() => handleSaveProject({ audit: true })}
         canSave={canSave}
@@ -1279,6 +1282,8 @@ export default function HomePage() {
       )}
 
       {/* Help modal */}
+      {showJournal && <ConstructionPanel onClose={() => setShowJournal(false)} />}
+
       {showHelp && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in" onClick={() => setShowHelp(false)}>
           <div className="bg-[#0d1b2a] border border-[#1e3a5f] rounded-xl shadow-2xl w-[520px] max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>

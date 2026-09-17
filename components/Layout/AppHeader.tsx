@@ -1,7 +1,7 @@
 'use client';
 import {
   Upload, Save, FolderOpen, HelpCircle, Undo2, Redo2,
-  Pencil, Eye, Sparkles, GitBranch, X, Package, Menu,
+  Pencil, Eye, Sparkles, GitBranch, X, Package, Menu, HardHat,
 } from 'lucide-react';
 import Logo from '@/components/Brand/Logo';
 import GeocodeSearch from '@/components/Geocoding/GeocodeSearch';
@@ -35,6 +35,8 @@ interface Props {
   undoHint?: string | null;
   dbEnabled: boolean;
   onCatalog: () => void;
+  /** Журнал стройки — дневная выработка, ГНБ, материалы. */
+  onJournal?: () => void;
   onProjects: () => void;
   onSave: () => void;
   canSave: boolean;
@@ -141,6 +143,9 @@ export default function AppHeader(p: Props) {
           <button type="button" className="btn btn-secondary text-[11px]" onClick={p.onClearBranch}><GitBranch size={14} />Ветка <X size={12} /></button>
         )}
         <button type="button" className="btn btn-ghost btn-icon hidden sm:flex" onClick={p.onCatalog} disabled={!p.dbEnabled} title="Каталог"><Package size={16} /></button>
+        {p.onJournal && (
+          <button type="button" className="btn btn-ghost btn-icon" onClick={p.onJournal} title="Журнал стройки"><HardHat size={16} /></button>
+        )}
         <button type="button" className="btn btn-ghost text-[11px] hidden sm:flex" onClick={p.onProjects}><FolderOpen size={14} />Проекты</button>
         <button type="button" className="btn btn-ghost text-[11px] hidden sm:flex" onClick={p.onSave} disabled={!p.canSave}><Save size={14} />Сохранить</button>
         <button type="button" className="btn btn-primary shrink-0" onClick={p.onImport}>
