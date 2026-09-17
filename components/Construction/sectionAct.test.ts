@@ -38,10 +38,10 @@ describe('свод по участку для АСР/ОСР', () => {
     expect(t.byMethod['бар']).toBe(0);
   });
 
-  it('берёт комплекты сращивания из материала КОД', () => {
+  it('берёт комплекты сращивания из фитингов — так в документах Казахтелекома', () => {
     const t = computeSectionAct([
-      g({ materials: { 'КОД': 4 } }),
-      g({ materials: { 'КОД': 2 } }),
+      g({ materials: { 'ФИТИНГ': 4, 'КОД': 99 } }),
+      g({ materials: { 'ФИТИНГ': 2 } }),
     ]);
     expect(t.splicingKits).toBe(6);
   });
@@ -60,18 +60,81 @@ describe('свод по участку для АСР/ОСР', () => {
     expect(t.crossingsTotal).toBe(4);
   });
 
-  it('без отклонений фактическая глубина равна проектной', () => {
-    const t = computeSectionAct([g({ byMethod: { 'кабелеукладчик': 100 } })]);
+  it('без отклонений участок закрывается одним актом по проекту', () => {
+    const t = computeSectionAct([g({ byMethod: { 'кабелеукладчик': 11100 } })]);
     expect(t.designDepthM).toBe(1.2);
-    expect(t.actualDepthM).toBe(1.2);
+    expect(t.variants).toHaveLength(1);
+    expect(t.variants[0].isMain).toBe(true);
+    expect(t.variants[0].actualDepthM).toBe(1.2);
+    expect(t.variants[0].lengthM).toBe(11100);
   });
 
-  it('в акт идёт наименьшая фактическая глубина по участку', () => {
+  it('участок с отклонением даёт два акта: основной и на отклонение', () => {
+    // 11 100 м уложены по 1,2 м, из них 50 м прошли по 0,5 м.
     const t = computeSectionAct(
-      [g()],
-      [dev({ actualDepthM: 0.9 }), dev({ actualDepthM: 0.5 }), dev({ actualDepthM: 1.2 })],
+      [g({ byMethod: { 'кабелеукладчик': 11100 } })],
+      [dev({ actualDepthM: 0.5, lengthM: 50, protocol: { number: '14', date: '2026-09-06' } })],
     );
-    expect(t.actualDepthM).toBe(0.5);
+    expect(t.variants).toHaveLength(2);
+
+    const main = t.variants.find((v) => v.isMain)!;
+    expect(main.actualDepthM).toBe(1.2);
+    expect(main.lengthM).toBe(11050);
+
+    const deviated = t.variants.find((v) => !v.isMain)!;
+    expect(deviated.actualDepthM).toBe(0.5);
+    expect(deviated.lengthM).toBe(50);
+    expect(deviated.protocols[0].number).toBe('14');
+    expect(deviated.blocked).toBe(false);
+  });
+
+  it('куски с одинаковой глубиной закрываются одним актом', () => {
+    const t = computeSectionAct(
+      [g({ byMethod: { 'кабелеукладчик': 1000 } })],
+      [dev({ actualDepthM: 0.5, lengthM: 50 }), dev({ actualDepthM: 0.5, lengthM: 30 })],
+    );
+    const deviated = t.variants.filter((v) => !v.isMain);
+    expect(deviated).toHaveLength(1);
+    expect(deviated[0].lengthM).toBe(80);
+    expect(t.variants.find((v) => v.isMain)!.lengthM).toBe(920);
+  });
+
+  it('разные глубины дают разные акты', () => {
+    const t = computeSectionAct(
+      [g({ byMethod: { 'кабелеукладчик': 1000 } })],
+      [dev({ actualDepthM: 0.5, lengthM: 50 }), dev({ actualDepthM: 0.9, lengthM: 20 })],
+    );
+    const depths = t.variants.map((v) => v.actualDepthM);
+    expect(depths).toEqual([1.2, 0.9, 0.5]);
+  });
+
+  it('отклонение без протокола помечает свой акт как незакрываемый', () => {
+    const t = computeSectionAct(
+      [g({ byMethod: { 'кабелеукладчик': 1000 } })],
+      [dev({ actualDepthM: 0.5, lengthM: 50 })],
+    );
+    expect(t.variants.find((v) => !v.isMain)!.blocked).toBe(true);
+    expect(t.variants.find((v) => v.isMain)!.blocked).toBe(false);
+  });
+
+  it('уложились в проект — отдельного акта не появляется', () => {
+    const t = computeSectionAct(
+      [g({ byMethod: { 'кабелеукладчик': 1000 } })],
+      [dev({ actualDepthM: 1.2, lengthM: 50 })],
+    );
+    expect(t.variants).toHaveLength(1);
+    expect(t.variants[0].isMain).toBe(true);
+    expect(t.variants[0].lengthM).toBe(1000);
+  });
+
+  it('когда отклонение покрывает весь участок, основного акта нет', () => {
+    const t = computeSectionAct(
+      [g({ byMethod: { 'кабелеукладчик': 50 } })],
+      [dev({ actualDepthM: 0.5, lengthM: 50 })],
+    );
+    expect(t.variants).toHaveLength(1);
+    expect(t.variants[0].isMain).toBe(false);
+    expect(t.variants[0].actualDepthM).toBe(0.5);
   });
 
   it('отклонение без протокола попадает в список, мешающий закрыть акт', () => {

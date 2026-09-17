@@ -1,5 +1,6 @@
 import {
   DailyWorkEntry, Deviation, LayMethod, LAY_METHODS, DESIGN_DEPTH_M,
+  MobileGroupProtocol,
 } from '@/types/construction';
 
 /**
@@ -12,9 +13,16 @@ import {
  *   «Защитной МКТ проложено всего»            → сумма по способам прокладки
  *   «Кабелеукладчиком с двукратной пропоркой» → способ «кабелеукладчик»
  *   «Вручную / Экскаватором / Бар / По сущ. канализации» → те же способы
- *   «Комплектов для сращивания защитной МКТ»  → материал КОД
+ *   «Комплектов для сращивания защитной МКТ»  → материал ФИТИНГ
  *   «Лента на глубине ½ от глубины МКТ»       → материал Лента
  *   «Глубина: по проекту / фактически»        → карточки отклонений
+ *
+ * ВАЖНО про глубину: акт не один на участок. Каждая фактическая глубина
+ * закрывается своим актом. Если на СНП 11 100 м уложены по проектным 1,2 м,
+ * а 50 м прошли по 0,5 м, получается два АСР/ОСР на один и тот же участок:
+ * основной на 11 050 м с глубиной 1,2 и отдельный на 50 м с глубиной 0,5,
+ * со ссылкой на протокол мобильной группы. Поэтому свод возвращает набор
+ * актов, а не одну «наименьшую глубину» на всю трассу.
  *
  * То, чего в дневном отчёте нет по существу (рекультивация, восстановление
  * покрытий, столбики, шаровые маркеры, разбивка переходов по ПЭТ-63/110),
@@ -24,6 +32,25 @@ import {
 export type Recultivation = 'выполнена' | 'не выполнена';
 export type PavementRestore = 'выполнено' | 'не выполнено' | 'не предусматривается проектом';
 
+/**
+ * Один акт АСР/ОСР: участок трассы, уложенный на одной глубине.
+ * Основной идёт по проектной глубине, каждое отклонение закрывается своим.
+ */
+export interface SectionActVariant {
+  /** true — основной акт по проектной глубине. */
+  isMain: boolean;
+  designDepthM: number;
+  actualDepthM: number;
+  /** Протяжённость этого акта, метры. */
+  lengthM: number;
+  /** Отклонения, вошедшие в акт (пусто у основного). */
+  deviations: Deviation[];
+  /** Протоколы мобильной группы, на которые ссылается акт. */
+  protocols: MobileGroupProtocol[];
+  /** Есть отклонение без протокола — акт не закрыть. */
+  blocked: boolean;
+}
+
 /** Считается из журнала. */
 export interface SectionActTotals {
   /** Защитной МКТ проложено всего, метры. */
@@ -31,7 +58,7 @@ export interface SectionActTotals {
   byMethod: Record<LayMethod, number>;
   /** Предупредительно-сигнальная лента, метры. */
   tapeM: number;
-  /** Комплекты для сращивания МКТ (КОД), штуки. */
+  /** Комплекты для сращивания МКТ — по документам Казахтелекома это фитинги. */
   splicingKits: number;
   /** Бестраншейные переходы. */
   drillM: number;
@@ -41,8 +68,11 @@ export interface SectionActTotals {
   /** Всего переходов на участке. */
   crossingsTotal: number;
   designDepthM: number;
-  /** Наименьшая фактическая глубина по участку — её и пишут в акт. */
-  actualDepthM: number;
+  /**
+   * Акты по участку: основной по проектной глубине плюс по одному на
+   * каждую фактическую глубину отклонения.
+   */
+  variants: SectionActVariant[];
   /** Отклонения по глубине, попавшие в участок. */
   depthDeviations: Deviation[];
   /** Отклонения без протокола мобильной группы — акт с ними не закрыть. */
@@ -90,7 +120,8 @@ export function computeSectionAct(
   for (const e of entries) {
     for (const m of LAY_METHODS) byMethod[m] += e.byMethod[m] ?? 0;
     tapeM += e.materials['Лента'] ?? 0;
-    splicingKits += e.materials['КОД'] ?? 0;
+    // По документам Казахтелекома комплекты для сращивания МКТ — это фитинги.
+    splicingKits += e.materials['ФИТИНГ'] ?? 0;
     drillM += e.drillM ?? 0;
     drillCount += e.drillCount ?? 0;
     openCrossings += e.openCrossings ?? 0;
@@ -105,12 +136,6 @@ export function computeSectionAct(
 
   const depthDeviations = deviations.filter((d) => d.kind === 'depth');
   const designDepthM = depthDeviations[0]?.designDepthM ?? DESIGN_DEPTH_M;
-  // В акт идёт наименьшая фактическая глубина: именно она определяет,
-  // соответствует участок проекту или нет.
-  const actualDepthM = depthDeviations.reduce(
-    (min, d) => (d.actualDepthM !== undefined && d.actualDepthM < min ? d.actualDepthM : min),
-    designDepthM,
-  );
 
   const openDeviations = deviations.filter(
     (d) => (d.kind === 'route' || (d.actualDepthM !== undefined && d.actualDepthM < (d.designDepthM ?? DESIGN_DEPTH_M) - 0.01))
@@ -121,12 +146,66 @@ export function computeSectionAct(
     totalM, byMethod, tapeM, splicingKits,
     drillM, drillCount, openCrossings,
     crossingsTotal: drillCount + openCrossings,
-    designDepthM, actualDepthM,
+    designDepthM,
+    variants: buildVariants(totalM, designDepthM, depthDeviations),
     depthDeviations, openDeviations,
     dateFrom, dateTo,
     performers: [...performers].sort((a, b) => a.localeCompare(b, 'ru')),
     entriesCount: entries.length,
   };
+}
+
+/**
+ * Разбивает участок на акты по фактической глубине.
+ *
+ * Отклонения с одинаковой глубиной объединяются в один акт — на СНП может
+ * быть несколько кусков по 0,5 м, и они закрываются вместе. Остаток трассы
+ * идёт основным актом по проектной глубине.
+ */
+function buildVariants(
+  totalM: number,
+  designDepthM: number,
+  depthDeviations: Deviation[],
+): SectionActVariant[] {
+  const byDepth = new Map<number, Deviation[]>();
+  for (const d of depthDeviations) {
+    const depth = d.actualDepthM;
+    // Уложились в проект — отдельный акт не нужен.
+    if (depth === undefined || depth >= (d.designDepthM ?? designDepthM) - 0.01) continue;
+    const list = byDepth.get(depth);
+    if (list) list.push(d); else byDepth.set(depth, [d]);
+  }
+
+  const deviationVariants: SectionActVariant[] = [...byDepth.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .map(([depth, list]) => ({
+      isMain: false,
+      designDepthM,
+      actualDepthM: depth,
+      lengthM: list.reduce((s, d) => s + d.lengthM, 0),
+      deviations: list,
+      protocols: list
+        .map((d) => d.protocol)
+        .filter((p): p is MobileGroupProtocol => !!p?.number?.trim()),
+      blocked: list.some((d) => !d.protocol?.number?.trim()),
+    }));
+
+  const deviatedM = deviationVariants.reduce((s, v) => s + v.lengthM, 0);
+  // Отклонения не могут занимать больше, чем проложено: если так вышло,
+  // основного акта просто нет, а расхождение видно по цифрам.
+  const mainLength = Math.max(0, totalM - deviatedM);
+
+  const main: SectionActVariant = {
+    isMain: true,
+    designDepthM,
+    actualDepthM: designDepthM,
+    lengthM: mainLength,
+    deviations: [],
+    protocols: [],
+    blocked: false,
+  };
+
+  return mainLength > 0 ? [main, ...deviationVariants] : deviationVariants;
 }
 
 /** Километры для акта: в документах объёмы пишут в км с тремя знаками. */
