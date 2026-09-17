@@ -259,6 +259,82 @@ export interface DrillLogEntry extends WorkEntryBase {
 
 export type ConstructionEntry = DailyWorkEntry | AerialWorkEntry | DrillLogEntry;
 
+// ── Колонны на карте ─────────────────────────────────────────────────────────
+
+/** Вид работ колонны — определяет цвет и значок на карте. */
+export type CrewKind = 'mkt' | 'gnb' | 'zaduvka' | 'podves' | 'svarka';
+
+export interface CrewKindSpec {
+  label: string;
+  short: string;
+  color: string;
+  icon: string;
+}
+
+export const CREW_KINDS: Record<CrewKind, CrewKindSpec> = {
+  mkt:     { label: 'Прокладка МКТ', short: 'МКТ',    color: '#2dd4bf', icon: '🚜' },
+  gnb:     { label: 'ГНБ / ГНП',     short: 'ГНБ',    color: '#fbbf24', icon: '🛠' },
+  zaduvka: { label: 'Задувка',       short: 'Задувка', color: '#38bdf8', icon: '💨' },
+  podves:  { label: 'Подвес',        short: 'Подвес', color: '#a78bfa', icon: '🗼' },
+  svarka:  { label: 'Сварка',        short: 'Сварка', color: '#f472b6', icon: '🔥' },
+};
+
+export const CREW_KIND_LIST = Object.keys(CREW_KINDS) as CrewKind[];
+
+/** Состояние колонны — то, что видно на карте с первого взгляда. */
+export type CrewStatus = 'working' | 'waiting' | 'done' | 'idle';
+
+export const CREW_STATUS: Record<CrewStatus, { label: string; color: string }> = {
+  working: { label: 'Работает',    color: '#4ade80' },
+  waiting: { label: 'В ожидании',  color: '#fbbf24' },
+  done:    { label: 'Закончила',   color: '#64748b' },
+  idle:    { label: 'Простой',     color: '#f87171' },
+};
+
+/** Сотрудник в составе колонны. */
+export interface CrewMember {
+  name: string;
+  /** Мастер участка, машинист, сварщик, разнорабочий… */
+  role?: string;
+  /** Выходной — на карте состав показывается с пометкой. */
+  dayOff?: boolean;
+}
+
+/**
+ * Колонна: бригада с техникой и составом, стоящая на конкретном месте.
+ * Положение приблизительное — его двигают руками по карте, когда бригада
+ * переезжает на другой участок.
+ */
+export interface Crew {
+  id: string;
+  kind: CrewKind;
+  /** «1-колонна», «Колонна-2». */
+  name: string;
+  contractor?: string;
+  status: CrewStatus;
+  lat?: number;
+  lon?: number;
+  oblast?: string;
+  rayon?: string;
+  /** Участок, на котором стоит. */
+  uchastok?: string;
+  members: CrewMember[];
+  /** Техника: название → количество. */
+  equipment: Record<string, number>;
+  note?: string;
+  updatedAt: string;
+}
+
+/** Сколько человек сегодня в строю. */
+export function crewOnDuty(c: Crew): number {
+  return c.members.filter((m) => !m.dayOff).length;
+}
+
+/** Единиц техники всего. */
+export function crewEquipmentCount(c: Crew): number {
+  return Object.values(c.equipment).reduce((s, v) => s + (v || 0), 0);
+}
+
 // ── Отклонения от проекта ────────────────────────────────────────────────────
 
 /** Проектная глубина прокладки защитной трубы, м (по ПСД). */

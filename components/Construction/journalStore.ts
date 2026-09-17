@@ -2,6 +2,7 @@ import {
   DailyWorkEntry, AerialWorkEntry, DrillLogEntry, SettlementOrder,
   LayMethod, MaterialKind, CorrectionRequest, Contractor, JournalRole,
   LAY_METHOD_LABEL, Deviation, isDeviationClosed, needsProtocol,
+  Crew, crewOnDuty, crewEquipmentCount,
 } from '@/types/construction';
 
 /** Состояние журнала стройки — Слой 2. */
@@ -14,6 +15,8 @@ export interface JournalState {
   corrections: CorrectionRequest[];
   /** Отклонения от проекта: глубина и трасса. */
   deviations: Deviation[];
+  /** Колонны на карте. */
+  crews: Crew[];
   contractors: Contractor[];
   updatedAt: string;
 }
@@ -21,7 +24,8 @@ export interface JournalState {
 export function emptyJournal(): JournalState {
   return {
     orders: [], ground: [], aerial: [], drills: [],
-    corrections: [], deviations: [], contractors: DEFAULT_CONTRACTORS, updatedAt: '',
+    corrections: [], deviations: [], crews: [],
+    contractors: DEFAULT_CONTRACTORS, updatedAt: '',
   };
 }
 
@@ -208,6 +212,7 @@ export function loadJournal(): JournalState {
       aerial: p.aerial ?? [], drills: p.drills ?? [],
       corrections: p.corrections ?? [],
       deviations: p.deviations ?? [],
+      crews: p.crews ?? [],
       // Пустой справочник заменяем стартовым — иначе подрядчика не из чего выбрать.
       contractors: p.contractors?.length ? p.contractors : DEFAULT_CONTRACTORS,
       updatedAt: p.updatedAt ?? '',
@@ -244,9 +249,10 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     ground: mergeList(base.ground, add.ground ?? []),
     aerial: mergeList(base.aerial, add.aerial ?? []),
     drills: mergeList(base.drills, add.drills ?? []),
-    // Импорт файла не трогает заявки, отклонения и справочник подрядчиков.
+    // Импорт файла не трогает заявки, отклонения, колонны и справочник.
     corrections: base.corrections,
     deviations: base.deviations,
+    crews: base.crews,
     contractors: base.contractors.length ? base.contractors : DEFAULT_CONTRACTORS,
     updatedAt: new Date().toISOString(),
   };
@@ -318,6 +324,47 @@ export function saveLastContext(ctx: LastContext): void {
 export function addGroundEntry(base: JournalState, entry: DailyWorkEntry): JournalState {
   return { ...base, ground: [...base.ground, entry], updatedAt: new Date().toISOString() };
 }
+
+// ── Колонны ──────────────────────────────────────────────────────────────────
+
+export function upsertCrew(base: JournalState, crew: Crew): JournalState {
+  const now = new Date().toISOString();
+  const exists = base.crews.some((c) => c.id === crew.id);
+  const next = { ...crew, updatedAt: now };
+  return {
+    ...base,
+    crews: exists ? base.crews.map((c) => (c.id === crew.id ? next : c)) : [...base.crews, next],
+    updatedAt: now,
+  };
+}
+
+export function removeCrew(base: JournalState, id: string): JournalState {
+  return {
+    ...base,
+    crews: base.crews.filter((c) => c.id !== id),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+/** Перемещение колонны по карте — меняет только координаты. */
+export function moveCrew(base: JournalState, id: string, lat: number, lon: number): JournalState {
+  const now = new Date().toISOString();
+  return {
+    ...base,
+    crews: base.crews.map((c) => (c.id === id ? { ...c, lat, lon, updatedAt: now } : c)),
+    updatedAt: now,
+  };
+}
+
+/** Колонны, которым есть что показать на карте. */
+export function placedCrews(base: JournalState): Crew[] {
+  return base.crews.filter(
+    (c) => typeof c.lat === 'number' && typeof c.lon === 'number'
+      && Number.isFinite(c.lat) && Number.isFinite(c.lon),
+  );
+}
+
+export { crewOnDuty, crewEquipmentCount };
 
 // ── Отклонения от проекта ────────────────────────────────────────────────────
 

@@ -35,7 +35,11 @@ import {
 } from '@/lib/appRole';
 import { diffScenarioCables, highlightCurrentCableIds } from '@/lib/scenarioDiff';
 import AuthButton from '@/components/Auth/AuthButton';
-import { loadJournal, drillMapPoints, type DrillMapPoint } from '@/components/Construction/journalStore';
+import {
+  loadJournal, saveJournal, drillMapPoints, placedCrews, moveCrew,
+  type DrillMapPoint,
+} from '@/components/Construction/journalStore';
+import type { Crew } from '@/types/construction';
 const ConstructionPanel = dynamic(() => import('@/components/Construction/ConstructionPanel'), { ssr: false });
 import { useSupabaseAuth } from '@/hooks/useSupabaseAuth';
 import { roleFromUser } from '@/lib/authSession';
@@ -93,10 +97,20 @@ export default function HomePage() {
   const [showJournal, setShowJournal] = useState(false);
   // Проколы ГНБ из журнала стройки — отдельный слой на карте.
   const [drillPoints, setDrillPoints] = useState<DrillMapPoint[]>([]);
-  const refreshDrillPoints = useCallback(() => {
-    setDrillPoints(drillMapPoints(loadJournal()));
+  const [crews, setCrews] = useState<Crew[]>([]);
+  const refreshJournalLayers = useCallback(() => {
+    const j = loadJournal();
+    setDrillPoints(drillMapPoints(j));
+    setCrews(placedCrews(j));
   }, []);
-  useEffect(() => { refreshDrillPoints(); }, [refreshDrillPoints]);
+  useEffect(() => { refreshJournalLayers(); }, [refreshJournalLayers]);
+
+  /** Перетащили колонну на карте — сохраняем новое место. */
+  const handleMoveCrew = useCallback((id: string, lat: number, lon: number) => {
+    const next = moveCrew(loadJournal(), id, lat, lon);
+    saveJournal(next);
+    setCrews(placedCrews(next));
+  }, []);
   const [showProjects, setShowProjects] = useState(false);
   const [showCatalog, setShowCatalog] = useState(false);
   const [showAddSub, setShowAddSub] = useState<{ lat: number; lon: number } | null>(null);
@@ -935,6 +949,8 @@ export default function HomePage() {
             setMeasureMode={setMeasureMode}
             heatmapEnabled={heatmapEnabled}
             drillPoints={drillPoints}
+            crews={crews}
+            onMoveCrew={handleMoveCrew}
             budgetMap={budgetMap.current}
             budgetColoring={budgetColoring}
           />
@@ -1291,7 +1307,7 @@ export default function HomePage() {
 
       {/* Help modal */}
       {showJournal && (
-        <ConstructionPanel onClose={() => { setShowJournal(false); refreshDrillPoints(); }} />
+        <ConstructionPanel onClose={() => { setShowJournal(false); refreshJournalLayers(); }} />
       )}
 
       {showHelp && (

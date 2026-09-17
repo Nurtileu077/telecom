@@ -8,6 +8,7 @@ import {
 import type { DrawingTool } from '@/components/Sidebar/NotesTab';
 import { nearestTbToJoint, endpointLabel } from '@/components/Network/entityInterior';
 import { collapseWaypoint } from '@/components/Network/cableWaypoints';
+import { CREW_KINDS, CREW_STATUS } from '@/types/construction';
 import GpsLocateButton from '@/components/Map/GpsLocateButton';
 import PresenceCursors from '@/components/Map/PresenceCursors';
 
@@ -64,6 +65,10 @@ interface Props {
   heatmapEnabled: boolean;
   /** Проколы ГНБ/ГНП из журнала стройки — отдельный слой поверх сети. */
   drillPoints?: import('@/components/Construction/journalStore').DrillMapPoint[];
+  /** Колонны на карте: где стоит бригада, чем занята, каким составом. */
+  crews?: import('@/types/construction').Crew[];
+  /** Перетаскивание колонны на новое место. */
+  onMoveCrew?: (id: string, lat: number, lon: number) => void;
   // Bounding-box overlay for "export selection".  Drawn as a translucent
   // amber rectangle so the user can see what's about to be exported.
   selectionBBox?: { latMin: number; lonMin: number; latMax: number; lonMax: number } | null;
@@ -245,6 +250,13 @@ function offsetPolyline(coords: [number, number][], offsetM: number): [number, n
   return out;
 }
 
+/** Экранирование пользовательского текста для HTML в попапах карты. */
+function esc(s: string): string {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 /** Размер маркеров в зависимости от зума — как в Google: точки «растут»
  *  при приближении и уменьшаются при отдалении. Возвращает множитель ≈ 0.85-1.75. */
 function markerScale(zoom: number): number {
@@ -261,6 +273,7 @@ export default function LeafletMap(props: Props) {
   const dataGroupRef = useRef<any>(null);
   const annoGroupRef = useRef<any>(null);
   const drillGroupRef = useRef<any>(null);
+  const crewGroupRef = useRef<any>(null);
   const drawGroupRef = useRef<any>(null);
   const measureGroupRef = useRef<any>(null);
   const heatLayerRef = useRef<any>(null);
@@ -299,6 +312,7 @@ export default function LeafletMap(props: Props) {
       dataGroupRef.current = L.layerGroup().addTo(map);
       annoGroupRef.current = L.layerGroup().addTo(map);
       drillGroupRef.current = L.layerGroup().addTo(map);
+      crewGroupRef.current = L.layerGroup().addTo(map);
       drawGroupRef.current = L.layerGroup().addTo(map);
       measureGroupRef.current = L.layerGroup().addTo(map);
       waypointGroupRef.current = L.layerGroup().addTo(map);
@@ -870,6 +884,107 @@ export default function LeafletMap(props: Props) {
     });
   }
 
+  /**
+   * Колонны на карте.
+   *
+   * Метка крупная и подписанная: с одного взгляда видно, какая бригада где
+   * стоит и чем занята. Цвет кружка — вид работ, кольцо — состояние
+   * (работает, ждёт, закончила, простой). Метка перетаскивается — так
+   * бригаду переносят на другой участок.
+   */
+  function renderCrews() {
+    const group = crewGroupRef.current;
+    if (!mapRef.current || !group) return;
+    import('leaflet').then((L) => {
+      group.clearLayers();
+      const crews = propsRef.current.crews ?? [];
+      if (crews.length === 0) return;
+
+      for (const c of crews) {
+        if (typeof c.lat !== 'number' || typeof c.lon !== 'number') continue;
+        if (!Number.isFinite(c.lat) || !Number.isFinite(c.lon)) continue;
+
+        const kind = CREW_KINDS[c.kind];
+        const st = CREW_STATUS[c.status];
+        const onDuty = c.members.filter((m) => !m.dayOff).length;
+        const equip = Object.values(c.equipment ?? {}).reduce((s, v) => s + (v || 0), 0);
+        // Работающая колонна мягко пульсирует — глаз сам находит активные.
+        const pulse = c.status === 'working'
+          ? 'animation: optiq-crew-pulse 2.2s ease-in-out infinite;'
+          : '';
+
+        const icon = L.divIcon({
+          className: '',
+          iconSize: [46, 58],
+          iconAnchor: [23, 52],
+          html: `
+            <div style="display:flex;flex-direction:column;align-items:center;pointer-events:none">
+              <div style="
+                width:38px;height:38px;border-radius:50%;
+                background:${kind.color}22;border:3px solid ${st.color};
+                box-shadow:0 0 10px ${st.color}66, 0 2px 6px rgba(0,0,0,.6);
+                display:flex;align-items:center;justify-content:center;
+                font-size:19px;line-height:1;${pulse}
+              ">${kind.icon}</div>
+              <div style="
+                margin-top:2px;padding:1px 5px;border-radius:4px;white-space:nowrap;
+                background:#0c1018ee;border:1px solid ${kind.color}88;
+                color:${kind.color};font-size:10px;font-weight:600;
+                font-family:ui-monospace,monospace;
+              ">${esc(c.name)}</div>
+            </div>`,
+        });
+
+        const draggable = !!propsRef.current.onMoveCrew;
+        const m = L.marker([c.lat, c.lon], { icon, draggable, zIndexOffset: 800 });
+
+        const roster = c.members.length === 0
+          ? '<i style="color:#64748b">состав не заполнен</i>'
+          : c.members.map((mem) => {
+              const off = mem.dayOff
+                ? ' <span style="color:#f87171">выходной</span>'
+                : '';
+              const role = mem.role ? ` <span style="color:#64748b">· ${esc(mem.role)}</span>` : '';
+              return `${esc(mem.name)}${role}${off}`;
+            }).join('<br/>');
+
+        const equipList = Object.entries(c.equipment ?? {})
+          .filter(([, v]) => v > 0)
+          .map(([k, v]) => `${esc(k)} — ${v}`)
+          .join('<br/>') || '<i style="color:#64748b">техника не указана</i>';
+
+        m.bindPopup(`
+          <div style="min-width:210px">
+            <b style="color:${kind.color}">${kind.icon} ${esc(c.name)}</b>
+            <span style="color:#64748b;font-size:11px"> · ${esc(kind.label)}</span><br/>
+            <span style="color:${st.color};font-size:11px">● ${esc(st.label)}</span>
+            ${c.uchastok ? `<br/><span style="font-size:11px">${esc(c.uchastok)}</span>` : ''}
+            ${c.contractor ? `<br/><span style="color:#64748b;font-size:11px">${esc(c.contractor)}</span>` : ''}
+            <div style="margin-top:6px;padding-top:5px;border-top:1px solid #1e293b">
+              <b style="font-size:11px">Состав</b>
+              <span style="color:#64748b;font-size:11px">— в строю ${onDuty} из ${c.members.length}</span>
+              <div style="font-size:11px;margin-top:2px">${roster}</div>
+            </div>
+            <div style="margin-top:6px;padding-top:5px;border-top:1px solid #1e293b">
+              <b style="font-size:11px">Техника</b>
+              <span style="color:#64748b;font-size:11px">— ${equip} ед.</span>
+              <div style="font-size:11px;margin-top:2px">${equipList}</div>
+            </div>
+            ${c.note ? `<div style="margin-top:5px;font-size:11px;color:#94a3b8">${esc(c.note)}</div>` : ''}
+            ${draggable ? '<div style="margin-top:6px;font-size:10px;color:#64748b">Перетащите метку, чтобы перебросить колонну</div>' : ''}
+          </div>`);
+
+        if (draggable) {
+          m.on('dragend', (e: any) => {
+            const ll = e.target.getLatLng();
+            propsRef.current.onMoveCrew?.(c.id, ll.lat, ll.lng);
+          });
+        }
+        group.addLayer(m);
+      }
+    });
+  }
+
   function handleDrawClick(L: any, lat: number, lon: number) {
     const tool = propsRef.current.activeTool;
     const type = propsRef.current.activeAnnotationType;
@@ -1089,6 +1204,7 @@ export default function LeafletMap(props: Props) {
   }, [props.editingCableId, props.cables]);
   useEffect(() => { renderAnnotations(); }, [props.annotations]);
   useEffect(() => { renderDrillPoints(); }, [props.drillPoints, mapReady]);
+  useEffect(() => { renderCrews(); }, [props.crews, mapReady]);
 
   // Draw the lasso selection overlay (independent layer so it doesn't get
   // cleared by the data-layer rerender): in-progress vertices + closed polygon.

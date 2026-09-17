@@ -6,9 +6,10 @@ import {
   submitCorrection, approveCorrection, rejectCorrection, pendingCorrections,
   hasPendingCorrection, diffEntries, suggestContractor, DEFAULT_CONTRACTORS,
   addDeviation, removeDeviation, openDeviations, isDeviationClosed, needsProtocol,
-  documentContractor,
+  documentContractor, upsertCrew, removeCrew, moveCrew, placedCrews,
+  crewOnDuty, crewEquipmentCount,
 } from './journalStore';
-import type { DailyWorkEntry, DrillLogEntry, Deviation } from '@/types/construction';
+import type { DailyWorkEntry, DrillLogEntry, Deviation, Crew } from '@/types/construction';
 
 const now = '2026-09-17T00:00:00.000Z';
 
@@ -364,6 +365,68 @@ describe('отклонения и протокол мобильной групп
   it('удаление убирает отклонение', () => {
     const s = addDeviation(emptyJournal(), dev({ id: 'x' }));
     expect(removeDeviation(s, 'x').deviations).toHaveLength(0);
+  });
+});
+
+describe('колонны', () => {
+  const crew = (over: Partial<Crew> = {}): Crew => ({
+    id: 'c1', kind: 'mkt', name: '1-колонна', status: 'working',
+    members: [], equipment: {}, updatedAt: now, ...over,
+  });
+
+  it('добавляет новую и заменяет существующую по id', () => {
+    const s1 = upsertCrew(emptyJournal(), crew());
+    expect(s1.crews).toHaveLength(1);
+    const s2 = upsertCrew(s1, crew({ name: 'Колонна-2' }));
+    expect(s2.crews).toHaveLength(1);
+    expect(s2.crews[0].name).toBe('Колонна-2');
+  });
+
+  it('удаляет колонну', () => {
+    const s = upsertCrew(emptyJournal(), crew());
+    expect(removeCrew(s, 'c1').crews).toHaveLength(0);
+  });
+
+  it('перемещение меняет только координаты', () => {
+    const s = upsertCrew(emptyJournal(), crew({ lat: 52.0, lon: 69.0, status: 'waiting' }));
+    const moved = moveCrew(s, 'c1', 52.5, 69.5);
+    expect(moved.crews[0].lat).toBe(52.5);
+    expect(moved.crews[0].lon).toBe(69.5);
+    expect(moved.crews[0].status).toBe('waiting');
+    expect(moved.crews[0].name).toBe('1-колонна');
+  });
+
+  it('на карту попадают только колонны с координатами', () => {
+    const s: JournalState = {
+      ...emptyJournal(),
+      crews: [
+        crew({ id: 'a', lat: 52, lon: 69 }),
+        crew({ id: 'b' }),
+        crew({ id: 'c', lat: NaN, lon: 69 }),
+      ],
+    };
+    expect(placedCrews(s).map((c) => c.id)).toEqual(['a']);
+  });
+
+  it('считает состав в строю без выходных', () => {
+    const c = crew({
+      members: [
+        { name: 'Какенов Е.А.', role: 'мастер участка' },
+        { name: 'Иванов И.', dayOff: true },
+        { name: 'Петров П.' },
+      ],
+    });
+    expect(crewOnDuty(c)).toBe(2);
+  });
+
+  it('считает единицы техники', () => {
+    expect(crewEquipmentCount(crew({ equipment: { 'Кабелеукладчик': 1, 'Экскаватор 3/1': 2 } }))).toBe(3);
+    expect(crewEquipmentCount(crew())).toBe(0);
+  });
+
+  it('колонны переживают импорт файла', () => {
+    const s = upsertCrew(emptyJournal(), crew({ lat: 52, lon: 69 }));
+    expect(mergeJournal(s, { ground: [g()] }).crews).toHaveLength(1);
   });
 });
 

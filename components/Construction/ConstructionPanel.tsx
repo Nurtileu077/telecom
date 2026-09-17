@@ -16,16 +16,19 @@ import {
   submitCorrection, approveCorrection, rejectCorrection, pendingCorrections,
   hasPendingCorrection, diffEntries, loadJournalRole, saveJournalRole,
   addDeviation, removeDeviation, openDeviations, isDeviationClosed,
+  upsertCrew, removeCrew,
 } from './journalStore';
 import DeviationForm from './DeviationForm';
+import CrewForm from './CrewForm';
 import {
   LAY_METHOD_LABEL, MATERIAL_UNIT, JOURNAL_ROLE_LABEL, DEVIATION_KIND_LABEL,
+  CREW_KINDS, CREW_STATUS,
   type LayMethod, type MaterialKind, type DailyWorkEntry,
-  type CorrectionRequest, type JournalRole, type Deviation,
+  type CorrectionRequest, type JournalRole, type Deviation, type Crew,
 } from '@/types/construction';
 
 type Period = 'day' | 'week' | 'month' | 'all';
-type View = 'summary' | 'entries' | 'corrections' | 'deviations';
+type View = 'summary' | 'entries' | 'corrections' | 'deviations' | 'crews';
 
 const PERIOD_LABEL: Record<Period, string> = {
   day: 'Последний день', week: '7 дней', month: '30 дней', all: 'Всё время',
@@ -47,6 +50,8 @@ export default function ConstructionPanel({ onClose }: Props) {
   const [editing, setEditing] = useState<DailyWorkEntry | null>(null);
   const [devFormOpen, setDevFormOpen] = useState(false);
   const [editingDev, setEditingDev] = useState<Deviation | null>(null);
+  const [crewFormOpen, setCrewFormOpen] = useState(false);
+  const [editingCrew, setEditingCrew] = useState<Crew | null>(null);
   const [role, setRole] = useState<JournalRole>('field');
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -103,6 +108,16 @@ export default function ConstructionPanel({ onClose }: Props) {
   const handleDeleteDeviation = useCallback((id: string) => {
     if (!confirm('Удалить отклонение?')) return;
     persist(removeDeviation(loadJournal(), id));
+  }, [persist]);
+
+  const handleSaveCrew = useCallback((c: Crew) => {
+    persist(upsertCrew(loadJournal(), c));
+    setEditingCrew(null);
+  }, [persist]);
+
+  const handleDeleteCrew = useCallback((id: string) => {
+    if (!confirm('Удалить колонну?')) return;
+    persist(removeCrew(loadJournal(), id));
   }, [persist]);
 
   const handleDelete = useCallback((id: string) => {
@@ -218,7 +233,7 @@ export default function ConstructionPanel({ onClose }: Props) {
       {!empty && (
         <div className="flex flex-wrap items-center gap-1.5 px-3 md:px-4 py-2 border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0">
           <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md mr-1">
-            {([['summary', 'Сводка'], ['entries', 'Записи'], ['deviations', 'Отклонения'], ['corrections', 'Заявки']] as [View, string][]).map(([v, label]) => {
+            {([['summary', 'Сводка'], ['entries', 'Записи'], ['crews', 'Колонны'], ['deviations', 'Отклонения'], ['corrections', 'Заявки']] as [View, string][]).map(([v, label]) => {
               const badge = v === 'corrections' ? pending.length : v === 'deviations' ? openDevs.length : 0;
               return (
                 <button key={v} type="button" onClick={() => setView(v)}
@@ -294,6 +309,13 @@ export default function ConstructionPanel({ onClose }: Props) {
 
         {empty ? (
           <EmptyJournal onPick={() => fileRef.current?.click()} onAdd={() => setFormOpen(true)} busy={busy} />
+        ) : view === 'crews' ? (
+          <CrewsList
+            rows={journal.crews}
+            onAdd={() => { setEditingCrew(null); setCrewFormOpen(true); }}
+            onEdit={(c) => { setEditingCrew(c); setCrewFormOpen(true); }}
+            onDelete={handleDeleteCrew}
+          />
         ) : view === 'deviations' ? (
           <DeviationsList
             rows={devs}
@@ -366,6 +388,94 @@ export default function ConstructionPanel({ onClose }: Props) {
           onSave={handleSaveDeviation}
           onClose={() => { setDevFormOpen(false); setEditingDev(null); }}
         />
+      )}
+
+      {crewFormOpen && (
+        <CrewForm
+          journal={journal}
+          initial={editingCrew}
+          onSave={handleSaveCrew}
+          onClose={() => { setCrewFormOpen(false); setEditingCrew(null); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function CrewsList({ rows, onAdd, onEdit, onDelete }: {
+  rows: Crew[];
+  onAdd: () => void;
+  onEdit: (c: Crew) => void;
+  onDelete: (id: string) => void;
+}) {
+  const sorted = useMemo(
+    () => [...rows].sort((a, b) => a.name.localeCompare(b.name, 'ru')),
+    [rows],
+  );
+  const placed = sorted.filter((c) => typeof c.lat === 'number' && typeof c.lon === 'number').length;
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <p className="text-[11.5px] text-[var(--text-muted)] flex-1">
+          Колонны видны на карте: цвет — вид работ, кольцо — состояние.
+          Чтобы перебросить бригаду, перетащите её метку.
+          {sorted.length > 0 && <> На карте <b className="text-[var(--text)]">{placed}</b> из {sorted.length}.</>}
+        </p>
+        <button type="button" className="btn btn-primary text-[11px] shrink-0" onClick={onAdd}>
+          <Plus size={14} />Колонна
+        </button>
+      </div>
+
+      {sorted.length === 0 ? (
+        <div className="text-center py-12 flex flex-col items-center gap-2">
+          <span className="text-2xl">🚜</span>
+          <p className="text-[12.5px] text-[var(--text-muted)]">Колонны не заведены</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+          {sorted.map((c) => {
+            const kind = CREW_KINDS[c.kind];
+            const st = CREW_STATUS[c.status];
+            const onDuty = c.members.filter((m) => !m.dayOff).length;
+            const off = c.members.length - onDuty;
+            const equip = Object.values(c.equipment ?? {}).reduce((s, v) => s + (v || 0), 0);
+            const onMap = typeof c.lat === 'number' && typeof c.lon === 'number';
+            return (
+              <div key={c.id} className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-3 flex flex-col gap-1.5">
+                <div className="flex items-start gap-2">
+                  <span className="w-8 h-8 rounded-full flex items-center justify-center text-base shrink-0"
+                        style={{ background: `${kind.color}22`, border: `2px solid ${st.color}` }}>
+                    {kind.icon}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline gap-2 flex-wrap">
+                      <span className="text-[13px] font-medium text-[var(--text)] truncate">{c.name}</span>
+                      <span className="text-[10px]" style={{ color: st.color }}>● {st.label}</span>
+                    </div>
+                    <div className="text-[11px] text-[var(--text-muted)] truncate">
+                      {[kind.label, c.uchastok, c.contractor].filter(Boolean).join(' · ')}
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => onEdit(c)} title="Изменить"
+                          className="btn btn-ghost btn-icon shrink-0 text-[var(--text-muted)] hover:text-[var(--accent)]">
+                    <Pencil size={14} />
+                  </button>
+                  <button type="button" onClick={() => onDelete(c.id)} title="Удалить"
+                          className="btn btn-ghost btn-icon shrink-0 text-[var(--text-muted)] hover:text-[var(--danger)]">
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-[var(--text-muted)]">
+                  <span>👷 в строю <b className="text-[var(--text)]">{onDuty}</b> из {c.members.length}</span>
+                  {off > 0 && <span className="text-[var(--warn)]">выходной: {off}</span>}
+                  <span>🔧 техника: <b className="text-[var(--text)]">{equip}</b></span>
+                  {!onMap && <span className="text-[var(--warn)]">не на карте</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
