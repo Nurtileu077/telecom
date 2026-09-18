@@ -3,7 +3,7 @@ import {
   LayMethod, MaterialKind, CorrectionRequest, Contractor, JournalRole,
   LAY_METHOD_LABEL, Deviation, isDeviationClosed, needsProtocol,
   Crew, crewOnDuty, crewEquipmentCount, MaterialDelivery, PlanRoute,
-  SnpProgress, SnpStage, StageState,
+  SnpProgress, SnpStage, StageState, MapArea,
 } from '@/types/construction';
 
 /** Состояние журнала стройки — Слой 2. */
@@ -22,6 +22,8 @@ export interface JournalState {
   deliveries: MaterialDelivery[];
   /** Проектные трассы из KML: план, который стройка не переписывает. */
   planRoutes: PlanRoute[];
+  /** Обведённые районы и сёла из KML — границы, а не трассы. */
+  areas: MapArea[];
   /** Прохождение этапов по населённым пунктам — основа нарядов. */
   progress: SnpProgress[];
   contractors: Contractor[];
@@ -47,7 +49,8 @@ export interface DeletedMark {
 export function emptyJournal(): JournalState {
   return {
     orders: [], ground: [], aerial: [], drills: [],
-    corrections: [], deviations: [], crews: [], deliveries: [], planRoutes: [], progress: [],
+    corrections: [], deviations: [], crews: [], deliveries: [], planRoutes: [],
+    areas: [], progress: [],
     contractors: DEFAULT_CONTRACTORS, actFields: {}, deleted: [], updatedAt: '',
   };
 }
@@ -237,6 +240,7 @@ export function loadJournal(): JournalState {
       deviations: p.deviations ?? [],
       crews: p.crews ?? [],
       deliveries: p.deliveries ?? [],
+      areas: p.areas ?? [],
       planRoutes: p.planRoutes ?? [],
       progress: p.progress ?? [],
       actFields: p.actFields ?? {},
@@ -277,7 +281,8 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     ground: mergeList(base.ground, add.ground ?? []),
     aerial: mergeList(base.aerial, add.aerial ?? []),
     drills: mergeList(base.drills, add.drills ?? []),
-    // Импорт файла не трогает заявки, отклонения, колонны и справочник.
+    // Импорт файла не трогает заявки, отклонения, колонны, контуры и справочник.
+    areas: base.areas,
     corrections: base.corrections,
     deviations: base.deviations,
     crews: base.crews,
@@ -500,6 +505,30 @@ export function removePlanSource(base: JournalState, source: string): JournalSta
     planRoutes: base.planRoutes.filter((r) => r.source !== source),
     updatedAt: new Date().toISOString(),
   };
+}
+
+// ── Контуры районов и сёл ────────────────────────────────────────────────────
+
+export function addAreas(base: JournalState, areas: MapArea[]): JournalState {
+  const byId = new Map(base.areas.map((a) => [a.id, a]));
+  for (const a of areas) byId.set(a.id, a);
+  return { ...base, areas: [...byId.values()], updatedAt: new Date().toISOString() };
+}
+
+/** Убрать все контуры, пришедшие из одного файла. */
+export function removeAreaSource(base: JournalState, source: string): JournalState {
+  return {
+    ...base,
+    areas: base.areas.filter((a) => a.source !== source),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+/** Файлы контуров со сводкой — для списка в интерфейсе. */
+export function areaSources(base: JournalState): { source: string; areas: number }[] {
+  const acc = new Map<string, number>();
+  for (const a of base.areas) acc.set(a.source, (acc.get(a.source) ?? 0) + 1);
+  return [...acc.entries()].map(([source, areas]) => ({ source, areas }));
 }
 
 /** Файлы плана со сводкой — для списка в интерфейсе. */

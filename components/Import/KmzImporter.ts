@@ -23,6 +23,17 @@ export interface KmlRawLine {
   folder: string;
 }
 
+/**
+ * Полигон из KML: у заказчика в Google Earth так обведены районы и сёла.
+ * Их не нужно рисовать заново — их нужно прочитать.
+ */
+export interface KmlRawPolygon {
+  coords: [number, number][]; // [lat, lon], внешний контур
+  name: string;
+  folder: string;
+  folderPath: string[];
+}
+
 interface ParseOpts {
   defaultDistrict?: string;
   resetIds?: boolean;
@@ -111,7 +122,11 @@ function parseCoordList(text: string): [number, number][] {
 function parseKmlText(
   kmlText: string,
   opts: ParseOpts = {},
-): { subscribers: Subscriber[]; lines: KmlRawLine[]; structuredPoints: KmlPoint[]; structuredLines: KmlLine[] } {
+): {
+  subscribers: Subscriber[]; lines: KmlRawLine[];
+  structuredPoints: KmlPoint[]; structuredLines: KmlLine[];
+  polygons: KmlRawPolygon[];
+} {
   const parser = new DOMParser();
   const doc = parser.parseFromString(kmlText, 'text/xml');
   const schemaMap = parseSchemaFields(doc);
@@ -120,6 +135,7 @@ function parseKmlText(
   const lines: KmlRawLine[] = [];
   const structuredPoints: KmlPoint[] = [];
   const structuredLines: KmlLine[] = [];
+  const polygons: KmlRawPolygon[] = [];
   const fallback = opts.defaultDistrict ?? 'Imported';
   const placemarks = doc.querySelectorAll('Placemark');
 
@@ -148,6 +164,16 @@ function parseKmlText(
       }
     }
 
+    // Внешний контур полигона. Дырок (innerBoundaryIs) в районных обводках
+    // не бывает, поэтому берём только outerBoundaryIs.
+    const polyEl = pm.querySelector('Polygon > outerBoundaryIs > LinearRing > coordinates');
+    if (polyEl) {
+      const cs = parseCoordList(polyEl.textContent ?? '');
+      if (cs.length >= 3) {
+        polygons.push({ coords: cs, name: name || desc, folder, folderPath });
+      }
+    }
+
     const lineEl = pm.querySelector('LineString > coordinates');
     if (lineEl) {
       const cs = parseCoordList(lineEl.textContent ?? '');
@@ -160,7 +186,7 @@ function parseKmlText(
     }
   }
 
-  return { subscribers, lines, structuredPoints, structuredLines };
+  return { subscribers, lines, structuredPoints, structuredLines, polygons };
 }
 
 export async function importKmz(file: File): Promise<Subscriber[]> {
@@ -175,6 +201,7 @@ export async function importKmzRaw(file: File): Promise<{
   lines: KmlRawLine[];
   structuredPoints: KmlPoint[];
   structuredLines: KmlLine[];
+  polygons: KmlRawPolygon[];
 }> {
   idCounter = 0;
   const text = await readKmlText(file);

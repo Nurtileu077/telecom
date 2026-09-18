@@ -10,8 +10,10 @@ import { nearestTbToJoint, endpointLabel } from '@/components/Network/entityInte
 import { warpWaypoint } from '@/components/Network/cableWaypoints';
 import {
   CREW_KINDS, CREW_STATUS, SNP_STAGES, SNP_STAGE_SPECS, STAGE_STATUS_SPECS,
+  AREA_KIND_LABEL,
 } from '@/types/construction';
 import { SNP_POINT_SOURCE } from '@/components/Construction/snpMap';
+import { areaColor } from '@/components/Construction/areaProgress';
 import GpsLocateButton from '@/components/Map/GpsLocateButton';
 import PresenceCursors from '@/components/Map/PresenceCursors';
 
@@ -78,6 +80,8 @@ interface Props {
   })[];
   /** Этапы по населённым пунктам: где ждут фронт, где работают, где закрыто. */
   snpPoints?: import('@/components/Construction/snpMap').SnpMapPoint[];
+  /** Обведённые районы и сёла с ходом работ. */
+  areas?: import('@/components/Construction/areaProgress').AreaMapItem[];
   /** Перетаскивание колонны на новое место. */
   onMoveCrew?: (id: string, lat: number, lon: number) => void;
   // Bounding-box overlay for "export selection".  Drawn as a translucent
@@ -299,6 +303,7 @@ export default function LeafletMap(props: Props) {
   const deviationGroupRef = useRef<any>(null);
   const planGroupRef = useRef<any>(null);
   const snpGroupRef = useRef<any>(null);
+  const areaGroupRef = useRef<any>(null);
   const drawGroupRef = useRef<any>(null);
   const measureGroupRef = useRef<any>(null);
   const heatLayerRef = useRef<any>(null);
@@ -340,6 +345,8 @@ export default function LeafletMap(props: Props) {
       crewGroupRef.current = L.layerGroup().addTo(map);
       deviationGroupRef.current = L.layerGroup().addTo(map);
       planGroupRef.current = L.layerGroup().addTo(map);
+      // Контуры идут первыми: это подложка, а не объекты поверх.
+      areaGroupRef.current = L.layerGroup().addTo(map);
       snpGroupRef.current = L.layerGroup().addTo(map);
       drawGroupRef.current = L.layerGroup().addTo(map);
       measureGroupRef.current = L.layerGroup().addTo(map);
@@ -1171,6 +1178,67 @@ export default function LeafletMap(props: Props) {
   }
 
   /**
+   * Районы и сёла, обведённые в Google Earth.
+   *
+   * Границы не рисуются заново — они читаются из того же KML, которым
+   * пользуется прораб. Заливка показывает ход работ: серое — данных нет,
+   * янтарное — начато, зелёное — идёт, бирюзовое — закрыто, красное —
+   * стоит. На такую карту можно смотреть вместо таблицы.
+   */
+  function renderAreas() {
+    const group = areaGroupRef.current;
+    if (!mapRef.current || !group) return;
+    import('leaflet').then((L) => {
+      group.clearLayers();
+      const items = propsRef.current.areas ?? [];
+      if (items.length === 0) return;
+
+      // Область под районом, район под селом: иначе крупный контур
+      // перекрывает мелкий и по нему нельзя щёлкнуть.
+      const order: Record<string, number> = { oblast: 0, rayon: 1, snp: 2 };
+      const sorted = [...items].sort((a, b) => (order[a.kind] ?? 3) - (order[b.kind] ?? 3));
+
+      for (const a of sorted) {
+        if (a.coords.length < 3) continue;
+        const blocked = a.blockedSnp > 0;
+        const color = areaColor(a.completion, blocked);
+        const isSnp = a.kind === 'snp';
+        const poly = L.polygon(a.coords, {
+          color,
+          weight: isSnp ? 1.5 : a.kind === 'rayon' ? 2.5 : 3,
+          opacity: isSnp ? 0.8 : 0.9,
+          dashArray: a.kind === 'oblast' ? '8,6' : undefined,
+          fillColor: color,
+          // Заливка тем плотнее, чем мельче контур: у области она только
+          // мешала бы читать то, что внутри.
+          fillOpacity: a.completion === null ? 0.05 : isSnp ? 0.3 : a.kind === 'rayon' ? 0.12 : 0.04,
+        });
+
+        const progress = a.completion === null
+          ? 'данных по журналу нет'
+          : `${Math.round(a.completion * 100)}% этапов пройдено`;
+        const snpLine = a.totalSnp > 0
+          ? `<br/><span style="font-size:11px">Сёл закрыто ${a.doneSnp} из ${a.totalSnp}`
+            + (a.activeSnp ? ` · в работе ${a.activeSnp}` : '')
+            + (a.blockedSnp ? ` · <span style="color:#f87171">стоит ${a.blockedSnp}</span>` : '')
+            + '</span>'
+          : '';
+
+        poly.bindTooltip(`${esc(a.name)} — ${esc(progress)}`, { sticky: true, className: 'text-xs' });
+        poly.bindPopup(
+          `<b>${esc(a.name)}</b>`
+          + `<br/><span style="color:#64748b;font-size:11px">${esc(AREA_KIND_LABEL[a.kind])}`
+          + `${a.rayon && a.kind === 'snp' ? ` · ${esc(a.rayon)}` : ''}</span>`
+          + `<div style="margin-top:4px;color:${color};font-size:12px">${esc(progress)}</div>`
+          + snpLine
+          + (a.kato ? `<br/><span style="color:#64748b;font-size:10px;font-family:ui-monospace,monospace">${esc(a.kato)}</span>` : ''),
+        );
+        group.addLayer(poly);
+      }
+    });
+  }
+
+  /**
    * Этапы по населённым пунктам.
    *
    * Список этапов говорит, что закрыто; карта говорит, где. Прорабу нужно
@@ -1481,6 +1549,7 @@ export default function LeafletMap(props: Props) {
   useEffect(() => { renderDeviations(); }, [props.deviations, mapReady]);
   useEffect(() => { renderPlanRoutes(); }, [props.planRoutes, mapReady]);
   useEffect(() => { renderSnpPoints(); }, [props.snpPoints, mapReady]);
+  useEffect(() => { renderAreas(); }, [props.areas, mapReady]);
 
   /**
    * Первый показ журнала без проекта сети: подвинуть карту к данным.

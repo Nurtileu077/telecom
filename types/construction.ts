@@ -369,6 +369,40 @@ export interface PlanRoute {
   updatedAt: string;
 }
 
+// ── Территория на карте ──────────────────────────────────────────────────────
+
+/**
+ * Обведённая область на карте: область, район или населённый пункт.
+ *
+ * Границы уже нарисованы — в Google Earth у прораба районы и сёла обведены
+ * руками. Рисовать их заново в системе бессмысленно: их нужно прочитать из
+ * того же KML и связать с реестром по названию.
+ */
+export type AreaKind = 'oblast' | 'rayon' | 'snp';
+
+export const AREA_KIND_LABEL: Record<AreaKind, string> = {
+  oblast: 'Область',
+  rayon: 'Район',
+  snp: 'Населённый пункт',
+};
+
+export interface MapArea {
+  id: string;
+  kind: AreaKind;
+  name: string;
+  /** Путь папок KML — по нему видно вложенность района в область. */
+  path?: string[];
+  oblast?: string;
+  rayon?: string;
+  /** КАТО, если название совпало с реестром заказа. */
+  kato?: string;
+  /** Внешний контур, [lat, lon]. */
+  coords: [number, number][];
+  source: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ── Поставки материалов ──────────────────────────────────────────────────────
 
 /**

@@ -18,6 +18,8 @@ export interface ConstructionLayers {
   deviations: boolean;
   /** Проектная трасса из KML. */
   plan: boolean;
+  /** Обведённые районы и сёла. */
+  areas: boolean;
 }
 
 export const CONSTRUCTION_LAYER_LABELS: Record<keyof ConstructionLayers, string> = {
@@ -26,10 +28,11 @@ export const CONSTRUCTION_LAYER_LABELS: Record<keyof ConstructionLayers, string>
   snp: '🏘 Этапы по сёлам',
   deviations: '⚠ Отклонения',
   plan: '┈ Проектная трасса',
+  areas: '▦ Районы и сёла',
 };
 
 export const DEFAULT_CONSTRUCTION_LAYERS: ConstructionLayers = {
-  drills: true, crews: true, snp: true, deviations: true, plan: true,
+  drills: true, crews: true, snp: true, deviations: true, plan: true, areas: true,
 };
 
 const KEY = 'optiq-construction-layers-v1';

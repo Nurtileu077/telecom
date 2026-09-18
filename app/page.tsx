@@ -42,6 +42,7 @@ import {
 import { snpMapPoints, type SnpMapPoint } from '@/components/Construction/snpMap';
 import { effectiveProgress } from '@/components/Construction/stageDerive';
 import { placeCrews, type CrewPlacement } from '@/components/Construction/crewPlace';
+import { areaMapItems, type AreaMapItem } from '@/components/Construction/areaProgress';
 import {
   loadConstructionLayers, saveConstructionLayers,
   DEFAULT_CONSTRUCTION_LAYERS, type ConstructionLayers,
@@ -115,6 +116,7 @@ export default function HomePage() {
   const [mapDeviations, setMapDeviations] = useState<DeviationMapItem[]>([]);
   const [planRoutes, setPlanRoutes] = useState<PlanRoute[]>([]);
   const [snpPoints, setSnpPoints] = useState<SnpMapPoint[]>([]);
+  const [areas, setAreas] = useState<AreaMapItem[]>([]);
   const refreshJournalLayers = useCallback(() => {
     const j = loadJournal();
     setDrillPoints(drillMapPoints(j));
@@ -125,9 +127,9 @@ export default function HomePage() {
     setPlanRoutes(j.planRoutes);
     // Этапы считаем из журнала: на карте должно быть видно положение дел,
     // даже если доску никто руками не вёл.
-    setSnpPoints(snpMapPoints(effectiveProgress(j.progress, j), {
-      drills: j.drills, planRoutes: j.planRoutes,
-    }));
+    const progress = effectiveProgress(j.progress, j);
+    setSnpPoints(snpMapPoints(progress, { drills: j.drills, planRoutes: j.planRoutes }));
+    setAreas(areaMapItems(j.areas, progress));
   }, []);
   useEffect(() => { refreshJournalLayers(); }, [refreshJournalLayers]);
 
@@ -906,6 +908,7 @@ export default function HomePage() {
           constructionCounts={{
             drills: drillPoints.length, crews: crews.length, snp: snpPoints.length,
             deviations: mapDeviations.length, plan: planRoutes.length,
+            areas: areas.length,
           }}
           validationIssues={net.validationIssues}
           flyTo={flyToRef.current}
@@ -1090,6 +1093,7 @@ export default function HomePage() {
             deviations={conLayers.deviations ? mapDeviations : EMPTY_LAYER}
             planRoutes={conLayers.plan ? planRoutes : EMPTY_LAYER}
             snpPoints={conLayers.snp ? snpPoints : EMPTY_LAYER}
+            areas={conLayers.areas ? areas : EMPTY_LAYER}
             budgetMap={budgetMap.current}
             budgetColoring={budgetColoring}
           />
@@ -1283,7 +1287,7 @@ export default function HomePage() {
               «импортируйте Excel» только мешает смотреть на объекты. */}
           {net.districts.length === 0 && net.annotations.length === 0 && net.status === 'idle'
             && drillPoints.length === 0 && crews.length === 0 && mapDeviations.length === 0
-            && planRoutes.length === 0 && snpPoints.length === 0 && (
+            && planRoutes.length === 0 && snpPoints.length === 0 && areas.length === 0 && (
             <EmptyState onImport={() => setShowImport(true)} onHelp={() => setShowHelp(true)} />
           )}
         </main>

@@ -2,7 +2,7 @@ import { JournalState, DeletedMark, emptyJournal } from './journalStore';
 import {
   DailyWorkEntry, AerialWorkEntry, DrillLogEntry, Deviation, Crew,
   CorrectionRequest, SettlementOrder, Contractor, MaterialDelivery, PlanRoute,
-  SnpProgress,
+  SnpProgress, MapArea,
 } from '@/types/construction';
 
 /**
@@ -125,6 +125,7 @@ export function mergeJournalStates(
     crews: mergeCollection<Crew>(local.crews, remote.crews, tombs, stats),
     deliveries: mergeCollection<MaterialDelivery>(local.deliveries, remote.deliveries, tombs, stats),
     planRoutes: mergeCollection<PlanRoute>(local.planRoutes, remote.planRoutes, tombs, stats),
+    areas: mergeCollection<MapArea>(local.areas, remote.areas, tombs, stats),
     progress: mergeProgress(local.progress, remote.progress, stats),
     corrections: mergeCorrections(local.corrections, remote.corrections, stats),
     contractors: mergeContractors(local.contractors, remote.contractors),

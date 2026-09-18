@@ -18,6 +18,7 @@ import {
   addDeviation, removeDeviation, openDeviations, isDeviationClosed,
   upsertCrew, removeCrew, upsertDelivery, removeDelivery,
   addPlanRoutes, removePlanSource, planSources, plural, setProgress, setStage,
+  addAreas, removeAreaSource, areaSources,
 } from './journalStore';
 import DeviationForm from './DeviationForm';
 import CrewForm from './CrewForm';
@@ -31,7 +32,7 @@ import {
   journalCloudEnabled, syncJournal, loadLastSyncAt, saveLastSyncAt,
 } from './journalRemote';
 import { materialForecast, lowStock } from './materialForecast';
-import { importPlanRoutes } from './planImport';
+import { importPlanFile } from './planImport';
 import { pendingTasks, seedProgress, handoffTasks } from './stageTasks';
 import { effectiveProgress } from './stageDerive';
 import {
@@ -185,24 +186,41 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
     }
   }, [actor]);
 
-  /** Загрузка проектной трассы: план кладём отдельно от факта. */
+  /**
+   * Загрузка KML: и проектные трассы, и обводки районов с сёлами.
+   *
+   * В файле из Google Earth лежит и то и другое. План кладём отдельно от
+   * факта, контуры — отдельно от плана.
+   */
   const handlePlanFile = useCallback(async (file: File) => {
     setBusy(true); setError(''); setReport(null);
     try {
-      const res = await importPlanRoutes(file);
-      if (res.routes.length === 0) {
-        setError('В файле не нашлось линий трассы — в плановом KML должны быть LineString.');
+      const base = loadJournal();
+      const res = await importPlanFile(file, base.orders);
+      if (res.routes.length === 0 && res.areas.areas.length === 0) {
+        setError('В файле не нашлось ни линий трассы, ни обводок — нужен KML с LineString или Polygon.');
         return;
       }
-      persist(addPlanRoutes(loadJournal(), res.routes));
-      setSyncNote({
-        tone: 'ok',
-        text: `План загружен: ${res.routes.length} ${plural(res.routes.length, 'трасса', 'трассы', 'трасс')}, `
-          + `${(res.totalM / 1000).toFixed(1)} км`
-          + (res.skipped ? `, пропущено вырожденных: ${res.skipped}` : ''),
-      });
+      let next = base;
+      if (res.routes.length) next = addPlanRoutes(next, res.routes);
+      if (res.areas.areas.length) next = addAreas(next, res.areas.areas);
+      persist(next);
+
+      const parts: string[] = [];
+      if (res.routes.length) {
+        parts.push(`${res.routes.length} ${plural(res.routes.length, 'трасса', 'трассы', 'трасс')}`
+          + ` (${(res.totalM / 1000).toFixed(1)} км)`);
+      }
+      const { byKind, matched } = res.areas;
+      if (byKind.rayon) parts.push(`${byKind.rayon} ${plural(byKind.rayon, 'район', 'района', 'районов')}`);
+      if (byKind.oblast) parts.push(`${byKind.oblast} ${plural(byKind.oblast, 'область', 'области', 'областей')}`);
+      if (byKind.snp) {
+        parts.push(`${byKind.snp} ${plural(byKind.snp, 'село', 'села', 'сёл')}`
+          + (matched ? `, из них ${matched} связано с реестром` : ', ни одно не связано с реестром'));
+      }
+      setSyncNote({ tone: 'ok', text: `Загружено: ${parts.join(', ')}.` });
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Не удалось прочитать плановый файл');
+      setError(e instanceof Error ? e.message : 'Не удалось прочитать файл');
     } finally { setBusy(false); }
   }, [persist]);
 
@@ -347,7 +365,8 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
           </button>
           <input ref={planRef} type="file" accept=".kml,.kmz" className="hidden"
                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePlanFile(f); e.target.value = ''; }} />
-          <button type="button" className="btn btn-ghost btn-icon" title="Загрузить проектную трассу (KML)"
+          <button type="button" className="btn btn-ghost btn-icon"
+                  title="Загрузить KML: проектные трассы и обводки районов"
                   onClick={() => planRef.current?.click()} disabled={busy}>
             <Route size={15} />
           </button>
@@ -564,6 +583,15 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
               <MethodBlock byMethod={totals.byMethod} total={totals.meters} />
               <MaterialBlock byMaterial={totals.byMaterial} />
             </div>
+
+            <KmlSources
+              plans={planSources(journal)}
+              areas={areaSources(journal)}
+              onRemove={(source) => {
+                if (!confirm(`Убрать всё, что пришло из «${source}»?`)) return;
+                persist(removeAreaSource(removePlanSource(loadJournal(), source), source));
+              }}
+            />
           </div>
         )}
       </div>
@@ -1045,6 +1073,49 @@ function BarList({ title, icon, rows, onPick, picked }: {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Загруженные KML — трассы и обводки.
+ *
+ * Без списка загруженный не тот файл остаётся на карте навсегда: удалить
+ * его неоткуда, и человек начинает грузить поверх, надеясь перекрыть.
+ */
+function KmlSources({ plans, areas, onRemove }: {
+  plans: { source: string; routes: number; lengthM: number }[];
+  areas: { source: string; areas: number }[];
+  onRemove: (source: string) => void;
+}) {
+  const names = [...new Set([...plans.map((p) => p.source), ...areas.map((a) => a.source)])];
+  if (names.length === 0) return null;
+
+  return (
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-3">
+      <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-[var(--text-muted)] mb-2">
+        <Route size={13} />Загруженные KML ({names.length})
+      </div>
+      <div className="flex flex-col gap-1">
+        {names.map((source) => {
+          const p = plans.find((x) => x.source === source);
+          const a = areas.find((x) => x.source === source);
+          const parts = [
+            p ? `${p.routes} ${plural(p.routes, 'трасса', 'трассы', 'трасс')} · ${(p.lengthM / 1000).toFixed(1)} км` : '',
+            a ? `${a.areas} ${plural(a.areas, 'контур', 'контура', 'контуров')}` : '',
+          ].filter(Boolean);
+          return (
+            <div key={source} className="flex items-center gap-2 text-[11.5px] py-1 border-b border-[var(--border)] last:border-0">
+              <span className="text-[var(--text)] truncate" title={source}>{source}</span>
+              <span className="ml-auto text-[10.5px] text-[var(--text-muted)] shrink-0">{parts.join(' · ')}</span>
+              <button type="button" onClick={() => onRemove(source)} title="Убрать с карты"
+                      className="btn btn-ghost btn-icon shrink-0 text-[var(--text-muted)] hover:text-[var(--danger)]">
+                <Trash2 size={13} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

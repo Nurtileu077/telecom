@@ -1,5 +1,6 @@
-import { PlanRoute } from '@/types/construction';
+import { PlanRoute, SettlementOrder } from '@/types/construction';
 import { importKmzRaw } from '@/components/Import/KmzImporter';
+import { buildAreas, type AreaImportResult } from './areaImport';
 
 /**
  * Загрузка проектной трассы из KML/KMZ.
@@ -33,8 +34,34 @@ export interface PlanImportResult {
   totalM: number;
 }
 
+/**
+ * Один файл — и трассы, и контуры.
+ *
+ * В файле из Google Earth лежит и то и другое: линии трассы и обводки
+ * районов с сёлами. Просить человека загрузить один и тот же файл дважды,
+ * разными кнопками, — значит не понимать, как он работает.
+ */
+export async function importPlanFile(
+  file: File,
+  orders: SettlementOrder[] = [],
+): Promise<PlanImportResult & { areas: AreaImportResult }> {
+  const { lines, polygons } = await importKmzRaw(file);
+  const routes = buildRoutes(lines, file.name);
+  return {
+    ...routes,
+    areas: buildAreas(polygons, orders, file.name),
+  };
+}
+
 export async function importPlanRoutes(file: File): Promise<PlanImportResult> {
   const { lines } = await importKmzRaw(file);
+  return buildRoutes(lines, file.name);
+}
+
+function buildRoutes(
+  lines: { coords: [number, number][]; name: string; folder: string }[],
+  source: string,
+): PlanImportResult {
   const now = new Date().toISOString();
   const routes: PlanRoute[] = [];
   let skipped = 0;
@@ -47,13 +74,13 @@ export async function importPlanRoutes(file: File): Promise<PlanImportResult> {
     routes.push({
       // Идентификатор детерминированный: повторная загрузка того же файла
       // обновит трассы, а не удвоит их.
-      id: `plan-${file.name}-${i}`,
+      id: `plan-${source}-${i}`,
       name: l.name?.trim() || `Трасса ${i + 1}`,
       folder: l.folder?.trim() || undefined,
       uchastok: l.folder?.trim() || undefined,
       coords,
       lengthM: polylineLengthM(coords),
-      source: file.name,
+      source,
       createdAt: now,
       updatedAt: now,
     });
