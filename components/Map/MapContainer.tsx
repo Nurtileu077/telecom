@@ -434,6 +434,9 @@ export default function LeafletMap(props: Props) {
       // Re-render on zoom (for drop visibility threshold)
       map.on('zoomend', () => {
         renderData();
+        // План рисуется с толщиной по зуму — иначе на отдалении он снова
+        // превращается в волос.
+        renderPlanRoutes();
       });
 
       // After map ready: render existing data and fit bounds if already loaded
@@ -1165,10 +1168,18 @@ export default function LeafletMap(props: Props) {
     import('leaflet').then((L) => {
       group.clearLayers();
       const routes = propsRef.current.planRoutes ?? [];
+      if (routes.length === 0) return;
+      const zoom = mapRef.current?.getZoom?.() ?? 10;
       for (const r of routes) {
         if (r.coords.length < 2) continue;
+        // Приглушённый серый пунктир терялся на спутнике: на снимке местности
+        // серое есть везде. Делаем плановую трассу светлой и заметной —
+        // она всё ещё пунктир и всё ещё под фактом, но её видно.
         const line = L.polyline(r.coords, {
-          color: '#94a3b8', weight: 2.5, opacity: 0.55, dashArray: '4,7',
+          color: '#e2e8f0',
+          weight: 3 * lineScale(zoom),
+          opacity: 0.9,
+          dashArray: '10,8',
         });
         line.bindTooltip(
           `План: ${esc(r.name)}${r.lengthM ? ` · ${(r.lengthM / 1000).toFixed(2)} км` : ''}`,

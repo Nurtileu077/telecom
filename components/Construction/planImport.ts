@@ -1,5 +1,5 @@
 import { PlanRoute, SettlementOrder } from '@/types/construction';
-import { importKmzRaw } from '@/components/Import/KmzImporter';
+import { importKmzRaw, type KmlParseStats } from '@/components/Import/KmzImporter';
 import { buildAreas, type AreaImportResult } from './areaImport';
 
 /**
@@ -44,12 +44,13 @@ export interface PlanImportResult {
 export async function importPlanFile(
   file: File,
   orders: SettlementOrder[] = [],
-): Promise<PlanImportResult & { areas: AreaImportResult }> {
-  const { lines, polygons } = await importKmzRaw(file);
+): Promise<PlanImportResult & { areas: AreaImportResult; stats: KmlParseStats }> {
+  const { lines, polygons, stats } = await importKmzRaw(file);
   const routes = buildRoutes(lines, file.name);
   return {
     ...routes,
     areas: buildAreas(polygons, orders, file.name),
+    stats,
   };
 }
 

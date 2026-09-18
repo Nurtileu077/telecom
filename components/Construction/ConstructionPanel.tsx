@@ -201,7 +201,25 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
       const base = loadJournal();
       const res = await importPlanFile(file, base.orders);
       if (res.routes.length === 0 && res.areas.areas.length === 0) {
-        setError('В файле не нашлось ни линий трассы, ни обводок — нужен KML с LineString или Polygon.');
+        // Объясняем, что именно было в файле: «ничего не загрузилось» без
+        // причины заставляет грузить тот же файл снова и снова.
+        const st = res.stats;
+        const found = [
+          st.placemarks ? `меток ${st.placemarks}` : '',
+          st.points ? `точек ${st.points}` : '',
+          st.lines ? `линий ${st.lines}` : '',
+          st.polygons ? `контуров ${st.polygons}` : '',
+        ].filter(Boolean).join(', ');
+        setError(
+          `Ни трасс, ни обводок не добавилось. В файле: ${found || 'ничего не распознано'}.`
+          + (st.droppedCoords ? ` Не разобрано координат: ${st.droppedCoords}.` : '')
+          + (st.lines && !res.routes.length
+            ? ' Линии есть, но короче двух точек — такие не берём.'
+            : '')
+          + (!st.lines && !st.polygons
+            ? ' Нужен KML/KMZ, в котором есть LineString (трасса) или Polygon (обводка).'
+            : ''),
+        );
         return;
       }
       let next = base;
@@ -221,7 +239,10 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
         parts.push(`${byKind.snp} ${plural(byKind.snp, 'село', 'села', 'сёл')}`
           + (matched ? `, из них ${matched} связано с реестром` : ', ни одно не связано с реестром'));
       }
-      setSyncNote({ tone: 'ok', text: `Загружено: ${parts.join(', ')}.` });
+      const dropped = res.stats.droppedCoords
+        ? ` Не разобрано координат: ${res.stats.droppedCoords}.`
+        : '';
+      setSyncNote({ tone: 'ok', text: `Загружено: ${parts.join(', ')}.${dropped}` });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось прочитать файл');
     } finally { setBusy(false); }
@@ -368,10 +389,10 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
           </button>
           <input ref={planRef} type="file" accept=".kml,.kmz" className="hidden"
                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePlanFile(f); e.target.value = ''; }} />
-          <button type="button" className="btn btn-ghost btn-icon"
-                  title="Загрузить KML: проектные трассы и обводки районов"
+          <button type="button" className="btn btn-ghost text-[11px]"
+                  title="Загрузить KML/KMZ: проектные трассы и обводки районов и сёл"
                   onClick={() => planRef.current?.click()} disabled={busy}>
-            <Route size={15} />
+            <Route size={15} /><span className="hidden sm:inline">KML</span>
           </button>
           <button type="button" className="btn btn-primary text-[11px]" onClick={() => setFormOpen(true)}>
             <Plus size={15} /><span className="hidden sm:inline">Закрыть день</span>

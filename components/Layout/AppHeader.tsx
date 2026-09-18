@@ -55,6 +55,9 @@ interface Props {
 }
 
 export default function AppHeader(p: Props) {
+  // На стройке в шапке остаётся только то, что нужно прорабу: проект сети,
+  // смета и импорт KMZ — это работа другого человека.
+  const building = p.workspace === 'construction';
   return (
     <header className="app-header min-h-12 md:h-14 flex flex-nowrap items-center gap-1.5 md:gap-2 px-2 md:px-3 py-1.5 md:py-0 border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0 z-30">
       {p.onMenuToggle && (
@@ -69,12 +72,15 @@ export default function AppHeader(p: Props) {
         </button>
       )}
       <Logo compact />
+      {!building && (
       <input
         type="text"
         value={p.projectName}
         onChange={(e) => p.onProjectNameChange(e.target.value)}
         className="input-optiq h-8 md:h-9 px-2 flex-1 min-w-0 max-w-[120px] sm:max-w-[140px] text-xs md:text-sm font-medium bg-transparent border-transparent hover:border-[var(--border-strong)]"
       />
+      )}
+      {!building && (
       <select
         value={p.projectStatus}
         disabled={!p.onProjectStatusChange}
@@ -90,6 +96,7 @@ export default function AppHeader(p: Props) {
           <option key={s} value={s}>{PROJECT_STATUS_LABELS[s].label}</option>
         ))}
       </select>
+      )}
 
       {p.userRole && p.onUserRoleChange && (
         <div className="relative hidden md:block">
@@ -98,6 +105,7 @@ export default function AppHeader(p: Props) {
       )}
       <GeocodeSearch flyTo={p.flyTo} className="hidden sm:block min-w-0 max-w-[140px] lg:max-w-[180px]" />
 
+      {!building && (
       <div className="hidden md:flex items-center gap-0.5 shrink-0 border-r border-[var(--border)] pr-2 mr-0.5">
         <button
           type="button"
@@ -112,6 +120,7 @@ export default function AppHeader(p: Props) {
           <Redo2 size={16} />
         </button>
       </div>
+      )}
 
       {p.workspace && p.onWorkspaceChange && (
         <div className="seg shrink-0" title="Рабочее место">
@@ -125,6 +134,7 @@ export default function AppHeader(p: Props) {
         </div>
       )}
 
+      {!building && (
       <div className="hidden lg:flex items-center gap-1 flex-wrap shrink min-w-0">
         <span className="chip chip-accent">{p.totalSubscribers} аб.</span>
         <span className="chip chip-success">{p.totalCableKm} км</span>
@@ -136,37 +146,53 @@ export default function AppHeader(p: Props) {
           </span>
         )}
       </div>
+      )}
 
       <div className="ml-auto app-header-toolbar flex items-center gap-1 justify-end shrink-0 flex-nowrap">
-        <div className="flex md:hidden items-center gap-0.5 shrink-0">
-          <button type="button" className="btn btn-ghost btn-icon" onClick={p.onUndo} disabled={!p.canUndo} title="Отменить">
-            <Undo2 size={16} />
-          </button>
-          <button type="button" className="btn btn-ghost btn-icon" onClick={p.onRedo} disabled={!p.canRedo} title="Повторить">
-            <Redo2 size={16} />
-          </button>
-        </div>
+        {!building && (
+          <div className="flex md:hidden items-center gap-0.5 shrink-0">
+            <button type="button" className="btn btn-ghost btn-icon" onClick={p.onUndo} disabled={!p.canUndo} title="Отменить">
+              <Undo2 size={16} />
+            </button>
+            <button type="button" className="btn btn-ghost btn-icon" onClick={p.onRedo} disabled={!p.canRedo} title="Повторить">
+              <Redo2 size={16} />
+            </button>
+          </div>
+        )}
         {p.authSlot}
-        <div className="seg hidden lg:flex">
-          <button type="button" data-active={!p.editMode} onClick={() => p.editMode && p.onToggleEditMode()}>
-            <Eye size={12} className="inline mr-1" />Просмотр
-          </button>
-          <button type="button" data-active={p.editMode} onClick={() => !p.editMode && p.onToggleEditMode()}>
-            <Pencil size={12} className="inline mr-1" />Редакт.
-          </button>
-        </div>
+        {!building && (
+          <div className="seg hidden lg:flex">
+            <button type="button" data-active={!p.editMode} onClick={() => p.editMode && p.onToggleEditMode()}>
+              <Eye size={12} className="inline mr-1" />Просмотр
+            </button>
+            <button type="button" data-active={p.editMode} onClick={() => !p.editMode && p.onToggleEditMode()}>
+              <Pencil size={12} className="inline mr-1" />Редакт.
+            </button>
+          </div>
+        )}
         {p.branchActive && (
           <button type="button" className="btn btn-secondary text-[11px]" onClick={p.onClearBranch}><GitBranch size={14} />Ветка <X size={12} /></button>
         )}
-        <button type="button" className="btn btn-ghost btn-icon hidden sm:flex" onClick={p.onCatalog} disabled={!p.dbEnabled} title="Каталог"><Package size={16} /></button>
-        {p.onJournal && (
-          <button type="button" className="btn btn-ghost btn-icon" onClick={p.onJournal} title="Журнал стройки"><HardHat size={16} /></button>
+        {!building && (
+          <button type="button" className="btn btn-ghost btn-icon hidden sm:flex" onClick={p.onCatalog} disabled={!p.dbEnabled} title="Каталог"><Package size={16} /></button>
         )}
-        <button type="button" className="btn btn-ghost text-[11px] hidden sm:flex" onClick={p.onProjects}><FolderOpen size={14} />Проекты</button>
-        <button type="button" className="btn btn-ghost text-[11px] hidden sm:flex" onClick={p.onSave} disabled={!p.canSave}><Save size={14} />Сохранить</button>
-        <button type="button" className="btn btn-primary shrink-0" onClick={p.onImport}>
-          <Upload size={16} /><span className="hidden sm:inline">Импорт</span>
-        </button>
+        {p.onJournal && (
+          <button type="button"
+                  className={building ? 'btn btn-primary shrink-0' : 'btn btn-ghost btn-icon'}
+                  onClick={p.onJournal} title="Журнал стройки">
+            <HardHat size={16} />
+            {building && <span className="hidden sm:inline">Журнал</span>}
+          </button>
+        )}
+        {!building && (
+          <>
+            <button type="button" className="btn btn-ghost text-[11px] hidden sm:flex" onClick={p.onProjects}><FolderOpen size={14} />Проекты</button>
+            <button type="button" className="btn btn-ghost text-[11px] hidden sm:flex" onClick={p.onSave} disabled={!p.canSave}><Save size={14} />Сохранить</button>
+            <button type="button" className="btn btn-primary shrink-0" onClick={p.onImport}>
+              <Upload size={16} /><span className="hidden sm:inline">Импорт</span>
+            </button>
+          </>
+        )}
         <button type="button" className="btn btn-ghost btn-icon" onClick={p.onHelp}><HelpCircle size={16} /></button>
         <button type="button" className={`btn btn-icon ${p.chatOpen ? 'btn-secondary' : 'btn-ghost'}`} onClick={p.onToggleChat} title="AI"><Sparkles size={16} className="text-[var(--accent-2)]" /></button>
       </div>

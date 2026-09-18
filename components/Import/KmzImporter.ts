@@ -27,6 +27,16 @@ export interface KmlRawLine {
  * Полигон из KML: у заказчика в Google Earth так обведены районы и сёла.
  * Их не нужно рисовать заново — их нужно прочитать.
  */
+/** Что нашлось в файле — чтобы «ничего не загрузилось» можно было объяснить. */
+export interface KmlParseStats {
+  placemarks: number;
+  points: number;
+  lines: number;
+  polygons: number;
+  /** Сколько координат не удалось разобрать. */
+  droppedCoords: number;
+}
+
 export interface KmlRawPolygon {
   coords: [number, number][]; // [lat, lon], внешний контур
   name: string;
@@ -105,15 +115,30 @@ function folderPathOf(pm: Element): string[] {
   return path;
 }
 
+/**
+ * Координаты KML: тройки «долгота,широта,высота», разделённые пробелами.
+ *
+ * Раньше здесь стоял фильтр по границам Казахстана, и всё за его
+ * пределами молча выбрасывалось. Молча — самое плохое слово: файл
+ * загружался «успешно», а линий на карте не было, и понять почему было
+ * нельзя. Теперь отбрасываем только то, что не является координатой,
+ * а сколько отбросили — считаем и показываем.
+ */
+let lastDropped = 0;
+
 function parseCoordList(text: string): [number, number][] {
   const out: [number, number][] = [];
   for (const triplet of text.trim().split(/\s+/)) {
+    if (!triplet) continue;
     const parts = triplet.split(',');
-    if (parts.length < 2) continue;
+    if (parts.length < 2) { lastDropped++; continue; }
     const lon = parseFloat(parts[0]);
     const lat = parseFloat(parts[1]);
-    if (isNaN(lat) || isNaN(lon)) continue;
-    if (lat < 35 || lat > 60 || lon < 45 || lon > 90) continue;
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)
+        || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+      lastDropped++;
+      continue;
+    }
     out.push([lat, lon]);
   }
   return out;
@@ -126,11 +151,13 @@ function parseKmlText(
   subscribers: Subscriber[]; lines: KmlRawLine[];
   structuredPoints: KmlPoint[]; structuredLines: KmlLine[];
   polygons: KmlRawPolygon[];
+  stats: KmlParseStats;
 } {
   const parser = new DOMParser();
   const doc = parser.parseFromString(kmlText, 'text/xml');
   const schemaMap = parseSchemaFields(doc);
 
+  lastDropped = 0;
   const subscribers: Subscriber[] = [];
   const lines: KmlRawLine[] = [];
   const structuredPoints: KmlPoint[] = [];
@@ -166,27 +193,38 @@ function parseKmlText(
 
     // Внешний контур полигона. Дырок (innerBoundaryIs) в районных обводках
     // не бывает, поэтому берём только outerBoundaryIs.
-    const polyEl = pm.querySelector('Polygon > outerBoundaryIs > LinearRing > coordinates');
-    if (polyEl) {
-      const cs = parseCoordList(polyEl.textContent ?? '');
+    const polyEls = pm.querySelectorAll('Polygon > outerBoundaryIs > LinearRing > coordinates');
+    polyEls.forEach((el) => {
+      const cs = parseCoordList(el.textContent ?? '');
       if (cs.length >= 3) {
         polygons.push({ coords: cs, name: name || desc, folder, folderPath });
       }
-    }
+    });
 
-    const lineEl = pm.querySelector('LineString > coordinates');
-    if (lineEl) {
-      const cs = parseCoordList(lineEl.textContent ?? '');
+    // Все линии метки, а не первая: в MultiGeometry их бывает несколько,
+    // и остальные просто пропадали.
+    const lineEls = pm.querySelectorAll('LineString > coordinates');
+    lineEls.forEach((el) => {
+      const cs = parseCoordList(el.textContent ?? '');
       if (cs.length >= 2) {
         lines.push({ coords: cs, name: name || desc, folder });
         structuredLines.push({
           coords: cs, name: name || desc, folderPath, fileDistrict: fallback, extData,
         });
       }
-    }
+    });
   }
 
-  return { subscribers, lines, structuredPoints, structuredLines, polygons };
+  return {
+    subscribers, lines, structuredPoints, structuredLines, polygons,
+    stats: {
+      placemarks: placemarks.length,
+      points: structuredPoints.length,
+      lines: lines.length,
+      polygons: polygons.length,
+      droppedCoords: lastDropped,
+    },
+  };
 }
 
 export async function importKmz(file: File): Promise<Subscriber[]> {
@@ -202,6 +240,7 @@ export async function importKmzRaw(file: File): Promise<{
   structuredPoints: KmlPoint[];
   structuredLines: KmlLine[];
   polygons: KmlRawPolygon[];
+  stats: KmlParseStats;
 }> {
   idCounter = 0;
   const text = await readKmlText(file);

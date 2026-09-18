@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Layers, StickyNote, Package, LineChart, Wallet, BarChart3, Wrench,
   GitBranch, FolderOpen,
@@ -156,11 +156,31 @@ export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Prop
   const [group, setGroup] = useState<Group>('map');
   const [activeTab, setActiveTab] = useState<Tab>('layers');
 
-  const currentGroup = GROUPS.find((g) => g.id === group)!;
+  // На стройке от бокового меню нужна карта и заметки: сеть, схема, смета
+  // и инструменты проектирования — работа другого человека.
+  const groups = props.building
+    ? GROUPS.filter((g) => g.id === 'map').map((g) => ({
+        ...g,
+        tabs: g.tabs.filter((t) => t.id !== 'create'),
+      }))
+    : GROUPS;
+
+  const currentGroup = groups.find((g) => g.id === group) ?? groups[0];
+
+  useEffect(() => {
+    // Переключились на стройку, стоя на вкладке проектировщика — уводим
+    // на слои, иначе экран остался бы пустым.
+    if (!groups.some((g) => g.id === group)) {
+      setGroup(groups[0].id);
+      setActiveTab(groups[0].tabs[0].id);
+    } else if (!currentGroup.tabs.some((t) => t.id === activeTab)) {
+      setActiveTab(currentGroup.tabs[0].id);
+    }
+  }, [props.building]);
 
   const selectGroup = (g: Group) => {
     setGroup(g);
-    const first = GROUPS.find((x) => x.id === g)!.tabs[0].id;
+    const first = (groups.find((x) => x.id === g) ?? groups[0]).tabs[0].id;
     setActiveTab(first);
     if (!mobilePersist) onMobileClose?.();
   };
@@ -175,7 +195,7 @@ export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Prop
   return (
     <aside className="flex flex-1 min-h-0 border-r border-[var(--border)] bg-[var(--bg-surface)]">
       <nav className="w-11 md:w-12 flex flex-col items-center py-2 gap-1 border-r border-[var(--border)] bg-[var(--bg-canvas)] shrink-0">
-        {GROUPS.map((g) => {
+        {groups.map((g) => {
           const Icon = g.icon;
           const active = group === g.id;
           return (
