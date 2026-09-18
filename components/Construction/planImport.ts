@@ -41,16 +41,36 @@ export interface PlanImportResult {
  * районов с сёлами. Просить человека загрузить один и тот же файл дважды,
  * разными кнопками, — значит не понимать, как он работает.
  */
+/** Точка из файла — пока просто координата с подписью, без вида. */
+export interface RawPoint {
+  lat: number;
+  lon: number;
+  name: string;
+  folder?: string;
+}
+
 export async function importPlanFile(
   file: File,
   orders: SettlementOrder[] = [],
-): Promise<PlanImportResult & { areas: AreaImportResult; stats: KmlParseStats }> {
-  const { lines, polygons, stats } = await importKmzRaw(file);
+): Promise<PlanImportResult & {
+  areas: AreaImportResult;
+  stats: KmlParseStats;
+  points: RawPoint[];
+}> {
+  const { lines, polygons, structuredPoints, stats } = await importKmzRaw(file);
   const routes = buildRoutes(lines, file.name);
   return {
     ...routes,
     areas: buildAreas(polygons, orders, file.name),
     stats,
+    // Точки не раскладываем сами: что это — столбы, муфты или разметка
+    // обследования — знает только человек. Спрашиваем у него.
+    points: structuredPoints.map((p) => ({
+      lat: p.lat,
+      lon: p.lon,
+      name: (p.name || p.desc || '').trim(),
+      folder: p.folderPath?.[p.folderPath.length - 1],
+    })),
   };
 }
 

@@ -42,7 +42,7 @@ import { pendingTasks, seedProgress, handoffTasks } from './stageTasks';
 import { effectiveProgress } from './stageDerive';
 import {
   LAY_METHOD_LABEL, MATERIAL_UNIT, JOURNAL_ROLE_LABEL, DEVIATION_KIND_LABEL,
-  CREW_KINDS, CREW_STATUS,
+  CREW_KINDS, CREW_STATUS, SITE_OBJECT_KINDS, SITE_OBJECT_SPECS,
   type LayMethod, type MaterialKind, type DailyWorkEntry,
   type CorrectionRequest, type JournalRole, type Deviation, type Crew,
   type DrillLogEntry,
@@ -83,6 +83,10 @@ export default function ConstructionPanel({
   const [devFormOpen, setDevFormOpen] = useState(false);
   const [editingDev, setEditingDev] = useState<Deviation | null>(null);
   const [dayOpen, setDayOpen] = useState<string | null>(null);
+  /** Точки из загруженного KML: что это — решает человек, не система. */
+  const [pendingPoints, setPendingPoints] = useState<
+    { points: import('./planImport').RawPoint[]; source: string } | null
+  >(null);
   const [drillFormOpen, setDrillFormOpen] = useState(false);
   const [editingDrill, setEditingDrill] = useState<DrillLogEntry | null>(null);
   const [crewFormOpen, setCrewFormOpen] = useState(false);
@@ -261,6 +265,12 @@ export default function ConstructionPanel({
         ? ` Не разобрано координат: ${res.stats.droppedCoords}.`
         : '';
       setSyncNote({ tone: 'ok', text: `Загружено: ${parts.join(', ')}.${dropped}` });
+
+      // Точки сами не раскладываем: в одном файле это столбы, в другом —
+      // разметка обследования годичной давности. Спрашиваем.
+      if (res.points.length > 0) {
+        setPendingPoints({ points: res.points, source: file.name });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось прочитать файл');
     } finally { setBusy(false); }
@@ -509,6 +519,48 @@ export default function ConstructionPanel({
                     className="text-[var(--text-muted)] hover:text-[var(--text)]">
               <X size={14} />
             </button>
+          </div>
+        )}
+
+        {pendingPoints && (
+          <div className="mb-3 p-3 rounded-lg border border-[var(--warn)]/50 bg-[var(--warn)]/10 flex flex-col gap-2">
+            <div className="text-[12px] text-[var(--text)]">
+              В файле <b>{pendingPoints.points.length}</b>{' '}
+              {plural(pendingPoints.points.length, 'точка', 'точки', 'точек')}.
+              Что это? Система сама не решает: в одном файле это столбы, в другом —
+              разметка обследования, по которой трасса давно изменилась.
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {SITE_OBJECT_KINDS.map((k) => (
+                <button key={k} type="button" className="btn btn-ghost text-[11px]"
+                        onClick={() => {
+                          const now = new Date().toISOString();
+                          let next = loadJournal();
+                          pendingPoints.points.forEach((pt, i) => {
+                            next = upsertObject(next, {
+                              id: `obj-${pendingPoints.source}-${i}`,
+                              kind: k,
+                              name: pt.name || undefined,
+                              lat: pt.lat, lon: pt.lon,
+                              uchastok: pt.folder,
+                              state: k === 'mufta' ? 'planned' : undefined,
+                              author: actor,
+                              createdAt: now, updatedAt: now,
+                              sync: 'local',
+                            });
+                          });
+                          persist(next);
+                          setPendingPoints(null);
+                          setView('objects');
+                        }}>
+                  {SITE_OBJECT_SPECS[k].icon} Как {SITE_OBJECT_SPECS[k].plural.toLowerCase()}
+                </button>
+              ))}
+              <button type="button" className="btn btn-ghost text-[11px] text-[var(--text-muted)]"
+                      onClick={() => setPendingPoints(null)}>
+                Не загружать
+              </button>
+            </div>
           </div>
         )}
 
