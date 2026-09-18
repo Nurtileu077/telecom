@@ -27,6 +27,7 @@ import MaterialsView from './MaterialsView';
 import StagesView from './StagesView';
 import ManagementView from './ManagementView';
 import DayReport from './DayReport';
+import TodayView from './TodayView';
 import { protocolDocHtml, protocolFileName, DOC_MIME } from './actDocument';
 import {
   journalCloudEnabled, syncJournal, loadLastSyncAt, saveLastSyncAt,
@@ -43,7 +44,7 @@ import {
 } from '@/types/construction';
 
 type Period = 'day' | 'week' | 'month' | 'all';
-type View = 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages';
+type View = 'today' | 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages';
 
 const PERIOD_LABEL: Record<Period, string> = {
   day: 'Последний день', week: '7 дней', month: '30 дней', all: 'Всё время',
@@ -63,7 +64,9 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [report, setReport] = useState<JournalImportResult['stats'] | null>(null);
-  const [view, setView] = useState<View>('summary');
+  // Стройка открывается вопросом «что делать сегодня», а не графиком за
+  // месяц: график — это вечерний вопрос.
+  const [view, setView] = useState<View>('today');
   const [formOpen, setFormOpen] = useState(false);
   /** Запись, которую сейчас исправляют. */
   const [editing, setEditing] = useState<DailyWorkEntry | null>(null);
@@ -381,7 +384,7 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
       {!empty && (
         <div className="flex flex-wrap items-center gap-1.5 px-3 md:px-4 py-2 border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0">
           <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md mr-1">
-            {([['summary', 'Сводка'], ['management', 'Руководству'], ['entries', 'Записи'], ['crews', 'Колонны'], ['stages', 'Этапы'], ['deviations', 'Отклонения'], ['materials', 'Материалы'], ['closing', 'Закрытие'], ['corrections', 'Заявки']] as [View, string][]).map(([v, label]) => {
+            {([['today', 'Сегодня'], ['summary', 'Сводка'], ['management', 'Руководству'], ['entries', 'Записи'], ['crews', 'Колонны'], ['stages', 'Этапы'], ['deviations', 'Отклонения'], ['materials', 'Материалы'], ['closing', 'Закрытие'], ['corrections', 'Заявки']] as [View, string][]).map(([v, label]) => {
               const badge = v === 'corrections' ? pending.length
                 : v === 'deviations' ? openDevs.length
                 : v === 'materials' ? lowMaterials.length
@@ -487,6 +490,17 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
 
         {empty ? (
           <EmptyJournal onPick={() => fileRef.current?.click()} onAdd={() => setFormOpen(true)} busy={busy} />
+        ) : view === 'today' ? (
+          <TodayView
+            journal={live}
+            onOpenView={(v) => setView(v)}
+            onAddEntry={() => setFormOpen(true)}
+            onSetStage={(kato, stage, patch) => {
+              const row = live.progress.find((p) => p.kato === kato);
+              persist(setStage(loadJournal(), kato, stage, patch, actor,
+                row && { snp: row.snp, oblast: row.oblast, rayon: row.rayon }));
+            }}
+          />
         ) : view === 'management' ? (
           <ManagementView journal={live} onOpenView={(v) => setView(v)} />
         ) : view === 'stages' ? (
