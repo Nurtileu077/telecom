@@ -39,6 +39,11 @@ import {
   loadJournal, saveJournal, drillMapPoints, placedCrews, moveCrew, deviationMapItems,
   type DrillMapPoint, type DeviationMapItem,
 } from '@/components/Construction/journalStore';
+import { snpMapPoints, type SnpMapPoint } from '@/components/Construction/snpMap';
+import {
+  loadConstructionLayers, saveConstructionLayers,
+  DEFAULT_CONSTRUCTION_LAYERS, type ConstructionLayers,
+} from '@/components/Construction/mapLayers';
 import type { PlanRoute } from '@/types/construction';
 import type { Crew } from '@/types/construction';
 const ConstructionPanel = dynamic(() => import('@/components/Construction/ConstructionPanel'), { ssr: false });
@@ -72,6 +77,12 @@ const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
   ),
 });
 
+/**
+ * Выключенный слой отдаём одной и той же пустотой: новый литерал на каждый
+ * рендер заставлял бы карту перерисовывать слой без всякой причины.
+ */
+const EMPTY_LAYER: never[] = [];
+
 export default function HomePage() {
   const net = useNetwork();
   const [urlMode] = useState<AppViewMode>(() =>
@@ -101,14 +112,28 @@ export default function HomePage() {
   const [crews, setCrews] = useState<Crew[]>([]);
   const [mapDeviations, setMapDeviations] = useState<DeviationMapItem[]>([]);
   const [planRoutes, setPlanRoutes] = useState<PlanRoute[]>([]);
+  const [snpPoints, setSnpPoints] = useState<SnpMapPoint[]>([]);
   const refreshJournalLayers = useCallback(() => {
     const j = loadJournal();
     setDrillPoints(drillMapPoints(j));
     setCrews(placedCrews(j));
     setMapDeviations(deviationMapItems(j));
     setPlanRoutes(j.planRoutes);
+    setSnpPoints(snpMapPoints(j.progress, { drills: j.drills, planRoutes: j.planRoutes }));
   }, []);
   useEffect(() => { refreshJournalLayers(); }, [refreshJournalLayers]);
+
+  // Слои стройки настраиваются отдельно от сети: карта у прораба и у
+  // проектировщика — разная карта.
+  const [conLayers, setConLayers] = useState<ConstructionLayers>(DEFAULT_CONSTRUCTION_LAYERS);
+  useEffect(() => { setConLayers(loadConstructionLayers()); }, []);
+  const toggleConstructionLayer = useCallback((key: keyof ConstructionLayers) => {
+    setConLayers((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      saveConstructionLayers(next);
+      return next;
+    });
+  }, []);
 
   /**
    * Выбор точки на карте для журнала: панель прячется, следующий клик по
@@ -820,6 +845,12 @@ export default function HomePage() {
           materials={net.materials}
           layers={net.layers}
           toggleLayer={net.toggleLayer}
+          constructionLayers={conLayers}
+          toggleConstructionLayer={toggleConstructionLayer}
+          constructionCounts={{
+            drills: drillPoints.length, crews: crews.length, snp: snpPoints.length,
+            deviations: mapDeviations.length, plan: planRoutes.length,
+          }}
           validationIssues={net.validationIssues}
           flyTo={flyToRef.current}
           annotations={net.annotations}
@@ -994,11 +1025,12 @@ export default function HomePage() {
             measureMode={measureMode}
             setMeasureMode={setMeasureMode}
             heatmapEnabled={heatmapEnabled}
-            drillPoints={drillPoints}
-            crews={crews}
+            drillPoints={conLayers.drills ? drillPoints : EMPTY_LAYER}
+            crews={conLayers.crews ? crews : EMPTY_LAYER}
             onMoveCrew={handleMoveCrew}
-            deviations={mapDeviations}
-            planRoutes={planRoutes}
+            deviations={conLayers.deviations ? mapDeviations : EMPTY_LAYER}
+            planRoutes={conLayers.plan ? planRoutes : EMPTY_LAYER}
+            snpPoints={conLayers.snp ? snpPoints : EMPTY_LAYER}
             budgetMap={budgetMap.current}
             budgetColoring={budgetColoring}
           />
@@ -1192,7 +1224,7 @@ export default function HomePage() {
               «импортируйте Excel» только мешает смотреть на объекты. */}
           {net.districts.length === 0 && net.annotations.length === 0 && net.status === 'idle'
             && drillPoints.length === 0 && crews.length === 0 && mapDeviations.length === 0
-            && planRoutes.length === 0 && (
+            && planRoutes.length === 0 && snpPoints.length === 0 && (
             <EmptyState onImport={() => setShowImport(true)} onHelp={() => setShowHelp(true)} />
           )}
         </main>

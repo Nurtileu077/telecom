@@ -1,5 +1,10 @@
 import type { Metadata } from 'next';
 import { Plus_Jakarta_Sans, JetBrains_Mono } from 'next/font/google';
+// Стили Leaflet берём из пакета, а не с CDN: без них карта не просто теряет
+// оформление — слои перестают быть позиционированными, метки уезжают за
+// экран, тайлы встают в столбик. В поле интернета нет, и карта обязана
+// открываться из кэша целиком.
+import 'leaflet/dist/leaflet.css';
 import './globals.css';
 
 const jakarta = Plus_Jakarta_Sans({
@@ -54,11 +59,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=3" sizes="180x180" />
         <link rel="apple-touch-icon-precomposed" href="/apple-touch-icon.png?v=3" />
         <link rel="icon" href="/favicon-32.png?v=3" type="image/png" sizes="32x32" />
-        <link
-          rel="stylesheet"
-          href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-          crossOrigin=""
-        />
       </head>
       <body className={jakarta.className}>{children}</body>
     </html>

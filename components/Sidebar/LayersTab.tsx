@@ -1,10 +1,18 @@
 'use client';
 import { District, LayerVisibility } from '@/types/network';
+import {
+  ConstructionLayers, CONSTRUCTION_LAYER_LABELS,
+} from '@/components/Construction/mapLayers';
 
 interface Props {
   districts: District[];
   layers: LayerVisibility;
   toggleLayer: (key: keyof LayerVisibility) => void;
+  /** Слои журнала стройки — отдельные от сети: это факт, а не проект. */
+  constructionLayers?: ConstructionLayers;
+  toggleConstructionLayer?: (key: keyof ConstructionLayers) => void;
+  /** Сколько объектов сейчас в каждом слое — чтобы не искать пустое. */
+  constructionCounts?: Partial<Record<keyof ConstructionLayers, number>>;
 }
 
 function Toggle({ on, onChange, label }: { on: boolean; onChange: () => void; label: string }) {
@@ -29,9 +37,43 @@ const CABLE_COLORS: Record<string, string> = {
   'ОК-48': '#ec8a00', 'ОК-96': '#f87171',
 };
 
-export default function LayersTab({ districts, layers, toggleLayer }: Props) {
+export default function LayersTab({
+  districts, layers, toggleLayer,
+  constructionLayers, toggleConstructionLayer, constructionCounts,
+}: Props) {
+  const hasConstruction = constructionLayers && toggleConstructionLayer
+    && Object.values(constructionCounts ?? {}).some((n) => (n ?? 0) > 0);
+
   return (
     <div className="p-3 space-y-4 overflow-y-auto h-full">
+      {/* Стройка: слои журнала. Показываем только когда журнал не пуст —
+          пустой раздел учит игнорировать раздел. */}
+      {hasConstruction && (
+        <section>
+          <h3 className="text-[10px] uppercase tracking-widest text-[#64748b] mb-2">Стройка</h3>
+          <div className="space-y-0.5">
+            {(Object.keys(CONSTRUCTION_LAYER_LABELS) as (keyof ConstructionLayers)[]).map((key) => {
+              const n = constructionCounts?.[key] ?? 0;
+              return (
+                <div key={key} className="flex items-center justify-between py-1">
+                  <span className={`text-xs ${n > 0 ? 'text-[#94a3b8]' : 'text-[#475569]'}`}>
+                    {CONSTRUCTION_LAYER_LABELS[key]}
+                    {n > 0 && <span className="ml-1.5 text-[10px] font-mono text-[#64748b]">{n}</span>}
+                  </span>
+                  <button
+                    onClick={() => toggleConstructionLayer!(key)}
+                    className={`w-8 h-4 rounded-full transition-colors duration-200 relative overflow-hidden ${constructionLayers![key] ? 'bg-[#2dd4bf]' : 'bg-[#1e3a5f]'}`}
+                    style={{ minWidth: '2rem' }}
+                  >
+                    <span className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform duration-200 ${constructionLayers![key] ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
       {/* Object Types */}
       <section>
         <h3 className="text-[10px] uppercase tracking-widest text-[#64748b] mb-2">Типы объектов</h3>

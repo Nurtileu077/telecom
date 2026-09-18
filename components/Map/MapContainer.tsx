@@ -8,7 +8,10 @@ import {
 import type { DrawingTool } from '@/components/Sidebar/NotesTab';
 import { nearestTbToJoint, endpointLabel } from '@/components/Network/entityInterior';
 import { collapseWaypoint } from '@/components/Network/cableWaypoints';
-import { CREW_KINDS, CREW_STATUS } from '@/types/construction';
+import {
+  CREW_KINDS, CREW_STATUS, SNP_STAGES, SNP_STAGE_SPECS, STAGE_STATUS_SPECS,
+} from '@/types/construction';
+import { SNP_POINT_SOURCE } from '@/components/Construction/snpMap';
 import GpsLocateButton from '@/components/Map/GpsLocateButton';
 import PresenceCursors from '@/components/Map/PresenceCursors';
 
@@ -71,6 +74,8 @@ interface Props {
   deviations?: import('@/components/Construction/journalStore').DeviationMapItem[];
   /** Колонны на карте: где стоит бригада, чем занята, каким составом. */
   crews?: import('@/types/construction').Crew[];
+  /** Этапы по населённым пунктам: где ждут фронт, где работают, где закрыто. */
+  snpPoints?: import('@/components/Construction/snpMap').SnpMapPoint[];
   /** Перетаскивание колонны на новое место. */
   onMoveCrew?: (id: string, lat: number, lon: number) => void;
   // Bounding-box overlay for "export selection".  Drawn as a translucent
@@ -280,6 +285,7 @@ export default function LeafletMap(props: Props) {
   const crewGroupRef = useRef<any>(null);
   const deviationGroupRef = useRef<any>(null);
   const planGroupRef = useRef<any>(null);
+  const snpGroupRef = useRef<any>(null);
   const drawGroupRef = useRef<any>(null);
   const measureGroupRef = useRef<any>(null);
   const heatLayerRef = useRef<any>(null);
@@ -321,6 +327,7 @@ export default function LeafletMap(props: Props) {
       crewGroupRef.current = L.layerGroup().addTo(map);
       deviationGroupRef.current = L.layerGroup().addTo(map);
       planGroupRef.current = L.layerGroup().addTo(map);
+      snpGroupRef.current = L.layerGroup().addTo(map);
       drawGroupRef.current = L.layerGroup().addTo(map);
       measureGroupRef.current = L.layerGroup().addTo(map);
       waypointGroupRef.current = L.layerGroup().addTo(map);
@@ -1110,6 +1117,94 @@ export default function LeafletMap(props: Props) {
     });
   }
 
+  /**
+   * Этапы по населённым пунктам.
+   *
+   * Список этапов говорит, что закрыто; карта говорит, где. Прорабу нужно
+   * второе: увидеть, что ГНБ ждут вот в этих трёх сёлах вдоль одной дороги.
+   *
+   * Янтарная пульсирующая метка — фронт передали, но никто не взял. Зелёная —
+   * работают. Красная — стоит. Серая — ещё не начинали. Бирюзовая с галочкой —
+   * село закрыто. Полоска из шести делений под меткой — сколько этапов пройдено.
+   */
+  function renderSnpPoints() {
+    const group = snpGroupRef.current;
+    if (!mapRef.current || !group) return;
+    import('leaflet').then((L) => {
+      group.clearLayers();
+      const pts = propsRef.current.snpPoints ?? [];
+      if (pts.length === 0) return;
+
+      for (const p of pts) {
+        const doneAll = p.stage === null;
+        const color = doneAll ? '#2dd4bf'
+          : p.waiting ? '#fbbf24'
+          : STAGE_STATUS_SPECS[p.status].color;
+        const spec = p.stage ? SNP_STAGE_SPECS[p.stage] : null;
+        const glyph = doneAll ? '✓'
+          : spec?.crewKind ? CREW_KINDS[spec.crewKind].icon
+          : '🏁';
+        // Пульсирует только то, что кого-то ждёт: иначе пульсирует вся карта
+        // и перестаёт что-либо значить.
+        const pulse = p.waiting ? 'animation: optiq-crew-pulse 2.2s ease-in-out infinite;' : '';
+
+        const doneCount = Math.round(p.completion * SNP_STAGES.length);
+        const bar = SNP_STAGES.map((_, i) => `<div style="
+            width:5px;height:3px;border-radius:1px;
+            background:${i < doneCount ? '#2dd4bf' : '#334155'};
+          "></div>`).join('');
+
+        const icon = L.divIcon({
+          className: '',
+          iconSize: [34, 40],
+          iconAnchor: [17, 34],
+          html: `
+            <div style="display:flex;flex-direction:column;align-items:center;pointer-events:none">
+              <div style="
+                width:26px;height:26px;border-radius:50%;
+                background:#0c1018ee;border:2px solid ${color};
+                box-shadow:0 0 8px ${color}66;
+                display:flex;align-items:center;justify-content:center;
+                font-size:13px;line-height:1;${pulse}
+              ">${glyph}</div>
+              <div style="display:flex;gap:1px;margin-top:2px">${bar}</div>
+            </div>`,
+        });
+
+        const stageRows = SNP_STAGES.map((s) => {
+          const label = SNP_STAGE_SPECS[s].label;
+          const passed = SNP_STAGES.indexOf(s) < doneCount;
+          const here = s === p.stage;
+          const mark = passed ? '✓' : here ? '●' : '·';
+          const c = passed ? '#2dd4bf' : here ? color : '#475569';
+          return `<div style="color:${c};font-size:11px">${mark} ${label}</div>`;
+        }).join('');
+
+        const state = doneAll ? 'Село закрыто'
+          : p.waiting ? `Ждёт: ${spec?.label ?? ''}`
+          : `${STAGE_STATUS_SPECS[p.status].label}: ${spec?.label ?? ''}`;
+
+        const m = L.marker([p.lat, p.lon], { icon, zIndexOffset: 600 });
+        m.bindTooltip(`${glyph} ${esc(p.snp)} — ${esc(state)}`, { sticky: true, className: 'text-xs' });
+        m.bindPopup(`
+          <div style="min-width:190px">
+            <b>${esc(p.snp)}</b>
+            <span style="color:#64748b;font-size:10px;font-family:ui-monospace,monospace"> ${esc(p.kato)}</span><br/>
+            <span style="font-size:11px;color:#64748b">
+              ${esc([p.oblast, p.rayon].filter(Boolean).join(', '))}
+            </span>
+            <div style="margin:5px 0;color:${color};font-size:12px">${esc(state)}</div>
+            ${p.blockReason ? `<div style="font-size:11px;color:#f87171">${esc(p.blockReason)}</div>` : ''}
+            <div style="margin-top:4px">${stageRows}</div>
+            <div style="margin-top:5px;font-size:10px;color:#64748b">
+              Место ${esc(SNP_POINT_SOURCE[p.from])}
+            </div>
+          </div>`);
+        group.addLayer(m);
+      }
+    });
+  }
+
   function handleDrawClick(L: any, lat: number, lon: number) {
     const tool = propsRef.current.activeTool;
     const type = propsRef.current.activeAnnotationType;
@@ -1332,6 +1427,41 @@ export default function LeafletMap(props: Props) {
   useEffect(() => { renderCrews(); }, [props.crews, mapReady]);
   useEffect(() => { renderDeviations(); }, [props.deviations, mapReady]);
   useEffect(() => { renderPlanRoutes(); }, [props.planRoutes, mapReady]);
+  useEffect(() => { renderSnpPoints(); }, [props.snpPoints, mapReady]);
+
+  /**
+   * Первый показ журнала без проекта сети: подвинуть карту к данным.
+   *
+   * Без этого человек открывает приложение и видит пустой юг страны, хотя
+   * стройка идёт в Акмолинской. Двигаем ровно один раз: если делать это на
+   * каждое обновление, карта будет выдёргивать из-под рук при каждой записи.
+   */
+  const didFitJournalRef = useRef(false);
+  useEffect(() => {
+    if (!mapReady || didFitJournalRef.current) return;
+    if (props.districts.length > 0) return;
+    const pts: [number, number][] = [];
+    for (const p of props.drillPoints ?? []) pts.push([p.lat, p.lon]);
+    for (const s of props.snpPoints ?? []) pts.push([s.lat, s.lon]);
+    for (const c of props.crews ?? []) {
+      if (typeof c.lat === 'number' && typeof c.lon === 'number') pts.push([c.lat, c.lon]);
+    }
+    for (const d of props.deviations ?? []) for (const c of d.coords) pts.push([c.lat, c.lon]);
+    for (const r of props.planRoutes ?? []) if (r.coords[0]) pts.push(r.coords[0]);
+    if (pts.length === 0) return;
+    didFitJournalRef.current = true;
+    import('leaflet').then((L) => {
+      try {
+        // animate: false — карта должна сразу открыться на данных, а не
+        // проезжать через полстраны; заодно положение выставляется
+        // синхронно, а не по окончании анимации.
+        mapRef.current?.fitBounds(L.latLngBounds(pts), {
+          padding: [60, 60], maxZoom: 12, animate: false,
+        });
+      } catch { /* данные могут быть кривыми — это не повод ломать карту */ }
+    });
+  }, [mapReady, props.districts, props.drillPoints, props.snpPoints, props.crews,
+      props.deviations, props.planRoutes]);
 
   // Draw the lasso selection overlay (independent layer so it doesn't get
   // cleared by the data-layer rerender): in-progress vertices + closed polygon.

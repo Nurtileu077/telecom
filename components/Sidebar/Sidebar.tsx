@@ -68,6 +68,9 @@ interface Props {
   materials: Materials | null;
   layers: LayerVisibility;
   toggleLayer: (key: keyof LayerVisibility) => void;
+  constructionLayers?: import('@/components/Construction/mapLayers').ConstructionLayers;
+  toggleConstructionLayer?: (key: keyof import('@/components/Construction/mapLayers').ConstructionLayers) => void;
+  constructionCounts?: Partial<Record<keyof import('@/components/Construction/mapLayers').ConstructionLayers, number>>;
   validationIssues: ValidationIssue[];
   flyTo: ((lat: number, lon: number, zoom?: number) => void) | null;
   annotations: MapAnnotation[];
@@ -246,7 +249,14 @@ export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Prop
         )}
 
         <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
-          {activeTab === 'layers' && <LayersTab districts={props.districts} layers={props.layers} toggleLayer={props.toggleLayer} />}
+          {activeTab === 'layers' && <LayersTab
+              districts={props.districts}
+              layers={props.layers}
+              toggleLayer={props.toggleLayer}
+              constructionLayers={props.constructionLayers}
+              toggleConstructionLayer={props.toggleConstructionLayer}
+              constructionCounts={props.constructionCounts}
+            />}
           {activeTab === 'create' && props.onSetPlacing && (
             <CreateTab
               readOnly={props.readOnly}
