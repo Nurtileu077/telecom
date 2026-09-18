@@ -236,3 +236,57 @@ describe('дней с последней записи', () => {
     expect(daysSince('')).toBeNull();
   });
 });
+
+describe('разрезы по уровням', () => {
+  const data = () => ctx({
+    orders: [
+      order({ kato: '1', oblast: 'Акмолинская', rayon: 'Зерендинский', snp: 'Еленовка', planVolsM: 10000 }),
+      order({ kato: '2', oblast: 'Акмолинская', rayon: 'Бурабайский', snp: 'Катарколь', planVolsM: 5000 }),
+      order({ kato: '3', oblast: 'Костанайская', rayon: 'Алтынсаринский', snp: 'Убаган', planVolsM: 8000 }),
+    ],
+    ground: [
+      ground({ id: 'g1', oblast: 'Акмолинская', rayon: 'Зерендинский', uchastok: 'Еленовка', kato: '1' }),
+      ground({ id: 'g2', oblast: 'Акмолинская', rayon: 'Бурабайский', uchastok: 'Катарколь', kato: '2',
+               byMethod: { 'кабелеукладчик': 2000 } }),
+    ],
+  });
+
+  it('по областям — как раньше', () => {
+    const rows = regionProgress(data());
+    expect(rows.map((r) => r.name)).toEqual(['Акмолинская', 'Костанайская']);
+  });
+
+  it('область раскрывается в свои районы', () => {
+    const rows = regionProgress(data(), { level: 'rayon', oblast: 'Акмолинская' });
+    expect(rows.map((r) => r.name).sort()).toEqual(['Бурабайский', 'Зерендинский']);
+    expect(rows.find((r) => r.name === 'Зерендинский')!.planM).toBe(10000);
+  });
+
+  it('чужая область в разрез района не попадает', () => {
+    const rows = regionProgress(data(), { level: 'rayon', oblast: 'Акмолинская' });
+    expect(rows.some((r) => r.name === 'Алтынсаринский')).toBe(false);
+  });
+
+  it('район раскрывается в сёла', () => {
+    const rows = regionProgress(data(), {
+      level: 'snp', oblast: 'Акмолинская', rayon: 'Бурабайский',
+    });
+    expect(rows.map((r) => r.name)).toEqual(['Катарколь']);
+    expect(rows[0].factM).toBe(2000);
+    expect(rows[0].planM).toBe(5000);
+  });
+
+  it('слово «район» в названии не мешает совпадению', () => {
+    const rows = regionProgress(data(), {
+      level: 'snp', oblast: 'Акмолинская область', rayon: 'Бурабайский район',
+    });
+    expect(rows.map((r) => r.name)).toEqual(['Катарколь']);
+  });
+
+  it('сумма районов сходится с областью', () => {
+    const whole = regionProgress(data()).find((r) => r.name === 'Акмолинская')!;
+    const parts = regionProgress(data(), { level: 'rayon', oblast: 'Акмолинская' });
+    expect(parts.reduce((s, r) => s + r.planM, 0)).toBe(whole.planM);
+    expect(parts.reduce((s, r) => s + r.factM, 0)).toBe(whole.factM);
+  });
+});

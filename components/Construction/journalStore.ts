@@ -24,6 +24,8 @@ export interface JournalState {
   planRoutes: PlanRoute[];
   /** Обведённые районы и сёла из KML — границы, а не трассы. */
   areas: MapArea[];
+  /** Цены материалов — у каждого подрядчика свои, система их не выдумывает. */
+  prices: import('./materialCost').MaterialPrices;
   /** Прохождение этапов по населённым пунктам — основа нарядов. */
   progress: SnpProgress[];
   contractors: Contractor[];
@@ -50,7 +52,7 @@ export function emptyJournal(): JournalState {
   return {
     orders: [], ground: [], aerial: [], drills: [],
     corrections: [], deviations: [], crews: [], deliveries: [], planRoutes: [],
-    areas: [], progress: [],
+    areas: [], prices: {}, progress: [],
     contractors: DEFAULT_CONTRACTORS, actFields: {}, deleted: [], updatedAt: '',
   };
 }
@@ -241,6 +243,7 @@ export function loadJournal(): JournalState {
       crews: p.crews ?? [],
       deliveries: p.deliveries ?? [],
       areas: p.areas ?? [],
+      prices: p.prices ?? {},
       planRoutes: p.planRoutes ?? [],
       progress: p.progress ?? [],
       actFields: p.actFields ?? {},
@@ -283,6 +286,7 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     drills: mergeList(base.drills, add.drills ?? []),
     // Импорт файла не трогает заявки, отклонения, колонны, контуры и справочник.
     areas: base.areas,
+    prices: base.prices,
     corrections: base.corrections,
     deviations: base.deviations,
     crews: base.crews,
@@ -529,6 +533,18 @@ export function areaSources(base: JournalState): { source: string; areas: number
   const acc = new Map<string, number>();
   for (const a of base.areas) acc.set(a.source, (acc.get(a.source) ?? 0) + 1);
   return [...acc.entries()].map(([source, areas]) => ({ source, areas }));
+}
+
+/** Цены материалов: задаются руками и живут вместе с журналом. */
+export function setMaterialPrice(
+  base: JournalState,
+  material: MaterialKind,
+  price: number | undefined,
+): JournalState {
+  const prices = { ...base.prices };
+  if (price === undefined || !Number.isFinite(price) || price <= 0) delete prices[material];
+  else prices[material] = price;
+  return { ...base, prices, updatedAt: new Date().toISOString() };
 }
 
 /** Файлы плана со сводкой — для списка в интерфейсе. */

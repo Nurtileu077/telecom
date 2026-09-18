@@ -1,5 +1,5 @@
 'use client';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   TrendingUp, AlertTriangle, CalendarClock, Users, MapPin, ChevronRight,
 } from 'lucide-react';
@@ -45,10 +45,23 @@ function Bar({ pct }: { pct: number | null }) {
   );
 }
 
-function RegionRow({ r }: { r: RegionProgress }) {
+function RegionRow({ r, onOpen, open, children }: {
+  r: RegionProgress;
+  onOpen?: () => void;
+  open?: boolean;
+  children?: React.ReactNode;
+}) {
+  const Head = onOpen ? 'button' : 'div';
   return (
-    <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] px-3 py-2 flex flex-col gap-1.5">
+    <div className="rounded-lg border bg-[var(--bg-surface)] px-3 py-2 flex flex-col gap-1.5"
+         style={{ borderColor: open ? 'var(--accent)' : 'var(--border)' }}>
+      <Head {...(onOpen ? { type: 'button' as const, onClick: onOpen } : {})}
+            className={`flex flex-col gap-1.5 text-left w-full ${onOpen ? 'cursor-pointer' : ''}`}>
       <div className="flex items-baseline gap-2 flex-wrap">
+        {onOpen && (
+          <ChevronRight size={13}
+                        className={`text-[var(--text-muted)] shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} />
+        )}
         <span className="text-[12.5px] font-medium text-[var(--text)]">{r.name}</span>
         <span className="text-[11px] text-[var(--text-muted)]">
           {fmtKm(r.factM)} из {fmtKm(r.planM)} км
@@ -72,6 +85,10 @@ function RegionRow({ r }: { r: RegionProgress }) {
           </span>
         )}
       </div>
+      </Head>
+      {open && children && (
+        <div className="pl-3 border-l-2 border-[var(--accent)]/40 flex flex-col gap-1.5">{children}</div>
+      )}
     </div>
   );
 }
@@ -87,6 +104,20 @@ export default function ManagementView({ journal, onOpenView }: Props) {
   }), [journal]);
 
   const regions = useMemo(() => regionProgress(ctx), [ctx]);
+  // Раскрытие: область → районы → сёла. Одна цифра всегда должна
+  // разбираться на то, из чего она сложилась.
+  const [openOblast, setOpenOblast] = useState<string | null>(null);
+  const [openRayon, setOpenRayon] = useState<string | null>(null);
+  const rayons = useMemo(
+    () => (openOblast ? regionProgress(ctx, { level: 'rayon', oblast: openOblast }) : []),
+    [ctx, openOblast],
+  );
+  const snps = useMemo(
+    () => (openOblast && openRayon
+      ? regionProgress(ctx, { level: 'snp', oblast: openOblast, rayon: openRayon })
+      : []),
+    [ctx, openOblast, openRayon],
+  );
   const p = useMemo(() => pace(ctx), [ctx]);
 
   const totals = useMemo(() => {
@@ -198,8 +229,32 @@ export default function ManagementView({ journal, onOpenView }: Props) {
             Нет данных: загрузите журнал с реестром заказа — плановые метры лежат там.
           </p>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
-            {regions.map((r) => <RegionRow key={r.name} r={r} />)}
+          <div className="flex flex-col gap-2">
+            {regions.map((r) => (
+              <RegionRow key={r.name} r={r}
+                         open={openOblast === r.name}
+                         onOpen={() => {
+                           setOpenOblast(openOblast === r.name ? null : r.name);
+                           setOpenRayon(null);
+                         }}>
+                {rayons.length === 0 ? (
+                  <p className="text-[11px] text-[var(--text-muted)] py-1">
+                    Районы в записях не указаны — разложить область не по чему.
+                  </p>
+                ) : rayons.map((ry) => (
+                  <RegionRow key={ry.name} r={ry}
+                             open={openRayon === ry.name}
+                             onOpen={() => setOpenRayon(openRayon === ry.name ? null : ry.name)}>
+                    {snps.length === 0 ? (
+                      <p className="text-[11px] text-[var(--text-muted)] py-1">Сёл в этом районе не нашлось.</p>
+                    ) : snps.slice(0, 60).map((sn) => <RegionRow key={sn.name} r={sn} />)}
+                    {snps.length > 60 && (
+                      <p className="text-[10.5px] text-[var(--text-muted)]">Показаны первые 60 из {snps.length}.</p>
+                    )}
+                  </RegionRow>
+                ))}
+              </RegionRow>
+            ))}
           </div>
         )}
       </section>

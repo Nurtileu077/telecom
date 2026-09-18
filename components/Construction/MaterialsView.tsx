@@ -4,11 +4,12 @@ import { Plus, Trash2, AlertTriangle, PackageCheck, TrendingDown } from 'lucide-
 import {
   MaterialKind, MATERIAL_KINDS, MATERIAL_UNIT, MaterialDelivery,
 } from '@/types/construction';
-import { JournalState, MATERIAL_LABEL, fmtMeters, distinct } from './journalStore';
+import { JournalState, MATERIAL_LABEL, fmtMeters, distinct, plural } from './journalStore';
 import {
   materialForecast, lowStock, negativeStock, unknownStock, daysLeftText, LOW_STOCK_DAYS,
   materialByScope,
 } from './materialForecast';
+import { spendOf, stockValueOf, fmtMoney, hasPrices } from './materialCost';
 
 /**
  * Остатки материалов и прогноз, на сколько хватит.
@@ -22,12 +23,15 @@ interface Props {
   journal: JournalState;
   onAddDelivery: (d: MaterialDelivery) => void;
   onRemoveDelivery: (id: string) => void;
+  onSetPrice: (material: MaterialKind, price: number | undefined) => void;
   author: string;
 }
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
 
-export default function MaterialsView({ journal, onAddDelivery, onRemoveDelivery, author }: Props) {
+export default function MaterialsView({
+  journal, onAddDelivery, onRemoveDelivery, onSetPrice, author,
+}: Props) {
   const oblasti = useMemo(() => distinct(journal.ground, (e) => e.oblast), [journal.ground]);
   const [oblast, setOblast] = useState('');
   const [adding, setAdding] = useState(false);
@@ -48,6 +52,13 @@ export default function MaterialsView({ journal, onAddDelivery, onRemoveDelivery
       .filter((r) => !oblast || r.oblast === oblast),
     [journal.ground, journal.deliveries, level, oblast],
   );
+
+  // Деньги показываем, только когда заданы цены: сумма из половины цен
+  // выглядит точной, будучи наполовину придуманной.
+  const priced = hasPrices(journal.prices);
+  const spend = useMemo(() => spendOf(stocks, journal.prices), [stocks, journal.prices]);
+  const left = useMemo(() => stockValueOf(stocks, journal.prices), [stocks, journal.prices]);
+  const [pricesOpen, setPricesOpen] = useState(false);
 
   const deliveries = useMemo(
     () => journal.deliveries
@@ -135,6 +146,67 @@ export default function MaterialsView({ journal, onAddDelivery, onRemoveDelivery
         })}
       </div>
 
+      <section className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2 mt-1">
+          <h4 className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">Деньги</h4>
+          <button type="button" onClick={() => setPricesOpen((v) => !v)}
+                  className="text-[11px] text-[var(--accent)] hover:underline">
+            {pricesOpen ? 'свернуть цены' : priced ? 'изменить цены' : 'задать цены'}
+          </button>
+        </div>
+
+        {priced ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
+                Израсходовано{oblast ? ` · ${oblast}` : ''}
+              </div>
+              <div className="text-[18px] font-semibold text-[var(--text)] leading-tight">
+                {fmtMoney(spend.total)}
+              </div>
+              {spend.partial && (
+                <div className="text-[10.5px] text-[var(--warn)]">
+                  без цены {spend.unpriced} {plural(spend.unpriced, 'позиция', 'позиции', 'позиций')} — сумма неполная
+                </div>
+              )}
+            </div>
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">Лежит на остатке</div>
+              <div className="text-[18px] font-semibold text-[var(--text)] leading-tight">
+                {fmtMoney(left.total)}
+              </div>
+              <div className="text-[10.5px] text-[var(--text-muted)]">по внесённому приходу</div>
+            </div>
+          </div>
+        ) : (
+          <p className="text-[11.5px] text-[var(--text-muted)]">
+            Цены не заданы, поэтому суммы не считаются. Свои цены система не
+            выдумывает — у каждого подрядчика они свои.
+          </p>
+        )}
+
+        {pricesOpen && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] p-3">
+            {MATERIAL_KINDS.map((m) => (
+              <label key={m} className="flex flex-col gap-1">
+                <span className="text-[10.5px] text-[var(--text-muted)]">
+                  {MATERIAL_LABEL[m]}, ₸ за {MATERIAL_UNIT[m]}
+                </span>
+                <input inputMode="decimal"
+                       value={journal.prices[m] === undefined ? '' : String(journal.prices[m])}
+                       onChange={(e) => {
+                         const raw = e.target.value.replace(/[^\d.,]/g, '').replace(',', '.');
+                         const n = parseFloat(raw);
+                         onSetPrice(m, raw === '' || !Number.isFinite(n) ? undefined : n);
+                       }}
+                       placeholder="—"
+                       className="bg-[var(--bg-surface)] border border-[var(--border)] rounded px-2 py-1 text-[11px] text-[var(--text)] font-mono tabular-nums" />
+              </label>
+            ))}
+          </div>
+        )}
+      </section>
+
       <section className="flex flex-col gap-1.5">
         <div className="flex flex-wrap items-center gap-2 mt-1">
           <h4 className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
@@ -187,6 +259,11 @@ export default function MaterialsView({ journal, onAddDelivery, onRemoveDelivery
                       </span>
                     ))}
                   </div>
+                  {priced && (
+                    <div className="text-[10.5px] text-[var(--text-muted)]">
+                      израсходовано на <b className="text-[var(--text)]">{fmtMoney(spendOf(r.stocks, journal.prices).total)}</b>
+                    </div>
+                  )}
                   {r.low.length > 0 && (
                     <div className="text-[10.5px] text-[var(--warn)]">
                       пора отправлять: {r.low.map((s) => MATERIAL_LABEL[s.material]).join(', ')}

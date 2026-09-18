@@ -49,9 +49,45 @@ function entryMeters(e: DailyWorkEntry): number {
   return m;
 }
 
-/** Сводка по областям — основной разрез для руководства. */
-export function regionProgress(ctx: ManagementContext): RegionProgress[] {
+export type RegionLevel = 'oblast' | 'rayon' | 'snp';
+
+export interface RegionOptions {
+  /** Разрез: по областям, по районам внутри области, по сёлам внутри района. */
+  level?: RegionLevel;
+  oblast?: string;
+  rayon?: string;
+}
+
+/** Сравнение названий районов: в журнале слово «район» стоит не всегда. */
+function sameRegion(a?: string, b?: string): boolean {
+  const norm = (v?: string) => (v ?? '')
+    .toLowerCase()
+    .replace(/район|ауданы|аудан|р-н|область|области|обл\./g, '')
+    .replace(/[^a-zа-я0-9]+/g, '');
+  return norm(a) === norm(b);
+}
+
+/**
+ * Сводка по территории: область, район или село.
+ *
+ * Один и тот же расчёт на трёх уровнях — иначе в районном разрезе
+ * незаметно заведётся своя арифметика, и цифры перестанут сходиться с
+ * областными.
+ */
+export function regionProgress(ctx: ManagementContext, opts: RegionOptions = {}): RegionProgress[] {
+  const level = opts.level ?? 'oblast';
   const acc = new Map<string, RegionProgress>();
+
+  const inScope = (x: { oblast?: string; rayon?: string }): boolean =>
+    (!opts.oblast || sameRegion(x.oblast, opts.oblast))
+    && (!opts.rayon || sameRegion(x.rayon, opts.rayon));
+
+  const keyOf = (x: { oblast?: string; rayon?: string; name?: string }): string => {
+    if (level === 'oblast') return x.oblast || '';
+    if (level === 'rayon') return x.rayon || '';
+    return x.name || '';
+  };
+
   const row = (name: string): RegionProgress => {
     const key = name || 'Не указано';
     let r = acc.get(key);
@@ -66,22 +102,39 @@ export function regionProgress(ctx: ManagementContext): RegionProgress[] {
     return r;
   };
 
-  for (const o of ctx.orders) row(o.oblast).planM += o.planVolsM ?? 0;
-  for (const e of ctx.ground) row(e.oblast).factM += entryMeters(e);
+  for (const o of ctx.orders) {
+    if (!inScope(o)) continue;
+    row(keyOf({ ...o, name: o.snp })).planM += o.planVolsM ?? 0;
+  }
+  for (const e of ctx.ground) {
+    if (!inScope(e)) continue;
+    row(keyOf({ ...e, name: e.uchastok })).factM += entryMeters(e);
+  }
   // Подвес — это тоже построенная линия: считать его отдельно от плана
   // значит вечно не добирать процент там, где идут по опорам.
-  for (const a of ctx.aerial) row(a.oblast).factM += a.totalM ?? 0;
+  for (const a of ctx.aerial) {
+    if (!inScope(a)) continue;
+    row(keyOf({ ...a, name: a.uchastok })).factM += a.totalM ?? 0;
+  }
 
   for (const p of ctx.progress) {
-    const r = row(p.oblast ?? '');
+    if (!inScope(p)) continue;
+    const r = row(keyOf({ ...p, name: p.snp }));
     r.snpTotal++;
     if (snpCompletion(p) >= 1) r.snpDone++;
     else if (SNP_STAGES.some((s) => stageStatus(p, s) === 'in_progress')) r.snpActive++;
     if (SNP_STAGES.some((s) => stageStatus(p, s) === 'blocked')) r.snpBlocked++;
   }
 
-  for (const c of ctx.crews) if (c.oblast) row(c.oblast).crews++;
-  for (const d of ctx.deviations) row(d.oblast ?? '').openDeviations++;
+  for (const c of ctx.crews) {
+    if (!inScope(c)) continue;
+    const key = keyOf({ ...c, name: c.uchastok });
+    if (key) row(key).crews++;
+  }
+  for (const d of ctx.deviations) {
+    if (!inScope(d)) continue;
+    row(keyOf({ ...d, name: d.uchastok })).openDeviations++;
+  }
 
   const rows = [...acc.values()];
   for (const r of rows) {

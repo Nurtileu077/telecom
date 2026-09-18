@@ -126,6 +126,8 @@ export function mergeJournalStates(
     deliveries: mergeCollection<MaterialDelivery>(local.deliveries, remote.deliveries, tombs, stats),
     planRoutes: mergeCollection<PlanRoute>(local.planRoutes, remote.planRoutes, tombs, stats),
     areas: mergeCollection<MapArea>(local.areas, remote.areas, tombs, stats),
+    // Цены — справочник: чужие позиции добираем, свои не отдаём.
+    prices: { ...remote.prices, ...local.prices },
     progress: mergeProgress(local.progress, remote.progress, stats),
     corrections: mergeCorrections(local.corrections, remote.corrections, stats),
     contractors: mergeContractors(local.contractors, remote.contractors),

@@ -18,7 +18,7 @@ import {
   addDeviation, removeDeviation, openDeviations, isDeviationClosed,
   upsertCrew, removeCrew, upsertDelivery, removeDelivery,
   addPlanRoutes, removePlanSource, planSources, plural, setProgress, setStage,
-  addAreas, removeAreaSource, areaSources,
+  addAreas, removeAreaSource, areaSources, setMaterialPrice,
 } from './journalStore';
 import DeviationForm from './DeviationForm';
 import CrewForm from './CrewForm';
@@ -507,6 +507,7 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
             journal={journal}
             author={actor}
             onAddDelivery={(d) => persist(upsertDelivery(loadJournal(), d))}
+            onSetPrice={(m, price) => persist(setMaterialPrice(loadJournal(), m, price))}
             onRemoveDelivery={(id) => {
               if (!confirm('Удалить поставку?')) return;
               persist(removeDelivery(loadJournal(), id));
