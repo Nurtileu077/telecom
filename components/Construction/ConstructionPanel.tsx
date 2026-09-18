@@ -19,6 +19,7 @@ import {
   upsertCrew, removeCrew, upsertDelivery, removeDelivery,
   addPlanRoutes, removePlanSource, planSources, plural, setProgress, setStage,
   addAreas, removeAreaSource, areaSources, setMaterialPrice, upsertDrill,
+  upsertObject, removeObject,
 } from './journalStore';
 import DeviationForm from './DeviationForm';
 import CrewForm from './CrewForm';
@@ -30,6 +31,7 @@ import DayReport from './DayReport';
 import TodayView from './TodayView';
 import DrillsView from './DrillsView';
 import DrillForm from './DrillForm';
+import ObjectsView from './ObjectsView';
 import { protocolDocHtml, protocolFileName, DOC_MIME } from './actDocument';
 import {
   journalCloudEnabled, syncJournal, loadLastSyncAt, saveLastSyncAt,
@@ -47,7 +49,7 @@ import {
 } from '@/types/construction';
 
 type Period = 'day' | 'week' | 'month' | 'all';
-type View = 'today' | 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages' | 'drills';
+type View = 'today' | 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages' | 'drills' | 'objects';
 
 const PERIOD_LABEL: Record<Period, string> = {
   day: 'Последний день', week: '7 дней', month: '30 дней', all: 'Всё время',
@@ -57,9 +59,14 @@ interface Props {
   onClose: () => void;
   /** Спрятать панель и дать выбрать точку на карте. null — передумали. */
   onRequestPick?: (label: string) => Promise<{ lat: number; lon: number } | null>;
+  /** Объект, который попросили открыть с карты. */
+  editObjectId?: string | null;
+  onDoneEditObject?: () => void;
 }
 
-export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
+export default function ConstructionPanel({
+  onClose, onRequestPick, editObjectId, onDoneEditObject,
+}: Props) {
   const [journal, setJournal] = useState<JournalState>(emptyJournal);
   const [period, setPeriod] = useState<Period>('month');
   const [oblast, setOblast] = useState('');
@@ -93,6 +100,12 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
     setRole(loadJournalRole());
     setSyncedAt(loadLastSyncAt());
   }, []);
+
+  // Нажали «Изменить» в попапе объекта — открываем его раздел, иначе
+  // карточка появилась бы за другим экраном.
+  useEffect(() => {
+    if (editObjectId) setView('objects');
+  }, [editObjectId]);
 
   const actor = useMemo(() => getActorName() || 'Без имени', []);
 
@@ -410,7 +423,7 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
       {!empty && (
         <div className="flex flex-wrap items-center gap-1.5 px-3 md:px-4 py-2 border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0">
           <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md mr-1">
-            {([['today', 'Сегодня'], ['summary', 'Сводка'], ['management', 'Руководству'], ['entries', 'Записи'], ['crews', 'Колонны'], ['stages', 'Этапы'], ['drills', 'Проколы'], ['deviations', 'Отклонения'], ['materials', 'Материалы'], ['closing', 'Закрытие'], ['corrections', 'Заявки']] as [View, string][]).map(([v, label]) => {
+            {([['today', 'Сегодня'], ['summary', 'Сводка'], ['management', 'Руководству'], ['entries', 'Записи'], ['crews', 'Колонны'], ['stages', 'Этапы'], ['drills', 'Проколы'], ['objects', 'Объекты'], ['deviations', 'Отклонения'], ['materials', 'Материалы'], ['closing', 'Закрытие'], ['corrections', 'Заявки']] as [View, string][]).map(([v, label]) => {
               const badge = v === 'corrections' ? pending.length
                 : v === 'deviations' ? openDevs.length
                 : v === 'materials' ? lowMaterials.length
@@ -529,6 +542,19 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
           />
         ) : view === 'management' ? (
           <ManagementView journal={live} onOpenView={(v) => setView(v)} />
+        ) : view === 'objects' ? (
+          <ObjectsView
+            journal={journal}
+            author={actor}
+            editingId={editObjectId}
+            onRequestPick={onRequestPick}
+            onSave={(o) => persist(upsertObject(loadJournal(), o))}
+            onDelete={(id) => {
+              if (!confirm('Удалить объект?')) return;
+              persist(removeObject(loadJournal(), id));
+            }}
+            onDoneEditing={() => onDoneEditObject?.()}
+          />
         ) : view === 'drills' ? (
           <DrillsView
             journal={journal}

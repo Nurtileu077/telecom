@@ -2,7 +2,7 @@ import { JournalState, DeletedMark, emptyJournal } from './journalStore';
 import {
   DailyWorkEntry, AerialWorkEntry, DrillLogEntry, Deviation, Crew,
   CorrectionRequest, SettlementOrder, Contractor, MaterialDelivery, PlanRoute,
-  SnpProgress, MapArea,
+  SnpProgress, MapArea, SiteObject,
 } from '@/types/construction';
 
 /**
@@ -126,6 +126,7 @@ export function mergeJournalStates(
     deliveries: mergeCollection<MaterialDelivery>(local.deliveries, remote.deliveries, tombs, stats),
     planRoutes: mergeCollection<PlanRoute>(local.planRoutes, remote.planRoutes, tombs, stats),
     areas: mergeCollection<MapArea>(local.areas, remote.areas, tombs, stats),
+    objects: mergeCollection<SiteObject>(local.objects, remote.objects, tombs, stats),
     // Цены — справочник: чужие позиции добираем, свои не отдаём.
     prices: { ...remote.prices, ...local.prices },
     progress: mergeProgress(local.progress, remote.progress, stats),

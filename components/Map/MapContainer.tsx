@@ -14,6 +14,9 @@ import {
 } from '@/types/construction';
 import { SNP_POINT_SOURCE } from '@/components/Construction/snpMap';
 import { areaColor } from '@/components/Construction/areaProgress';
+import {
+  SITE_OBJECT_SPECS, MUFTA_STATES, siteObjectColor,
+} from '@/types/construction';
 import { routeTitle } from '@/components/Construction/routeStyle';
 
 /**
@@ -119,6 +122,9 @@ interface Props {
   snpPoints?: import('@/components/Construction/snpMap').SnpMapPoint[];
   /** Обведённые районы и сёла с ходом работ. */
   areas?: import('@/components/Construction/areaProgress').AreaMapItem[];
+  /** Муфты, столбы, конечные точки, ККС. */
+  siteObjects?: import('@/types/construction').SiteObject[];
+  onEditSiteObject?: (id: string) => void;
   /**
    * Рабочее место — стройка: сеть на карте не рисуем. Прорабу проектные
    * узлы и кабели мешают искать своё, а проектировщику — наоборот.
@@ -356,6 +362,7 @@ export default function LeafletMap(props: Props) {
   const routeClickTimerRef = useRef<number | null>(null);
   /** Ручки правки трассы — отдельная группа, чтобы не мешать слоям. */
   const routeEditGroupRef = useRef<any>(null);
+  const objectGroupRef = useRef<any>(null);
   const measureStateRef = useRef<{ coords: [number, number][]; layer?: any; total: number }>({ coords: [], total: 0 });
   const waypointGroupRef = useRef<any>(null);
   const entityDragRef = useRef(false);
@@ -396,6 +403,7 @@ export default function LeafletMap(props: Props) {
       // Контуры идут первыми: это подложка, а не объекты поверх.
       areaGroupRef.current = L.layerGroup().addTo(map);
       snpGroupRef.current = L.layerGroup().addTo(map);
+      objectGroupRef.current = L.layerGroup().addTo(map);
       routeEditGroupRef.current = L.layerGroup().addTo(map);
       drawGroupRef.current = L.layerGroup().addTo(map);
       measureGroupRef.current = L.layerGroup().addTo(map);
@@ -1326,6 +1334,73 @@ export default function LeafletMap(props: Props) {
   }
 
   /**
+   * Муфты, столбы, конечные точки, ККС.
+   *
+   * У муфты цвет говорит о состоянии: серая не установлена, янтарная
+   * установлена, бирюзовая заварена. Установить и заварить — разные
+   * работы и разные дни, и на карте это должно различаться с одного
+   * взгляда, без открывания карточки.
+   */
+  function renderSiteObjects() {
+    const group = objectGroupRef.current;
+    if (!mapRef.current || !group) return;
+    import('leaflet').then((L) => {
+      group.clearLayers();
+      const objects = propsRef.current.siteObjects ?? [];
+      if (objects.length === 0) return;
+      const zoom = mapRef.current?.getZoom?.() ?? 10;
+      const scale = markerScale(zoom);
+
+      for (const o of objects) {
+        if (!Number.isFinite(o.lat) || !Number.isFinite(o.lon)) continue;
+        const spec = SITE_OBJECT_SPECS[o.kind];
+        const color = siteObjectColor(o);
+        const size = Math.round(20 * scale);
+
+        const icon = L.divIcon({
+          className: '',
+          iconSize: [size, size],
+          iconAnchor: [size / 2, size / 2],
+          html: `<div style="
+            width:${size}px;height:${size}px;border-radius:${o.kind === 'stolb' ? '3px' : '50%'};
+            background:#0c1018ee;border:2px solid ${color};
+            display:flex;align-items:center;justify-content:center;
+            font-size:${Math.round(size * 0.5)}px;line-height:1;
+            box-shadow:0 0 6px ${color}66;
+          ">${spec.icon}</div>`,
+        });
+
+        const state = o.kind === 'mufta'
+          ? MUFTA_STATES[o.state ?? 'planned'].label
+          : o.endpointKind || spec.label;
+
+        const m = L.marker([o.lat, o.lon], { icon, zIndexOffset: 500 });
+        m.bindTooltip(`${spec.icon} ${esc(o.name || spec.label)} — ${esc(state)}`,
+          { sticky: true, className: 'text-xs' });
+        m.bindPopup(
+          `<b>${esc(o.name || spec.label)}</b>`
+          + `<br/><span style="color:${color};font-size:12px">${esc(state)}</span>`
+          + (o.uchastok ? `<br/><span style="font-size:11px">${esc(o.uchastok)}</span>` : '')
+          + (o.number ? `<br/><span style="font-size:11px">№ ${esc(o.number)}</span>` : '')
+          + (o.date
+            ? `<br/><span style="color:#64748b;font-size:11px">${new Date(`${o.date}T00:00:00Z`).toLocaleDateString('ru')}</span>`
+            : '')
+          + (o.note ? `<br/><span style="font-size:11px">${esc(o.note)}</span>` : '')
+          + (propsRef.current.onEditSiteObject
+            ? `<div style="margin-top:6px">
+                 <button onclick="window.__optiqEditObject__('${esc(o.id)}')"
+                   style="padding:3px 8px;background:#2dd4bf;color:#041016;border:none;border-radius:3px;font-size:10px;cursor:pointer;font-weight:600">
+                   ✏️ Изменить</button>
+               </div>`
+            : '')
+          + routeLinks(o.lat, o.lon),
+        );
+        group.addLayer(m);
+      }
+    });
+  }
+
+  /**
    * Районы и сёла, обведённые в Google Earth.
    *
    * Границы не рисуются заново — они читаются из того же KML, которым
@@ -1826,6 +1901,7 @@ export default function LeafletMap(props: Props) {
   }, [props.drawingRoute]);
   useEffect(() => { renderSnpPoints(); }, [props.snpPoints, mapReady]);
   useEffect(() => { renderAreas(); }, [props.areas, mapReady]);
+  useEffect(() => { renderSiteObjects(); }, [props.siteObjects, mapReady]);
   useEffect(() => { renderData(); }, [props.hideNetwork]);
 
   /**
@@ -1934,6 +2010,10 @@ export default function LeafletMap(props: Props) {
       mapRef.current?.closePopup?.();
       propsRef.current.onEditRoute?.(id);
     };
+    (window as any).__optiqEditObject__ = (id: string) => {
+      mapRef.current?.closePopup?.();
+      propsRef.current.onEditSiteObject?.(id);
+    };
     (window as any).__optiqDeleteRoute__ = (id: string) => {
       mapRef.current?.closePopup?.();
       propsRef.current.onDeleteRoute?.(id);
@@ -1943,6 +2023,7 @@ export default function LeafletMap(props: Props) {
       delete (window as any).__showBranchSub__;
       delete (window as any).__optiqEditRoute__;
       delete (window as any).__optiqDeleteRoute__;
+      delete (window as any).__optiqEditObject__;
     };
   }, []);
 

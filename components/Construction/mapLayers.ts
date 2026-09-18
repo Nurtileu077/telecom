@@ -20,6 +20,8 @@ export interface ConstructionLayers {
   plan: boolean;
   /** Обведённые районы и сёла. */
   areas: boolean;
+  /** Муфты, столбы, конечные точки, ККС. */
+  objects: boolean;
 }
 
 export const CONSTRUCTION_LAYER_LABELS: Record<keyof ConstructionLayers, string> = {
@@ -29,13 +31,15 @@ export const CONSTRUCTION_LAYER_LABELS: Record<keyof ConstructionLayers, string>
   deviations: '⚠ Отклонения',
   plan: '┈ Проектная трасса',
   areas: '▦ Районы и сёла',
+  objects: '🔗 Муфты и столбы',
 };
 
 export const DEFAULT_CONSTRUCTION_LAYERS: ConstructionLayers = {
   // Контуры районов и сёл по умолчанию выключены: в рабочем файле их
   // восемь десятков, они закрывают трассу и отвечают на вопрос, который
   // на стройке никто не задаёт. Включить можно тумблером.
-  drills: true, crews: true, snp: true, deviations: true, plan: true, areas: false,
+  drills: true, crews: true, snp: true, deviations: true, plan: true,
+  areas: false, objects: true,
 };
 
 const KEY = 'optiq-construction-layers-v1';

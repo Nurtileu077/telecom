@@ -3,7 +3,7 @@ import {
   LayMethod, MaterialKind, CorrectionRequest, Contractor, JournalRole,
   LAY_METHOD_LABEL, Deviation, isDeviationClosed, needsProtocol,
   Crew, crewOnDuty, crewEquipmentCount, MaterialDelivery, PlanRoute,
-  SnpProgress, SnpStage, StageState, MapArea,
+  SnpProgress, SnpStage, StageState, MapArea, SiteObject,
 } from '@/types/construction';
 
 /** Состояние журнала стройки — Слой 2. */
@@ -26,6 +26,8 @@ export interface JournalState {
   areas: MapArea[];
   /** Цены материалов — у каждого подрядчика свои, система их не выдумывает. */
   prices: import('./materialCost').MaterialPrices;
+  /** Муфты, столбы, конечные точки, ККС — то, что стоит вдоль трассы. */
+  objects: SiteObject[];
   /** Прохождение этапов по населённым пунктам — основа нарядов. */
   progress: SnpProgress[];
   contractors: Contractor[];
@@ -52,7 +54,7 @@ export function emptyJournal(): JournalState {
   return {
     orders: [], ground: [], aerial: [], drills: [],
     corrections: [], deviations: [], crews: [], deliveries: [], planRoutes: [],
-    areas: [], prices: {}, progress: [],
+    areas: [], prices: {}, objects: [], progress: [],
     contractors: DEFAULT_CONTRACTORS, actFields: {}, deleted: [], updatedAt: '',
   };
 }
@@ -244,6 +246,7 @@ export function loadJournal(): JournalState {
       deliveries: p.deliveries ?? [],
       areas: p.areas ?? [],
       prices: p.prices ?? {},
+      objects: p.objects ?? [],
       planRoutes: p.planRoutes ?? [],
       progress: p.progress ?? [],
       actFields: p.actFields ?? {},
@@ -287,6 +290,7 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     // Импорт файла не трогает заявки, отклонения, колонны, контуры и справочник.
     areas: base.areas,
     prices: base.prices,
+    objects: base.objects,
     corrections: base.corrections,
     deviations: base.deviations,
     crews: base.crews,
@@ -574,6 +578,31 @@ export function removePlanSource(base: JournalState, source: string): JournalSta
     ...base,
     planRoutes: base.planRoutes.filter((r) => r.source !== source),
     updatedAt: new Date().toISOString(),
+  };
+}
+
+// ── Объекты на трассе ────────────────────────────────────────────────────────
+
+export function upsertObject(base: JournalState, o: SiteObject): JournalState {
+  const now = new Date().toISOString();
+  const next = { ...o, updatedAt: now };
+  const exists = base.objects.some((x) => x.id === o.id);
+  return {
+    ...base,
+    objects: exists
+      ? base.objects.map((x) => (x.id === o.id ? next : x))
+      : [...base.objects, next],
+    updatedAt: now,
+  };
+}
+
+export function removeObject(base: JournalState, id: string): JournalState {
+  const now = new Date().toISOString();
+  return {
+    ...base,
+    objects: base.objects.filter((o) => o.id !== id),
+    deleted: withTombstone(base, id, now),
+    updatedAt: now,
   };
 }
 

@@ -388,6 +388,83 @@ export interface PlanRoute {
   updatedAt: string;
 }
 
+// ── Объекты на трассе ────────────────────────────────────────────────────────
+
+/**
+ * Что стоит вдоль трассы: муфта, столб, конечная точка, ККС.
+ *
+ * Одна модель на всё, потому что вопросы к ним одинаковые: где стоит, кто
+ * поставил, когда, в каком состоянии. Разводить это по четырём таблицам
+ * значит четыре раза написать одно и то же.
+ */
+export type SiteObjectKind = 'mufta' | 'stolb' | 'endpoint' | 'kks';
+
+export interface SiteObjectSpec {
+  label: string;
+  /** Множественное — для заголовков списков. */
+  plural: string;
+  icon: string;
+  color: string;
+}
+
+export const SITE_OBJECT_SPECS: Record<SiteObjectKind, SiteObjectSpec> = {
+  mufta:    { label: 'Муфта',           plural: 'Муфты',           icon: '🔗', color: '#38bdf8' },
+  stolb:    { label: 'Столб',           plural: 'Столбы',          icon: '🪵', color: '#a78bfa' },
+  endpoint: { label: 'Конечная точка',  plural: 'Конечные точки',  icon: '🏫', color: '#4ade80' },
+  kks:      { label: 'ККС',             plural: 'ККС',             icon: '⬛', color: '#94a3b8' },
+};
+
+export const SITE_OBJECT_KINDS = Object.keys(SITE_OBJECT_SPECS) as SiteObjectKind[];
+
+/**
+ * Состояние муфты. Установить и заварить — разные работы и разные дни,
+ * и на карте это должно различаться с одного взгляда.
+ */
+export type MuftaState = 'planned' | 'installed' | 'spliced';
+
+export const MUFTA_STATES: Record<MuftaState, { label: string; color: string }> = {
+  planned:   { label: 'Не установлена', color: '#64748b' },
+  installed: { label: 'Установлена',    color: '#fbbf24' },
+  spliced:   { label: 'Заварена',       color: '#2dd4bf' },
+};
+
+/** Вид конечной точки — кого подключаем. */
+export const ENDPOINT_KINDS: string[] = [
+  'Школа', 'ФАП', 'Аким аппарат', 'Детский сад', 'Клуб', 'Почта', 'Прочее',
+];
+
+export interface SiteObject {
+  id: string;
+  kind: SiteObjectKind;
+  /** «Муфта №3», «Школа», «ККС 339». */
+  name?: string;
+  lat: number;
+  lon: number;
+  oblast?: string;
+  rayon?: string;
+  uchastok?: string;
+  kato?: string;
+  /** Только для муфты. */
+  state?: MuftaState;
+  /** Для конечной точки — школа, ФАП, аким аппарат. */
+  endpointKind?: string;
+  /** Для столба — номер по проекту. */
+  number?: string;
+  note?: string;
+  /** Дата установки или заварки. */
+  date?: string;
+  author?: string;
+  createdAt: string;
+  updatedAt: string;
+  sync?: 'local' | 'synced';
+}
+
+/** Цвет метки: у муфты он говорит о состоянии, у остальных — о виде. */
+export function siteObjectColor(o: Pick<SiteObject, 'kind' | 'state'>): string {
+  if (o.kind === 'mufta') return MUFTA_STATES[o.state ?? 'planned'].color;
+  return SITE_OBJECT_SPECS[o.kind].color;
+}
+
 // ── Территория на карте ──────────────────────────────────────────────────────
 
 /**

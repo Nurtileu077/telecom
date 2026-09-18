@@ -54,7 +54,7 @@ import {
   loadConstructionLayers, saveConstructionLayers,
   DEFAULT_CONSTRUCTION_LAYERS, type ConstructionLayers,
 } from '@/components/Construction/mapLayers';
-import type { Crew } from '@/types/construction';
+import type { Crew, SiteObject } from '@/types/construction';
 const ConstructionPanel = dynamic(() => import('@/components/Construction/ConstructionPanel'), { ssr: false });
 import { useSupabaseAuth } from '@/hooks/useSupabaseAuth';
 import { roleFromUser } from '@/lib/authSession';
@@ -166,10 +166,13 @@ export default function HomePage() {
     // Цвет трассы — от того, как далеко по ней зашли: считаем здесь, чтобы
     // карта получала готовый вид, а не лезла в журнал сама.
     setPlanRoutes(routeViews(j.planRoutes, { progress }));
+    setSiteObjects(j.objects);
   }, []);
   useEffect(() => { refreshJournalLayers(); }, [refreshJournalLayers]);
 
   const [editingRouteId, setEditingRouteId] = useState<string | null>(null);
+  const [editObjectId, setEditObjectId] = useState<string | null>(null);
+  const [siteObjects, setSiteObjects] = useState<SiteObject[]>([]);
 
   /** Правка трассы: пишем сразу — линия на карте и есть форма. */
   const handleUpdateRoute = useCallback((id: string, coords: [number, number][]) => {
@@ -983,6 +986,7 @@ export default function HomePage() {
             drills: drillPoints.length + drillLines.length, crews: crews.length, snp: snpPoints.length,
             deviations: mapDeviations.length, plan: planRoutes.length,
             areas: areas.length,
+            objects: siteObjects.length,
           }}
           validationIssues={net.validationIssues}
           flyTo={flyToRef.current}
@@ -1175,6 +1179,8 @@ export default function HomePage() {
             onEditRoute={building ? setEditingRouteId : undefined}
             onUpdateRouteCoords={handleUpdateRoute}
             onDeleteRoute={handleDeleteRoute}
+            siteObjects={conLayers.objects ? siteObjects : EMPTY_LAYER}
+            onEditSiteObject={building ? (id) => { setEditObjectId(id); setShowJournal(true); } : undefined}
             snpPoints={conLayers.snp ? snpPoints : EMPTY_LAYER}
             areas={conLayers.areas ? areas : EMPTY_LAYER}
             budgetMap={budgetMap.current}
@@ -1573,7 +1579,9 @@ export default function HomePage() {
 
       {showJournal && (
         <ConstructionPanel
-          onClose={() => { setShowJournal(false); refreshJournalLayers(); }}
+          editObjectId={editObjectId}
+          onDoneEditObject={() => setEditObjectId(null)}
+          onClose={() => { setShowJournal(false); setEditObjectId(null); refreshJournalLayers(); }}
           onRequestPick={requestPickOnMap}
         />
       )}
