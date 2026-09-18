@@ -122,3 +122,22 @@ describe('когда места нет', () => {
     expect(c.lat).toBeUndefined();
   });
 });
+
+describe('продвижение по трассе точнее центра села', () => {
+  it('колонна встаёт туда, докуда дошли, а не в середину села', () => {
+    const [c] = placeCrews([crew()], ctx({
+      ground: [ground()],
+      drills: [drill()],
+      sectionProgress: {
+        '191': { lat: 51.9, lon: 71.9, date: '2026-09-10', doneM: 4200 },
+      },
+    }));
+    expect(c.lat).toBeCloseTo(51.9, 5);
+    expect(c.placement?.source).toBe('progress');
+  });
+
+  it('без продвижения остаётся место участка', () => {
+    const [c] = placeCrews([crew()], ctx({ ground: [ground()], drills: [drill()] }));
+    expect(c.placement?.source).toBe('report');
+  });
+});

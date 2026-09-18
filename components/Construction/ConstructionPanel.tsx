@@ -19,7 +19,7 @@ import {
   upsertCrew, removeCrew, upsertDelivery, removeDelivery,
   addPlanRoutes, removePlanSource, planSources, plural, setProgress, setStage,
   addAreas, removeAreaSource, areaSources, setMaterialPrice, upsertDrill,
-  upsertObject, removeObject,
+  upsertObject, removeObject, setSectionProgress,
 } from './journalStore';
 import DeviationForm from './DeviationForm';
 import CrewForm from './CrewForm';
@@ -127,13 +127,30 @@ export default function ConstructionPanel({
    * Новый день — пишем сразу. Исправление — только заявкой: цифры в сводке
    * не должны меняться задним числом без ведома отчётности.
    */
-  const handleFormSave = useCallback((entry: DailyWorkEntry, reason?: string) => {
+  const handleFormSave = useCallback((
+    entry: DailyWorkEntry,
+    reason?: string,
+    stop?: { lat: number; lon: number; routeId: string; doneM: number; manual: boolean },
+  ) => {
     const base = loadJournal();
     if (editing && reason) {
       persist(submitCorrection(base, { entry: editing, proposed: entry, reason, author: actor }));
       setView('corrections');
     } else {
-      persist(addGroundEntry(base, entry));
+      let next = addGroundEntry(base, entry);
+      // Докуда дошли — по этому потом едет метка колонны и строится
+      // вчерашний день в движении.
+      if (stop && entry.kato) {
+        next = setSectionProgress(next, entry.kato, {
+          routeId: stop.routeId,
+          doneM: stop.doneM,
+          lat: stop.lat,
+          lon: stop.lon,
+          date: entry.date,
+          manual: stop.manual,
+        });
+      }
+      persist(next);
     }
     setEditing(null);
     setReport(null);
@@ -750,6 +767,7 @@ export default function ConstructionPanel({
         <DailyEntryForm
           journal={journal}
           initial={editing}
+          onRequestPick={onRequestPick}
           onSave={handleFormSave}
           onClose={() => { setFormOpen(false); setEditing(null); }}
         />

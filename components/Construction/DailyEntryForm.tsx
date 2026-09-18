@@ -1,6 +1,6 @@
 'use client';
 import { useState, useMemo, useEffect } from 'react';
-import { X, Check, AlertTriangle } from 'lucide-react';
+import { X, Check, AlertTriangle, MapPin } from 'lucide-react';
 import {
   WorkTech, WORK_TECHS, LayMethod, LAY_METHODS, LAY_METHOD_LABEL,
   MaterialKind, MATERIAL_KINDS, MATERIAL_UNIT, DailyWorkEntry,
@@ -8,6 +8,8 @@ import {
   EQUIPMENT_KINDS, DuctMark,
 } from '@/types/construction';
 import { JournalState, loadLastContext, saveLastContext, MATERIAL_LABEL, suggestContractor } from './journalStore';
+import { advanceAlong, routeForSection } from './routeProgress';
+import { normName } from './areaImport';
 
 /**
  * Закрытие рабочего дня.
@@ -18,18 +20,27 @@ import { JournalState, loadLastContext, saveLastContext, MATERIAL_LABEL, suggest
  */
 
 interface Props {
+  /** Спрятать форму и дать указать точку на карте. */
+  onRequestPick?: (label: string) => Promise<{ lat: number; lon: number } | null>;
   journal: JournalState;
   /** Запись, которую исправляют. Пусто — вносим новый день. */
   initial?: DailyWorkEntry | null;
   /** В режиме исправления причина обязательна и уходит на согласование. */
-  onSave: (entry: DailyWorkEntry, reason?: string) => void;
+  onSave: (
+    entry: DailyWorkEntry,
+    reason?: string,
+    /** Где остановились: подтверждённая или поправленная точка. */
+    stop?: { lat: number; lon: number; routeId: string; doneM: number; manual: boolean },
+  ) => void;
   onClose: () => void;
 }
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
 const numToStr = (v?: number): string => (v ? String(v) : '');
 
-export default function DailyEntryForm({ journal, initial, onSave, onClose }: Props) {
+export default function DailyEntryForm({
+  journal, initial, onSave, onClose, onRequestPick,
+}: Props) {
   const correcting = !!initial;
   const last = useMemo(() => (correcting ? null : loadLastContext()), [correcting]);
 
@@ -89,6 +100,9 @@ export default function DailyEntryForm({ journal, initial, onSave, onClose }: Pr
   const [continued, setContinued] = useState<boolean | null>(
     correcting || !last?.uchastok ? true : null,
   );
+  /** Куда сдвинулись за день: считаем, человек подтверждает или правит. */
+  const [stopPoint, setStopPoint] = useState<{ lat: number; lon: number } | null>(null);
+  const [stopConfirmed, setStopConfirmed] = useState(false);
   const [ductMarks, setDuctMarks] = useState<{ coil: string; meters: string }[]>(
     () => (initial?.ductMarks ?? []).map((m) => ({ coil: m.coil, meters: String(m.meters) })),
   );
@@ -154,6 +168,31 @@ export default function DailyEntryForm({ journal, initial, onSave, onClose }: Pr
     () => LAY_METHODS.reduce((s, m) => s + numOf(byMethod[m]), 0),
     [byMethod],
   );
+
+  /**
+   * Трасса участка и предполагаемая точка остановки.
+   *
+   * Положение колонны — следствие метража: прошли за день столько-то —
+   * сдвинулись по линии на столько-то. Система считает и спрашивает,
+   * человек подтверждает или поправляет.
+   */
+  const sectionRoute = useMemo(() => {
+    const key = normName(uchastok);
+    if (!key) return null;
+    return routeForSection(journal.planRoutes, (r) => {
+      const fields = [r.uchastok, r.folder, r.name].filter(Boolean) as string[];
+      return fields.some((f) => normName(f) === key || normName(f).includes(key));
+    });
+  }, [journal.planRoutes, uchastok]);
+
+  const doneBefore = kato ? (journal.sectionProgress?.[kato]?.doneM ?? 0) : 0;
+
+  const proposedStop = useMemo(() => {
+    if (correcting || !sectionRoute || totalMeters <= 0) return null;
+    return advanceAlong(sectionRoute, doneBefore, totalMeters);
+  }, [correcting, sectionRoute, doneBefore, totalMeters]);
+
+  const stop = stopPoint ?? (proposedStop ? { lat: proposedStop.lat, lon: proposedStop.lon } : null);
 
   // Подрядчик по району — подсказка, а не автозаполнение: район может вести
   // субподрядчик, и решать должен человек.
@@ -232,7 +271,18 @@ export default function DailyEntryForm({ journal, initial, onSave, onClose }: Pr
       downtime: downtime.trim() || undefined,
       tomorrow: tomorrow.trim() || undefined,
       createdAt: initial?.createdAt ?? now, updatedAt: now, sync: 'local',
-    }, correcting ? reason.trim() : undefined);
+    },
+    correcting ? reason.trim() : undefined,
+    // Точку сохраняем только подтверждённую: молча двигать метку колонны
+    // по расчёту — значит однажды показать её там, где никого нет.
+    stop && stopConfirmed && sectionRoute
+      ? {
+          lat: stop.lat, lon: stop.lon,
+          routeId: sectionRoute.id,
+          doneM: Math.round(doneBefore + totalMeters),
+          manual: !!stopPoint,
+        }
+      : undefined);
 
     if (!correcting) {
       saveLastContext({
@@ -385,6 +435,46 @@ export default function DailyEntryForm({ journal, initial, onSave, onClose }: Pr
                   ≈ {(totalMeters / 1000).toFixed(2)} км</span>}
               </span>
             </div>
+
+            {/* Где остановились. Считаем по метражу вдоль трассы и
+                спрашиваем: угадать точнее человека система не может, но
+                предложить точку и сэкономить ему вечер — вполне. */}
+            {stop && (
+              <div className="rounded-lg border p-2.5 flex flex-col gap-1.5"
+                   style={{
+                     borderColor: stopConfirmed ? 'var(--accent)' : 'var(--border)',
+                     background: stopConfirmed ? 'var(--accent-dim)' : 'var(--bg-canvas)',
+                   }}>
+                <div className="text-[11.5px] text-[var(--text)]">
+                  {stopConfirmed ? 'Остановились здесь' : 'Вы примерно тут?'}
+                  <span className="font-mono text-[10.5px] text-[var(--text-muted)] ml-1.5">
+                    {stop.lat.toFixed(5)}, {stop.lon.toFixed(5)}
+                  </span>
+                </div>
+                <div className="text-[10.5px] text-[var(--text-muted)]">
+                  По трассе «{sectionRoute?.name}»: было {Math.round(doneBefore).toLocaleString('ru')} м,
+                  за день {Math.round(totalMeters).toLocaleString('ru')} м
+                  {proposedStop?.atEnd ? ' — трасса пройдена до конца' : ''}
+                </div>
+                <div className="flex gap-1.5">
+                  {!stopConfirmed && (
+                    <button type="button" className="btn btn-primary text-[10.5px]"
+                            onClick={() => setStopConfirmed(true)}>
+                      Верно
+                    </button>
+                  )}
+                  {onRequestPick && (
+                    <button type="button" className="btn btn-ghost text-[10.5px]"
+                            onClick={async () => {
+                              const p = await onRequestPick('где остановились');
+                              if (p) { setStopPoint(p); setStopConfirmed(true); }
+                            }}>
+                      <MapPin size={12} />Указать на карте
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </Group>
 
           {/* Переходы */}

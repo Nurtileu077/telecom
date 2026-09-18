@@ -127,6 +127,9 @@ export function mergeJournalStates(
     planRoutes: mergeCollection<PlanRoute>(local.planRoutes, remote.planRoutes, tombs, stats),
     areas: mergeCollection<MapArea>(local.areas, remote.areas, tombs, stats),
     objects: mergeCollection<SiteObject>(local.objects, remote.objects, tombs, stats),
+    // Продвижение по участку — позже записанное вернее: это накопленный
+    // метраж, и свежая запись включает в себя прежнюю.
+    sectionProgress: mergeSectionProgress(local.sectionProgress, remote.sectionProgress),
     // Цены — справочник: чужие позиции добираем, свои не отдаём.
     prices: { ...remote.prices, ...local.prices },
     progress: mergeProgress(local.progress, remote.progress, stats),
@@ -193,6 +196,18 @@ function mergeProgress(local: SnpProgress[], remote: SnpProgress[], stats: Merge
     byKato.set(r.kato, { ...mine, stages, updatedAt: new Date().toISOString() });
   }
   return [...byKato.values()];
+}
+
+function mergeSectionProgress(
+  local: JournalState['sectionProgress'],
+  remote: JournalState['sectionProgress'],
+): JournalState['sectionProgress'] {
+  const out = { ...remote };
+  for (const [kato, mine] of Object.entries(local ?? {})) {
+    const theirs = out[kato];
+    if (!theirs || (mine.date ?? '') >= (theirs.date ?? '')) out[kato] = mine;
+  }
+  return out;
 }
 
 /** Пустой журнал как «серверная сторона», когда на сервере ещё ничего нет. */

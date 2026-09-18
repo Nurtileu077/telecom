@@ -16,8 +16,12 @@ import { placeFinder, SnpMapContext } from './snpMap';
 export interface CrewPlacement {
   lat: number;
   lon: number;
-  /** 'report' — встала по отчёту, 'manual' — поставлена рукой. */
-  source: 'report' | 'manual';
+  /**
+   * 'progress' — по метражу вдоль трассы (точнее всего),
+   * 'report' — по участку последнего отчёта,
+   * 'manual' — поставлена рукой.
+   */
+  source: 'progress' | 'report' | 'manual';
   /** Дата отчёта, по которому встала. */
   date?: string;
   uchastok?: string;
@@ -30,6 +34,8 @@ export interface CrewPlaceContext extends SnpMapContext {
   ground: DailyWorkEntry[];
   aerial: AerialWorkEntry[];
   drills: DrillLogEntry[];
+  /** Докуда дошли по трассе — точка вернее центра села. */
+  sectionProgress?: Record<string, { lat: number; lon: number; date: string; doneM: number }>;
 }
 
 /** Сопоставление «эта запись — про эту колонну». */
@@ -101,7 +107,12 @@ export function placeCrews(crews: Crew[], ctx: CrewPlaceContext): (Crew & { plac
       return { ...c, placement: manual };
     }
 
-    const place = findPlace(last.kato, last.uchastok);
+    // Продвижение по трассе точнее центра села: колонна стоит там, где
+    // остановилась, а не посередине населённого пункта.
+    const along = ctx.sectionProgress?.[last.kato];
+    const place = along
+      ? { lat: along.lat, lon: along.lon, from: 'drill' as const }
+      : findPlace(last.kato, last.uchastok);
     if (!place) return manual ? { ...c, placement: manual } : c;
 
     return {
@@ -114,8 +125,10 @@ export function placeCrews(crews: Crew[], ctx: CrewPlaceContext): (Crew & { plac
       rayon: last.rayon || c.rayon,
       uchastok: last.uchastok || c.uchastok,
       placement: {
-        lat: place.lat, lon: place.lon, source: 'report',
-        date: last.date, uchastok: last.uchastok, kato: last.kato,
+        lat: place.lat, lon: place.lon,
+        source: along ? 'progress' : 'report',
+        date: along?.date ?? last.date,
+        uchastok: last.uchastok, kato: last.kato,
         oblast: last.oblast, rayon: last.rayon,
       },
     };

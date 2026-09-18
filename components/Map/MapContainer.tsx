@@ -1135,9 +1135,10 @@ export default function LeafletMap(props: Props) {
               <div style="font-size:11px;margin-top:2px">${equipList}</div>
             </div>
             ${c.note ? `<div style="margin-top:5px;font-size:11px;color:#94a3b8">${esc(c.note)}</div>` : ''}
-            ${c.placement?.source === 'report' && c.placement.date
+            ${c.placement?.date && c.placement.source !== 'manual'
               ? `<div style="margin-top:6px;font-size:10px;color:#64748b">
-                   Встала по отчёту от ${new Date(`${c.placement.date}T00:00:00Z`).toLocaleDateString('ru')}
+                   ${c.placement.source === 'progress' ? 'По метражу вдоль трассы' : 'Встала по отчёту'},
+                   ${new Date(`${c.placement.date}T00:00:00Z`).toLocaleDateString('ru')}
                  </div>`
               : ''}
             ${routeLinks(c.lat as number, c.lon as number)}

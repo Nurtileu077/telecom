@@ -28,6 +28,12 @@ export interface JournalState {
   prices: import('./materialCost').MaterialPrices;
   /** Муфты, столбы, конечные точки, ККС — то, что стоит вдоль трассы. */
   objects: SiteObject[];
+  /**
+   * Докуда дошли по трассе каждого участка. Положение колонны — следствие
+   * метража, а не отдельная запись: прошли четыре километра — сдвинулись
+   * по линии на четыре километра.
+   */
+  sectionProgress: Record<string, import('./routeProgress').SectionProgress>;
   /** Прохождение этапов по населённым пунктам — основа нарядов. */
   progress: SnpProgress[];
   contractors: Contractor[];
@@ -54,7 +60,7 @@ export function emptyJournal(): JournalState {
   return {
     orders: [], ground: [], aerial: [], drills: [],
     corrections: [], deviations: [], crews: [], deliveries: [], planRoutes: [],
-    areas: [], prices: {}, objects: [], progress: [],
+    areas: [], prices: {}, objects: [], sectionProgress: {}, progress: [],
     contractors: DEFAULT_CONTRACTORS, actFields: {}, deleted: [], updatedAt: '',
   };
 }
@@ -247,6 +253,7 @@ export function loadJournal(): JournalState {
       areas: p.areas ?? [],
       prices: p.prices ?? {},
       objects: p.objects ?? [],
+      sectionProgress: p.sectionProgress ?? {},
       planRoutes: p.planRoutes ?? [],
       progress: p.progress ?? [],
       actFields: p.actFields ?? {},
@@ -291,6 +298,7 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     areas: base.areas,
     prices: base.prices,
     objects: base.objects,
+    sectionProgress: base.sectionProgress,
     corrections: base.corrections,
     deviations: base.deviations,
     crews: base.crews,
@@ -587,6 +595,22 @@ export function removePlanSource(base: JournalState, source: string): JournalSta
   return {
     ...base,
     planRoutes: base.planRoutes.filter((r) => r.source !== source),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+// ── Продвижение по трассе ────────────────────────────────────────────────────
+
+/** Запоминаем, докуда дошли: по этому потом едет метка колонны. */
+export function setSectionProgress(
+  base: JournalState,
+  kato: string,
+  value: import('./routeProgress').SectionProgress,
+): JournalState {
+  if (!kato) return base;
+  return {
+    ...base,
+    sectionProgress: { ...base.sectionProgress, [kato]: value },
     updatedAt: new Date().toISOString(),
   };
 }
