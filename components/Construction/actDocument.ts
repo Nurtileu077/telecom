@@ -1,56 +1,99 @@
-import { LAY_METHODS, LAY_METHOD_LABEL, Deviation, MobileGroupProtocol } from '@/types/construction';
+import { LayMethod, Deviation, MobileGroupProtocol } from '@/types/construction';
 import {
   SectionActTotals, SectionActVariant, SectionActManual, actKm,
+  ACT_MATERIALS_DEFAULT, ACT_NEXT_WORKS_DEFAULT, ACT_GEN_CONTRACTOR_DEFAULT,
 } from './sectionAct';
 
 /**
- * Закрывающие документы файлом.
+ * Закрывающие документы — по бланкам заказчика, слово в слово.
  *
- * Акт нужно отправить: печать в PDF годится для папки, но в переписке ждут
- * документ, который можно открыть и поправить. Собираем Word-совместимый
- * HTML — Word открывает его как документ и даёт редактировать, а лишней
- * библиотеки на полтора мегабайта в поле не появляется.
+ * Акт, набранный «по смыслу», на приёмке возвращают: там сверяют не цифры,
+ * а формулировки. Поэтому здесь воспроизведены два настоящих бланка —
+ * АСР (СН РК 1.03-00-2022) и ОСР (Приложение 12 к ОДС/П-14-4-4-01) — с их
+ * заголовками, подстрочными пояснениями в скобках, порядком пунктов и
+ * подписями. Всё, что в бланке напечатано типографски, здесь константа;
+ * всё, что вписывают от руки, — поле.
  *
- * Строки таблицы считает одна функция и для экрана, и для файла: две
- * копии одного акта однажды разойдутся, и разойдутся в худший момент.
+ * Таблица у обоих бланков одна и та же, 17 строк, различается только
+ * первая: в ОСР это «Защитной МКТ», в АСР — «Защитной полиэтиленовой
+ * трубы». Считает её одна функция и для экрана, и для файла: экран здесь
+ * не пересказ документа, а он сам — тот же HTML.
+ *
+ * Файл — Word-совместимый HTML: Word открывает его как документ и даёт
+ * править, а библиотеки на полтора мегабайта в поле не появляется.
  */
 
 export type ActKind = 'ASR' | 'OSR';
 
-export const ACT_KIND_SPECS: Record<ActKind, { short: string; title: string; basis: string }> = {
+export const ACT_KIND_SPECS: Record<ActKind, {
+  short: string;
+  /** Что напечатано в правом верхнем углу бланка. */
+  basis: string;
+  /** Заголовок листа. У АСР в него вписывают номер — см. actHeading. */
+  title: string;
+}> = {
   ASR: {
     short: 'АСР',
-    title: 'АКТ ОСВИДЕТЕЛЬСТВОВАНИЯ СКРЫТЫХ РАБОТ',
     basis: 'СН РК 1.03-00-2022',
+    title: 'Акт № ____освидетельствования скрытых работ',
   },
   OSR: {
     short: 'ОСР',
-    title: 'АКТ ОСВИДЕТЕЛЬСТВОВАНИЯ СКРЫТЫХ РАБОТ',
-    basis: 'Приложение 12 к ОДС/П-14-4-4-01',
+    basis: 'Приложение 12 к\nОДС/П-14-4-4-01',
+    title: 'Освидетельствование скрытых работ по прокладке защитной '
+      + 'полиэтиленовой трубы и предупредительной ленты',
   },
 };
 
+/** Заголовок листа с подставленным номером акта, если он уже присвоен. */
+export function actHeading(kind: ActKind, fields: SectionActManual): string {
+  if (kind !== 'ASR') return ACT_KIND_SPECS.OSR.title;
+  const n = (fields.actNumber ?? '').trim();
+  return n
+    ? `Акт № ${n} освидетельствования скрытых работ`
+    : ACT_KIND_SPECS.ASR.title;
+}
+
+// ── Таблица ──────────────────────────────────────────────────────────────────
+
+/** Ключ строки — чтобы искать её в коде и в тестах, не цепляясь за текст. */
+export type ActRowKey =
+  | 'total' | 'method' | 'gnbPet63' | 'gnbPet110' | 'openPet63' | 'openSteel63'
+  | 'depth' | 'depthFact' | 'kits' | 'tape' | 'crossings' | 'recult' | 'pavement';
+
 export interface ActRow {
-  n?: string;
+  key: ActRowKey;
   label: string;
   value: string;
   unit?: string;
-  indent?: boolean;
-  strong?: boolean;
+  /** Продолжение предыдущей строки: в бланке у неё нет подписи слева. */
+  cont?: boolean;
   /** Значение введено руками — в журнале такого показателя нет. */
   manual?: boolean;
+}
+
+/** Порядок способов в бланке отличается от порядка колонок в журнале. */
+export const ACT_METHOD_ORDER: LayMethod[] = [
+  'кабелеукладчик', 'вручную', 'экскаватор', 'сущ_канализация', 'бар',
+];
+
+/** Формулировки бланка — они не совпадают с подписями в журнале. */
+export const ACT_METHOD_LABEL: Record<LayMethod, string> = {
+  'кабелеукладчик': 'Кабелеукладчиком с двукратной пропоркой __ категорий',
+  'вручную': 'Вручную __ категорий',
+  'экскаватор': 'Экскаватором __ категорий',
+  'сущ_канализация': 'По существующей канализации',
+  'бар': 'Бар',
+};
+
+export function methodActLabel(m: string): string {
+  return ACT_METHOD_LABEL[m as LayMethod] ?? m;
 }
 
 /** Доля показателя, приходящаяся на этот акт по длине. */
 export function share(value: number, total: number, part: number): number {
   if (!total) return 0;
   return Math.round((value * part) / total);
-}
-
-export function methodActLabel(m: string): string {
-  // В акте у кабелеукладчика формулировка своя, остальные совпадают.
-  if (m === 'кабелеукладчик') return 'Кабелеукладчиком с двукратной пропоркой';
-  return LAY_METHOD_LABEL[m as never] ?? m;
 }
 
 export function fmtDepth(m: number): string {
@@ -63,10 +106,36 @@ export function fmtDate(iso?: string): string {
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('ru');
 }
 
+const MONTHS_RU = [
+  'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+  'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
+];
+
+/** «10» сентября 2026 г. — так дата стоит в шапке АСР. */
+export function ruDateWords(iso?: string): string {
+  if (!iso) return '«___» ____________ 20___ г.';
+  const d = new Date(`${iso}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return '«___» ____________ 20___ г.';
+  return `«${String(d.getUTCDate()).padStart(2, '0')}» ${MONTHS_RU[d.getUTCMonth()]} ${d.getUTCFullYear()} г.`;
+}
+
 /** В журнале район пишут и со словом «район», и без — не удваиваем. */
 export function withRayonWord(rayon: string): string {
   const r = rayon.trim();
   return /район/i.test(r) ? r : `${r} район`;
+}
+
+/** В шапке ОСР порядок обратный: «Область Акмолинская, район Бурабайский». */
+export function bareOblast(s?: string): string {
+  return (s ?? '').replace(/\s*област[ьи]\s*/gi, ' ').trim();
+}
+
+export function bareRayon(s?: string): string {
+  return (s ?? '').replace(/\s*район[а-я]*\s*/gi, ' ').trim();
+}
+
+function capFirst(s: string): string {
+  return s ? s[0].toUpperCase() + s.slice(1) : s;
 }
 
 /**
@@ -76,69 +145,122 @@ export function actRows(
   totals: SectionActTotals,
   v: SectionActVariant,
   fields: SectionActManual,
+  kind: ActKind = 'OSR',
 ): ActRow[] {
-  const rows: ActRow[] = [
-    { n: '1', label: 'Защитной МКТ проложено всего', value: actKm(v.lengthM), unit: 'км', strong: true },
-  ];
+  const rows: ActRow[] = [{
+    key: 'total',
+    label: kind === 'ASR'
+      ? '1.Защитной полиэтиленовой трубы проложено всего:'
+      : '1.Защитной МКТ проложено всего:',
+    value: actKm(v.lengthM), unit: 'км',
+  }];
 
-  for (const m of LAY_METHODS) {
+  for (const m of ACT_METHOD_ORDER) {
     rows.push({
-      label: methodActLabel(m),
+      key: 'method',
+      label: ACT_METHOD_LABEL[m],
       value: actKm(share(totals.byMethod[m], totals.totalM, v.lengthM)),
-      unit: 'км', indent: true,
+      unit: 'км',
     });
   }
 
   rows.push(
-    { label: 'Переходы ГНБ с защитой ПЭТ-63мм', value: actKm(fields.gnbPet63M ?? 0), unit: 'км', indent: true, manual: true },
-    { label: 'Переходы ГНБ с защитой ПЭТ-110мм', value: actKm(fields.gnbPet110M ?? 0), unit: 'км', indent: true, manual: true },
-    { label: 'Переходы открытым способом, ПЭТ-63мм', value: actKm(fields.openPet63M ?? 0), unit: 'км', indent: true, manual: true },
-    { label: 'Переходы открытым способом, ст. труба 63мм', value: actKm(fields.openSteel63M ?? 0), unit: 'км', indent: true, manual: true },
     {
-      n: '2', label: 'Глубина прокладки защитной МКТ',
-      value: `по проекту — ${fmtDepth(v.designDepthM)} м, фактически — ${fmtDepth(v.actualDepthM)} м`,
+      key: 'gnbPet63',
+      label: 'Переходы методом горизонтально-направленного бурения с защитой ПЭТ-63мм',
+      value: actKm(fields.gnbPet63M ?? 0), unit: 'км', manual: true,
     },
     {
-      n: '3', label: 'Комплектов для сращивания защитной МКТ (фитинги)',
-      value: String(share(totals.splicingKits, totals.totalM, v.lengthM)), unit: 'шт',
+      key: 'gnbPet110',
+      label: 'Переходы методом горизонтально-направленного бурения с защитой ПЭТ-110мм',
+      value: actKm(fields.gnbPet110M ?? 0), unit: 'км', manual: true,
     },
     {
-      n: '4', label: 'Прокладка предупредительно-сигнальной ленты на глубине ½ от МКТ',
+      key: 'openPet63',
+      label: 'Переходы открытым способом с защитой ПЭТ-63мм',
+      value: actKm(fields.openPet63M ?? 0), unit: 'км', manual: true,
+    },
+    {
+      key: 'openSteel63',
+      label: 'Переходы открытым способом с защитой Ст труба -63мм',
+      value: actKm(fields.openSteel63M ?? 0), unit: 'км', manual: true,
+    },
+    {
+      key: 'depth',
+      label: '2. Глубина прокладки защитной МКТ составляет',
+      value: `по проекту - ${fmtDepth(v.designDepthM)} м`,
+    },
+    {
+      key: 'depthFact', label: '', cont: true,
+      value: `фактический - ${fmtDepth(v.actualDepthM)} м`,
+    },
+    {
+      key: 'kits',
+      label: '3. При прокладке использовано комплектов для сращивания защитной МКТ',
+      value: String(share(totals.splicingKits, totals.totalM, v.lengthM)), unit: 'шт.',
+    },
+    {
+      key: 'tape',
+      label: '4. Прокладка предупредительной-сигнальной ленты на глубине ½ от глубины МКТ',
       value: actKm(share(totals.tapeM, totals.totalM, v.lengthM)), unit: 'км',
     },
     {
-      n: '5', label: 'На участке выполнено переходов',
+      key: 'crossings',
+      label: '5. На участке выполнено переходов (акты на скрытые работы прилагаются)',
       // Переходы целиком относятся к основному акту: делить прокол между
       // глубинами нечем, а приписывать его отклонению — неправда.
       value: String(v.isMain ? totals.crossingsTotal : 0), unit: 'пер.',
     },
-    { n: '6', label: 'Рекультивация', value: fields.recultivation ?? '—', manual: true },
-    { n: '7', label: 'Восстановление а/бетонных покрытий', value: fields.pavement ?? '—', manual: true },
+    {
+      key: 'recult',
+      label: '6. Рекультивация (выполнена, не выполнена)',
+      value: capFirst(fields.recultivation ?? ''), manual: true,
+    },
+    {
+      key: 'pavement',
+      label: '7. Восстановление а/бетонных покрытий (выполнено, не выполнено, не предусматривается проектом)',
+      value: capFirst(fields.pavement ?? ''), manual: true,
+    },
   );
-
-  if (fields.markerPosts || fields.ballMarkers) {
-    rows.push(
-      { label: 'Установлено идентификационных столбиков', value: String(fields.markerPosts ?? 0), unit: 'шт', manual: true },
-      { label: 'Установлено шаровых маркеров', value: String(fields.ballMarkers ?? 0), unit: 'шт', manual: true },
-    );
-  }
-
-  if (!v.isMain) {
-    rows.push({
-      label: 'Отклонения от ПСД',
-      value: v.protocols.length
-        ? v.protocols.map((p) => `Протокол мобильной группы №${p.number} от ${fmtDate(p.date)}`).join('; ')
-        : 'протокол мобильной группы не оформлен',
-    });
-  }
 
   return rows;
 }
+
+// ── Отклонения ───────────────────────────────────────────────────────────────
+
+/** Пункт об отклонениях от ПСД: в бланке он один и тот же в обоих актах. */
+export function deviationSummary(v: SectionActVariant): string {
+  if (v.isMain) return 'нет';
+  const depth = `допущено уменьшение глубины заложения до ${fmtDepth(v.actualDepthM)} м `
+    + `вместо проектной ${fmtDepth(v.designDepthM)} м на протяжении ${actKm(v.lengthM)} км`;
+  const reasons = [...new Set(v.deviations.map((d: Deviation) => d.reason).filter(Boolean))];
+  return reasons.length ? `${depth} (${reasons.join(', ')})` : depth;
+}
+
+/** «№17 от 12.09.2026» либо пустой бланк с прочерками. */
+export function protocolRef(v: SectionActVariant): string {
+  const p: MobileGroupProtocol | undefined = v.protocols[0];
+  if (!p?.number?.trim()) return '№______ от _______';
+  return `№${p.number} от ${fmtDate(p.date)}`;
+}
+
+// ── Разметка ─────────────────────────────────────────────────────────────────
 
 export function esc(s: string): string {
   return String(s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+/** Пустая строка бланка: в оригинале это подчёркивания, а не рамка. */
+function blank(n: number): string {
+  return '_'.repeat(n);
+}
+
+/** Значение или прочерк нужной длины — так бланк остаётся бланком. */
+function or(v: string | undefined, n: number): string {
+  const s = (v ?? '').trim();
+  return s ? esc(s) : blank(n);
 }
 
 export interface ActDocInput {
@@ -157,86 +279,211 @@ export interface ActDocInput {
   fields: SectionActManual;
 }
 
+function actTable(rows: ActRow[]): string {
+  const body = rows.map((r) => `
+      <tr>
+        ${r.cont
+          ? '<td class="lbl"></td>'
+          : `<td class="lbl">${esc(r.label)}</td>`}
+        <td class="val"${r.unit ? '' : ' colspan="2"'}>${esc(r.value)}</td>
+        ${r.unit ? `<td class="unit">${esc(r.unit)}</td>` : ''}
+      </tr>`).join('');
+  return `<table class="act">${body}
+    </table>`;
+}
+
+/** Участок ВОЛС: «от М№1 до здания АТС п. Мадениет, Зеленоборский с.о.» */
+export function volsTitle(input: ActDocInput): string {
+  const f = input.fields;
+  const from = (f.volsFrom ?? '').trim();
+  const to = (f.volsTo ?? '').trim();
+  const so = (f.selsovet ?? '').trim();
+  const tail = so ? `, ${so} с.о.` : '';
+  if (from && to) return `от ${from} до ${to}${tail}`;
+  if (to) return `до ${to}${tail}`;
+  return `${input.uchastok}${tail}`;
+}
+
+/** АСР: «наименование и место расположения объекта». */
+export function objectTitle(input: ActDocInput): string {
+  const manual = (input.fields.objectName ?? '').trim();
+  if (manual) return manual;
+  const place = [input.oblast, input.rayon ? withRayonWord(input.rayon) : '']
+    .filter(Boolean).join(', ');
+  const so = (input.fields.selsovet ?? '').trim();
+  return [
+    'Обеспечение высокоскоростным доступом к сети Интернет Республики Казахстан',
+    volsTitle({ ...input, fields: { ...input.fields, selsovet: '' } }),
+  ].join(' ') + (place ? `, ${place}` : '') + (so ? `, с.о.${so}` : '');
+}
+
+const CAP_FIO = '(фамилия, имя, отчество (при наличии), организация, должность)';
+
+function asrSheet(input: ActDocInput, v: SectionActVariant): string {
+  const f = input.fields;
+  const spec = ACT_KIND_SPECS.ASR;
+
+  return `
+      <p class="right">${esc(spec.basis)}</p>
+      <h1>${esc(actHeading('ASR', f))}</h1>
+      <p class="center">г. ${or(f.city, 12)} ${esc(ruDateWords(f.actDate))}</p>
+      <p class="obj">${esc(objectTitle(input))}</p>
+      <p class="cap">(наименование и место расположения объекта)</p>
+      <p>Мы, нижеподписавшиеся:</p>
+      <p>представителя подрядчика (генподрядчика) работ ${
+        or(f.genContractor ?? ACT_GEN_CONTRACTOR_DEFAULT, 20)}${blank(21)}</p>
+      <p class="rule">${blank(81)}</p>
+      <p class="cap">${CAP_FIO}</p>
+      <p>представителя технического надзора заказчика</p>
+      <p class="rule">${blank(81)}</p>
+      <p class="cap">${CAP_FIO}</p>
+      <p>представителя технического надзора заказчика</p>
+      <p class="rule">${blank(81)}</p>
+      <p class="cap">${CAP_FIO}</p>
+      <p>представителя проектной организации (в случаях осуществления авторского надзора проектной организацией)</p>
+      <p class="rule">${blank(81)}</p>
+      <p class="cap">${CAP_FIO}</p>
+      <p>а также представителей, дополнительно участвующих в освидетельствовании:</p>
+      ${f.extraParticipants?.trim() ? `<p>${esc(f.extraParticipants.trim())}</p>` : ''}
+      <p class="rule">${blank(81)}</p>
+      <p class="cap">${CAP_FIO}</p>
+      <p>Произвела осмотр работ, выполненных ${
+        esc(input.performer || input.contractor || blank(30))}</p>
+      <p class="cap">наименование подрядчика (генподрядчика)</p>
+      <p>и составила настоящий акт о нижеследующим:</p>
+      <p>К освидетельствованию предъявлены следующие работы</p>
+      ${actTable(actRows(input.totals, v, f, 'ASR'))}
+      <p class="cap">(наименование скрытых работ)</p>
+      <p>2. Работы выполнены по проектно-сметной документации ${or(f.psd, 39)}</p>
+      <p class="cap">(наименование проектной организации, № чертежей и дата их составления или
+        идентификационные параметры эскиза/записи в журнале авторского надзора)</p>
+      <p>3. При выполнении работ применены ${esc(f.materials ?? ACT_MATERIALS_DEFAULT)}</p>
+      <p class="cap">(наименование материалов, конструкций, изделий со ссылкой на сертификаты
+        или другие документы, подтверждающие качество и сертификаты о происхождении товара
+        формы СТ-KZ и индустриальные сертификаты)</p>
+      <p>Исполнителем работ предъявлены следующие дополнительные доказательства соответствия
+        работ предъявляемым к ним требованиям, приложенные (не приложенные) к настоящему акту</p>
+      <p class="rule">${blank(81)}</p>
+      <p class="cap">(исполнительные схемы и чертежи, заключения лаборатории и так далее)</p>
+      <p>4. При выполнении работ отсутствуют (или допущены) отклонения от проектно-сметной
+        документации ${esc(deviationSummary(v))}${
+          v.isMain ? '' : `. Протокол Мобильной группы ${esc(protocolRef(v))}`}</p>
+      <p class="cap">(при наличии отклонений указывается, кем согласовано, № чертежей и дата согласования)</p>
+      <p>5. Даты: начала работ ${esc(fmtDate(input.dateFrom))}</p>
+      <p class="ind">окончания работ ${esc(fmtDate(input.dateTo))}</p>
+      <p class="center b">Решение комиссии</p>
+      <p>Работы выполнены в соответствии с проектно-сметной документацией и требованиями
+        действующих нормативных документов.</p>
+      <p>На основании изложенного разрешается производство последующих работ по устройству
+        (монтажу) ${esc(f.nextWorks ?? ACT_NEXT_WORKS_DEFAULT)}${blank(28)}</p>
+      <p class="cap">(наименование последующих работ и конструкций)</p>
+      ${v.blocked
+        ? '<p class="warn">Протокол мобильной группы не оформлен — акт не подлежит подписанию.</p>'
+        : ''}
+      <table class="sign">
+        <tr><td>Представитель<br/>подрядчика (генподрядчика)</td><td class="s">${blank(18)}<br/><span class="cap">(подпись)</span></td></tr>
+        <tr><td>Представитель<br/>Технического надзора<br/>заказчика</td><td class="s">${blank(18)}<br/><span class="cap">(подпись)</span></td></tr>
+        <tr><td>Представитель<br/>Технического надзора<br/>заказчика</td><td class="s">${blank(18)}<br/><span class="cap">(подпись)</span></td></tr>
+        <tr><td>Представителя авторского надзора</td><td class="s">${blank(18)}<br/><span class="cap">(подпись)</span></td></tr>
+        <tr><td>Дополнительные участники:<br/>фамилия, имя, отчество (при его наличии)</td><td class="s">${blank(18)}<br/><span class="cap">(подпись)</span></td></tr>
+      </table>`;
+}
+
+function osrSheet(input: ActDocInput, v: SectionActVariant): string {
+  const f = input.fields;
+  const spec = ACT_KIND_SPECS.OSR;
+  const oblast = bareOblast(input.oblast);
+  const rayon = bareRayon(input.rayon);
+
+  return `
+      <p class="right">${esc(spec.basis).replace(/\n/g, '<br/>')}</p>
+      <h1>${esc(spec.title)}</h1>
+      <p>Область ${or(oblast, 16)}, район ${or(rayon, 16)}</p>
+      <p>Участок ВОЛС: ${esc(volsTitle(input))}</p>
+      <p class="cap">(наименование участка ВОЛС)</p>
+      <p>1. Прокладка защитной полиэтиленовой трубы и предупредительной ленты</p>
+      <p class="cap">(наименование скрытых работ)</p>
+      ${actTable(actRows(input.totals, v, f, 'OSR'))}
+      <p>Глубина прокладки защитной полиэтиленовой трубы составляет по проекту ${
+        esc(fmtDepth(v.designDepthM))} м, фактически ${esc(fmtDepth(v.actualDepthM))} м;</p>
+      <p>Обваловка (выполнено, не выполнено, предусмотрено / не предусмотрено) ${
+        or(f.obvalovka, 12)};</p>
+      <p>Восстановление, а/бетонных покрытий (выполнено, не выполнено, выполнено частично,
+        не требуется, не предусматривается проектом) ${or(f.pavement, 12)};</p>
+      <p>Установлено идентификационных столбиков ${
+        f.markerPosts === undefined ? blank(4) : esc(String(f.markerPosts))} шт.</p>
+      <p>Установлено шаровых маркеров ${
+        f.ballMarkers === undefined ? blank(4) : esc(String(f.ballMarkers))} шт.</p>
+      <p class="ind">2. При выполнении работ применены:</p>
+      <p class="ind">- ${esc(f.materials ?? ACT_MATERIALS_DEFAULT)}</p>
+      <p>3. При выполнении допущены отклонения от проектно-сметной документации ${
+        esc(deviationSummary(v))}.</p>
+      <p>Протокол Мобильной группы ${esc(v.isMain ? '№______ от _______' : protocolRef(v))}</p>
+      <p>4. Дата начала работ:${
+        input.dateFrom ? ` ${esc(fmtDate(input.dateFrom))} ` : blank(9)} года, окончания работ ${
+        input.dateTo ? `${esc(fmtDate(input.dateTo))} ` : blank(9)} года</p>
+      ${v.blocked
+        ? '<p class="warn">Протокол мобильной группы не оформлен — акт не подлежит подписанию.</p>'
+        : ''}
+      <p class="mt">Начальник ПТО ТУСМ-${or(f.tusm, 4)}${blank(55)}</p>
+      <p class="cap">(ФИО, подпись)</p>
+      <p>Представитель технологического надзора ${blank(49)}</p>
+      <p class="cap">(ФИО, подпись)</p>`;
+}
+
 /**
  * Один файл на участок: основной акт и акты по отклонениям идут листами
  * подряд. Их подписывают вместе, и разносить их по файлам — лишняя работа
  * для того, кто потом это отправляет.
  */
-export function actDocHtml(input: ActDocInput): string {
-  const spec = ACT_KIND_SPECS[input.kind];
-  const place = [input.oblast, input.rayon ? withRayonWord(input.rayon) : '']
-    .filter(Boolean).join(', ');
-
-  const sheets = input.variants.map((v, i) => {
-    const rows = actRows(input.totals, v, input.fields).map((r) => `
-      <tr>
-        <td class="lbl"${r.indent ? ' style="padding-left:24pt"' : ''}>
-          ${r.n ? `${esc(r.n)}. ` : ''}${esc(r.label)}
-        </td>
-        <td class="val">${esc(r.value)}${r.unit ? ` ${esc(r.unit)}` : ''}</td>
-      </tr>`).join('');
-
-    const title = v.isMain
-      ? spec.title
-      : `${spec.title} (участок с отклонением по глубине)`;
-
+export function actDocBody(input: ActDocInput): string {
+  return input.variants.map((v, i) => {
+    const sheet = input.kind === 'ASR' ? asrSheet(input, v) : osrSheet(input, v);
     return `
-    <div class="sheet"${i > 0 ? ' style="page-break-before:always"' : ''}>
-      <p class="basis">${esc(spec.basis)}</p>
-      <h1>${esc(title)}</h1>
-      <p class="meta">
-        ${input.fields.actNumber ? `№ ${esc(input.fields.actNumber)}` : '№ ______'}
-        &nbsp;&nbsp;от ${input.fields.actDate ? esc(fmtDate(input.fields.actDate)) : '«___» ____________ 20___ г.'}
-        ${input.fields.city ? `&nbsp;&nbsp;г. ${esc(input.fields.city)}` : ''}
-      </p>
-      <table class="head">
-        <tr><td class="k">Объект:</td><td>${esc(input.uchastok)}${place ? `, ${esc(place)}` : ''}</td></tr>
-        <tr><td class="k">Подрядчик:</td><td>${esc(input.contractor ?? '____________________')}</td></tr>
-        ${input.performer && input.performer !== input.contractor
-          ? `<tr><td class="k">Работы вёл:</td><td>${esc(input.performer)}</td></tr>` : ''}
-        <tr><td class="k">Период работ:</td><td>${esc(fmtDate(input.dateFrom))} — ${esc(fmtDate(input.dateTo))}</td></tr>
-      </table>
-      <table class="act">${rows}</table>
-      ${!v.isMain && v.deviations.length
-        ? `<p class="note">Причины отклонения: ${esc([...new Set(v.deviations.map((d: Deviation) => d.reason))].join(', '))}</p>`
-        : ''}
-      ${!v.isMain && v.blocked
-        ? '<p class="warn">Протокол мобильной группы не оформлен — акт не подлежит подписанию.</p>'
-        : ''}
-      <table class="sign">
-        <tr>
-          <td>Представитель подрядчика<br/><span class="line">&nbsp;</span><br/><span class="sub">подпись, Ф.И.О.</span></td>
-          <td>Представитель технадзора<br/><span class="line">&nbsp;</span><br/><span class="sub">подпись, Ф.И.О.</span></td>
-          <td>Представитель заказчика<br/><span class="line">&nbsp;</span><br/><span class="sub">подпись, Ф.И.О.</span></td>
-        </tr>
-      </table>
+    <div class="sheet"${i > 0 ? ' style="page-break-before:always"' : ''}>${sheet}
     </div>`;
   }).join('');
+}
 
+/**
+ * Оформление бланка. Одно и то же и в файле, и на экране: предпросмотр,
+ * который отличается от документа, ничего не проверяет.
+ */
+export const ACT_DOC_CSS = `
+  .act-doc { font-family: "Times New Roman", serif; font-size: 12pt; color: #000; background: #fff; }
+  .act-doc p { margin: 0 0 2pt; text-align: justify; line-height: 1.15; }
+  .act-doc h1 { font-size: 12pt; font-weight: bold; text-align: center; margin: 8pt 0; }
+  .act-doc .right { text-align: right; }
+  .act-doc .center { text-align: center; }
+  .act-doc .b { font-weight: bold; }
+  .act-doc .ind { text-indent: 28pt; }
+  .act-doc .obj { text-align: center; font-weight: bold; margin-top: 6pt; }
+  .act-doc .cap { font-size: 9pt; text-align: center; margin: 0 0 6pt; }
+  .act-doc .rule { word-break: break-all; }
+  .act-doc .warn { font-weight: bold; margin: 6pt 0; }
+  .act-doc .mt { margin-top: 18pt; }
+  .act-doc table.act { width: 100%; border-collapse: collapse; margin: 6pt 0; }
+  .act-doc table.act td { border: 0.5pt solid #000; padding: 2pt 4pt; font-size: 12pt; vertical-align: middle; }
+  .act-doc table.act td.lbl { text-align: justify; }
+  .act-doc table.act td.val { text-align: center; width: 18%; white-space: nowrap; }
+  .act-doc table.act td.unit { text-align: left; width: 8%; white-space: nowrap; }
+  .act-doc table.sign { width: 100%; border-collapse: collapse; margin-top: 18pt; }
+  .act-doc table.sign td { padding: 4pt 4pt 10pt; vertical-align: bottom; }
+  .act-doc table.sign td.s { width: 42%; text-align: center; }
+`;
+
+export function actDocHtml(input: ActDocInput): string {
+  const spec = ACT_KIND_SPECS[input.kind];
   return `<html xmlns:o="urn:schemas-microsoft-com:office:office"
       xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
 <head><meta charset="utf-8"/>
 <title>${esc(spec.short)} — ${esc(input.uchastok)}</title>
 <!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml><![endif]-->
 <style>
-  @page { size: A4; margin: 2cm 1.5cm; }
-  body { font-family: "Times New Roman", serif; font-size: 11pt; color: #000; }
-  h1 { font-size: 13pt; text-align: center; margin: 6pt 0; text-transform: uppercase; }
-  .basis { text-align: right; font-size: 9pt; color: #444; margin: 0; }
-  .meta { text-align: center; font-size: 10pt; margin: 0 0 10pt; }
-  table { width: 100%; border-collapse: collapse; }
-  table.head td { padding: 2pt 4pt; font-size: 10pt; vertical-align: top; }
-  table.head td.k { width: 26%; color: #444; }
-  table.act td { border-bottom: 0.5pt solid #999; padding: 3pt 4pt; vertical-align: top; }
-  table.act td.val { text-align: right; white-space: nowrap; width: 32%; }
-  .note { font-size: 10pt; margin-top: 6pt; }
-  .warn { font-size: 10pt; margin-top: 6pt; font-weight: bold; }
-  table.sign { margin-top: 24pt; }
-  table.sign td { width: 33%; font-size: 10pt; vertical-align: top; padding-right: 10pt; }
-  .line { display: inline-block; border-bottom: 0.5pt solid #000; width: 90%; }
-  .sub { font-size: 8pt; color: #444; }
-</style></head>
-<body>${sheets}</body></html>`;
+  @page { size: A4; margin: 1.5cm 1.5cm 1.5cm 2.5cm; }
+  body { margin: 0; }
+${ACT_DOC_CSS}</style></head>
+<body class="act-doc">${actDocBody(input)}</body></html>`;
 }
 
 /** Имя файла: участок и вид акта — чтобы в почте было видно без открытия. */

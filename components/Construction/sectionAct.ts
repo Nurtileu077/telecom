@@ -30,7 +30,11 @@ import {
  */
 
 export type Recultivation = 'выполнена' | 'не выполнена';
-export type PavementRestore = 'выполнено' | 'не выполнено' | 'не предусматривается проектом';
+
+/** Варианты ровно те, что перечислены в скобках самого бланка. */
+export type PavementRestore =
+  | 'выполнено' | 'не выполнено' | 'выполнено частично'
+  | 'не требуется' | 'не предусмотрено проектом';
 
 /**
  * Один акт АСР/ОСР: участок трассы, уложенный на одной глубине.
@@ -64,6 +68,8 @@ export interface SectionActManual {
   openSteel63M?: number;
   recultivation?: Recultivation;
   pavement?: PavementRestore;
+  /** Обваловка — строка ОСР под таблицей. */
+  obvalovka?: string;
   /** Идентификационные столбики и шаровые маркеры, штуки. */
   markerPosts?: number;
   ballMarkers?: number;
@@ -71,11 +77,50 @@ export interface SectionActManual {
   actNumber?: string;
   actDate?: string;
   city?: string;
+
+  // ── Шапки бланков ──────────────────────────────────────────────────────
+  /** АСР: «наименование и место расположения объекта». */
+  objectName?: string;
+  /** ОСР: «Участок ВОЛС: от … до …». */
+  volsFrom?: string;
+  volsTo?: string;
+  /** Сельский округ — им заканчивается название участка в обоих бланках. */
+  selsovet?: string;
+  /** Генподрядчик, от чьего имени подписывают: в бланке это АО «Транстелеком». */
+  genContractor?: string;
+  /** «а также представителей, дополнительно участвующих в освидетельствовании». */
+  extraParticipants?: string;
+  /** АСР п.2: проектная организация, № чертежей. */
+  psd?: string;
+  /** Применённые материалы: в бланке это длинная постоянная строка. */
+  materials?: string;
+  /** АСР: «разрешается производство последующих работ по устройству (монтажу) …». */
+  nextWorks?: string;
+  /** ОСР: номер ТУСМ в подписи начальника ПТО. */
+  tusm?: string;
 }
+
+/**
+ * Постоянные строки бланков.
+ *
+ * Их печатают в каждом акте одинаково, и набирать их заново — только
+ * плодить расхождения между актами одного объекта. Поправить можно в полях.
+ */
+export const ACT_MATERIALS_DEFAULT =
+  'Пакет микротрубок kCl-SRV-G 2х14/10 tc-blue, Лента ЛСС 50мм/250м/100мкм '
+  + '(«Не копать! Оптический кабель АО «Казахтелеком») (2 проводника), '
+  + 'Соединитель прямой DSM 14, Заглушка концевая ES 14.';
+
+export const ACT_NEXT_WORKS_DEFAULT = 'Задувка волоконно-оптического кабеля';
+
+export const ACT_GEN_CONTRACTOR_DEFAULT = 'АО «Транстелеком»';
 
 export const DEFAULT_ACT_MANUAL: SectionActManual = {
   recultivation: 'выполнена',
-  pavement: 'не предусматривается проектом',
+  pavement: 'не предусмотрено проектом',
+  genContractor: ACT_GEN_CONTRACTOR_DEFAULT,
+  materials: ACT_MATERIALS_DEFAULT,
+  nextWorks: ACT_NEXT_WORKS_DEFAULT,
 };
 
 /** Считается из журнала. */

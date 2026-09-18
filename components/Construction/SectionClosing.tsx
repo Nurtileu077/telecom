@@ -7,20 +7,20 @@ import {
   SectionActManual, DEFAULT_ACT_MANUAL, Recultivation, PavementRestore,
 } from './sectionAct';
 import {
-  actRows, actDocHtml, actFileName, fmtDate, withRayonWord,
-  ActKind, ACT_KIND_SPECS, DOC_MIME,
+  actDocBody, actDocHtml, actFileName, ACT_DOC_CSS,
+  ActKind, ACT_KIND_SPECS, DOC_MIME, ActDocInput,
 } from './actDocument';
 
 /**
- * Закрытие участка: таблица АСР/ОСР, заполненная из дневных записей.
+ * Закрытие участка: АСР и ОСР по бланкам заказчика, заполненные из журнала.
  *
- * Показывается столько актов, сколько фактических глубин на участке:
- * основной по проекту и по одному на каждое отклонение. Строки, которые
- * считаются из журнала, подставлены; те, которых в дневном отчёте нет,
- * остаются полями для заполнения и подписаны как ручные.
+ * На экране показывается не пересказ акта, а сам акт: та же разметка, что
+ * уходит в файл. Пересказ всегда однажды разойдётся с документом, и заметят
+ * это на приёмке.
  *
- * Печать — обычная печать браузера: так получается и бумага, и PDF, и не
- * нужен внешний генератор документов.
+ * Актов столько, сколько фактических глубин на участке: основной по проекту
+ * и по одному на каждое отклонение. Строки, которые считаются из дневных
+ * записей, подставлены; то, чего в журнале нет по существу, остаётся полями.
  */
 
 interface Props {
@@ -29,7 +29,10 @@ interface Props {
 }
 
 const RECULT: Recultivation[] = ['выполнена', 'не выполнена'];
-const PAVEMENT: PavementRestore[] = ['выполнено', 'не выполнено', 'не предусматривается проектом'];
+const PAVEMENT: PavementRestore[] = [
+  'выполнено', 'не выполнено', 'выполнено частично',
+  'не требуется', 'не предусмотрено проектом',
+];
 
 export default function SectionClosing({ journal, onChangeFields }: Props) {
   const sections = useMemo(() => {
@@ -39,6 +42,7 @@ export default function SectionClosing({ journal, onChangeFields }: Props) {
   }, [journal.ground]);
 
   const [uchastok, setUchastok] = useState(sections[0] ?? '');
+  const [kind, setKind] = useState<ActKind>('OSR');
 
   const entries = useMemo(() => entriesOfSection(journal.ground, uchastok), [journal.ground, uchastok]);
   const devs = useMemo(() => deviationsOfSection(journal.deviations, uchastok), [journal.deviations, uchastok]);
@@ -55,32 +59,34 @@ export default function SectionClosing({ journal, onChangeFields }: Props) {
     ? documentContractor(journal.contractors, performerName)
     : undefined;
 
+  // Пустой акт хуже отсутствующего: его подпишут не глядя.
+  const nothingToSign = totals.variants.length === 0;
+
+  const docInput = (k: ActKind): ActDocInput => ({
+    kind: k,
+    uchastok,
+    oblast: first?.oblast,
+    rayon: first?.rayon,
+    contractor: docContractor?.fullName ?? docContractor?.name,
+    performer: performerName,
+    dateFrom: totals.dateFrom,
+    dateTo: totals.dateTo,
+    totals, variants: totals.variants, fields,
+  });
+
   /**
    * Акт файлом. Word-совместимый HTML: открывается как документ, правится
    * и уходит в письме — печать в PDF для этого не годится.
    */
-  // Пустой акт хуже отсутствующего: его подпишут не глядя.
-  const nothingToSign = totals.variants.length === 0;
-
-  const downloadAct = (kind: ActKind) => {
+  const downloadAct = (k: ActKind) => {
     if (nothingToSign) return;
-    const html = actDocHtml({
-      kind,
-      uchastok,
-      oblast: first?.oblast,
-      rayon: first?.rayon,
-      contractor: docContractor?.fullName ?? docContractor?.name,
-      performer: performerName,
-      dateFrom: totals.dateFrom,
-      dateTo: totals.dateTo,
-      totals, variants: totals.variants, fields,
-    });
+    const html = actDocHtml(docInput(k));
     // BOM — иначе Word открывает кириллицу кракозябрами.
-    const blob = new Blob(['\ufeff', html], { type: DOC_MIME });
+    const blob = new Blob(['﻿', html], { type: DOC_MIME });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = actFileName(kind, uchastok, fields.actDate);
+    a.download = actFileName(k, uchastok, fields.actDate);
     document.body.appendChild(a);
     a.click();
     // Якорь убираем не сразу: если удалить его в тот же тик, браузер
@@ -107,16 +113,23 @@ export default function SectionClosing({ journal, onChangeFields }: Props) {
                 className="flex-1 min-w-[220px] bg-[var(--bg-canvas)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[12px] text-[var(--text)]">
           {sections.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
-        {(['ASR', 'OSR'] as ActKind[]).map((k) => (
-          <button key={k} type="button" className="btn text-[11px]"
-                  disabled={nothingToSign}
-                  title={nothingToSign
-                    ? 'По участку нет объёмов прокладки — акт составлять не из чего'
-                    : `Скачать ${ACT_KIND_SPECS[k].short} — открывается в Word`}
-                  onClick={() => downloadAct(k)}>
-            <FileDown size={14} />{ACT_KIND_SPECS[k].short}
-          </button>
-        ))}
+        <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md">
+          {(['OSR', 'ASR'] as ActKind[]).map((k) => (
+            <button key={k} type="button" onClick={() => setKind(k)}
+                    className={`px-2.5 py-1 text-[11px] rounded ${
+                      kind === k ? 'bg-[var(--accent)]/15 text-[var(--accent)]' : 'text-[var(--text-muted)]'}`}>
+              {ACT_KIND_SPECS[k].short}
+            </button>
+          ))}
+        </div>
+        <button type="button" className="btn text-[11px]"
+                disabled={nothingToSign}
+                title={nothingToSign
+                  ? 'По участку нет объёмов прокладки — акт составлять не из чего'
+                  : `Скачать ${ACT_KIND_SPECS[kind].short} — открывается в Word`}
+                onClick={() => downloadAct(kind)}>
+          <FileDown size={14} />Скачать {ACT_KIND_SPECS[kind].short}
+        </button>
         <button type="button" className="btn btn-primary text-[11px]" onClick={() => window.print()}>
           <Printer size={14} />Печать
         </button>
@@ -145,85 +158,75 @@ export default function SectionClosing({ journal, onChangeFields }: Props) {
       {/* Ручные поля — их нет в дневном отчёте */}
       <details className="no-print rounded-lg border border-[var(--border)] bg-[var(--bg-surface)]">
         <summary className="px-3 py-2 text-[11.5px] text-[var(--text-muted)] cursor-pointer hover:text-[var(--text)]">
-          Поля акта, которых нет в журнале — заполните вручную
+          Поля бланка, которых нет в журнале — заполните вручную
         </summary>
-        <div className="p-3 pt-0 grid grid-cols-2 lg:grid-cols-4 gap-2">
-          <Num label="ГНБ с ПЭТ-63, м" value={fields.gnbPet63M} onChange={(v) => setField('gnbPet63M', v)} />
-          <Num label="ГНБ с ПЭТ-110, м" value={fields.gnbPet110M} onChange={(v) => setField('gnbPet110M', v)} />
-          <Num label="Открытый, ПЭТ-63, м" value={fields.openPet63M} onChange={(v) => setField('openPet63M', v)} />
-          <Num label="Открытый, ст. труба, м" value={fields.openSteel63M} onChange={(v) => setField('openSteel63M', v)} />
-          <Num label="Столбиков, шт" value={fields.markerPosts} onChange={(v) => setField('markerPosts', v)} />
-          <Num label="Шаровых маркеров, шт" value={fields.ballMarkers} onChange={(v) => setField('ballMarkers', v)} />
-          <label className="flex flex-col gap-1">
-            <span className="text-[10.5px] text-[var(--text-muted)]">Рекультивация</span>
-            <select value={fields.recultivation} onChange={(e) => setField('recultivation', e.target.value as Recultivation)}
-                    className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1 text-[11px] text-[var(--text)]">
-              {RECULT.map((r) => <option key={r} value={r}>{r}</option>)}
-            </select>
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-[10.5px] text-[var(--text-muted)]">А/бетонные покрытия</span>
-            <select value={fields.pavement} onChange={(e) => setField('pavement', e.target.value as PavementRestore)}
-                    className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1 text-[11px] text-[var(--text)]">
-              {PAVEMENT.map((r) => <option key={r} value={r}>{r}</option>)}
-            </select>
-          </label>
+        <div className="p-3 pt-0 flex flex-col gap-3">
+          <Group title="Реквизиты">
+            <Txt label="Номер акта" value={fields.actNumber} onChange={(v) => setField('actNumber', v)} />
+            <label className="flex flex-col gap-1">
+              <span className="text-[10.5px] text-[var(--text-muted)]">Дата акта</span>
+              <input type="date" value={fields.actDate ?? ''}
+                     onChange={(e) => setField('actDate', e.target.value || undefined)}
+                     className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1 text-[11px] text-[var(--text)]" />
+            </label>
+            <Txt label="Город" value={fields.city} onChange={(v) => setField('city', v)} />
+            <Txt label="Генподрядчик" value={fields.genContractor} onChange={(v) => setField('genContractor', v)} />
+          </Group>
+
+          <Group title="Участок ВОЛС">
+            <Txt label="От (точка А)" value={fields.volsFrom} onChange={(v) => setField('volsFrom', v)} />
+            <Txt label="До (точка Б)" value={fields.volsTo} onChange={(v) => setField('volsTo', v)} />
+            <Txt label="Сельский округ" value={fields.selsovet} onChange={(v) => setField('selsovet', v)} />
+            <Txt label="№ ТУСМ (подпись ОСР)" value={fields.tusm} onChange={(v) => setField('tusm', v)} />
+          </Group>
+
+          <Group title="Переходы, м">
+            <Num label="ГНБ с ПЭТ-63" value={fields.gnbPet63M} onChange={(v) => setField('gnbPet63M', v)} />
+            <Num label="ГНБ с ПЭТ-110" value={fields.gnbPet110M} onChange={(v) => setField('gnbPet110M', v)} />
+            <Num label="Открытый, ПЭТ-63" value={fields.openPet63M} onChange={(v) => setField('openPet63M', v)} />
+            <Num label="Открытый, ст. труба" value={fields.openSteel63M} onChange={(v) => setField('openSteel63M', v)} />
+          </Group>
+
+          <Group title="После таблицы">
+            <Num label="Столбиков, шт" value={fields.markerPosts} onChange={(v) => setField('markerPosts', v)} />
+            <Num label="Шаровых маркеров, шт" value={fields.ballMarkers} onChange={(v) => setField('ballMarkers', v)} />
+            <label className="flex flex-col gap-1">
+              <span className="text-[10.5px] text-[var(--text-muted)]">Рекультивация</span>
+              <select value={fields.recultivation} onChange={(e) => setField('recultivation', e.target.value as Recultivation)}
+                      className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1 text-[11px] text-[var(--text)]">
+                {RECULT.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10.5px] text-[var(--text-muted)]">А/бетонные покрытия</span>
+              <select value={fields.pavement} onChange={(e) => setField('pavement', e.target.value as PavementRestore)}
+                      className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1 text-[11px] text-[var(--text)]">
+                {PAVEMENT.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </label>
+            <Txt label="Обваловка" value={fields.obvalovka} onChange={(v) => setField('obvalovka', v)} />
+          </Group>
+
+          <Wide label="Наименование объекта (АСР)" value={fields.objectName}
+                onChange={(v) => setField('objectName', v)}
+                hint="Пусто — соберётся из точек А/Б, области и района" />
+          <Wide label="Проектно-сметная документация (АСР, п.2)" value={fields.psd}
+                onChange={(v) => setField('psd', v)} />
+          <Wide label="Применённые материалы" value={fields.materials}
+                onChange={(v) => setField('materials', v)} />
+          <Wide label="Последующие работы (АСР, решение комиссии)" value={fields.nextWorks}
+                onChange={(v) => setField('nextWorks', v)} />
+          <Wide label="Дополнительные участники освидетельствования (АСР)"
+                value={fields.extraParticipants}
+                onChange={(v) => setField('extraParticipants', v)} />
         </div>
       </details>
 
-      {/* Акты */}
-      <div className="print-area flex flex-col gap-4">
-        {totals.variants.map((v, i) => (
-          <article key={i} className="act-sheet rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-4">
-            <header className="mb-3">
-              <div className="flex items-baseline gap-2 flex-wrap">
-                <h3 className="text-[13px] font-semibold text-[var(--text)]">
-                  {v.isMain ? 'Акт освидетельствования скрытых работ' : 'Акт на участок с отклонением'}
-                </h3>
-                {!v.isMain && (
-                  <span className="no-print text-[10px] px-1.5 py-0.5 rounded"
-                        style={{ color: v.blocked ? 'var(--warn)' : 'var(--success)',
-                                 border: `1px solid ${v.blocked ? 'var(--warn)' : 'var(--success)'}` }}>
-                    {v.blocked ? 'нет протокола МГ' : 'протокол есть'}
-                  </span>
-                )}
-              </div>
-              <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
-                {uchastok}
-                {first?.oblast ? ` · ${first.oblast}` : ''}
-                {first?.rayon ? `, ${withRayonWord(first.rayon)}` : ''}
-              </p>
-              <p className="text-[11px] text-[var(--text-muted)]">
-                {docContractor
-                  ? <>Подрядчик: <b className="text-[var(--text)]">{docContractor.fullName ?? docContractor.name}</b></>
-                  : 'Подрядчик не указан'}
-                {performerName && docContractor && performerName !== docContractor.name && (
-                  <> · работы вёл {performerName}</>
-                )}
-              </p>
-              {totals.dateFrom && (
-                <p className="text-[11px] text-[var(--text-muted)]">
-                  Работы: {fmtDate(totals.dateFrom)} — {fmtDate(totals.dateTo)}
-                </p>
-              )}
-            </header>
-
-            <table className="w-full text-[11.5px] border-collapse">
-              <tbody>
-                {actRows(totals, v, fields).map((r, ri) => (
-                  <Row key={ri} n={r.n} label={r.label} value={r.value} unit={r.unit}
-                       indent={r.indent} strong={r.strong} manual={r.manual} />
-                ))}
-              </tbody>
-            </table>
-
-            {!v.isMain && v.deviations.length > 0 && (
-              <p className="mt-2 text-[11px] text-[var(--text-muted)]">
-                Причины: {[...new Set(v.deviations.map((d) => d.reason))].join(', ')}
-              </p>
-            )}
-          </article>
-        ))}
+      {/* Сам документ: то же, что уйдёт в файл */}
+      <div className="print-area act-preview">
+        {!nothingToSign && (
+          <div className="act-doc" dangerouslySetInnerHTML={{ __html: actDocBody(docInput(kind)) }} />
+        )}
       </div>
 
       <p className="no-print text-[10.5px] text-[var(--text-muted)]">
@@ -232,41 +235,66 @@ export default function SectionClosing({ journal, onChangeFields }: Props) {
         распределение знает только исполнитель. Проверьте перед подписанием.
       </p>
 
+      {/* Оформление бланка — общее с файлом, чтобы предпросмотр не врал */}
+      <style dangerouslySetInnerHTML={{ __html: ACT_DOC_CSS }} />
       <style jsx global>{`
+        .act-preview .act-doc { background: transparent; }
+        .act-preview .act-doc .sheet {
+          background: #fff;
+          padding: 16mm 14mm;
+          margin-bottom: 10px;
+          border-radius: 4px;
+          overflow-x: auto;
+        }
         @media print {
           body * { visibility: hidden; }
           .print-area, .print-area * { visibility: visible; }
           .print-area { position: absolute; inset: 0; padding: 0; }
           .no-print { display: none !important; }
-          .act-sheet {
+          .act-preview .act-doc .sheet {
+            padding: 0;
+            border-radius: 0;
+            margin: 0;
             page-break-after: always;
-            border: none !important;
-            background: #fff !important;
-            color: #000 !important;
           }
-          .act-sheet * { color: #000 !important; }
-          .act-sheet td { border-bottom: 1px solid #ccc; }
         }
       `}</style>
     </div>
   );
 }
 
-function Row({ n, label, value, unit, indent, strong, manual }: {
-  n?: string; label: string; value: string; unit?: string;
-  indent?: boolean; strong?: boolean; manual?: boolean;
+function Group({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section>
+      <p className="text-[10px] uppercase tracking-widest text-[var(--text-muted)] mb-1.5">{title}</p>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">{children}</div>
+    </section>
+  );
+}
+
+function Txt({ label, value, onChange }: {
+  label: string; value?: string; onChange: (v: string | undefined) => void;
 }) {
   return (
-    <tr className="border-b border-[var(--border)] last:border-0">
-      <td className={`py-1 pr-2 align-top ${indent ? 'pl-4' : ''} ${strong ? 'font-semibold text-[var(--text)]' : 'text-[var(--text-muted)]'}`}>
-        {n && <span className="text-[var(--text)] mr-1">{n}.</span>}
-        {label}
-        {manual && <span className="no-print text-[9px] text-[var(--warn)] ml-1">вручную</span>}
-      </td>
-      <td className={`py-1 text-right font-mono tabular-nums whitespace-nowrap ${strong ? 'font-semibold text-[var(--text)]' : 'text-[var(--text)]'}`}>
-        {value}{unit ? ` ${unit}` : ''}
-      </td>
-    </tr>
+    <label className="flex flex-col gap-1">
+      <span className="text-[10.5px] text-[var(--text-muted)] truncate" title={label}>{label}</span>
+      <input value={value ?? ''} onChange={(e) => onChange(e.target.value || undefined)}
+             className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1 text-[11px] text-[var(--text)]" />
+    </label>
+  );
+}
+
+function Wide({ label, value, onChange, hint }: {
+  label: string; value?: string; onChange: (v: string | undefined) => void; hint?: string;
+}) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-[10.5px] text-[var(--text-muted)]">
+        {label}{hint && <span className="ml-1 text-[var(--text-muted)]/70">— {hint}</span>}
+      </span>
+      <textarea rows={2} value={value ?? ''} onChange={(e) => onChange(e.target.value || undefined)}
+                className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1 text-[11px] text-[var(--text)] resize-y" />
+    </label>
   );
 }
 
