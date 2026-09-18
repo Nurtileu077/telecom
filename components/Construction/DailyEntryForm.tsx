@@ -72,9 +72,23 @@ export default function DailyEntryForm({ journal, initial, onSave, onClose }: Pr
   });
   const [equipment, setEquipment] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
-    if (initial?.equipment) for (const [k, v] of Object.entries(initial.equipment)) init[k] = String(v);
+    if (initial?.equipment) {
+      for (const [k, v] of Object.entries(initial.equipment)) init[k] = String(v);
+    } else if (last?.equipment) {
+      // Техника вчерашней смены переносится: колонна не меняет
+      // кабелеукладчик на манипулятор каждое утро.
+      for (const [k, v] of Object.entries(last.equipment)) init[k] = String(v);
+    }
     return init;
   });
+  /** Что сегодня не вышло и почему — спрашиваем, когда убирают вчерашнее. */
+  const [equipmentOff, setEquipmentOff] = useState<Record<string, string>>(
+    () => ({ ...(initial?.equipmentOff ?? {}) }),
+  );
+  /** Продолжаем вчерашний участок или начали новый. */
+  const [continued, setContinued] = useState<boolean | null>(
+    correcting || !last?.uchastok ? true : null,
+  );
   const [ductMarks, setDuctMarks] = useState<{ coil: string; meters: string }[]>(
     () => (initial?.ductMarks ?? []).map((m) => ({ coil: m.coil, meters: String(m.meters) })),
   );
@@ -197,6 +211,7 @@ export default function DailyEntryForm({ journal, initial, onSave, onClose }: Pr
         }
         return Object.keys(o).length ? o : undefined;
       })(),
+      equipmentOff: Object.keys(equipmentOff).length ? equipmentOff : undefined,
       equipment: (() => {
         const e: Record<string, number> = {};
         for (const [k, v] of Object.entries(equipment)) {
@@ -219,7 +234,19 @@ export default function DailyEntryForm({ journal, initial, onSave, onClose }: Pr
       createdAt: initial?.createdAt ?? now, updatedAt: now, sync: 'local',
     }, correcting ? reason.trim() : undefined);
 
-    if (!correcting) saveLastContext({ smu, contractor, column, oblast, rayon, uchastok, kato, tech });
+    if (!correcting) {
+      saveLastContext({
+        smu, contractor, column, oblast, rayon, uchastok, kato, tech, date,
+        equipment: (() => {
+          const out: Record<string, number> = {};
+          for (const [k, v] of Object.entries(equipment)) {
+            const n = parseFloat(String(v).replace(',', '.'));
+            if (Number.isFinite(n) && n > 0) out[k] = n;
+          }
+          return out;
+        })(),
+      });
+    }
     onClose();
   };
 
@@ -246,6 +273,39 @@ export default function DailyEntryForm({ journal, initial, onSave, onClose }: Pr
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-4">
+          {/* Продолжаем вчерашнее или начали новое.
+              Вопрос заранее избавляет от половины ввода: участок, колонна,
+              подрядчик и техника подставлены — остаётся вписать цифры. */}
+          {continued === null && last && (
+            <div className="rounded-lg border border-[var(--accent)]/40 bg-[var(--accent-dim)] p-3 flex flex-col gap-2">
+              <div className="text-[12.5px] text-[var(--text)]">
+                {last.date
+                  ? `${new Date(`${last.date}T00:00:00Z`).toLocaleDateString('ru')} работали на «${last.uchastok}»`
+                  : `В прошлый раз работали на «${last.uchastok}»`}
+                {last.column ? ` · ${last.column}` : ''}
+                {Object.keys(last.equipment ?? {}).length
+                  ? ` · техника: ${Object.entries(last.equipment ?? {}).map(([k, v]) => `${k} ${v}`).join(', ')}`
+                  : ''}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" className="btn btn-primary text-[11.5px]"
+                        onClick={() => setContinued(true)}>
+                  Продолжаем здесь
+                </button>
+                <button type="button" className="btn btn-ghost text-[11.5px]"
+                        onClick={() => {
+                          // Новый участок: чистим место и технику, остальное
+                          // (СМУ, подрядчик, колонна) обычно то же самое.
+                          setContinued(false);
+                          setUchastok(''); setKato(''); setOblast(''); setRayon('');
+                          setEquipment({});
+                        }}>
+                  Новый участок
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Где */}
           <Group title="Где">
             <div className="grid grid-cols-2 gap-2">
@@ -392,13 +452,46 @@ export default function DailyEntryForm({ journal, initial, onSave, onClose }: Pr
               </Group>
 
               <Group title="Состав техники">
+                {last?.equipment && Object.keys(last.equipment).length > 0 && !correcting && (
+                  <p className="text-[10.5px] text-[var(--text-muted)] leading-snug -mt-1">
+                    Перенесена со вчерашней смены. Убираете — скажите почему,
+                    и причина сама попадёт в отчёт.
+                  </p>
+                )}
                 <div className="grid grid-cols-2 gap-2">
                   {EQUIPMENT_KINDS.map((k) => (
                     <NumField key={k} id={`ce-eq-${k}`} label={k} unit="шт"
                               value={equipment[k] ?? ''}
-                              onChange={(v) => setEquipment((p) => ({ ...p, [k]: v }))} />
+                              onChange={(v) => {
+                                const had = parseFloat(String(equipment[k] ?? '0').replace(',', '.')) > 0;
+                                const now = parseFloat(String(v).replace(',', '.')) > 0;
+                                setEquipment((p) => ({ ...p, [k]: v }));
+                                // Вчера была, сегодня убрали — спрашиваем причину.
+                                if (had && !now && (last?.equipment?.[k] ?? 0) > 0) {
+                                  const why = window.prompt(`Почему сегодня без «${k}»?`);
+                                  if (why && why.trim()) {
+                                    setEquipmentOff((p) => ({ ...p, [k]: why.trim() }));
+                                  }
+                                } else if (now) {
+                                  setEquipmentOff((p) => {
+                                    if (!(k in p)) return p;
+                                    const next = { ...p };
+                                    delete next[k];
+                                    return next;
+                                  });
+                                }
+                              }} />
                   ))}
                 </div>
+                {Object.keys(equipmentOff).length > 0 && (
+                  <div className="flex flex-col gap-1 mt-1">
+                    {Object.entries(equipmentOff).map(([k, why]) => (
+                      <div key={k} className="text-[11px] text-[var(--warn)]">
+                        Без «{k}»: {why}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </Group>
 
               <Group title="Метки трубы">

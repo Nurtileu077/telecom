@@ -443,7 +443,13 @@ export function drillMapLines(state: JournalState): DrillMapLine[] {
 
 const LAST_KEY = 'optiq-journal-last-v1';
 
-/** Что подставить в форму завтра, чтобы бригаде осталось вписать цифры. */
+/**
+ * Что подставить в форму завтра, чтобы бригаде осталось вписать цифры.
+ *
+ * Техника и состав переносятся вместе с участком: колонна не меняет
+ * кабелеукладчик на манипулятор каждое утро. Убрали — система спросит
+ * почему, и это окажется в отчёте само.
+ */
 export interface LastContext {
   smu: string;
   contractor?: string;
@@ -453,6 +459,10 @@ export interface LastContext {
   uchastok: string;
   kato: string;
   tech: import('@/types/construction').WorkTech;
+  /** Техника вчерашней смены: название → количество. */
+  equipment?: Record<string, number>;
+  /** Дата той записи — чтобы спросить «вчера был этот СНП, продолжаем?». */
+  date?: string;
 }
 
 export function loadLastContext(): LastContext | null {
