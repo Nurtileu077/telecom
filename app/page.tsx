@@ -40,6 +40,7 @@ import {
   type DrillMapPoint, type DeviationMapItem,
 } from '@/components/Construction/journalStore';
 import { snpMapPoints, type SnpMapPoint } from '@/components/Construction/snpMap';
+import { effectiveProgress } from '@/components/Construction/stageDerive';
 import {
   loadConstructionLayers, saveConstructionLayers,
   DEFAULT_CONSTRUCTION_LAYERS, type ConstructionLayers,
@@ -119,7 +120,11 @@ export default function HomePage() {
     setCrews(placedCrews(j));
     setMapDeviations(deviationMapItems(j));
     setPlanRoutes(j.planRoutes);
-    setSnpPoints(snpMapPoints(j.progress, { drills: j.drills, planRoutes: j.planRoutes }));
+    // Этапы считаем из журнала: на карте должно быть видно положение дел,
+    // даже если доску никто руками не вёл.
+    setSnpPoints(snpMapPoints(effectiveProgress(j.progress, j), {
+      drills: j.drills, planRoutes: j.planRoutes,
+    }));
   }, []);
   useEffect(() => { refreshJournalLayers(); }, [refreshJournalLayers]);
 

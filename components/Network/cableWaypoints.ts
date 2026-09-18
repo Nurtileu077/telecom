@@ -124,3 +124,49 @@ export function recalcLengthM(coords: LatLon[]): number {
   }
   return len;
 }
+
+/**
+ * Тянет вершину, сохраняя форму трассы.
+ *
+ * `collapseWaypoint` выбрасывал все спрятанные вершины пролёта, и трасса,
+ * обогнувшая озеро по дороге, после одного движения ручки превращалась в
+ * прямую. Здесь вместо этого вершины пролёта смещаются вместе с ручкой —
+ * тем меньше, чем дальше они от неё, — и к соседним ручкам смещение сходит
+ * на нет. Форма остаётся, тянется только то, за что взялись.
+ */
+export function warpWaypoint(
+  coords: LatLon[],
+  prevH: number | null,
+  index: number,
+  nextH: number | null,
+  lat: number,
+  lon: number,
+): LatLon[] {
+  if (index < 0 || index >= coords.length) return coords.map((c) => [...c] as LatLon);
+
+  const out = coords.map((c) => [...c] as LatLon);
+  const dLat = lat - coords[index][0];
+  const dLon = lon - coords[index][1];
+  out[index] = [lat, lon];
+  if (dLat === 0 && dLon === 0) return out;
+
+  const cum = polylineLengths(coords);
+
+  // Слева и справа от ручки смещение затухает к соседней ручке. Вес берём
+  // по длине вдоль линии, а не по номеру вершины: OSRM ставит точки
+  // неравномерно, и по номерам трассу бы перекосило.
+  const taper = (from: number, to: number) => {
+    const span = cum[to] - cum[from];
+    if (span <= 0) return;
+    for (let j = Math.min(from, to) + 1; j < Math.max(from, to); j++) {
+      const w = (cum[j] - cum[from]) / span;
+      const k = Math.max(0, Math.min(1, w));
+      out[j] = [coords[j][0] + dLat * k, coords[j][1] + dLon * k];
+    }
+  };
+
+  if (prevH !== null && prevH < index) taper(prevH, index);
+  if (nextH !== null && nextH > index) taper(nextH, index);
+
+  return out;
+}

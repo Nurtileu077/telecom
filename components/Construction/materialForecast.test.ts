@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  materialForecast, lowStock, negativeStock, daysLeftText, LOW_STOCK_DAYS,
+  materialForecast, lowStock, negativeStock, unknownStock, daysLeftText, LOW_STOCK_DAYS,
+  materialByScope,
 } from './materialForecast';
 import type { DailyWorkEntry, MaterialDelivery, MaterialKind } from '@/types/construction';
 
@@ -37,10 +38,20 @@ describe('остатки материалов', () => {
     expect(mkt.remaining).toBe(15000);
   });
 
-  it('расход без поставок даёт отрицательный остаток, а не ноль', () => {
-    // Это сигнал, что поставки внесены не полностью. Прятать нельзя.
+  it('приход не внесён — остаток ноль, а не минус пять тысяч', () => {
+    // Минус в этой клетке означал бы, что материал ушёл в минус. На деле
+    // его просто не отметили при поступлении, и это другая беда.
     const rows = materialForecast([g('2026-09-10', { 'МКТ': 5000 })], []);
-    expect(find(rows, 'МКТ').remaining).toBe(-5000);
+    const mkt = find(rows, 'МКТ');
+    expect(mkt.remaining).toBe(0);
+    expect(mkt.hasDeliveries).toBe(false);
+    expect(unknownStock(rows).map((s) => s.material)).toEqual(['МКТ']);
+    expect(negativeStock(rows)).toHaveLength(0);
+  });
+
+  it('приход внесён, а расход его перебил — вот это настоящий минус', () => {
+    const rows = materialForecast([g('2026-09-10', { 'МКТ': 5000 })], [d('МКТ', 3000)]);
+    expect(find(rows, 'МКТ').remaining).toBe(-2000);
     expect(negativeStock(rows).map((s) => s.material)).toEqual(['МКТ']);
   });
 
@@ -107,17 +118,22 @@ describe('на сколько хватит', () => {
     expect(find(rows, 'МКТ').daysLeft).toBe(9);
   });
 
-  it('при отрицательном остатке прогноз ноль, а не отрицательный', () => {
+  it('без внесённого прихода прогноза нет — считать не от чего', () => {
     const rows = materialForecast([g('2026-09-10', { 'МКТ': 1000 })], []);
+    expect(find(rows, 'МКТ').daysLeft).toBeNull();
+  });
+
+  it('при отрицательном остатке прогноз ноль, а не отрицательный', () => {
+    const rows = materialForecast([g('2026-09-10', { 'МКТ': 1000 })], [d('МКТ', 500)]);
     expect(find(rows, 'МКТ').daysLeft).toBe(0);
   });
 
-  it('отрицательный остаток не выдаётся за нехватку — это дыра в учёте', () => {
-    // Поставок нет вовсе: сообщать «пора отправлять» бессмысленно, пока
-    // приход не внесён. Для этого есть отдельное предупреждение.
+  it('позиция без прихода не выдаётся за нехватку — это дыра в учёте', () => {
+    // Сообщать «пора отправлять» бессмысленно, пока приход не внесён.
+    // Для этого есть отдельное предупреждение.
     const rows = materialForecast([g('2026-09-10', { 'МКТ': 1000 })], []);
     expect(lowStock(rows)).toHaveLength(0);
-    expect(negativeStock(rows).map((s) => s.material)).toEqual(['МКТ']);
+    expect(unknownStock(rows).map((s) => s.material)).toEqual(['МКТ']);
   });
 
   it('выделяет позиции, по которым пора отправлять', () => {
@@ -156,7 +172,8 @@ describe('отбор по области', () => {
 describe('подпись под цифрой', () => {
   const stock = (over: Partial<ReturnType<typeof materialForecast>[0]>) => ({
     material: 'МКТ' as MaterialKind, unit: 'м' as const,
-    delivered: 0, used: 0, remaining: 100, perDay: 10, daysLeft: 10, workingDays: 5,
+    delivered: 200, used: 100, remaining: 100, perDay: 10, daysLeft: 10, workingDays: 5,
+    hasDeliveries: true,
     ...over,
   });
 
@@ -174,5 +191,65 @@ describe('подпись под цифрой', () => {
     expect(daysLeftText(stock({ remaining: -5 }))).toBe('закончился');
     expect(daysLeftText(stock({ daysLeft: null }))).toBe('расхода нет');
     expect(daysLeftText(stock({ daysLeft: 0 }))).toBe('меньше дня');
+  });
+});
+
+describe('разрезы по территории', () => {
+  const entry = (oblast: string, rayon: string, materials: Partial<Record<MaterialKind, number>>): DailyWorkEntry => ({
+    kind: 'ground', id: `${oblast}-${rayon}-${Math.random()}`, date: '2026-09-10', smu: '',
+    oblast, rayon, uchastok: 'Еленовка', kato: '191',
+    byMethod: {}, materials,
+    createdAt: '2026-09-10T00:00:00Z', updatedAt: '2026-09-10T00:00:00Z',
+  });
+
+  const supply = (oblast: string, material: MaterialKind, qty: number, rayon?: string): MaterialDelivery => ({
+    id: `${oblast}-${material}-${qty}`, date: '2026-09-01', oblast, rayon, material, qty,
+    createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-01T00:00:00Z',
+  });
+
+  it('считает области отдельно', () => {
+    const rows = materialByScope(
+      [entry('Акмолинская', 'Зерендинский', { 'МКТ': 1000 }),
+       entry('Костанайская', 'Алтынсаринский', { 'МКТ': 4000 })],
+      [supply('Акмолинская', 'МКТ', 10000)],
+      'oblast',
+    );
+    expect(rows).toHaveLength(2);
+    const akmola = rows.find((r) => r.oblast === 'Акмолинская')!;
+    expect(find(akmola.stocks, 'МКТ').remaining).toBe(9000);
+    const kostanay = rows.find((r) => r.oblast === 'Костанайская')!;
+    expect(find(kostanay.stocks, 'МКТ').hasDeliveries).toBe(false);
+  });
+
+  it('районы показывают расход, пока приход на них не заводят', () => {
+    const rows = materialByScope(
+      [entry('Акмолинская', 'Зерендинский', { 'МКТ': 1000 }),
+       entry('Акмолинская', 'Бурабайский', { 'МКТ': 3000 })],
+      [supply('Акмолинская', 'МКТ', 10000)],
+      'rayon',
+    );
+    expect(rows.map((r) => r.rayon).sort()).toEqual(['Бурабайский', 'Зерендинский']);
+    const zerenda = rows.find((r) => r.rayon === 'Зерендинский')!;
+    expect(find(zerenda.stocks, 'МКТ').used).toBe(1000);
+    expect(find(zerenda.stocks, 'МКТ').hasDeliveries).toBe(false);
+  });
+
+  it('накладная с районом даёт районный остаток', () => {
+    const rows = materialByScope(
+      [entry('Акмолинская', 'Зерендинский', { 'МКТ': 1000 })],
+      [supply('Акмолинская', 'МКТ', 4000, 'Зерендинский')],
+      'rayon',
+    );
+    expect(find(rows[0].stocks, 'МКТ').remaining).toBe(3000);
+  });
+
+  it('первым идёт тот, у кого запас кончается раньше', () => {
+    const rows = materialByScope(
+      [entry('Скоро', 'р1', { 'МКТ': 1000 }), entry('Ещё есть', 'р2', { 'МКТ': 1000 })],
+      [supply('Скоро', 'МКТ', 2000), supply('Ещё есть', 'МКТ', 50000)],
+      'oblast',
+    );
+    expect(rows[0].oblast).toBe('Скоро');
+    expect(rows[0].minDaysLeft).toBe(1);
   });
 });

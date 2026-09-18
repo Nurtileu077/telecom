@@ -454,23 +454,34 @@ export function setStage(
   stage: SnpStage,
   patch: Partial<StageState>,
   by: string,
+  /** Данные села — нужны, когда карточку ещё не заводили. */
+  meta?: { snp?: string; oblast?: string; rayon?: string },
 ): JournalState {
   const now = new Date().toISOString();
-  return {
-    ...base,
-    progress: base.progress.map((p) => {
-      if (p.kato !== kato) return p;
-      const prev = p.stages[stage] ?? { status: 'not_started' as const };
-      const next: StageState = { ...prev, ...patch, by };
-      if (patch.status === 'in_progress' && !next.startedAt) next.startedAt = now;
-      if (patch.status === 'done') next.doneAt = now;
-      if (patch.status === 'blocked' && !next.startedAt) next.startedAt = now;
-      // Снятие блокировки и возврат в работу не должны тащить старую причину.
-      if (patch.status && patch.status !== 'blocked') next.blockReason = undefined;
-      return { ...p, stages: { ...p.stages, [stage]: next }, updatedAt: now };
-    }),
-    updatedAt: now,
+  const mark = (p: SnpProgress): SnpProgress => {
+    const prev = p.stages[stage] ?? { status: 'not_started' as const };
+    // derived снимаем: отметка человека перестаёт быть выведенной, иначе
+    // следующий пересчёт журнала её затрёт.
+    const next: StageState = { ...prev, ...patch, by, derived: undefined };
+    if (patch.status === 'in_progress' && !next.startedAt) next.startedAt = now;
+    if (patch.status === 'done') next.doneAt = now;
+    if (patch.status === 'blocked' && !next.startedAt) next.startedAt = now;
+    // Снятие блокировки и возврат в работу не должны тащить старую причину.
+    if (patch.status && patch.status !== 'blocked') next.blockReason = undefined;
+    return { ...p, stages: { ...p.stages, [stage]: next }, updatedAt: now };
   };
+
+  // Карточки может не быть: доска показывает и сёла, выведенные из журнала,
+  // а сохраняем мы только то, что человек тронул руками.
+  const known = base.progress.some((p) => p.kato === kato);
+  const progress = known
+    ? base.progress.map((p) => (p.kato === kato ? mark(p) : p))
+    : [...base.progress, mark({
+        kato, snp: meta?.snp || kato, oblast: meta?.oblast, rayon: meta?.rayon,
+        stages: {}, updatedAt: now,
+      })];
+
+  return { ...base, progress, updatedAt: now };
 }
 
 // ── Плановые трассы ──────────────────────────────────────────────────────────

@@ -7,7 +7,7 @@ import {
 } from '@/types/network';
 import type { DrawingTool } from '@/components/Sidebar/NotesTab';
 import { nearestTbToJoint, endpointLabel } from '@/components/Network/entityInterior';
-import { collapseWaypoint } from '@/components/Network/cableWaypoints';
+import { warpWaypoint } from '@/components/Network/cableWaypoints';
 import {
   CREW_KINDS, CREW_STATUS, SNP_STAGES, SNP_STAGE_SPECS, STAGE_STATUS_SPECS,
 } from '@/types/construction';
@@ -96,10 +96,10 @@ interface Props {
 
 const CABLE_COLORS: Record<string, string> = CABLE_COLORS_MAP as Record<string, string>;
 const CABLE_WEIGHTS: Record<string, number> = {
-  'ОК-4':  1.5, 'ОК-8':  2,
-  'ОК-12': 2.5, 'ОК-16': 3,
-  'ОК-24': 3.5, 'ОК-32': 4,
-  'ОК-48': 5,   'ОК-96': 6,
+  'ОК-4':  2.5, 'ОК-8':  3,
+  'ОК-12': 3.5, 'ОК-16': 4,
+  'ОК-24': 4.5, 'ОК-32': 5,
+  'ОК-48': 6,   'ОК-96': 7,
 };
 const CABLE_LAYER_KEY: Record<string, keyof LayerVisibility> = {
   'ОК-4': 'cableOK4', 'ОК-8': 'cableOK8',
@@ -270,6 +270,17 @@ function esc(s: string): string {
  *  при приближении и уменьшаются при отдалении. Возвращает множитель ≈ 0.85-1.75. */
 function markerScale(zoom: number): number {
   return Math.max(0.85, Math.min(1.75, 0.85 + (zoom - 10) * 0.12));
+}
+
+/**
+ * Толщина кабеля по зуму.
+ *
+ * На общем плане области волосяная линия сливается с дорогами и просто
+ * теряется, поэтому внизу диапазона не даём ей истончаться, а вблизи —
+ * наоборот, кабель становится заметно толще подложки.
+ */
+function lineScale(zoom: number): number {
+  return Math.max(0.9, Math.min(1.8, 0.9 + (zoom - 9) * 0.1));
 }
 
 export default function LeafletMap(props: Props) {
@@ -597,8 +608,9 @@ export default function LeafletMap(props: Props) {
                   ? '#c4b5fd'
                   : (CABLE_COLORS[cable.type] || '#888'),
             weight: dimmed
-              ? 1
-              : (CABLE_WEIGHTS[cable.type] || 2) + (isEditing ? 2 : inDiff ? 2 : inBranch ? 1 : 0),
+              ? 1.5
+              : ((CABLE_WEIGHTS[cable.type] || 3) + (isEditing ? 2 : inDiff ? 2 : inBranch ? 1 : 0))
+                * lineScale(zoom),
             opacity: dimmed ? 0.12 : inDiff || inBranch ? 1 : (cable.type === 'ОК-4' ? 0.6 : 0.85),
             // Клики ловит широкая «hit»-линия ниже, чтобы по кабелю было легко
             // попасть без приближения карты.
@@ -1406,9 +1418,8 @@ export default function LeafletMap(props: Props) {
           const m = L.marker(coord, { icon: makeIcon(kind), draggable: true });
           const isEnd = idx === 0 || idx === n - 1;
           const end: 'from' | 'to' = idx === 0 ? 'from' : 'to';
-          // Соседние ручки: «спрятанные» вершины между ними схлопываем при
-          // перетаскивании, чтобы конец реально укорачивал кабель, а серединная
-          // ручка не давала зигзаг между плотными OSRM-точками.
+          // Соседние ручки задают пролёт, внутри которого трасса тянется за
+          // ручкой: к ним смещение сходит на нет, и форма не рушится.
           const prevH = hpos > 0 ? handleIndices[hpos - 1] : null;
           const nextH = hpos < handleIndices.length - 1 ? handleIndices[hpos + 1] : null;
 
@@ -1447,9 +1458,10 @@ export default function LeafletMap(props: Props) {
                 }
               }
             }
-            // Двигаем выбранную точку и схлопываем спрятанные вершины её пролёта:
-            // конец реально укорачивает кабель, серединная ручка — без зигзагов.
-            applyCoords(collapseWaypoint(coords, prevH, nextH, ll.lat, ll.lng));
+            // Тянем вершину, не спрямляя трассу: спрятанные вершины пролёта
+            // едут следом и к соседним ручкам смещение сходит на нет.
+            // Раньше они выбрасывались, и обход озера превращался в прямую.
+            applyCoords(warpWaypoint(coords, prevH, idx, nextH, ll.lat, ll.lng));
           });
           group.addLayer(m);
         });

@@ -182,6 +182,8 @@ export function attention(input: {
   blocked: { snp: string; reason: string }[];
   lowStock: { material: string; daysLeft: number | null }[];
   negativeStock: number;
+  /** Позиции, по которым расходуют, но приход ни разу не вносили. */
+  unknownStock: number;
   pendingCorrections: number;
   daysSinceLastEntry: number | null;
 }): AttentionItem[] {
@@ -208,11 +210,19 @@ export function attention(input: {
     });
   }
 
+  if (input.unknownStock > 0) {
+    out.push({
+      kind: 'material', tone: 'warn', view: 'materials',
+      text: `Позиций без внесённого прихода: ${input.unknownStock}. `
+        + 'Расход идёт, накладных нет — остаток посчитать не из чего.',
+    });
+  }
+
   if (input.negativeStock > 0) {
     out.push({
       kind: 'material', tone: 'warn', view: 'materials',
       text: `Материалов с отрицательным остатком: ${input.negativeStock}. `
-        + 'Скорее всего, не внесены поставки.',
+        + 'Расход больше прихода — поставки внесены не полностью.',
     });
   }
 

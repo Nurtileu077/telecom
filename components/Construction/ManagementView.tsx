@@ -4,7 +4,7 @@ import {
   TrendingUp, AlertTriangle, CalendarClock, Users, MapPin, ChevronRight,
 } from 'lucide-react';
 import { JournalState, fmtKm, fmtMeters, plural, openDeviations, pendingCorrections } from './journalStore';
-import { materialForecast, lowStock, negativeStock } from './materialForecast';
+import { materialForecast, lowStock, negativeStock, unknownStock } from './materialForecast';
 import { blockedStages } from './stageTasks';
 import {
   regionProgress, pace, attention, daysSince, RegionProgress, AttentionItem,
@@ -105,6 +105,7 @@ export default function ManagementView({ journal, onOpenView }: Props) {
         daysLeft: s.daysLeft,
       })),
       negativeStock: negativeStock(stocks).length,
+      unknownStock: unknownStock(stocks).length,
       pendingCorrections: pendingCorrections(journal).length,
       daysSinceLastEntry: daysSince(p.lastDate),
     });

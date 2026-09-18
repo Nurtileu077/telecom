@@ -182,7 +182,7 @@ describe('рабочие дни', () => {
 
 describe('что требует решения', () => {
   const base = {
-    openDeviations: 0, blocked: [], lowStock: [], negativeStock: 0,
+    openDeviations: 0, blocked: [], lowStock: [], negativeStock: 0, unknownStock: 0,
     pendingCorrections: 0, daysSinceLastEntry: null,
   };
 

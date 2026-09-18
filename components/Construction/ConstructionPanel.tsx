@@ -32,6 +32,7 @@ import {
 import { materialForecast, lowStock } from './materialForecast';
 import { importPlanRoutes } from './planImport';
 import { pendingTasks, seedProgress, handoffTasks } from './stageTasks';
+import { effectiveProgress } from './stageDerive';
 import {
   LAY_METHOD_LABEL, MATERIAL_UNIT, JOURNAL_ROLE_LABEL, DEVIATION_KIND_LABEL,
   CREW_KINDS, CREW_STATUS,
@@ -263,11 +264,19 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
   const mappedPoints = useMemo(() => drills.reduce((s, d) => s + d.points.length, 0), [drills]);
   const drillsWithCoords = useMemo(() => drills.filter((d) => d.points.length > 0).length, [drills]);
 
+  // Доска и сводки смотрят на журнал с выведенными этапами: руками
+  // отмечать шесть этапов на шестистах сёлах никто не станет, а журнал
+  // и так знает, где что делают.
+  const live = useMemo<JournalState>(() => ({
+    ...journal,
+    progress: effectiveProgress(journal.progress, journal),
+  }), [journal]);
+
   const pending = useMemo(() => pendingCorrections(journal), [journal]);
   const openDevs = useMemo(() => openDeviations(journal), [journal]);
   const tasks = useMemo(
-    () => pendingTasks(journal.progress, { orders: journal.orders, drills: journal.drills }),
-    [journal.progress, journal.orders, journal.drills],
+    () => pendingTasks(live.progress, { orders: journal.orders, drills: journal.drills }),
+    [live.progress, journal.orders, journal.drills],
   );
   const handoffs = useMemo(() => handoffTasks(tasks), [tasks]);
   const lowMaterials = useMemo(
@@ -458,16 +467,19 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
         {empty ? (
           <EmptyJournal onPick={() => fileRef.current?.click()} onAdd={() => setFormOpen(true)} busy={busy} />
         ) : view === 'management' ? (
-          <ManagementView journal={journal} onOpenView={(v) => setView(v)} />
+          <ManagementView journal={live} onOpenView={(v) => setView(v)} />
         ) : view === 'stages' ? (
           <StagesView
-            journal={journal}
+            journal={live}
             onSeed={() => {
               const base = loadJournal();
               persist(setProgress(base, seedProgress(base.orders, base.ground, base.progress)));
             }}
-            onSetStage={(kato, stage, patch) =>
-              persist(setStage(loadJournal(), kato, stage, patch, actor))}
+            onSetStage={(kato, stage, patch) => {
+              const row = live.progress.find((p) => p.kato === kato);
+              persist(setStage(loadJournal(), kato, stage, patch, actor,
+                row && { snp: row.snp, oblast: row.oblast, rayon: row.rayon }));
+            }}
           />
         ) : view === 'materials' ? (
           <MaterialsView

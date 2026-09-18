@@ -6,7 +6,8 @@ import {
 } from '@/types/construction';
 import { JournalState, MATERIAL_LABEL, fmtMeters, distinct } from './journalStore';
 import {
-  materialForecast, lowStock, negativeStock, daysLeftText, LOW_STOCK_DAYS,
+  materialForecast, lowStock, negativeStock, unknownStock, daysLeftText, LOW_STOCK_DAYS,
+  materialByScope,
 } from './materialForecast';
 
 /**
@@ -37,6 +38,16 @@ export default function MaterialsView({ journal, onAddDelivery, onRemoveDelivery
   );
   const low = lowStock(stocks);
   const negative = negativeStock(stocks);
+  const unknown = unknownStock(stocks);
+
+  // Разрез по территории: снабжению нужно знать не «сколько всего», а
+  // «куда везти». Районы показывают расход — приход на них заводят редко.
+  const [level, setLevel] = useState<'oblast' | 'rayon'>('oblast');
+  const scopes = useMemo(
+    () => materialByScope(journal.ground, journal.deliveries, level)
+      .filter((r) => !oblast || r.oblast === oblast),
+    [journal.ground, journal.deliveries, level, oblast],
+  );
 
   const deliveries = useMemo(
     () => journal.deliveries
@@ -74,12 +85,23 @@ export default function MaterialsView({ journal, onAddDelivery, onRemoveDelivery
         </div>
       )}
 
+      {unknown.length > 0 && (
+        <div className="flex items-start gap-2 p-2.5 rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] text-[12px] text-[var(--text-muted)]">
+          <PackageCheck size={15} className="shrink-0 mt-0.5" />
+          <span>
+            Приход не внесён: <b className="text-[var(--text)]">{unknown.map((s) => MATERIAL_LABEL[s.material]).join(', ')}</b>.
+            Расход по ним идёт, накладных нет — остаток показан нулём, потому что
+            считать его не из чего. Это не нехватка материала, а пробел в учёте.
+          </span>
+        </div>
+      )}
+
       {negative.length > 0 && (
         <div className="flex items-start gap-2 p-2.5 rounded-lg border border-[var(--danger)]/50 bg-[var(--danger)]/10 text-[12px] text-[var(--text)]">
           <AlertTriangle size={15} className="shrink-0 mt-0.5" style={{ color: 'var(--danger)' }} />
           <span>
             Расход больше прихода: <b>{negative.map((s) => MATERIAL_LABEL[s.material]).join(', ')}</b>.
-            Скорее всего, поставки внесены не полностью — прогноз по этим позициям неверен.
+            Поставки внесены не полностью — прогноз по этим позициям неверен.
           </span>
         </div>
       )}
@@ -112,6 +134,76 @@ export default function MaterialsView({ journal, onAddDelivery, onRemoveDelivery
           );
         })}
       </div>
+
+      <section className="flex flex-col gap-1.5">
+        <div className="flex flex-wrap items-center gap-2 mt-1">
+          <h4 className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
+            Кому отправлять ({scopes.length})
+          </h4>
+          <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md ml-auto">
+            {([['oblast', 'По областям'], ['rayon', 'По районам']] as const).map(([v, label]) => (
+              <button key={v} type="button" onClick={() => setLevel(v)}
+                className={`px-2 py-1 text-[11px] rounded ${level === v ? 'bg-[var(--accent-dim)] text-[var(--accent)]' : 'text-[var(--text-muted)]'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {scopes.length === 0 ? (
+          <p className="text-[11.5px] text-[var(--text-muted)]">Расхода по территории пока нет.</p>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+            {scopes.slice(0, 40).map((r) => {
+              const urgent = r.minDaysLeft !== null && r.minDaysLeft <= LOW_STOCK_DAYS;
+              return (
+                <div key={`${r.oblast}|${r.rayon ?? ''}`}
+                     className="rounded-lg border bg-[var(--bg-surface)] px-3 py-2 flex flex-col gap-1"
+                     style={{ borderColor: urgent ? 'var(--warn)' : 'var(--border)' }}>
+                  <div className="flex items-baseline gap-2 flex-wrap">
+                    <span className="text-[12.5px] font-medium text-[var(--text)]">
+                      {r.rayon ? r.rayon : r.oblast}
+                    </span>
+                    {r.rayon && <span className="text-[10.5px] text-[var(--text-muted)]">{r.oblast}</span>}
+                    <span className="ml-auto text-[11px]"
+                          style={{ color: urgent ? 'var(--warn)' : 'var(--text-muted)' }}>
+                      {r.minDaysLeft !== null
+                        ? `запас ${r.minDaysLeft} раб. дн.`
+                        : 'приход не внесён'}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10.5px] text-[var(--text-muted)]">
+                    {r.stocks.filter((s) => s.used > 0).map((s) => (
+                      <span key={s.material}>
+                        {MATERIAL_LABEL[s.material]}{' '}
+                        <b className="text-[var(--text)] font-mono">
+                          {s.hasDeliveries
+                            ? (s.unit === 'м' ? fmtMeters(Math.max(0, s.remaining)) : `${Math.max(0, s.remaining)} шт`)
+                            : (s.unit === 'м' ? fmtMeters(s.used) : `${s.used} шт`)}
+                        </b>
+                        <span className="text-[var(--text-muted)]">
+                          {s.hasDeliveries ? ' ост.' : ' израсх.'}
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                  {r.low.length > 0 && (
+                    <div className="text-[10.5px] text-[var(--warn)]">
+                      пора отправлять: {r.low.map((s) => MATERIAL_LABEL[s.material]).join(', ')}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {level === 'rayon' && (
+          <p className="text-[10.5px] text-[var(--text-muted)]">
+            По районам виден расход: накладные обычно оформляют на область.
+            Заведите поставку с районом — и остаток посчитается по нему.
+          </p>
+        )}
+      </section>
 
       <div className="flex flex-col gap-1.5">
         <h4 className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] mt-1">
