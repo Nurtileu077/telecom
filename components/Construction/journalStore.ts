@@ -2,7 +2,7 @@ import {
   DailyWorkEntry, AerialWorkEntry, DrillLogEntry, SettlementOrder,
   LayMethod, MaterialKind, CorrectionRequest, Contractor, JournalRole,
   LAY_METHOD_LABEL, Deviation, isDeviationClosed, needsProtocol,
-  Crew, crewOnDuty, crewEquipmentCount,
+  Crew, crewOnDuty, crewEquipmentCount, MaterialDelivery,
 } from '@/types/construction';
 
 /** Состояние журнала стройки — Слой 2. */
@@ -17,6 +17,8 @@ export interface JournalState {
   deviations: Deviation[];
   /** Колонны на карте. */
   crews: Crew[];
+  /** Приход материалов по областям — без него остаток не из чего вычесть. */
+  deliveries: MaterialDelivery[];
   contractors: Contractor[];
   /** Поля актов, заполняемые при закрытии, по участкам. */
   actFields: Record<string, import('./sectionAct').SectionActManual>;
@@ -40,7 +42,7 @@ export interface DeletedMark {
 export function emptyJournal(): JournalState {
   return {
     orders: [], ground: [], aerial: [], drills: [],
-    corrections: [], deviations: [], crews: [],
+    corrections: [], deviations: [], crews: [], deliveries: [],
     contractors: DEFAULT_CONTRACTORS, actFields: {}, deleted: [], updatedAt: '',
   };
 }
@@ -229,6 +231,7 @@ export function loadJournal(): JournalState {
       corrections: p.corrections ?? [],
       deviations: p.deviations ?? [],
       crews: p.crews ?? [],
+      deliveries: p.deliveries ?? [],
       actFields: p.actFields ?? {},
       deleted: p.deleted ?? [],
       // Пустой справочник заменяем стартовым — иначе подрядчика не из чего выбрать.
@@ -271,6 +274,7 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     corrections: base.corrections,
     deviations: base.deviations,
     crews: base.crews,
+    deliveries: base.deliveries,
     contractors: base.contractors.length ? base.contractors : DEFAULT_CONTRACTORS,
     actFields: base.actFields,
     deleted: base.deleted,
@@ -423,6 +427,31 @@ export function placedCrews(base: JournalState): Crew[] {
 }
 
 export { crewOnDuty, crewEquipmentCount };
+
+// ── Поставки материалов ──────────────────────────────────────────────────────
+
+export function upsertDelivery(base: JournalState, d: MaterialDelivery): JournalState {
+  const now = new Date().toISOString();
+  const exists = base.deliveries.some((x) => x.id === d.id);
+  const next = { ...d, updatedAt: now };
+  return {
+    ...base,
+    deliveries: exists
+      ? base.deliveries.map((x) => (x.id === d.id ? next : x))
+      : [...base.deliveries, next],
+    updatedAt: now,
+  };
+}
+
+export function removeDelivery(base: JournalState, id: string): JournalState {
+  const now = new Date().toISOString();
+  return {
+    ...base,
+    deliveries: base.deliveries.filter((x) => x.id !== id),
+    deleted: withTombstone(base, id, now),
+    updatedAt: now,
+  };
+}
 
 // ── Отклонения от проекта ────────────────────────────────────────────────────
 

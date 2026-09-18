@@ -16,14 +16,16 @@ import {
   submitCorrection, approveCorrection, rejectCorrection, pendingCorrections,
   hasPendingCorrection, diffEntries, loadJournalRole, saveJournalRole,
   addDeviation, removeDeviation, openDeviations, isDeviationClosed,
-  upsertCrew, removeCrew,
+  upsertCrew, removeCrew, upsertDelivery, removeDelivery,
 } from './journalStore';
 import DeviationForm from './DeviationForm';
 import CrewForm from './CrewForm';
 import SectionClosing from './SectionClosing';
+import MaterialsView from './MaterialsView';
 import {
   journalCloudEnabled, syncJournal, loadLastSyncAt, saveLastSyncAt,
 } from './journalRemote';
+import { materialForecast, lowStock } from './materialForecast';
 import {
   LAY_METHOD_LABEL, MATERIAL_UNIT, JOURNAL_ROLE_LABEL, DEVIATION_KIND_LABEL,
   CREW_KINDS, CREW_STATUS,
@@ -32,7 +34,7 @@ import {
 } from '@/types/construction';
 
 type Period = 'day' | 'week' | 'month' | 'all';
-type View = 'summary' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing';
+type View = 'summary' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials';
 
 const PERIOD_LABEL: Record<Period, string> = {
   day: 'Последний день', week: '7 дней', month: '30 дней', all: 'Всё время',
@@ -235,6 +237,10 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
 
   const pending = useMemo(() => pendingCorrections(journal), [journal]);
   const openDevs = useMemo(() => openDeviations(journal), [journal]);
+  const lowMaterials = useMemo(
+    () => lowStock(materialForecast(journal.ground, journal.deliveries, { oblast: oblast || undefined })),
+    [journal.ground, journal.deliveries, oblast],
+  );
   const devs = useMemo(
     () => journal.deviations.filter((d) => matchesFilter({ ...d, smu: '' }, { ...filter, smu: undefined })),
     [journal.deviations, filter],
@@ -299,8 +305,10 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
       {!empty && (
         <div className="flex flex-wrap items-center gap-1.5 px-3 md:px-4 py-2 border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0">
           <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md mr-1">
-            {([['summary', 'Сводка'], ['entries', 'Записи'], ['crews', 'Колонны'], ['deviations', 'Отклонения'], ['closing', 'Закрытие'], ['corrections', 'Заявки']] as [View, string][]).map(([v, label]) => {
-              const badge = v === 'corrections' ? pending.length : v === 'deviations' ? openDevs.length : 0;
+            {([['summary', 'Сводка'], ['entries', 'Записи'], ['crews', 'Колонны'], ['deviations', 'Отклонения'], ['materials', 'Материалы'], ['closing', 'Закрытие'], ['corrections', 'Заявки']] as [View, string][]).map(([v, label]) => {
+              const badge = v === 'corrections' ? pending.length
+                : v === 'deviations' ? openDevs.length
+                : v === 'materials' ? lowMaterials.length : 0;
               return (
                 <button key={v} type="button" onClick={() => setView(v)}
                   className={`px-2.5 py-1 text-[11px] rounded transition-colors inline-flex items-center gap-1 ${
@@ -396,6 +404,16 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
 
         {empty ? (
           <EmptyJournal onPick={() => fileRef.current?.click()} onAdd={() => setFormOpen(true)} busy={busy} />
+        ) : view === 'materials' ? (
+          <MaterialsView
+            journal={journal}
+            author={actor}
+            onAddDelivery={(d) => persist(upsertDelivery(loadJournal(), d))}
+            onRemoveDelivery={(id) => {
+              if (!confirm('Удалить поставку?')) return;
+              persist(removeDelivery(loadJournal(), id));
+            }}
+          />
         ) : view === 'closing' ? (
           <SectionClosing
             journal={journal}

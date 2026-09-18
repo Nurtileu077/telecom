@@ -1,7 +1,7 @@
 import { JournalState, DeletedMark, emptyJournal } from './journalStore';
 import {
   DailyWorkEntry, AerialWorkEntry, DrillLogEntry, Deviation, Crew,
-  CorrectionRequest, SettlementOrder, Contractor,
+  CorrectionRequest, SettlementOrder, Contractor, MaterialDelivery,
 } from '@/types/construction';
 
 /**
@@ -122,6 +122,7 @@ export function mergeJournalStates(
     drills: mergeCollection<DrillLogEntry>(local.drills, remote.drills, tombs, stats),
     deviations: mergeCollection<Deviation>(local.deviations, remote.deviations, tombs, stats),
     crews: mergeCollection<Crew>(local.crews, remote.crews, tombs, stats),
+    deliveries: mergeCollection<MaterialDelivery>(local.deliveries, remote.deliveries, tombs, stats),
     corrections: mergeCorrections(local.corrections, remote.corrections, stats),
     contractors: mergeContractors(local.contractors, remote.contractors),
     // Поля актов: своё заполнение в приоритете, чужие участки добираем.

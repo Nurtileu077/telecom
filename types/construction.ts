@@ -259,6 +259,30 @@ export interface DrillLogEntry extends WorkEntryBase {
 
 export type ConstructionEntry = DailyWorkEntry | AerialWorkEntry | DrillLogEntry;
 
+// ── Поставки материалов ──────────────────────────────────────────────────────
+
+/**
+ * Приход материала на область.
+ *
+ * Без поставок остаток не из чего вычесть: журнал знает только расход.
+ * Учёт ведём по области, а не по участку — материал отгружают на регион,
+ * и вопрос «пора ли слать МКТ в Акмолинскую» тоже региональный.
+ */
+export interface MaterialDelivery {
+  id: string;
+  /** YYYY-MM-DD */
+  date: string;
+  oblast: string;
+  material: MaterialKind;
+  /** Метры для метровых позиций, штуки для штучных. */
+  qty: number;
+  /** Номер накладной или примечание. */
+  note?: string;
+  author?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ── Колонны на карте ─────────────────────────────────────────────────────────
 
 /** Вид работ колонны — определяет цвет и значок на карте. */
