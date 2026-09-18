@@ -62,10 +62,12 @@ interface Props {
   /** Объект, который попросили открыть с карты. */
   editObjectId?: string | null;
   onDoneEditObject?: () => void;
+  /** Показать движение колонн за день на карте. */
+  onPlayDay?: (date: string) => void;
 }
 
 export default function ConstructionPanel({
-  onClose, onRequestPick, editObjectId, onDoneEditObject,
+  onClose, onRequestPick, editObjectId, onDoneEditObject, onPlayDay,
 }: Props) {
   const [journal, setJournal] = useState<JournalState>(emptyJournal);
   const [period, setPeriod] = useState<Period>('month');
@@ -760,7 +762,8 @@ export default function ConstructionPanel({
       )}
 
       {dayOpen && (
-        <DayReport journal={journal} date={dayOpen} onClose={() => setDayOpen(null)} />
+        <DayReport journal={journal} date={dayOpen} onClose={() => setDayOpen(null)}
+                   onPlay={onPlayDay ? () => { onPlayDay(dayOpen); setDayOpen(null); } : undefined} />
       )}
 
       {formOpen && (

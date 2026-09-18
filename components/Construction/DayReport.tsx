@@ -20,6 +20,8 @@ interface Props {
   journal: JournalState;
   date: string;
   onClose: () => void;
+  /** Показать движение колонн этого дня на карте. */
+  onPlay?: () => void;
 }
 
 function entryMeters(byMethod: Partial<Record<LayMethod, number>>): number {
@@ -28,7 +30,7 @@ function entryMeters(byMethod: Partial<Record<LayMethod, number>>): number {
   return m;
 }
 
-export default function DayReport({ journal, date, onClose }: Props) {
+export default function DayReport({ journal, date, onClose, onPlay }: Props) {
   const data = useMemo(() => {
     const ground = journal.ground.filter((e) => e.date === date);
     const aerial = journal.aerial.filter((e) => e.date === date);
@@ -104,6 +106,12 @@ export default function DayReport({ journal, date, onClose }: Props) {
               {plural(data.ground.length + data.aerial.length, 'запись', 'записи', 'записей')}
             </p>
           </div>
+          {onPlay && (
+            <button type="button" onClick={onPlay} className="btn btn-ghost text-[11px]"
+                    title="Показать на карте, откуда куда дошли за этот день">
+              ▶ Движение
+            </button>
+          )}
           <button type="button" onClick={onClose} aria-label="Закрыть"
                   className="btn btn-ghost btn-icon"><X size={16} /></button>
         </header>

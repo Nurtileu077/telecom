@@ -125,6 +125,10 @@ interface Props {
   /** Муфты, столбы, конечные точки, ККС. */
   siteObjects?: import('@/types/construction').SiteObject[];
   onEditSiteObject?: (id: string) => void;
+  /** Вчерашний день в движении: откуда куда дошли колонны. */
+  playbackMoves?: import('@/components/Construction/playback').DayMove[];
+  playbackDate?: string | null;
+  onPlaybackDone?: () => void;
   /**
    * Рабочее место — стройка: сеть на карте не рисуем. Прорабу проектные
    * узлы и кабели мешают искать своё, а проектировщику — наоборот.
@@ -363,6 +367,8 @@ export default function LeafletMap(props: Props) {
   /** Ручки правки трассы — отдельная группа, чтобы не мешать слоям. */
   const routeEditGroupRef = useRef<any>(null);
   const objectGroupRef = useRef<any>(null);
+  const playbackGroupRef = useRef<any>(null);
+  const playbackRafRef = useRef<number | null>(null);
   const measureStateRef = useRef<{ coords: [number, number][]; layer?: any; total: number }>({ coords: [], total: 0 });
   const waypointGroupRef = useRef<any>(null);
   const entityDragRef = useRef(false);
@@ -404,6 +410,7 @@ export default function LeafletMap(props: Props) {
       areaGroupRef.current = L.layerGroup().addTo(map);
       snpGroupRef.current = L.layerGroup().addTo(map);
       objectGroupRef.current = L.layerGroup().addTo(map);
+      playbackGroupRef.current = L.layerGroup().addTo(map);
       routeEditGroupRef.current = L.layerGroup().addTo(map);
       drawGroupRef.current = L.layerGroup().addTo(map);
       measureGroupRef.current = L.layerGroup().addTo(map);
@@ -1335,6 +1342,76 @@ export default function LeafletMap(props: Props) {
   }
 
   /**
+   * Вчерашний день в движении.
+   *
+   * Метка едет от утренней точки к вечерней по прямой между ними —
+   * настоящий трек по часам никто не пишет, и притворяться, что он есть,
+   * было бы враньём. Показываем ровно то, что знаем: откуда и докуда
+   * дошли за день.
+   */
+  function runPlayback() {
+    const group = playbackGroupRef.current;
+    if (!mapRef.current || !group) return;
+    if (playbackRafRef.current !== null) {
+      cancelAnimationFrame(playbackRafRef.current);
+      playbackRafRef.current = null;
+    }
+    group.clearLayers();
+
+    const moves = propsRef.current.playbackMoves ?? [];
+    if (moves.length === 0) return;
+
+    import('leaflet').then((L) => {
+      const markers = moves.map((mv) => {
+        // След пути — бледная линия под меткой, чтобы было видно, что
+        // пройдено, когда движение закончилось.
+        group.addLayer(L.polyline(
+          [[mv.from.lat, mv.from.lon], [mv.to.lat, mv.to.lon]],
+          { color: '#4ade80', weight: 3, opacity: 0.45, dashArray: '6,6' },
+        ));
+        const marker = L.marker([mv.from.lat, mv.from.lon], {
+          zIndexOffset: 1200,
+          icon: L.divIcon({
+            className: '',
+            iconSize: [34, 34],
+            iconAnchor: [17, 17],
+            html: `<div style="
+              width:30px;height:30px;border-radius:50%;
+              background:#0c1018ee;border:3px solid #4ade80;
+              display:flex;align-items:center;justify-content:center;font-size:15px;
+              box-shadow:0 0 12px #4ade8099">🚜</div>`,
+          }),
+        });
+        marker.bindTooltip(
+          `${esc(mv.uchastok)} — ${Math.round(mv.meters).toLocaleString('ru')} м`,
+          { permanent: true, direction: 'top', className: 'text-xs' },
+        );
+        group.addLayer(marker);
+        return { marker, mv };
+      });
+
+      const DURATION = 4000;
+      const started = performance.now();
+      const step = (t: number) => {
+        const k = Math.min(1, (t - started) / DURATION);
+        for (const { marker, mv } of markers) {
+          marker.setLatLng([
+            mv.from.lat + (mv.to.lat - mv.from.lat) * k,
+            mv.from.lon + (mv.to.lon - mv.from.lon) * k,
+          ]);
+        }
+        if (k < 1) {
+          playbackRafRef.current = requestAnimationFrame(step);
+        } else {
+          playbackRafRef.current = null;
+          propsRef.current.onPlaybackDone?.();
+        }
+      };
+      playbackRafRef.current = requestAnimationFrame(step);
+    });
+  }
+
+  /**
    * Муфты, столбы, конечные точки, ККС.
    *
    * У муфты цвет говорит о состоянии: серая не установлена, янтарная
@@ -1903,6 +1980,13 @@ export default function LeafletMap(props: Props) {
   useEffect(() => { renderSnpPoints(); }, [props.snpPoints, mapReady]);
   useEffect(() => { renderAreas(); }, [props.areas, mapReady]);
   useEffect(() => { renderSiteObjects(); }, [props.siteObjects, mapReady]);
+  useEffect(() => {
+    runPlayback();
+    return () => {
+      if (playbackRafRef.current !== null) cancelAnimationFrame(playbackRafRef.current);
+      playbackRafRef.current = null;
+    };
+  }, [props.playbackMoves, mapReady]);
   useEffect(() => { renderData(); }, [props.hideNetwork]);
 
   /**
@@ -2099,6 +2183,14 @@ export default function LeafletMap(props: Props) {
           >
             ✏️ Трасса
           </button>
+        )}
+        {props.playbackDate && (
+          <div className="bg-[#0d1b2a]/95 border border-[#4ade80]/50 rounded-lg px-3 py-1.5 text-[10px] text-[#e2e8f0] shadow-lg max-w-[220px]">
+            {new Date(`${props.playbackDate}T00:00:00Z`).toLocaleDateString('ru')}:{' '}
+            {(props.playbackMoves ?? []).length
+              ? `${(props.playbackMoves ?? []).length} колонн в движении`
+              : 'движения по трассам нет'}
+          </div>
         )}
         {props.editingRouteId && (
           <div className="bg-[#0d1b2a]/95 border border-[#2dd4bf]/50 rounded-lg px-3 py-1.5 text-[10px] text-[#e2e8f0] shadow-lg max-w-[220px] flex flex-col gap-1.5">

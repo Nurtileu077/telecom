@@ -47,6 +47,7 @@ import { effectiveProgress } from '@/components/Construction/stageDerive';
 import { placeCrews, type CrewPlacement } from '@/components/Construction/crewPlace';
 import { areaMapItems, type AreaMapItem } from '@/components/Construction/areaProgress';
 import { routeViews, type RouteView } from '@/components/Construction/routeStyle';
+import { dayMoves, playableDates, type DayMove } from '@/components/Construction/playback';
 import RouteDrawForm from '@/components/Construction/RouteDrawForm';
 import { addPlanRoutes, addDeviation } from '@/components/Construction/journalStore';
 import { polylineLengthM } from '@/components/Construction/planImport';
@@ -172,6 +173,14 @@ export default function HomePage() {
 
   const [editingRouteId, setEditingRouteId] = useState<string | null>(null);
   const [editObjectId, setEditObjectId] = useState<string | null>(null);
+  /** Вчерашний день в движении: дату выбирают, движение считается. */
+  const [playbackDate, setPlaybackDate] = useState<string | null>(null);
+  const [playbackMoves, setPlaybackMoves] = useState<DayMove[]>([]);
+  const playDay = useCallback((date: string) => {
+    const j = loadJournal();
+    setPlaybackDate(date);
+    setPlaybackMoves(dayMoves({ ground: j.ground, planRoutes: j.planRoutes }, date));
+  }, []);
   const [siteObjects, setSiteObjects] = useState<SiteObject[]>([]);
 
   /** Правка трассы: пишем сразу — линия на карте и есть форма. */
@@ -1180,6 +1189,8 @@ export default function HomePage() {
             onUpdateRouteCoords={handleUpdateRoute}
             onDeleteRoute={handleDeleteRoute}
             siteObjects={conLayers.objects ? siteObjects : EMPTY_LAYER}
+            playbackMoves={playbackMoves}
+            playbackDate={playbackDate}
             onEditSiteObject={building ? (id) => { setEditObjectId(id); setShowJournal(true); } : undefined}
             snpPoints={conLayers.snp ? snpPoints : EMPTY_LAYER}
             areas={conLayers.areas ? areas : EMPTY_LAYER}
@@ -1579,6 +1590,7 @@ export default function HomePage() {
 
       {showJournal && (
         <ConstructionPanel
+          onPlayDay={(date) => { playDay(date); setShowJournal(false); }}
           editObjectId={editObjectId}
           onDoneEditObject={() => setEditObjectId(null)}
           onClose={() => { setShowJournal(false); setEditObjectId(null); refreshJournalLayers(); }}
