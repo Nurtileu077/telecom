@@ -3,7 +3,7 @@ import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   X, Upload, Loader2, AlertTriangle, MapPin, Wrench, Boxes,
   Plus, Download, Trash2, CloudOff, Pencil, Check, Ban, Building2, Clock,
-  Ruler, FileWarning,
+  Ruler, FileWarning, RefreshCw, CloudCheck,
 } from 'lucide-react';
 import { getActorName } from '@/lib/appRole';
 import { importJournal, type JournalImportResult } from './JournalImport';
@@ -20,6 +20,9 @@ import {
 } from './journalStore';
 import DeviationForm from './DeviationForm';
 import CrewForm from './CrewForm';
+import {
+  journalCloudEnabled, syncJournal, loadLastSyncAt, saveLastSyncAt,
+} from './journalRemote';
 import {
   LAY_METHOD_LABEL, MATERIAL_UNIT, JOURNAL_ROLE_LABEL, DEVIATION_KIND_LABEL,
   CREW_KINDS, CREW_STATUS,
@@ -52,12 +55,17 @@ export default function ConstructionPanel({ onClose }: Props) {
   const [editingDev, setEditingDev] = useState<Deviation | null>(null);
   const [crewFormOpen, setCrewFormOpen] = useState(false);
   const [editingCrew, setEditingCrew] = useState<Crew | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncNote, setSyncNote] = useState<{ tone: 'ok' | 'warn'; text: string } | null>(null);
+  const [syncedAt, setSyncedAt] = useState<string | null>(null);
+  const cloud = journalCloudEnabled();
   const [role, setRole] = useState<JournalRole>('field');
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setJournal(loadJournal());
     setRole(loadJournalRole());
+    setSyncedAt(loadLastSyncAt());
   }, []);
 
   const actor = useMemo(() => getActorName() || 'Без имени', []);
@@ -124,6 +132,41 @@ export default function ConstructionPanel({ onClose }: Props) {
     if (!confirm('Удалить запись?')) return;
     persist(removeEntry(loadJournal(), id));
   }, [persist]);
+
+  /**
+   * Обмен с облаком. Слитое состояние обязательно сохраняем локально —
+   * иначе при следующем обмене чужие правки придут заново.
+   */
+  const handleSync = useCallback(async () => {
+    setSyncing(true);
+    setSyncNote(null);
+    try {
+      const res = await syncJournal(loadJournal(), actor);
+      if (!res.ok) {
+        setSyncNote({ tone: 'warn', text: res.message });
+        return;
+      }
+      setJournal(res.merged);
+      saveJournal(res.merged);
+      saveLastSyncAt(res.at);
+      setSyncedAt(res.at);
+      const { pulled, pushed, conflicts, removed } = res.stats;
+      const parts = [
+        pulled ? `получено ${pulled}` : '',
+        pushed ? `отправлено ${pushed}` : '',
+        conflicts ? `расхождений ${conflicts}` : '',
+        removed ? `удалено ${removed}` : '',
+      ].filter(Boolean);
+      setSyncNote({
+        tone: 'ok',
+        text: res.firstPush
+          ? 'Журнал впервые выгружен в облако.'
+          : parts.length ? `Синхронизировано: ${parts.join(', ')}.` : 'Всё уже совпадало.',
+      });
+    } finally {
+      setSyncing(false);
+    }
+  }, [actor]);
 
   const handleExport = useCallback(async () => {
     setBusy(true);
@@ -212,6 +255,24 @@ export default function ConstructionPanel({ onClose }: Props) {
           </span>
         )}
         <div className="ml-auto flex items-center gap-1.5">
+          {cloud ? (
+            <button type="button" className="btn btn-ghost text-[11px]" onClick={handleSync} disabled={syncing}
+                    title={syncedAt ? `Синхронизировано ${new Date(syncedAt).toLocaleString('ru')}` : 'Обмен с облаком'}>
+              {syncing
+                ? <Loader2 size={14} className="animate-spin" />
+                : syncedAt ? <CloudCheck size={14} /> : <RefreshCw size={14} />}
+              <span className="hidden md:inline">
+                {syncing ? 'Обмен…' : syncedAt
+                  ? new Date(syncedAt).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' })
+                  : 'Синхронизировать'}
+              </span>
+            </button>
+          ) : (
+            <span className="hidden md:inline-flex items-center gap-1 text-[10.5px] text-[var(--text-muted)] px-1.5"
+                  title="Журнал хранится только в этом браузере: облако не настроено">
+              <CloudOff size={13} />только здесь
+            </span>
+          )}
           <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden"
                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }} />
           <button type="button" className="btn btn-ghost btn-icon" title="Загрузить журнал из Excel"
@@ -289,6 +350,27 @@ export default function ConstructionPanel({ onClose }: Props) {
         {error && (
           <div className="mb-3 flex items-start gap-2 p-3 rounded-lg border border-[var(--danger)]/40 bg-[var(--danger)]/10 text-[12px] text-[var(--danger)]">
             <AlertTriangle size={15} className="shrink-0 mt-0.5" /><span>{error}</span>
+          </div>
+        )}
+
+        {syncNote && (
+          <div className="mb-3 flex items-start gap-2 p-2.5 rounded-lg text-[12px]"
+               style={{
+                 borderWidth: 1, borderStyle: 'solid',
+                 borderColor: syncNote.tone === 'ok' ? 'var(--success)' : 'var(--warn)',
+                 background: syncNote.tone === 'ok'
+                   ? 'color-mix(in srgb, var(--success) 10%, transparent)'
+                   : 'color-mix(in srgb, var(--warn) 10%, transparent)',
+                 color: 'var(--text)',
+               }}>
+            {syncNote.tone === 'ok'
+              ? <CloudCheck size={15} className="shrink-0 mt-0.5" style={{ color: 'var(--success)' }} />
+              : <AlertTriangle size={15} className="shrink-0 mt-0.5" style={{ color: 'var(--warn)' }} />}
+            <span className="flex-1">{syncNote.text}</span>
+            <button type="button" onClick={() => setSyncNote(null)}
+                    className="text-[var(--text-muted)] hover:text-[var(--text)]">
+              <X size={14} />
+            </button>
           </div>
         )}
 

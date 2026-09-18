@@ -18,14 +18,28 @@ export interface JournalState {
   /** Колонны на карте. */
   crews: Crew[];
   contractors: Contractor[];
+  /**
+   * Надгробия удалённых записей.
+   *
+   * Без них удаление не переживает синхронизацию: сосед, у которого запись
+   * ещё есть, при следующем обмене вернёт её обратно. Храним id и время
+   * удаления, чтобы отличить «удалили после правки» от «правили после удаления».
+   */
+  deleted: DeletedMark[];
   updatedAt: string;
+}
+
+export interface DeletedMark {
+  id: string;
+  /** Когда удалили — ISO. */
+  at: string;
 }
 
 export function emptyJournal(): JournalState {
   return {
     orders: [], ground: [], aerial: [], drills: [],
     corrections: [], deviations: [], crews: [],
-    contractors: DEFAULT_CONTRACTORS, updatedAt: '',
+    contractors: DEFAULT_CONTRACTORS, deleted: [], updatedAt: '',
   };
 }
 
@@ -213,6 +227,7 @@ export function loadJournal(): JournalState {
       corrections: p.corrections ?? [],
       deviations: p.deviations ?? [],
       crews: p.crews ?? [],
+      deleted: p.deleted ?? [],
       // Пустой справочник заменяем стартовым — иначе подрядчика не из чего выбрать.
       contractors: p.contractors?.length ? p.contractors : DEFAULT_CONTRACTORS,
       updatedAt: p.updatedAt ?? '',
@@ -254,6 +269,7 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     deviations: base.deviations,
     crews: base.crews,
     contractors: base.contractors.length ? base.contractors : DEFAULT_CONTRACTORS,
+    deleted: base.deleted,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -339,10 +355,12 @@ export function upsertCrew(base: JournalState, crew: Crew): JournalState {
 }
 
 export function removeCrew(base: JournalState, id: string): JournalState {
+  const now = new Date().toISOString();
   return {
     ...base,
     crews: base.crews.filter((c) => c.id !== id),
-    updatedAt: new Date().toISOString(),
+    deleted: withTombstone(base, id, now),
+    updatedAt: now,
   };
 }
 
@@ -382,10 +400,12 @@ export function updateDeviation(base: JournalState, id: string, patch: Partial<D
 }
 
 export function removeDeviation(base: JournalState, id: string): JournalState {
+  const now = new Date().toISOString();
   return {
     ...base,
     deviations: base.deviations.filter((d) => d.id !== id),
-    updatedAt: new Date().toISOString(),
+    deleted: withTombstone(base, id, now),
+    updatedAt: now,
   };
 }
 
@@ -512,13 +532,21 @@ export function saveJournalRole(r: JournalRole): void {
   try { localStorage.setItem(ROLE_KEY, r); } catch { /* приватный режим */ }
 }
 
+/** Отметить запись удалённой, чтобы удаление пережило синхронизацию. */
+function withTombstone(base: JournalState, id: string, at: string): DeletedMark[] {
+  const rest = base.deleted.filter((d) => d.id !== id);
+  return [...rest, { id, at }];
+}
+
 export function removeEntry(base: JournalState, id: string): JournalState {
+  const now = new Date().toISOString();
   return {
     ...base,
     ground: base.ground.filter((e) => e.id !== id),
     aerial: base.aerial.filter((e) => e.id !== id),
     drills: base.drills.filter((e) => e.id !== id),
-    updatedAt: new Date().toISOString(),
+    deleted: withTombstone(base, id, now),
+    updatedAt: now,
   };
 }
 

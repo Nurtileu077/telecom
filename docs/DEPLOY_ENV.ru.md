@@ -12,6 +12,9 @@
 
 1. Выполнить `docs/supabase-rls.sql`
 2. Выполнить `docs/supabase-field-photos.sql`
+2a. Выполнить `docs/supabase-journal.sql` — общий журнал стройки (дневные
+    отчёты, отклонения, колонны). Без него журнал остаётся в localStorage
+    каждого браузера, и бригады не видят работу друг друга.
 3. Authentication → Email: включить, **Confirm email** по желанию; для входа по паролю — пользователь с паролем в **Users → Add user**
 4. В `user_metadata` задать `role` и `org_id` (совпадает с `NEXT_PUBLIC_OPTIQ_ORG_ID`)
 5. Realtime включён (по умолчанию для Broadcast/Presence)
