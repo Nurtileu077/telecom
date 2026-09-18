@@ -38,18 +38,19 @@ import {
 import { diffScenarioCables, highlightCurrentCableIds } from '@/lib/scenarioDiff';
 import AuthButton from '@/components/Auth/AuthButton';
 import {
-  loadJournal, saveJournal, drillMapPoints, placedCrews, moveCrew, deviationMapItems,
-  type DrillMapPoint, type DeviationMapItem,
+  loadJournal, saveJournal, drillMapPoints, drillMapLines, placedCrews, moveCrew,
+  deviationMapItems,
+  type DrillMapPoint, type DrillMapLine, type DeviationMapItem,
 } from '@/components/Construction/journalStore';
 import { snpMapPoints, type SnpMapPoint } from '@/components/Construction/snpMap';
 import { effectiveProgress } from '@/components/Construction/stageDerive';
 import { placeCrews, type CrewPlacement } from '@/components/Construction/crewPlace';
 import { areaMapItems, type AreaMapItem } from '@/components/Construction/areaProgress';
+import { routeViews, type RouteView } from '@/components/Construction/routeStyle';
 import {
   loadConstructionLayers, saveConstructionLayers,
   DEFAULT_CONSTRUCTION_LAYERS, type ConstructionLayers,
 } from '@/components/Construction/mapLayers';
-import type { PlanRoute } from '@/types/construction';
 import type { Crew } from '@/types/construction';
 const ConstructionPanel = dynamic(() => import('@/components/Construction/ConstructionPanel'), { ssr: false });
 import { useSupabaseAuth } from '@/hooks/useSupabaseAuth';
@@ -116,7 +117,8 @@ export default function HomePage() {
   const [drillPoints, setDrillPoints] = useState<DrillMapPoint[]>([]);
   const [crews, setCrews] = useState<(Crew & { placement?: CrewPlacement })[]>([]);
   const [mapDeviations, setMapDeviations] = useState<DeviationMapItem[]>([]);
-  const [planRoutes, setPlanRoutes] = useState<PlanRoute[]>([]);
+  const [planRoutes, setPlanRoutes] = useState<RouteView[]>([]);
+  const [drillLines, setDrillLines] = useState<DrillMapLine[]>([]);
   const [snpPoints, setSnpPoints] = useState<SnpMapPoint[]>([]);
   const [areas, setAreas] = useState<AreaMapItem[]>([]);
 
@@ -141,12 +143,15 @@ export default function HomePage() {
     // день никто не станет, а отчёт бригада сдаёт и так.
     setCrews(placedCrews({ ...j, crews: placeCrews(j.crews, j) }));
     setMapDeviations(deviationMapItems(j));
-    setPlanRoutes(j.planRoutes);
+    setDrillLines(drillMapLines(j));
     // Этапы считаем из журнала: на карте должно быть видно положение дел,
     // даже если доску никто руками не вёл.
     const progress = effectiveProgress(j.progress, j);
     setSnpPoints(snpMapPoints(progress, { drills: j.drills, planRoutes: j.planRoutes }));
     setAreas(areaMapItems(j.areas, progress));
+    // Цвет трассы — от того, как далеко по ней зашли: считаем здесь, чтобы
+    // карта получала готовый вид, а не лезла в журнал сама.
+    setPlanRoutes(routeViews(j.planRoutes, { progress }));
   }, []);
   useEffect(() => { refreshJournalLayers(); }, [refreshJournalLayers]);
 
@@ -930,7 +935,7 @@ export default function HomePage() {
           constructionLayers={conLayers}
           toggleConstructionLayer={toggleConstructionLayer}
           constructionCounts={{
-            drills: drillPoints.length, crews: crews.length, snp: snpPoints.length,
+            drills: drillPoints.length + drillLines.length, crews: crews.length, snp: snpPoints.length,
             deviations: mapDeviations.length, plan: planRoutes.length,
             areas: areas.length,
           }}
@@ -1117,6 +1122,7 @@ export default function HomePage() {
             onMoveCrew={handleMoveCrew}
             deviations={conLayers.deviations ? mapDeviations : EMPTY_LAYER}
             planRoutes={conLayers.plan ? planRoutes : EMPTY_LAYER}
+            drillLines={conLayers.drills ? drillLines : EMPTY_LAYER}
             snpPoints={conLayers.snp ? snpPoints : EMPTY_LAYER}
             areas={conLayers.areas ? areas : EMPTY_LAYER}
             budgetMap={budgetMap.current}
@@ -1312,7 +1318,8 @@ export default function HomePage() {
               «импортируйте Excel» только мешает смотреть на объекты. */}
           {net.districts.length === 0 && net.annotations.length === 0 && net.status === 'idle'
             && drillPoints.length === 0 && crews.length === 0 && mapDeviations.length === 0
-            && planRoutes.length === 0 && snpPoints.length === 0 && areas.length === 0 && (
+            && planRoutes.length === 0 && snpPoints.length === 0 && areas.length === 0
+            && drillLines.length === 0 && (
             <EmptyState onImport={() => setShowImport(true)} onHelp={() => setShowHelp(true)} />
           )}
         </main>

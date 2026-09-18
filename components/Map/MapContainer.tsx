@@ -14,6 +14,13 @@ import {
 } from '@/types/construction';
 import { SNP_POINT_SOURCE } from '@/components/Construction/snpMap';
 import { areaColor } from '@/components/Construction/areaProgress';
+import { routeTitle } from '@/components/Construction/routeStyle';
+
+/** Цвет прокола: свой, не пересекается с цветами этапов трассы. */
+const DRILL_COLOR: Record<'ГНБ' | 'ГНП', string> = {
+  'ГНБ': '#f472b6',
+  'ГНП': '#fb923c',
+};
 import GpsLocateButton from '@/components/Map/GpsLocateButton';
 import PresenceCursors from '@/components/Map/PresenceCursors';
 
@@ -70,8 +77,10 @@ interface Props {
   heatmapEnabled: boolean;
   /** Проколы ГНБ/ГНП из журнала стройки — отдельный слой поверх сети. */
   drillPoints?: import('@/components/Construction/journalStore').DrillMapPoint[];
-  /** Проектные трассы из KML — «как должно быть». */
-  planRoutes?: import('@/types/construction').PlanRoute[];
+  /** Трассы с видом: пунктир — проект, сплошная — построено. */
+  planRoutes?: import('@/components/Construction/routeStyle').RouteView[];
+  /** Проколы, у которых сняты вход и выход — рисуются линией. */
+  drillLines?: import('@/components/Construction/journalStore').DrillMapLine[];
   /** Отклонения от проекта — глубина и трасса — как контекст на карте. */
   deviations?: import('@/components/Construction/journalStore').DeviationMapItem[];
   /** Колонны на карте: где стоит бригада, чем занята, каким составом. */
@@ -942,8 +951,9 @@ export default function LeafletMap(props: Props) {
       if (pts.length === 0) return;
 
       for (const p of pts) {
-        // ГНБ — бирюзовый ромб, ГНП — янтарный: методы различаются на глаз.
-        const color = p.drillKind === 'ГНП' ? '#fbbf24' : '#2dd4bf';
+        // ГНБ розовый, ГНП оранжевый: янтарный занят трассой с проложенной
+        // трубой, и два разных смысла одним цветом читать невозможно.
+        const color = DRILL_COLOR[p.drillKind];
         const icon = L.divIcon({
           className: '',
           iconSize: [14, 14],
@@ -1168,28 +1178,61 @@ export default function LeafletMap(props: Props) {
     import('leaflet').then((L) => {
       group.clearLayers();
       const routes = propsRef.current.planRoutes ?? [];
-      if (routes.length === 0) return;
+      const drillLines = propsRef.current.drillLines ?? [];
+      if (routes.length === 0 && drillLines.length === 0) return;
       const zoom = mapRef.current?.getZoom?.() ?? 10;
+
       for (const r of routes) {
         if (r.coords.length < 2) continue;
-        // Приглушённый серый пунктир терялся на спутнике: на снимке местности
-        // серое есть везде. Делаем плановую трассу светлой и заметной —
-        // она всё ещё пунктир и всё ещё под фактом, но её видно.
+        // Пунктир говорит «так задумано», сплошная — «так лежит». Цвет
+        // берётся от самого дальнего пройденного этапа: труба проложена —
+        // один цвет, кабель задут — другой.
         const line = L.polyline(r.coords, {
-          color: '#e2e8f0',
-          weight: 3 * lineScale(zoom),
-          opacity: 0.9,
-          dashArray: '10,8',
+          color: r.color,
+          weight: (r.dashed ? 3 : 4.5) * lineScale(zoom),
+          opacity: r.dashed ? 0.75 : 0.95,
+          dashArray: r.dashed ? '10,8' : undefined,
         });
+        const title = routeTitle(r);
+        const stageLabel = r.stage ? SNP_STAGE_SPECS[r.stage].label : 'работ не было';
         line.bindTooltip(
-          `План: ${esc(r.name)}${r.lengthM ? ` · ${(r.lengthM / 1000).toFixed(2)} км` : ''}`,
+          `${esc(title)} · ${esc(stageLabel)}${r.lengthM ? ` · ${(r.lengthM / 1000).toFixed(2)} км` : ''}`,
           { sticky: true, className: 'text-xs' },
         );
         line.bindPopup(
-          `<b>Проектная трасса</b><br/>${esc(r.name)}` +
-          (r.folder ? `<br/><span style="color:#64748b;font-size:11px">${esc(r.folder)}</span>` : '') +
-          `<br/><span style="font-size:11px">${(r.lengthM / 1000).toFixed(3)} км</span>` +
-          `<br/><span style="color:#64748b;font-size:10px">${esc(r.source)}</span>`,
+          `<b>${esc(title)}</b>`
+          + (r.name && r.name !== title
+            ? `<br/><span style="color:#64748b;font-size:11px">${esc(r.name)}</span>` : '')
+          + `<div style="margin-top:4px;color:${r.color};font-size:12px">${esc(stageLabel)}</div>`
+          + (r.snp ? `<span style="font-size:11px">${esc(r.snp)}</span><br/>` : '')
+          + `<span style="font-size:11px">${(r.lengthM / 1000).toFixed(3)} км</span>`
+          + `<br/><span style="color:#64748b;font-size:10px">${esc(r.source)}</span>`,
+        );
+        group.addLayer(line);
+      }
+
+      // Проколы линией: у ГНБ есть вход и выход, и на карте это отрезок,
+      // а не точка. Цвет свой, чтобы не путать с трассой.
+      for (const d of drillLines) {
+        const color = DRILL_COLOR[d.drillKind];
+        const line = L.polyline(d.coords.map((c) => [c.lat, c.lon]), {
+          color,
+          weight: 5 * lineScale(zoom),
+          opacity: 0.95,
+        });
+        const when = d.date ? new Date(`${d.date}T00:00:00Z`).toLocaleDateString('ru') : '—';
+        line.bindTooltip(
+          `${d.drillKind}${d.meters ? ` · ${d.meters} м` : ''} — ${esc(d.uchastok || '')}`,
+          { sticky: true, className: 'text-xs' },
+        );
+        line.bindPopup(
+          `<b style="color:${color}">${d.drillKind}</b>`
+          + (d.meters ? ` · ${d.meters} м` : '')
+          + (d.count ? ` · ${d.count} шт` : '')
+          + `<br/>${esc(d.uchastok || '—')}`
+          + `<br/><span style="color:#64748b;font-size:11px">${esc(d.oblast || '')} · ${when}</span>`
+          + (d.contractor ? `<br/><span style="font-size:11px">${esc(d.contractor)}</span>` : '')
+          + (d.note ? `<br/><span style="font-size:11px">${esc(d.note)}</span>` : ''),
         );
         group.addLayer(line);
       }
@@ -1566,7 +1609,7 @@ export default function LeafletMap(props: Props) {
   useEffect(() => { renderDrillPoints(); }, [props.drillPoints, mapReady]);
   useEffect(() => { renderCrews(); }, [props.crews, mapReady]);
   useEffect(() => { renderDeviations(); }, [props.deviations, mapReady]);
-  useEffect(() => { renderPlanRoutes(); }, [props.planRoutes, mapReady]);
+  useEffect(() => { renderPlanRoutes(); }, [props.planRoutes, props.drillLines, mapReady]);
   useEffect(() => { renderSnpPoints(); }, [props.snpPoints, mapReady]);
   useEffect(() => { renderAreas(); }, [props.areas, mapReady]);
   useEffect(() => { renderData(); }, [props.hideNetwork]);

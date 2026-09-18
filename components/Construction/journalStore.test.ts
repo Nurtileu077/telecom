@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   groundTotals, metersBy, metersByDay, lastWorkDate, matchesFilter,
-  mergeJournal, drillMapPoints, shiftDays, fmtKm, fmtMeters,
+  mergeJournal, drillMapPoints, drillMapLines, shiftDays, fmtKm, fmtMeters,
   emptyJournal, addGroundEntry, removeEntry, type JournalState,
   submitCorrection, approveCorrection, rejectCorrection, pendingCorrections,
   hasPendingCorrection, diffEntries, suggestContractor, DEFAULT_CONTRACTORS,
@@ -140,22 +140,43 @@ describe('слияние журналов', () => {
 });
 
 describe('точки для карты', () => {
-  it('разворачивает проколы в плоский список', () => {
+  it('прокол с одной координатой — метка', () => {
+    const state: JournalState = {
+      ...emptyJournal(),
+      drills: [d({ id: 'd1', points: [{ lat: 44.48, lon: 52.09, meters: 72 }] })],
+    };
+    const pts = drillMapPoints(state);
+    expect(pts).toHaveLength(1);
+    expect(pts[0].id).toBe('d1#0');
+    expect(pts[0].meters).toBe(72);
+    expect(pts[0].drillKind).toBe('ГНБ');
+  });
+
+  it('прокол со входом и выходом — линия, а не две метки', () => {
     const state: JournalState = {
       ...emptyJournal(),
       drills: [d({ id: 'd1', points: [{ lat: 44.48, lon: 52.09, meters: 72 }, { lat: 44.49, lon: 52.10 }] })],
     };
-    const pts = drillMapPoints(state);
-    expect(pts).toHaveLength(2);
-    expect(pts[0].id).toBe('d1#0');
-    expect(pts[0].meters).toBe(72);
-    expect(pts[1].meters).toBeUndefined();
-    expect(pts[0].drillKind).toBe('ГНБ');
+    // Иначе один прокол выглядел бы на карте как два разных.
+    expect(drillMapPoints(state)).toHaveLength(0);
+    const lines = drillMapLines(state);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].coords).toHaveLength(2);
+    expect(lines[0].drillKind).toBe('ГНБ');
   });
 
-  it('записи без координат не дают точек', () => {
+  it('записи без координат не дают ни меток, ни линий', () => {
     const state: JournalState = { ...emptyJournal(), drills: [d({ points: [] })] };
     expect(drillMapPoints(state)).toHaveLength(0);
+    expect(drillMapLines(state)).toHaveLength(0);
+  });
+
+  it('кривая координата в линию не попадает', () => {
+    const state: JournalState = {
+      ...emptyJournal(),
+      drills: [d({ points: [{ lat: 44.48, lon: 52.09 }, { lat: NaN, lon: 52.1 }] })],
+    };
+    expect(drillMapLines(state)).toHaveLength(0);
   });
 });
 

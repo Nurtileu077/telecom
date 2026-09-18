@@ -352,10 +352,17 @@ export function deviationMapItems(state: JournalState): DeviationMapItem[] {
   return out;
 }
 
-/** Разворачивает записи журнала в плоский список точек для отрисовки. */
+/**
+ * Проколы для карты.
+ *
+ * Прокол — это не точка, а отрезок: у него есть вход и выход. Когда в
+ * записи сняли обе координаты, рисуем линию; когда одну — метку. Так на
+ * карте видно, где ГНБ прошла под дорогой, а не просто «здесь что-то было».
+ */
 export function drillMapPoints(state: JournalState): DrillMapPoint[] {
   const out: DrillMapPoint[] = [];
   for (const d of state.drills) {
+    if (d.points.length >= 2) continue; // это линия, она рисуется отдельно
     d.points.forEach((p, i) => {
       out.push({
         id: `${d.id}#${i}`,
@@ -364,6 +371,43 @@ export function drillMapPoints(state: JournalState): DrillMapPoint[] {
         uchastok: d.uchastok, oblast: d.oblast, date: d.date,
         note: d.note,
       });
+    });
+  }
+  return out;
+}
+
+/** Прокол с началом и концом — рисуется линией своего цвета. */
+export interface DrillMapLine {
+  id: string;
+  coords: { lat: number; lon: number }[];
+  drillKind: 'ГНБ' | 'ГНП';
+  meters?: number;
+  count?: number;
+  uchastok: string;
+  oblast: string;
+  date: string;
+  note?: string;
+  contractor?: string;
+}
+
+export function drillMapLines(state: JournalState): DrillMapLine[] {
+  const out: DrillMapLine[] = [];
+  for (const d of state.drills) {
+    const pts = d.points.filter(
+      (p) => Number.isFinite(p.lat) && Number.isFinite(p.lon),
+    );
+    if (pts.length < 2) continue;
+    out.push({
+      id: d.id,
+      coords: pts.map((p) => ({ lat: p.lat, lon: p.lon })),
+      drillKind: d.drillKind,
+      meters: d.meters,
+      count: d.count,
+      uchastok: d.uchastok,
+      oblast: d.oblast,
+      date: d.date,
+      note: d.note,
+      contractor: d.contractor,
     });
   }
   return out;
