@@ -3,7 +3,7 @@ import {
   LayMethod, MaterialKind, CorrectionRequest, Contractor, JournalRole,
   LAY_METHOD_LABEL, Deviation, isDeviationClosed, needsProtocol,
   Crew, crewOnDuty, crewEquipmentCount, MaterialDelivery, PlanRoute,
-  SnpProgress, SnpStage, StageState, MapArea, SiteObject,
+  SnpProgress, SnpStage, StageState, MapArea, SiteObject, ChangeLogEntry,
 } from '@/types/construction';
 
 /** Состояние журнала стройки — Слой 2. */
@@ -37,6 +37,11 @@ export interface JournalState {
   /** Прохождение этапов по населённым пунктам — основа нарядов. */
   progress: SnpProgress[];
   contractors: Contractor[];
+  /**
+   * Журнал изменений трассы: кто, когда и как было. Одобрения правка не
+   * требует — линия и есть форма, — но след оставляет.
+   */
+  changes: ChangeLogEntry[];
   /** Поля актов, заполняемые при закрытии, по участкам. */
   actFields: Record<string, import('./sectionAct').SectionActManual>;
   /**
@@ -61,7 +66,8 @@ export function emptyJournal(): JournalState {
     orders: [], ground: [], aerial: [], drills: [],
     corrections: [], deviations: [], crews: [], deliveries: [], planRoutes: [],
     areas: [], prices: {}, objects: [], sectionProgress: {}, progress: [],
-    contractors: DEFAULT_CONTRACTORS, actFields: {}, deleted: [], updatedAt: '',
+    contractors: DEFAULT_CONTRACTORS, changes: [], actFields: {},
+    deleted: [], updatedAt: '',
   };
 }
 
@@ -298,6 +304,7 @@ export function loadJournal(): JournalState {
       orders: p.orders ?? [], ground: p.ground ?? [],
       aerial: p.aerial ?? [], drills: p.drills ?? [],
       corrections: p.corrections ?? [],
+      changes: p.changes ?? [],
       deviations: p.deviations ?? [],
       crews: p.crews ?? [],
       deliveries: p.deliveries ?? [],
@@ -351,6 +358,7 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     objects: base.objects,
     sectionProgress: base.sectionProgress,
     corrections: base.corrections,
+    changes: base.changes,
     deviations: base.deviations,
     crews: base.crews,
     deliveries: base.deliveries,
@@ -652,6 +660,150 @@ export function removePlanSource(base: JournalState, source: string): JournalSta
     planRoutes: base.planRoutes.filter((r) => r.source !== source),
     updatedAt: new Date().toISOString(),
   };
+}
+
+/**
+ * Запись в журнал изменений.
+ *
+ * Одобрения правка трассы не требует — линия на карте и есть форма, и
+ * ждать подтверждения, чтобы сдвинуть вершину, никто не станет. Но след
+ * она оставляет: кто, когда и как было. Через неделю иначе не вспомнить,
+ * где линия шла до того, как её поправили.
+ */
+export function logChange(
+  base: JournalState,
+  entry: Omit<ChangeLogEntry, 'id' | 'at'> & { id?: string; at?: string },
+): JournalState {
+  const at = entry.at ?? new Date().toISOString();
+  const rec: ChangeLogEntry = {
+    ...entry,
+    id: entry.id ?? `ch-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    at,
+  };
+  return {
+    ...base,
+    changes: [rec, ...(base.changes ?? [])].slice(0, 2000),
+    updatedAt: at,
+  };
+}
+
+/**
+ * Правка трассы с записью в журнал.
+ *
+ * Одна точка входа: иначе правка однажды пройдёт мимо журнала, и именно
+ * та, из-за которой потом будут разбираться.
+ */
+export function updateRouteCoords(
+  base: JournalState,
+  id: string,
+  coords: [number, number][],
+  ctx: { author: string; lengthM: number; kato?: string },
+): JournalState {
+  const prev = base.planRoutes.find((r) => r.id === id);
+  if (!prev) return base;
+  const now = new Date().toISOString();
+  const next: JournalState = {
+    ...base,
+    planRoutes: base.planRoutes.map((r) => (
+      r.id === id ? { ...r, coords, lengthM: ctx.lengthM, updatedAt: now } : r
+    )),
+    updatedAt: now,
+  };
+  return logChange(next, {
+    at: now,
+    author: ctx.author,
+    kind: 'route_edit',
+    target: prev.name || prev.uchastok || 'трасса',
+    detail: `было ${changeKm(prev.lengthM)}, стало ${changeKm(ctx.lengthM)}`,
+    routeId: id,
+    kato: ctx.kato,
+    before: prev.coords,
+  });
+}
+
+/** Удаление трассы — тоже с записью: вернуть её иначе будет неоткуда. */
+export function deleteRoute(
+  base: JournalState,
+  id: string,
+  author: string,
+): JournalState {
+  const prev = base.planRoutes.find((r) => r.id === id);
+  if (!prev) return base;
+  const now = new Date().toISOString();
+  const next: JournalState = {
+    ...base,
+    planRoutes: base.planRoutes.filter((r) => r.id !== id),
+    updatedAt: now,
+  };
+  return logChange(next, {
+    at: now,
+    author,
+    kind: 'route_delete',
+    target: prev.name || prev.uchastok || 'трасса',
+    detail: `удалена, была ${changeKm(prev.lengthM)}`,
+    routeId: id,
+    before: prev.coords,
+  });
+}
+
+/**
+ * Вернуть трассу как было — по записи журнала.
+ *
+ * Возврат сам становится записью: история не переписывается, она
+ * продолжается. Удалённая трасса возвращается целиком.
+ */
+export function restoreRoute(
+  base: JournalState,
+  changeId: string,
+  author: string,
+): JournalState {
+  const ch = (base.changes ?? []).find((c) => c.id === changeId);
+  if (!ch?.before?.length || !ch.routeId) return base;
+  const now = new Date().toISOString();
+  const lengthM = Math.round(coordsLengthM(ch.before));
+  const exists = base.planRoutes.find((r) => r.id === ch.routeId);
+
+  const planRoutes = exists
+    ? base.planRoutes.map((r) => (
+      r.id === ch.routeId ? { ...r, coords: ch.before!, lengthM, updatedAt: now } : r
+    ))
+    : [...base.planRoutes, {
+      id: ch.routeId,
+      name: ch.target,
+      coords: ch.before,
+      lengthM,
+      source: 'восстановлено',
+      createdAt: now,
+      updatedAt: now,
+    }];
+
+  return logChange({ ...base, planRoutes, updatedAt: now }, {
+    at: now,
+    author,
+    kind: 'route_edit',
+    target: ch.target,
+    detail: `возвращено как было на ${new Date(ch.at).toLocaleString('ru')}`,
+    routeId: ch.routeId,
+    before: exists?.coords,
+  });
+}
+
+/** Километры в журнале изменений — с запятой, как их пишут и читают. */
+function changeKm(m: number): string {
+  return `${(m / 1000).toFixed(3).replace('.', ',')} км`;
+}
+
+/** Длина ломаной в метрах — по той же формуле, что и везде в стройке. */
+function coordsLengthM(coords: [number, number][]): number {
+  let m = 0;
+  for (let i = 1; i < coords.length; i++) {
+    const [la1, lo1] = coords[i - 1];
+    const [la2, lo2] = coords[i];
+    const dLat = (la2 - la1) * 111_320;
+    const dLon = (lo2 - lo1) * 111_320 * Math.cos(((la1 + la2) / 2) * Math.PI / 180);
+    m += Math.hypot(dLat, dLon);
+  }
+  return m;
 }
 
 // ── Продвижение по трассе ────────────────────────────────────────────────────

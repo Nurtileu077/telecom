@@ -54,7 +54,9 @@ import {
   loadRouteColorMode, saveRouteColorMode, type RouteColorMode,
 } from '@/components/Construction/mapLayers';
 import RouteDrawForm from '@/components/Construction/RouteDrawForm';
-import { addPlanRoutes, addDeviation } from '@/components/Construction/journalStore';
+import {
+  addPlanRoutes, addDeviation, updateRouteCoords, deleteRoute,
+} from '@/components/Construction/journalStore';
 import { polylineLengthM } from '@/components/Construction/planImport';
 import {
   loadConstructionLayers, saveConstructionLayers,
@@ -235,30 +237,21 @@ export default function HomePage() {
   }, []);
   const [siteObjects, setSiteObjects] = useState<SiteObject[]>([]);
 
-  /** Правка трассы: пишем сразу — линия на карте и есть форма. */
+  /**
+   * Правка трассы: пишем сразу — линия на карте и есть форма.
+   * Одобрения она не требует, но след оставляет: кто, когда и как было.
+   */
   const handleUpdateRoute = useCallback((id: string, coords: [number, number][]) => {
-    const base = loadJournal();
-    const next = {
-      ...base,
-      planRoutes: base.planRoutes.map((r) => (
-        r.id === id
-          ? { ...r, coords, lengthM: polylineLengthM(coords), updatedAt: new Date().toISOString() }
-          : r
-      )),
-      updatedAt: new Date().toISOString(),
-    };
-    saveJournal(next);
+    saveJournal(updateRouteCoords(loadJournal(), id, coords, {
+      author: getActorName() || 'Без имени',
+      lengthM: polylineLengthM(coords),
+    }));
     refreshJournalLayers();
   }, [refreshJournalLayers]);
 
   const handleDeleteRoute = useCallback((id: string) => {
-    if (!confirm('Удалить трассу с карты?')) return;
-    const base = loadJournal();
-    saveJournal({
-      ...base,
-      planRoutes: base.planRoutes.filter((r) => r.id !== id),
-      updatedAt: new Date().toISOString(),
-    });
+    if (!confirm('Удалить трассу с карты?\nВернуть её можно будет в журнале изменений.')) return;
+    saveJournal(deleteRoute(loadJournal(), id, getActorName() || 'Без имени'));
     setEditingRouteId(null);
     refreshJournalLayers();
   }, [refreshJournalLayers]);

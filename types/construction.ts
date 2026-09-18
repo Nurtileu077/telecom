@@ -739,6 +739,36 @@ export interface CorrectionRequest {
   decisionNote?: string;
 }
 
+/**
+ * Запись в журнале изменений.
+ *
+ * Трассу правят на карте без чьего-либо одобрения — так и надо: линия и
+ * есть форма, а ждать подтверждения, чтобы сдвинуть вершину, никто не
+ * станет. Но правка должна оставлять след: кто, когда и как было. След —
+ * это не надзор, а возможность вернуть: через неделю никто не вспомнит,
+ * где линия шла до того, как её «поправили».
+ */
+export type ChangeKind = 'route_edit' | 'route_delete' | 'route_add';
+
+export interface ChangeLogEntry {
+  id: string;
+  /** Когда — ISO. */
+  at: string;
+  author: string;
+  kind: ChangeKind;
+  /** Что менялось: название трассы. */
+  target: string;
+  /** Коротко по существу: «было 12,4 км, стало 12,9 км». */
+  detail?: string;
+  oblast?: string;
+  rayon?: string;
+  kato?: string;
+  /** id трассы — чтобы вернуть как было. */
+  routeId?: string;
+  /** Прежняя геометрия. Без неё «как было» — просто слова. */
+  before?: [number, number][];
+}
+
 /** Роль внутри журнала: кто вносит и кто подтверждает исправления. */
 export type JournalRole = 'field' | 'office';
 

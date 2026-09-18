@@ -2,7 +2,7 @@ import { JournalState, DeletedMark, emptyJournal } from './journalStore';
 import {
   DailyWorkEntry, AerialWorkEntry, DrillLogEntry, Deviation, Crew,
   CorrectionRequest, SettlementOrder, Contractor, MaterialDelivery, PlanRoute,
-  SnpProgress, MapArea, SiteObject,
+  SnpProgress, MapArea, SiteObject, ChangeLogEntry,
 } from '@/types/construction';
 
 /**
@@ -48,6 +48,21 @@ function tombstoneMap(a: DeletedMark[], b: DeletedMark[]): Map<string, string> {
     if (!prev || d.at > prev) m.set(d.id, d.at);
   }
   return m;
+}
+
+/**
+ * Журнал изменений дописывается, а не правится: объединяем по id и
+ * держим в хронологии. Ограничение сверху — чтобы файл не рос вечно:
+ * старые записи о правках трассы никто не читает, а место занимают.
+ */
+const CHANGES_KEPT = 2000;
+
+function mergeChanges(a: ChangeLogEntry[] = [], b: ChangeLogEntry[] = []): ChangeLogEntry[] {
+  const byId = new Map<string, ChangeLogEntry>();
+  for (const c of [...a, ...b]) byId.set(c.id, c);
+  return [...byId.values()]
+    .sort((x, y) => y.at.localeCompare(x.at))
+    .slice(0, CHANGES_KEPT);
 }
 
 function mergeCollection<T extends Identified>(
@@ -134,6 +149,9 @@ export function mergeJournalStates(
     prices: { ...remote.prices, ...local.prices },
     progress: mergeProgress(local.progress, remote.progress, stats),
     corrections: mergeCorrections(local.corrections, remote.corrections, stats),
+    // Журнал изменений только растёт: записи в нём не правят, их дописывают.
+    // Поэтому объединение по id, без «кто новее»: новее тут не бывает.
+    changes: mergeChanges(local.changes, remote.changes),
     contractors: mergeContractors(local.contractors, remote.contractors),
     // Поля актов: своё заполнение в приоритете, чужие участки добираем.
     actFields: { ...(remote.actFields ?? {}), ...(local.actFields ?? {}) },

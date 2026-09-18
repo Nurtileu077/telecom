@@ -20,9 +20,11 @@ import {
   addPlanRoutes, removePlanSource, planSources, plural, setProgress, setStage,
   addAreas, removeAreaSource, areaSources, setMaterialPrice, upsertDrill,
   upsertObject, removeObject, setSectionProgress, scopeJournal, smuList,
+  restoreRoute,
 } from './journalStore';
 import { crewsFromJournal, type DerivedCrew } from './crewDerive';
 import { routeViews } from './routeStyle';
+import ChangeLogView from './ChangeLogView';
 import DeviationForm from './DeviationForm';
 import CrewForm from './CrewForm';
 import SectionClosing from './SectionClosing';
@@ -51,7 +53,7 @@ import {
 } from '@/types/construction';
 
 type Period = 'day' | 'week' | 'month' | 'all';
-type View = 'today' | 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages' | 'drills' | 'objects';
+type View = 'today' | 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages' | 'drills' | 'objects' | 'log';
 
 const PERIOD_LABEL: Record<Period, string> = {
   day: 'Последний день', week: '7 дней', month: '30 дней', all: 'Всё время',
@@ -481,7 +483,7 @@ export default function ConstructionPanel({
       {!empty && (
         <div className="flex flex-wrap items-center gap-1.5 px-3 md:px-4 py-2 border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0">
           <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md mr-1">
-            {([['today', 'Сегодня'], ['summary', 'Сводка'], ['management', 'Руководству'], ['entries', 'Записи'], ['crews', 'Колонны'], ['stages', 'Этапы'], ['drills', 'Проколы'], ['objects', 'Объекты'], ['deviations', 'Отклонения'], ['materials', 'Материалы'], ['closing', 'Закрытие'], ['corrections', 'Заявки']] as [View, string][]).map(([v, label]) => {
+            {([['today', 'Сегодня'], ['summary', 'Сводка'], ['management', 'Руководству'], ['entries', 'Записи'], ['crews', 'Колонны'], ['stages', 'Этапы'], ['drills', 'Проколы'], ['objects', 'Объекты'], ['deviations', 'Отклонения'], ['materials', 'Материалы'], ['closing', 'Закрытие'], ['corrections', 'Заявки'], ['log', 'Изменения']] as [View, string][]).map(([v, label]) => {
               const badge = v === 'corrections' ? pending.length
                 : v === 'deviations' ? openDevs.length
                 : v === 'materials' ? lowMaterials.length
@@ -704,6 +706,12 @@ export default function ConstructionPanel({
               const base = loadJournal();
               persist({ ...base, actFields: { ...base.actFields, [uch]: f } });
             }}
+          />
+        ) : view === 'log' ? (
+          <ChangeLogView
+            journal={journal}
+            oblast={oblast || undefined}
+            onRestore={(id) => persist(restoreRoute(loadJournal(), id, actor))}
           />
         ) : view === 'crews' ? (
           <CrewsList
