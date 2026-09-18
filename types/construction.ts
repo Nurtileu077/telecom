@@ -259,6 +259,86 @@ export interface DrillLogEntry extends WorkEntryBase {
 
 export type ConstructionEntry = DailyWorkEntry | AerialWorkEntry | DrillLogEntry;
 
+// ── Этапы по населённому пункту ──────────────────────────────────────────────
+
+/**
+ * Этапы прохождения СНП. Порядок значим: следующий этап становится
+ * нарядом, только когда предыдущий закрыт.
+ */
+export type SnpStage = 'mkt' | 'gnb' | 'zaduvka' | 'podves' | 'svarka' | 'sdacha';
+
+export const SNP_STAGES: SnpStage[] = ['mkt', 'gnb', 'zaduvka', 'podves', 'svarka', 'sdacha'];
+
+export interface SnpStageSpec {
+  label: string;
+  /** Колонна какого вида выполняет этап. Сдача — не бригадный этап. */
+  crewKind?: CrewKind;
+}
+
+export const SNP_STAGE_SPECS: Record<SnpStage, SnpStageSpec> = {
+  mkt:     { label: 'Прокладка МКТ', crewKind: 'mkt' },
+  gnb:     { label: 'ГНБ / переходы', crewKind: 'gnb' },
+  zaduvka: { label: 'Задувка ОК',    crewKind: 'zaduvka' },
+  podves:  { label: 'Подвес',        crewKind: 'podves' },
+  svarka:  { label: 'Сварка',        crewKind: 'svarka' },
+  sdacha:  { label: 'Сдача' },
+};
+
+export type StageStatus = 'not_started' | 'in_progress' | 'done' | 'blocked';
+
+export const STAGE_STATUS_SPECS: Record<StageStatus, { label: string; color: string }> = {
+  not_started: { label: 'Не начат',  color: '#64748b' },
+  in_progress: { label: 'В работе',  color: '#4ade80' },
+  done:        { label: 'Закрыт',    color: '#2dd4bf' },
+  blocked:     { label: 'Стоит',     color: '#f87171' },
+};
+
+export interface StageState {
+  status: StageStatus;
+  startedAt?: string;
+  doneAt?: string;
+  /** Кто отметил. */
+  by?: string;
+  /** Колонна, выполнявшая этап. */
+  crew?: string;
+  note?: string;
+  /** Почему стоит — обязательна при статусе blocked. */
+  blockReason?: string;
+}
+
+/** Типовые причины простоя — из отчётов инженера. */
+export const BLOCK_REASONS: string[] = [
+  'Ждём согласование',
+  'Скальный грунт',
+  'Поломка техники',
+  'Нет материала',
+  'Погода',
+  'Не передан фронт работ',
+  'Прочее',
+];
+
+/** Прохождение этапов по одному населённому пункту. */
+export interface SnpProgress {
+  /** Ключ — КАТО, как и во всём журнале. */
+  kato: string;
+  snp: string;
+  oblast?: string;
+  rayon?: string;
+  stages: Partial<Record<SnpStage, StageState>>;
+  updatedAt: string;
+}
+
+/** Следующий этап после указанного. */
+export function nextStage(s: SnpStage): SnpStage | null {
+  const i = SNP_STAGES.indexOf(s);
+  return i >= 0 && i < SNP_STAGES.length - 1 ? SNP_STAGES[i + 1] : null;
+}
+
+export function prevStage(s: SnpStage): SnpStage | null {
+  const i = SNP_STAGES.indexOf(s);
+  return i > 0 ? SNP_STAGES[i - 1] : null;
+}
+
 // ── Плановая трасса ──────────────────────────────────────────────────────────
 
 /**

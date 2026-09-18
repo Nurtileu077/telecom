@@ -3,6 +3,7 @@ import {
   LayMethod, MaterialKind, CorrectionRequest, Contractor, JournalRole,
   LAY_METHOD_LABEL, Deviation, isDeviationClosed, needsProtocol,
   Crew, crewOnDuty, crewEquipmentCount, MaterialDelivery, PlanRoute,
+  SnpProgress, SnpStage, StageState,
 } from '@/types/construction';
 
 /** Состояние журнала стройки — Слой 2. */
@@ -21,6 +22,8 @@ export interface JournalState {
   deliveries: MaterialDelivery[];
   /** Проектные трассы из KML: план, который стройка не переписывает. */
   planRoutes: PlanRoute[];
+  /** Прохождение этапов по населённым пунктам — основа нарядов. */
+  progress: SnpProgress[];
   contractors: Contractor[];
   /** Поля актов, заполняемые при закрытии, по участкам. */
   actFields: Record<string, import('./sectionAct').SectionActManual>;
@@ -44,7 +47,7 @@ export interface DeletedMark {
 export function emptyJournal(): JournalState {
   return {
     orders: [], ground: [], aerial: [], drills: [],
-    corrections: [], deviations: [], crews: [], deliveries: [], planRoutes: [],
+    corrections: [], deviations: [], crews: [], deliveries: [], planRoutes: [], progress: [],
     contractors: DEFAULT_CONTRACTORS, actFields: {}, deleted: [], updatedAt: '',
   };
 }
@@ -235,6 +238,7 @@ export function loadJournal(): JournalState {
       crews: p.crews ?? [],
       deliveries: p.deliveries ?? [],
       planRoutes: p.planRoutes ?? [],
+      progress: p.progress ?? [],
       actFields: p.actFields ?? {},
       deleted: p.deleted ?? [],
       // Пустой справочник заменяем стартовым — иначе подрядчика не из чего выбрать.
@@ -279,6 +283,7 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     crews: base.crews,
     deliveries: base.deliveries,
     planRoutes: base.planRoutes,
+    progress: base.progress,
     contractors: base.contractors.length ? base.contractors : DEFAULT_CONTRACTORS,
     actFields: base.actFields,
     deleted: base.deleted,
@@ -431,6 +436,42 @@ export function placedCrews(base: JournalState): Crew[] {
 }
 
 export { crewOnDuty, crewEquipmentCount };
+
+// ── Этапы по населённым пунктам ──────────────────────────────────────────────
+
+/** Замена карточек этапов целиком — после автозаведения из реестра. */
+export function setProgress(base: JournalState, rows: SnpProgress[]): JournalState {
+  return { ...base, progress: rows, updatedAt: new Date().toISOString() };
+}
+
+/**
+ * Отметка этапа. Время проставляется здесь, а не в интерфейсе: от него
+ * зависит очередь нарядов, и оно не должно приходить из формы.
+ */
+export function setStage(
+  base: JournalState,
+  kato: string,
+  stage: SnpStage,
+  patch: Partial<StageState>,
+  by: string,
+): JournalState {
+  const now = new Date().toISOString();
+  return {
+    ...base,
+    progress: base.progress.map((p) => {
+      if (p.kato !== kato) return p;
+      const prev = p.stages[stage] ?? { status: 'not_started' as const };
+      const next: StageState = { ...prev, ...patch, by };
+      if (patch.status === 'in_progress' && !next.startedAt) next.startedAt = now;
+      if (patch.status === 'done') next.doneAt = now;
+      if (patch.status === 'blocked' && !next.startedAt) next.startedAt = now;
+      // Снятие блокировки и возврат в работу не должны тащить старую причину.
+      if (patch.status && patch.status !== 'blocked') next.blockReason = undefined;
+      return { ...p, stages: { ...p.stages, [stage]: next }, updatedAt: now };
+    }),
+    updatedAt: now,
+  };
+}
 
 // ── Плановые трассы ──────────────────────────────────────────────────────────
 

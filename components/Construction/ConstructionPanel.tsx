@@ -17,17 +17,19 @@ import {
   hasPendingCorrection, diffEntries, loadJournalRole, saveJournalRole,
   addDeviation, removeDeviation, openDeviations, isDeviationClosed,
   upsertCrew, removeCrew, upsertDelivery, removeDelivery,
-  addPlanRoutes, removePlanSource, planSources, plural,
+  addPlanRoutes, removePlanSource, planSources, plural, setProgress, setStage,
 } from './journalStore';
 import DeviationForm from './DeviationForm';
 import CrewForm from './CrewForm';
 import SectionClosing from './SectionClosing';
 import MaterialsView from './MaterialsView';
+import StagesView from './StagesView';
 import {
   journalCloudEnabled, syncJournal, loadLastSyncAt, saveLastSyncAt,
 } from './journalRemote';
 import { materialForecast, lowStock } from './materialForecast';
 import { importPlanRoutes } from './planImport';
+import { pendingTasks, seedProgress, handoffTasks } from './stageTasks';
 import {
   LAY_METHOD_LABEL, MATERIAL_UNIT, JOURNAL_ROLE_LABEL, DEVIATION_KIND_LABEL,
   CREW_KINDS, CREW_STATUS,
@@ -36,7 +38,7 @@ import {
 } from '@/types/construction';
 
 type Period = 'day' | 'week' | 'month' | 'all';
-type View = 'summary' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials';
+type View = 'summary' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages';
 
 const PERIOD_LABEL: Record<Period, string> = {
   day: 'Последний день', week: '7 дней', month: '30 дней', all: 'Всё время',
@@ -261,6 +263,11 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
 
   const pending = useMemo(() => pendingCorrections(journal), [journal]);
   const openDevs = useMemo(() => openDeviations(journal), [journal]);
+  const tasks = useMemo(
+    () => pendingTasks(journal.progress, { orders: journal.orders, drills: journal.drills }),
+    [journal.progress, journal.orders, journal.drills],
+  );
+  const handoffs = useMemo(() => handoffTasks(tasks), [tasks]);
   const lowMaterials = useMemo(
     () => lowStock(materialForecast(journal.ground, journal.deliveries, { oblast: oblast || undefined })),
     [journal.ground, journal.deliveries, oblast],
@@ -335,10 +342,11 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
       {!empty && (
         <div className="flex flex-wrap items-center gap-1.5 px-3 md:px-4 py-2 border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0">
           <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md mr-1">
-            {([['summary', 'Сводка'], ['entries', 'Записи'], ['crews', 'Колонны'], ['deviations', 'Отклонения'], ['materials', 'Материалы'], ['closing', 'Закрытие'], ['corrections', 'Заявки']] as [View, string][]).map(([v, label]) => {
+            {([['summary', 'Сводка'], ['entries', 'Записи'], ['crews', 'Колонны'], ['stages', 'Этапы'], ['deviations', 'Отклонения'], ['materials', 'Материалы'], ['closing', 'Закрытие'], ['corrections', 'Заявки']] as [View, string][]).map(([v, label]) => {
               const badge = v === 'corrections' ? pending.length
                 : v === 'deviations' ? openDevs.length
-                : v === 'materials' ? lowMaterials.length : 0;
+                : v === 'materials' ? lowMaterials.length
+                : v === 'stages' ? handoffs.length : 0;
               return (
                 <button key={v} type="button" onClick={() => setView(v)}
                   className={`px-2.5 py-1 text-[11px] rounded transition-colors inline-flex items-center gap-1 ${
@@ -434,6 +442,16 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
 
         {empty ? (
           <EmptyJournal onPick={() => fileRef.current?.click()} onAdd={() => setFormOpen(true)} busy={busy} />
+        ) : view === 'stages' ? (
+          <StagesView
+            journal={journal}
+            onSeed={() => {
+              const base = loadJournal();
+              persist(setProgress(base, seedProgress(base.orders, base.ground, base.progress)));
+            }}
+            onSetStage={(kato, stage, patch) =>
+              persist(setStage(loadJournal(), kato, stage, patch, actor))}
+          />
         ) : view === 'materials' ? (
           <MaterialsView
             journal={journal}

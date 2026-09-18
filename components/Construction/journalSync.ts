@@ -2,6 +2,7 @@ import { JournalState, DeletedMark, emptyJournal } from './journalStore';
 import {
   DailyWorkEntry, AerialWorkEntry, DrillLogEntry, Deviation, Crew,
   CorrectionRequest, SettlementOrder, Contractor, MaterialDelivery, PlanRoute,
+  SnpProgress,
 } from '@/types/construction';
 
 /**
@@ -124,6 +125,7 @@ export function mergeJournalStates(
     crews: mergeCollection<Crew>(local.crews, remote.crews, tombs, stats),
     deliveries: mergeCollection<MaterialDelivery>(local.deliveries, remote.deliveries, tombs, stats),
     planRoutes: mergeCollection<PlanRoute>(local.planRoutes, remote.planRoutes, tombs, stats),
+    progress: mergeProgress(local.progress, remote.progress, stats),
     corrections: mergeCorrections(local.corrections, remote.corrections, stats),
     contractors: mergeContractors(local.contractors, remote.contractors),
     // Поля актов: своё заполнение в приоритете, чужие участки добираем.
@@ -163,6 +165,30 @@ function mergeCorrections(
     }
   }
   return [...byId.values()];
+}
+
+/**
+ * Этапы ключуются по КАТО, а не по id. Сливаем по этапам, а не целиком
+ * карточкой: бригады закрывают разные этапы одного СНП, и карточка целиком
+ * затирала бы чужую отметку.
+ */
+function mergeProgress(local: SnpProgress[], remote: SnpProgress[], stats: MergeStats): SnpProgress[] {
+  const byKato = new Map<string, SnpProgress>();
+  for (const p of local) byKato.set(p.kato, p);
+  for (const r of remote) {
+    const mine = byKato.get(r.kato);
+    if (!mine) { byKato.set(r.kato, r); stats.pulled++; continue; }
+    const stages = { ...mine.stages };
+    for (const [stage, st] of Object.entries(r.stages)) {
+      const own = stages[stage as keyof typeof stages];
+      if (!own) { stages[stage as keyof typeof stages] = st; continue; }
+      // Позже отмеченный этап сильнее: doneAt и startedAt дают порядок.
+      const t = (x: typeof st) => x.doneAt ?? x.startedAt ?? '';
+      if (t(st) > t(own)) { stages[stage as keyof typeof stages] = st; stats.conflicts++; }
+    }
+    byKato.set(r.kato, { ...mine, stages, updatedAt: new Date().toISOString() });
+  }
+  return [...byKato.values()];
 }
 
 /** Пустой журнал как «серверная сторона», когда на сервере ещё ничего нет. */
