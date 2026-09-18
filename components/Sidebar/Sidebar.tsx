@@ -319,7 +319,9 @@ export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Prop
                 <p className="section-title mb-2">Адрес</p>
                 <GeocodeSearch flyTo={props.flyTo} className="relative block w-full" />
               </div>
-              {props.onSearchHit && (
+              {/* Поиск по объектам сети — вещь проектировщика: на стройке
+                  камер и OLT в работе нет. */}
+              {props.onSearchHit && !props.building && (
                 <div>
                   <p className="section-title mb-2">ID / камера / OLT</p>
                   <EntityIdSearch

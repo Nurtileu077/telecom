@@ -32,7 +32,10 @@ export const CONSTRUCTION_LAYER_LABELS: Record<keyof ConstructionLayers, string>
 };
 
 export const DEFAULT_CONSTRUCTION_LAYERS: ConstructionLayers = {
-  drills: true, crews: true, snp: true, deviations: true, plan: true, areas: true,
+  // Контуры районов и сёл по умолчанию выключены: в рабочем файле их
+  // восемь десятков, они закрывают трассу и отвечают на вопрос, который
+  // на стройке никто не задаёт. Включить можно тумблером.
+  drills: true, crews: true, snp: true, deviations: true, plan: true, areas: false,
 };
 
 const KEY = 'optiq-construction-layers-v1';
