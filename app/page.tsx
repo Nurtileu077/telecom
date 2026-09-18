@@ -49,6 +49,7 @@ import { areaMapItems, type AreaMapItem } from '@/components/Construction/areaPr
 import { routeViews, type RouteView } from '@/components/Construction/routeStyle';
 import RouteDrawForm from '@/components/Construction/RouteDrawForm';
 import { addPlanRoutes, addDeviation } from '@/components/Construction/journalStore';
+import { polylineLengthM } from '@/components/Construction/planImport';
 import {
   loadConstructionLayers, saveConstructionLayers,
   DEFAULT_CONSTRUCTION_LAYERS, type ConstructionLayers,
@@ -167,6 +168,37 @@ export default function HomePage() {
     setPlanRoutes(routeViews(j.planRoutes, { progress }));
   }, []);
   useEffect(() => { refreshJournalLayers(); }, [refreshJournalLayers]);
+
+  const [editingRouteId, setEditingRouteId] = useState<string | null>(null);
+
+  /** Правка трассы: пишем сразу — линия на карте и есть форма. */
+  const handleUpdateRoute = useCallback((id: string, coords: [number, number][]) => {
+    const base = loadJournal();
+    const next = {
+      ...base,
+      planRoutes: base.planRoutes.map((r) => (
+        r.id === id
+          ? { ...r, coords, lengthM: polylineLengthM(coords), updatedAt: new Date().toISOString() }
+          : r
+      )),
+      updatedAt: new Date().toISOString(),
+    };
+    saveJournal(next);
+    refreshJournalLayers();
+  }, [refreshJournalLayers]);
+
+  const handleDeleteRoute = useCallback((id: string) => {
+    if (!confirm('Удалить трассу с карты?')) return;
+    const base = loadJournal();
+    saveJournal({
+      ...base,
+      planRoutes: base.planRoutes.filter((r) => r.id !== id),
+      updatedAt: new Date().toISOString(),
+    });
+    setEditingRouteId(null);
+    refreshJournalLayers();
+  }, [refreshJournalLayers]);
+
 
   // Слои стройки настраиваются отдельно от сети: карта у прораба и у
   // проектировщика — разная карта.
@@ -1139,6 +1171,10 @@ export default function HomePage() {
             drawingRoute={drawingRoute}
             onToggleDrawRoute={building ? () => setDrawingRoute((v) => !v) : undefined}
             onRouteDrawn={building ? handleRouteDrawn : undefined}
+            editingRouteId={editingRouteId}
+            onEditRoute={building ? setEditingRouteId : undefined}
+            onUpdateRouteCoords={handleUpdateRoute}
+            onDeleteRoute={handleDeleteRoute}
             snpPoints={conLayers.snp ? snpPoints : EMPTY_LAYER}
             areas={conLayers.areas ? areas : EMPTY_LAYER}
             budgetMap={budgetMap.current}

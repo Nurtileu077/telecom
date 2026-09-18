@@ -88,6 +88,11 @@ interface Props {
   drawingRoute?: boolean;
   onToggleDrawRoute?: () => void;
   onRouteDrawn?: (coords: [number, number][]) => void;
+  /** Трасса, у которой сейчас видны ручки: её можно тянуть и править. */
+  editingRouteId?: string | null;
+  onEditRoute?: (id: string | null) => void;
+  onUpdateRouteCoords?: (id: string, coords: [number, number][]) => void;
+  onDeleteRoute?: (id: string) => void;
   /** Отклонения от проекта — глубина и трасса — как контекст на карте. */
   deviations?: import('@/components/Construction/journalStore').DeviationMapItem[];
   /** Колонны на карте: где стоит бригада, чем занята, каким составом. */
@@ -333,6 +338,8 @@ export default function LeafletMap(props: Props) {
   const routeDraftRef = useRef<[number, number][]>([]);
   /** Отложенная вершина: двойной клик приходит после двух одиночных. */
   const routeClickTimerRef = useRef<number | null>(null);
+  /** Ручки правки трассы — отдельная группа, чтобы не мешать слоям. */
+  const routeEditGroupRef = useRef<any>(null);
   const measureStateRef = useRef<{ coords: [number, number][]; layer?: any; total: number }>({ coords: [], total: 0 });
   const waypointGroupRef = useRef<any>(null);
   const entityDragRef = useRef(false);
@@ -373,6 +380,7 @@ export default function LeafletMap(props: Props) {
       // Контуры идут первыми: это подложка, а не объекты поверх.
       areaGroupRef.current = L.layerGroup().addTo(map);
       snpGroupRef.current = L.layerGroup().addTo(map);
+      routeEditGroupRef.current = L.layerGroup().addTo(map);
       drawGroupRef.current = L.layerGroup().addTo(map);
       measureGroupRef.current = L.layerGroup().addTo(map);
       waypointGroupRef.current = L.layerGroup().addTo(map);
@@ -1246,7 +1254,17 @@ export default function LeafletMap(props: Props) {
           + `<div style="margin-top:4px;color:${r.color};font-size:12px">${esc(stageLabel)}</div>`
           + (r.snp ? `<span style="font-size:11px">${esc(r.snp)}</span><br/>` : '')
           + `<span style="font-size:11px">${(r.lengthM / 1000).toFixed(3)} км</span>`
-          + `<br/><span style="color:#64748b;font-size:10px">${esc(r.source)}</span>`,
+          + `<br/><span style="color:#64748b;font-size:10px">${esc(r.source)}</span>`
+          + (propsRef.current.onEditRoute
+            ? `<div style="margin-top:6px;display:flex;gap:6px">
+                 <button onclick="window.__optiqEditRoute__('${esc(r.id)}')"
+                   style="padding:3px 8px;background:#2dd4bf;color:#041016;border:none;border-radius:3px;font-size:10px;cursor:pointer;font-weight:600">
+                   ✏️ Править линию</button>
+                 <button onclick="window.__optiqDeleteRoute__('${esc(r.id)}')"
+                   style="padding:3px 8px;background:transparent;color:#f87171;border:1px solid #f87171;border-radius:3px;font-size:10px;cursor:pointer">
+                   Удалить</button>
+               </div>`
+            : ''),
         );
         group.addLayer(line);
       }
@@ -1460,6 +1478,69 @@ export default function LeafletMap(props: Props) {
     drawGroupRef.current?.clearLayers();
     if (pts.length >= 2) propsRef.current.onRouteDrawn?.(pts);
     else propsRef.current.onRouteDrawn?.([]);
+  }
+
+  /**
+   * Ручки на трассе, которую правят.
+   *
+   * Тянуть можно каждую вершину; форма при этом сохраняется — соседние
+   * точки едут следом и к соседним ручкам смещение сходит на нет.
+   * Правая кнопка по ручке убирает вершину: линия из двух точек — предел,
+   * дальше это уже не линия.
+   */
+  function renderRouteEdit() {
+    const group = routeEditGroupRef.current;
+    if (!mapRef.current || !group) return;
+    import('leaflet').then((L) => {
+      group.clearLayers();
+      const id = propsRef.current.editingRouteId;
+      if (!id) return;
+      const route = (propsRef.current.planRoutes ?? []).find((r) => r.id === id);
+      if (!route || route.coords.length < 2) return;
+
+      const coords = route.coords;
+      group.addLayer(L.polyline(coords, {
+        color: '#2dd4bf', weight: 3, opacity: 0.9, dashArray: '6,6',
+      }));
+
+      // Ручек на длинной трассе может быть сотня; показываем не больше
+      // двадцати равномерно — иначе они сливаются в кашу.
+      const MAX = 20;
+      const step = coords.length > MAX ? (coords.length - 1) / (MAX - 1) : 1;
+      const idx = new Set<number>([0, coords.length - 1]);
+      for (let k = 0; k < MAX; k++) idx.add(Math.round(k * step));
+
+      [...idx].sort((a, b) => a - b).forEach((i, pos, arr) => {
+        const c = coords[i];
+        if (!c) return;
+        const m = L.marker(c, {
+          draggable: true,
+          icon: L.divIcon({
+            className: '',
+            iconSize: [12, 12],
+            iconAnchor: [6, 6],
+            html: `<div style="width:10px;height:10px;border-radius:50%;
+                   background:#0c1018;border:2px solid #2dd4bf;cursor:grab"></div>`,
+          }),
+        });
+        const prevH = pos > 0 ? arr[pos - 1] : null;
+        const nextH = pos < arr.length - 1 ? arr[pos + 1] : null;
+
+        m.on('dragend', (e: any) => {
+          const ll = e.target.getLatLng();
+          propsRef.current.onUpdateRouteCoords?.(
+            id, warpWaypoint(coords, prevH, i, nextH, ll.lat, ll.lng),
+          );
+        });
+        m.on('contextmenu', (e: any) => {
+          e.originalEvent?.preventDefault?.();
+          if (coords.length <= 2) return;
+          const next = coords.filter((_, j) => j !== i);
+          propsRef.current.onUpdateRouteCoords?.(id, next);
+        });
+        group.addLayer(m);
+      });
+    });
   }
 
   function handleDrawClick(L: any, lat: number, lon: number) {
@@ -1684,6 +1765,7 @@ export default function LeafletMap(props: Props) {
   useEffect(() => { renderCrews(); }, [props.crews, mapReady]);
   useEffect(() => { renderDeviations(); }, [props.deviations, mapReady]);
   useEffect(() => { renderPlanRoutes(); }, [props.planRoutes, props.drillLines, mapReady]);
+  useEffect(() => { renderRouteEdit(); }, [props.editingRouteId, props.planRoutes, mapReady]);
 
   // Рисование: Enter заканчивает линию, Esc бросает начатое. Клавиатура
   // здесь важнее кнопок — рисуют мышью, вторая рука на клавишах.
@@ -1819,7 +1901,20 @@ export default function LeafletMap(props: Props) {
   useEffect(() => {
     (window as any).__deleteSub__ = (id: string) => propsRef.current.deleteSubscriber?.(id);
     (window as any).__showBranchSub__ = (id: string) => propsRef.current.onShowBranchSub?.(id);
-    return () => { delete (window as any).__deleteSub__; delete (window as any).__showBranchSub__; };
+    (window as any).__optiqEditRoute__ = (id: string) => {
+      mapRef.current?.closePopup?.();
+      propsRef.current.onEditRoute?.(id);
+    };
+    (window as any).__optiqDeleteRoute__ = (id: string) => {
+      mapRef.current?.closePopup?.();
+      propsRef.current.onDeleteRoute?.(id);
+    };
+    return () => {
+      delete (window as any).__deleteSub__;
+      delete (window as any).__showBranchSub__;
+      delete (window as any).__optiqEditRoute__;
+      delete (window as any).__optiqDeleteRoute__;
+    };
   }, []);
 
   return (
@@ -1893,6 +1988,15 @@ export default function LeafletMap(props: Props) {
           >
             ✏️ Трасса
           </button>
+        )}
+        {props.editingRouteId && (
+          <div className="bg-[#0d1b2a]/95 border border-[#2dd4bf]/50 rounded-lg px-3 py-1.5 text-[10px] text-[#e2e8f0] shadow-lg max-w-[220px] flex flex-col gap-1.5">
+            <span>Тяните ручки — трасса гнётся, форма остаётся. ПКМ по ручке убирает вершину.</span>
+            <button type="button" onClick={() => props.onEditRoute?.(null)}
+                    className="self-start px-2 py-0.5 rounded bg-[#2dd4bf] text-[#041016] text-[10px] font-semibold">
+              Готово
+            </button>
+          </div>
         )}
         {props.drawingRoute && (
           <div className="bg-[#0d1b2a]/95 border border-[#f472b6]/50 rounded-lg px-3 py-1.5 text-[10px] text-[#e2e8f0] shadow-lg max-w-[220px]">

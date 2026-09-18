@@ -99,9 +99,15 @@ export function parseEndpoints(
 
   if (hits.length === 1) {
     const before = words[hits[0].index - 1]?.toLowerCase();
-    return before === 'до' || before === 'к'
-      ? { to: hits[0].word }
-      : { from: hits[0].word };
+    if (before === 'до' || before === 'к') return { to: hits[0].word };
+
+    // «Сауыншы Школа»: село известно, а конец — нет, но он назван следом.
+    // Берём последнее содержательное слово, если оно идёт после села.
+    const after = words
+      .map((w, i) => ({ w, i }))
+      .filter(({ w, i }) => i > hits[0].index && !STOP_WORDS.has(w.toLowerCase()));
+    const tail = after[after.length - 1]?.w;
+    return tail ? { from: hits[0].word, to: tail } : { from: hits[0].word };
   }
 
   // Ни одного известного села: «Путь до Школы» — конец всё равно назван.
