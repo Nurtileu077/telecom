@@ -81,6 +81,13 @@ interface Props {
   planRoutes?: import('@/components/Construction/routeStyle').RouteView[];
   /** Проколы, у которых сняты вход и выход — рисуются линией. */
   drillLines?: import('@/components/Construction/journalStore').DrillMapLine[];
+  /**
+   * Рисование трассы на стройке. Пока включено, клик ставит вершину;
+   * правая кнопка или Enter заканчивают линию, Esc отменяет.
+   */
+  drawingRoute?: boolean;
+  onToggleDrawRoute?: () => void;
+  onRouteDrawn?: (coords: [number, number][]) => void;
   /** Отклонения от проекта — глубина и трасса — как контекст на карте. */
   deviations?: import('@/components/Construction/journalStore').DeviationMapItem[];
   /** Колонны на карте: где стоит бригада, чем занята, каким составом. */
@@ -322,6 +329,10 @@ export default function LeafletMap(props: Props) {
   const measureGroupRef = useRef<any>(null);
   const heatLayerRef = useRef<any>(null);
   const drawStateRef = useRef<{ coords: [number, number][]; tempLayer?: any }>({ coords: [] });
+  /** Вершины рисуемой трассы — живут, пока линию не закончили. */
+  const routeDraftRef = useRef<[number, number][]>([]);
+  /** Отложенная вершина: двойной клик приходит после двух одиночных. */
+  const routeClickTimerRef = useRef<number | null>(null);
   const measureStateRef = useRef<{ coords: [number, number][]; layer?: any; total: number }>({ coords: [], total: 0 });
   const waypointGroupRef = useRef<any>(null);
   const entityDragRef = useRef(false);
@@ -383,10 +394,35 @@ export default function LeafletMap(props: Props) {
         propsRef.current.mapElRef.current = containerRef.current;
       }
 
+      // Двойной клик заканчивает линию — так делают везде, включая
+      // Google Earth, и объяснять это никому не приходится.
+      map.on('dblclick', () => {
+        if (!propsRef.current.drawingRoute) return;
+        // Отменяем вершину, которую поставил бы второй клик двойного.
+        if (routeClickTimerRef.current !== null) {
+          window.clearTimeout(routeClickTimerRef.current);
+          routeClickTimerRef.current = null;
+        }
+        finishRouteDraft();
+      });
+
       // Map click handler
       map.on('click', (e: any) => {
         const { lat, lng: lon } = e.latlng;
         const p = propsRef.current;
+
+        // Рисование трассы: вершину ставим с задержкой. Двойной клик,
+        // которым заканчивают линию, состоит из двух одиночных, и без
+        // задержки он добавлял бы две лишние вершины в конце.
+        if (p.drawingRoute) {
+          if (routeClickTimerRef.current !== null) window.clearTimeout(routeClickTimerRef.current);
+          routeClickTimerRef.current = window.setTimeout(() => {
+            routeClickTimerRef.current = null;
+            routeDraftRef.current.push([lat, lon]);
+            renderRouteDraft(L);
+          }, 220);
+          return;
+        }
 
         // Measure mode
         if (p.measureMode) {
@@ -415,6 +451,10 @@ export default function LeafletMap(props: Props) {
       map.on('contextmenu', (e: any) => {
         e.originalEvent.preventDefault();
         const p = propsRef.current;
+        if (p.drawingRoute) {
+          finishRouteDraft();
+          return;
+        }
         if (p.activeTool === 'polygon' || p.activeTool === 'line') {
           finishShape(L);
           return;
@@ -1388,6 +1428,40 @@ export default function LeafletMap(props: Props) {
     });
   }
 
+  /** Показывает линию, которую сейчас рисуют, вместе с вершинами. */
+  function renderRouteDraft(L: any) {
+    const group = drawGroupRef.current;
+    if (!group) return;
+    group.clearLayers();
+    const pts = routeDraftRef.current;
+    if (pts.length === 0) return;
+
+    if (pts.length >= 2) {
+      group.addLayer(L.polyline(pts, {
+        color: '#f472b6', weight: 4, opacity: 0.95, dashArray: '8,6',
+      }));
+    }
+    pts.forEach((c, i) => {
+      group.addLayer(L.circleMarker(c, {
+        radius: i === 0 ? 6 : 4,
+        color: '#f472b6', fillColor: '#0c1018', fillOpacity: 1, weight: 2,
+      }));
+    });
+  }
+
+  /** Заканчивает линию: меньше двух вершин — рисовать нечего. */
+  function finishRouteDraft() {
+    if (routeClickTimerRef.current !== null) {
+      window.clearTimeout(routeClickTimerRef.current);
+      routeClickTimerRef.current = null;
+    }
+    const pts = routeDraftRef.current;
+    routeDraftRef.current = [];
+    drawGroupRef.current?.clearLayers();
+    if (pts.length >= 2) propsRef.current.onRouteDrawn?.(pts);
+    else propsRef.current.onRouteDrawn?.([]);
+  }
+
   function handleDrawClick(L: any, lat: number, lon: number) {
     const tool = propsRef.current.activeTool;
     const type = propsRef.current.activeAnnotationType;
@@ -1610,6 +1684,35 @@ export default function LeafletMap(props: Props) {
   useEffect(() => { renderCrews(); }, [props.crews, mapReady]);
   useEffect(() => { renderDeviations(); }, [props.deviations, mapReady]);
   useEffect(() => { renderPlanRoutes(); }, [props.planRoutes, props.drillLines, mapReady]);
+
+  // Рисование: Enter заканчивает линию, Esc бросает начатое. Клавиатура
+  // здесь важнее кнопок — рисуют мышью, вторая рука на клавишах.
+  useEffect(() => {
+    if (!props.drawingRoute) {
+      routeDraftRef.current = [];
+      drawGroupRef.current?.clearLayers();
+      return;
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') finishRouteDraft();
+      if (e.key === 'Escape') {
+        routeDraftRef.current = [];
+        drawGroupRef.current?.clearLayers();
+        propsRef.current.onRouteDrawn?.([]);
+      }
+      if (e.key === 'Backspace') {
+        routeDraftRef.current.pop();
+        import('leaflet').then((L) => renderRouteDraft(L));
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    // Двойной клик не должен заодно приближать карту.
+    mapRef.current?.doubleClickZoom?.disable();
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      mapRef.current?.doubleClickZoom?.enable();
+    };
+  }, [props.drawingRoute]);
   useEffect(() => { renderSnpPoints(); }, [props.snpPoints, mapReady]);
   useEffect(() => { renderAreas(); }, [props.areas, mapReady]);
   useEffect(() => { renderData(); }, [props.hideNetwork]);
@@ -1780,6 +1883,23 @@ export default function LeafletMap(props: Props) {
         >
           📏 Линейка
         </button>
+        {props.onRouteDrawn && (
+          <button
+            onClick={() => props.onToggleDrawRoute?.()}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium border shadow-lg transition-all ${
+              props.drawingRoute
+                ? 'bg-[#f472b6]/15 border-[#f472b6] text-[#f472b6]'
+                : 'bg-[#0d1b2a] border-[#1e3a5f] text-[#94a3b8] hover:text-[#e2e8f0]'}`}
+          >
+            ✏️ Трасса
+          </button>
+        )}
+        {props.drawingRoute && (
+          <div className="bg-[#0d1b2a]/95 border border-[#f472b6]/50 rounded-lg px-3 py-1.5 text-[10px] text-[#e2e8f0] shadow-lg max-w-[220px]">
+            Кликайте по карте — вершины трассы. Двойной клик, ПКМ или Enter —
+            закончить. Backspace — убрать последнюю. Esc — отмена.
+          </div>
+        )}
         {(props.activeTool || props.editMode || props.measureMode) && (
           <div className="bg-[#0d1b2a]/95 border border-[#1e3a5f] rounded-lg px-3 py-1.5 text-[10px] text-[#94a3b8] shadow-lg max-w-[200px]">
             {props.measureMode && <>📏 Кликайте по карте — измерение. ПКМ = сброс. ESC = выкл.</>}

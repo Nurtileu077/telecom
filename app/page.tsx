@@ -47,6 +47,8 @@ import { effectiveProgress } from '@/components/Construction/stageDerive';
 import { placeCrews, type CrewPlacement } from '@/components/Construction/crewPlace';
 import { areaMapItems, type AreaMapItem } from '@/components/Construction/areaProgress';
 import { routeViews, type RouteView } from '@/components/Construction/routeStyle';
+import RouteDrawForm from '@/components/Construction/RouteDrawForm';
+import { addPlanRoutes, addDeviation } from '@/components/Construction/journalStore';
 import {
   loadConstructionLayers, saveConstructionLayers,
   DEFAULT_CONSTRUCTION_LAYERS, type ConstructionLayers,
@@ -136,6 +138,17 @@ export default function HomePage() {
     if (w === 'construction') setShowJournal(true);
   }, []);
   const building = workspace === 'construction';
+
+  // Рисование трассы на карте: пока включено, клики ставят вершины.
+  // Готовую линию показываем в форме — там решают, отклонение это или
+  // недостающая трасса.
+  const [drawingRoute, setDrawingRoute] = useState(false);
+  const [drawnCoords, setDrawnCoords] = useState<[number, number][] | null>(null);
+  const handleRouteDrawn = useCallback((c: [number, number][]) => {
+    setDrawingRoute(false);
+    // Пустой массив приходит при отмене: линии не было.
+    setDrawnCoords(c.length >= 2 ? c : null);
+  }, []);
   const refreshJournalLayers = useCallback(() => {
     const j = loadJournal();
     setDrillPoints(drillMapPoints(j));
@@ -1123,6 +1136,9 @@ export default function HomePage() {
             deviations={conLayers.deviations ? mapDeviations : EMPTY_LAYER}
             planRoutes={conLayers.plan ? planRoutes : EMPTY_LAYER}
             drillLines={conLayers.drills ? drillLines : EMPTY_LAYER}
+            drawingRoute={drawingRoute}
+            onToggleDrawRoute={building ? () => setDrawingRoute((v) => !v) : undefined}
+            onRouteDrawn={building ? handleRouteDrawn : undefined}
             snpPoints={conLayers.snp ? snpPoints : EMPTY_LAYER}
             areas={conLayers.areas ? areas : EMPTY_LAYER}
             budgetMap={budgetMap.current}
@@ -1500,6 +1516,25 @@ export default function HomePage() {
       )}
 
       {/* Help modal */}
+      {drawnCoords && (
+        <RouteDrawForm
+          journal={loadJournal()}
+          coords={drawnCoords}
+          author={getActorName() || 'Без имени'}
+          onClose={() => setDrawnCoords(null)}
+          onSaveRoute={(r) => {
+            const next = addPlanRoutes(loadJournal(), [r]);
+            saveJournal(next);
+            refreshJournalLayers();
+          }}
+          onSaveDeviation={(d) => {
+            const next = addDeviation(loadJournal(), d);
+            saveJournal(next);
+            refreshJournalLayers();
+          }}
+        />
+      )}
+
       {showJournal && (
         <ConstructionPanel
           onClose={() => { setShowJournal(false); refreshJournalLayers(); }}
