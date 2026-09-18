@@ -259,6 +259,30 @@ export interface DrillLogEntry extends WorkEntryBase {
 
 export type ConstructionEntry = DailyWorkEntry | AerialWorkEntry | DrillLogEntry;
 
+// ── Плановая трасса ──────────────────────────────────────────────────────────
+
+/**
+ * Проектная трасса из KML — «как должно быть».
+ *
+ * Живёт отдельно от фактических кабелей: план не переписывается стройкой,
+ * иначе сравнивать станет не с чем и вопрос «почему ушли в сторону»
+ * останется без ответа.
+ */
+export interface PlanRoute {
+  id: string;
+  name: string;
+  /** Папка KML — обычно там лежит участок или населённый пункт. */
+  folder?: string;
+  uchastok?: string;
+  coords: [number, number][];
+  /** Длина по координатам, метры. */
+  lengthM: number;
+  /** Имя файла, из которого пришла трасса. */
+  source: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ── Поставки материалов ──────────────────────────────────────────────────────
 
 /**

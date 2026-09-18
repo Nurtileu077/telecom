@@ -3,7 +3,7 @@ import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   X, Upload, Loader2, AlertTriangle, MapPin, Wrench, Boxes,
   Plus, Download, Trash2, CloudOff, Pencil, Check, Ban, Building2, Clock,
-  Ruler, FileWarning, RefreshCw, CloudCheck,
+  Ruler, FileWarning, RefreshCw, CloudCheck, Route,
 } from 'lucide-react';
 import { getActorName } from '@/lib/appRole';
 import { importJournal, type JournalImportResult } from './JournalImport';
@@ -17,6 +17,7 @@ import {
   hasPendingCorrection, diffEntries, loadJournalRole, saveJournalRole,
   addDeviation, removeDeviation, openDeviations, isDeviationClosed,
   upsertCrew, removeCrew, upsertDelivery, removeDelivery,
+  addPlanRoutes, removePlanSource, planSources, plural,
 } from './journalStore';
 import DeviationForm from './DeviationForm';
 import CrewForm from './CrewForm';
@@ -26,6 +27,7 @@ import {
   journalCloudEnabled, syncJournal, loadLastSyncAt, saveLastSyncAt,
 } from './journalRemote';
 import { materialForecast, lowStock } from './materialForecast';
+import { importPlanRoutes } from './planImport';
 import {
   LAY_METHOD_LABEL, MATERIAL_UNIT, JOURNAL_ROLE_LABEL, DEVIATION_KIND_LABEL,
   CREW_KINDS, CREW_STATUS,
@@ -68,6 +70,7 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
   const cloud = journalCloudEnabled();
   const [role, setRole] = useState<JournalRole>('field');
   const fileRef = useRef<HTMLInputElement>(null);
+  const planRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setJournal(loadJournal());
@@ -174,6 +177,27 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
       setSyncing(false);
     }
   }, [actor]);
+
+  /** Загрузка проектной трассы: план кладём отдельно от факта. */
+  const handlePlanFile = useCallback(async (file: File) => {
+    setBusy(true); setError(''); setReport(null);
+    try {
+      const res = await importPlanRoutes(file);
+      if (res.routes.length === 0) {
+        setError('В файле не нашлось линий трассы — в плановом KML должны быть LineString.');
+        return;
+      }
+      persist(addPlanRoutes(loadJournal(), res.routes));
+      setSyncNote({
+        tone: 'ok',
+        text: `План загружен: ${res.routes.length} ${plural(res.routes.length, 'трасса', 'трассы', 'трасс')}, `
+          + `${(res.totalM / 1000).toFixed(1)} км`
+          + (res.skipped ? `, пропущено вырожденных: ${res.skipped}` : ''),
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось прочитать плановый файл');
+    } finally { setBusy(false); }
+  }, [persist]);
 
   const handleExport = useCallback(async () => {
     setBusy(true);
@@ -293,6 +317,12 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
           <button type="button" className="btn btn-ghost btn-icon" title="Выгрузить в Excel"
                   onClick={handleExport} disabled={busy || empty}>
             <Download size={15} />
+          </button>
+          <input ref={planRef} type="file" accept=".kml,.kmz" className="hidden"
+                 onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePlanFile(f); e.target.value = ''; }} />
+          <button type="button" className="btn btn-ghost btn-icon" title="Загрузить проектную трассу (KML)"
+                  onClick={() => planRef.current?.click()} disabled={busy}>
+            <Route size={15} />
           </button>
           <button type="button" className="btn btn-primary text-[11px]" onClick={() => setFormOpen(true)}>
             <Plus size={15} /><span className="hidden sm:inline">Закрыть день</span>

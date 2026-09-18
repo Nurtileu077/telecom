@@ -65,6 +65,8 @@ interface Props {
   heatmapEnabled: boolean;
   /** Проколы ГНБ/ГНП из журнала стройки — отдельный слой поверх сети. */
   drillPoints?: import('@/components/Construction/journalStore').DrillMapPoint[];
+  /** Проектные трассы из KML — «как должно быть». */
+  planRoutes?: import('@/types/construction').PlanRoute[];
   /** Отклонения от проекта — глубина и трасса — как контекст на карте. */
   deviations?: import('@/components/Construction/journalStore').DeviationMapItem[];
   /** Колонны на карте: где стоит бригада, чем занята, каким составом. */
@@ -277,6 +279,7 @@ export default function LeafletMap(props: Props) {
   const drillGroupRef = useRef<any>(null);
   const crewGroupRef = useRef<any>(null);
   const deviationGroupRef = useRef<any>(null);
+  const planGroupRef = useRef<any>(null);
   const drawGroupRef = useRef<any>(null);
   const measureGroupRef = useRef<any>(null);
   const heatLayerRef = useRef<any>(null);
@@ -317,6 +320,7 @@ export default function LeafletMap(props: Props) {
       drillGroupRef.current = L.layerGroup().addTo(map);
       crewGroupRef.current = L.layerGroup().addTo(map);
       deviationGroupRef.current = L.layerGroup().addTo(map);
+      planGroupRef.current = L.layerGroup().addTo(map);
       drawGroupRef.current = L.layerGroup().addTo(map);
       measureGroupRef.current = L.layerGroup().addTo(map);
       waypointGroupRef.current = L.layerGroup().addTo(map);
@@ -1073,6 +1077,39 @@ export default function LeafletMap(props: Props) {
     });
   }
 
+  /**
+   * Проектная трасса — «как должно быть».
+   *
+   * Рисуется приглушённым пунктиром под фактическими кабелями: план нужен
+   * как ориентир, а не как главный слой, иначе он перебьёт то, что реально
+   * построено. Сравнение плана и факта видно глазом там, где линии расходятся.
+   */
+  function renderPlanRoutes() {
+    const group = planGroupRef.current;
+    if (!mapRef.current || !group) return;
+    import('leaflet').then((L) => {
+      group.clearLayers();
+      const routes = propsRef.current.planRoutes ?? [];
+      for (const r of routes) {
+        if (r.coords.length < 2) continue;
+        const line = L.polyline(r.coords, {
+          color: '#94a3b8', weight: 2.5, opacity: 0.55, dashArray: '4,7',
+        });
+        line.bindTooltip(
+          `План: ${esc(r.name)}${r.lengthM ? ` · ${(r.lengthM / 1000).toFixed(2)} км` : ''}`,
+          { sticky: true, className: 'text-xs' },
+        );
+        line.bindPopup(
+          `<b>Проектная трасса</b><br/>${esc(r.name)}` +
+          (r.folder ? `<br/><span style="color:#64748b;font-size:11px">${esc(r.folder)}</span>` : '') +
+          `<br/><span style="font-size:11px">${(r.lengthM / 1000).toFixed(3)} км</span>` +
+          `<br/><span style="color:#64748b;font-size:10px">${esc(r.source)}</span>`,
+        );
+        group.addLayer(line);
+      }
+    });
+  }
+
   function handleDrawClick(L: any, lat: number, lon: number) {
     const tool = propsRef.current.activeTool;
     const type = propsRef.current.activeAnnotationType;
@@ -1294,6 +1331,7 @@ export default function LeafletMap(props: Props) {
   useEffect(() => { renderDrillPoints(); }, [props.drillPoints, mapReady]);
   useEffect(() => { renderCrews(); }, [props.crews, mapReady]);
   useEffect(() => { renderDeviations(); }, [props.deviations, mapReady]);
+  useEffect(() => { renderPlanRoutes(); }, [props.planRoutes, mapReady]);
 
   // Draw the lasso selection overlay (independent layer so it doesn't get
   // cleared by the data-layer rerender): in-progress vertices + closed polygon.

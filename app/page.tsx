@@ -39,6 +39,7 @@ import {
   loadJournal, saveJournal, drillMapPoints, placedCrews, moveCrew, deviationMapItems,
   type DrillMapPoint, type DeviationMapItem,
 } from '@/components/Construction/journalStore';
+import type { PlanRoute } from '@/types/construction';
 import type { Crew } from '@/types/construction';
 const ConstructionPanel = dynamic(() => import('@/components/Construction/ConstructionPanel'), { ssr: false });
 import { useSupabaseAuth } from '@/hooks/useSupabaseAuth';
@@ -99,11 +100,13 @@ export default function HomePage() {
   const [drillPoints, setDrillPoints] = useState<DrillMapPoint[]>([]);
   const [crews, setCrews] = useState<Crew[]>([]);
   const [mapDeviations, setMapDeviations] = useState<DeviationMapItem[]>([]);
+  const [planRoutes, setPlanRoutes] = useState<PlanRoute[]>([]);
   const refreshJournalLayers = useCallback(() => {
     const j = loadJournal();
     setDrillPoints(drillMapPoints(j));
     setCrews(placedCrews(j));
     setMapDeviations(deviationMapItems(j));
+    setPlanRoutes(j.planRoutes);
   }, []);
   useEffect(() => { refreshJournalLayers(); }, [refreshJournalLayers]);
 
@@ -995,6 +998,7 @@ export default function HomePage() {
             crews={crews}
             onMoveCrew={handleMoveCrew}
             deviations={mapDeviations}
+            planRoutes={planRoutes}
             budgetMap={budgetMap.current}
             budgetColoring={budgetColoring}
           />
@@ -1187,7 +1191,8 @@ export default function HomePage() {
               колонны, отклонения — это тоже содержимое карты: с ним подсказка
               «импортируйте Excel» только мешает смотреть на объекты. */}
           {net.districts.length === 0 && net.annotations.length === 0 && net.status === 'idle'
-            && drillPoints.length === 0 && crews.length === 0 && mapDeviations.length === 0 && (
+            && drillPoints.length === 0 && crews.length === 0 && mapDeviations.length === 0
+            && planRoutes.length === 0 && (
             <EmptyState onImport={() => setShowImport(true)} onHelp={() => setShowHelp(true)} />
           )}
         </main>

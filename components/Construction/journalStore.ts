@@ -2,7 +2,7 @@ import {
   DailyWorkEntry, AerialWorkEntry, DrillLogEntry, SettlementOrder,
   LayMethod, MaterialKind, CorrectionRequest, Contractor, JournalRole,
   LAY_METHOD_LABEL, Deviation, isDeviationClosed, needsProtocol,
-  Crew, crewOnDuty, crewEquipmentCount, MaterialDelivery,
+  Crew, crewOnDuty, crewEquipmentCount, MaterialDelivery, PlanRoute,
 } from '@/types/construction';
 
 /** Состояние журнала стройки — Слой 2. */
@@ -19,6 +19,8 @@ export interface JournalState {
   crews: Crew[];
   /** Приход материалов по областям — без него остаток не из чего вычесть. */
   deliveries: MaterialDelivery[];
+  /** Проектные трассы из KML: план, который стройка не переписывает. */
+  planRoutes: PlanRoute[];
   contractors: Contractor[];
   /** Поля актов, заполняемые при закрытии, по участкам. */
   actFields: Record<string, import('./sectionAct').SectionActManual>;
@@ -42,7 +44,7 @@ export interface DeletedMark {
 export function emptyJournal(): JournalState {
   return {
     orders: [], ground: [], aerial: [], drills: [],
-    corrections: [], deviations: [], crews: [], deliveries: [],
+    corrections: [], deviations: [], crews: [], deliveries: [], planRoutes: [],
     contractors: DEFAULT_CONTRACTORS, actFields: {}, deleted: [], updatedAt: '',
   };
 }
@@ -232,6 +234,7 @@ export function loadJournal(): JournalState {
       deviations: p.deviations ?? [],
       crews: p.crews ?? [],
       deliveries: p.deliveries ?? [],
+      planRoutes: p.planRoutes ?? [],
       actFields: p.actFields ?? {},
       deleted: p.deleted ?? [],
       // Пустой справочник заменяем стартовым — иначе подрядчика не из чего выбрать.
@@ -275,6 +278,7 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     deviations: base.deviations,
     crews: base.crews,
     deliveries: base.deliveries,
+    planRoutes: base.planRoutes,
     contractors: base.contractors.length ? base.contractors : DEFAULT_CONTRACTORS,
     actFields: base.actFields,
     deleted: base.deleted,
@@ -427,6 +431,35 @@ export function placedCrews(base: JournalState): Crew[] {
 }
 
 export { crewOnDuty, crewEquipmentCount };
+
+// ── Плановые трассы ──────────────────────────────────────────────────────────
+
+/** Загрузка плана: трассы с теми же id заменяются, остальные добавляются. */
+export function addPlanRoutes(base: JournalState, routes: PlanRoute[]): JournalState {
+  const byId = new Map(base.planRoutes.map((r) => [r.id, r]));
+  for (const r of routes) byId.set(r.id, r);
+  return { ...base, planRoutes: [...byId.values()], updatedAt: new Date().toISOString() };
+}
+
+/** Убрать все трассы, пришедшие из одного файла. */
+export function removePlanSource(base: JournalState, source: string): JournalState {
+  return {
+    ...base,
+    planRoutes: base.planRoutes.filter((r) => r.source !== source),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+/** Файлы плана со сводкой — для списка в интерфейсе. */
+export function planSources(base: JournalState): { source: string; routes: number; lengthM: number }[] {
+  const acc = new Map<string, { routes: number; lengthM: number }>();
+  for (const r of base.planRoutes) {
+    const cur = acc.get(r.source) ?? { routes: 0, lengthM: 0 };
+    cur.routes++; cur.lengthM += r.lengthM;
+    acc.set(r.source, cur);
+  }
+  return [...acc.entries()].map(([source, v]) => ({ source, ...v }));
+}
 
 // ── Поставки материалов ──────────────────────────────────────────────────────
 
@@ -628,6 +661,20 @@ export function fmtKm(meters: number): string {
 
 export function fmtMeters(meters: number): string {
   return meters >= 1000 ? `${fmtKm(meters)} км` : `${Math.round(meters)} м`;
+}
+
+/**
+ * Русское склонение при числе: plural(2, 'трасса', 'трассы', 'трасс').
+ * Нужно везде, где цифра показывается человеку: «2 трасс» читается как брак.
+ */
+export function plural(n: number, one: string, few: string, many: string): string {
+  const abs = Math.abs(Math.round(n));
+  const last = abs % 10;
+  const tens = Math.floor((abs % 100) / 10);
+  if (tens === 1) return many;
+  if (last === 1) return one;
+  if (last >= 2 && last <= 4) return few;
+  return many;
 }
 
 export function shiftDays(iso: string, days: number): string {

@@ -7,7 +7,7 @@ import {
   hasPendingCorrection, diffEntries, suggestContractor, DEFAULT_CONTRACTORS,
   addDeviation, removeDeviation, openDeviations, isDeviationClosed, needsProtocol,
   documentContractor, upsertCrew, removeCrew, moveCrew, placedCrews,
-  crewOnDuty, crewEquipmentCount, deviationMapItems,
+  crewOnDuty, crewEquipmentCount, deviationMapItems, plural,
 } from './journalStore';
 import type { DailyWorkEntry, DrillLogEntry, Deviation, Crew } from '@/types/construction';
 
@@ -491,6 +491,17 @@ describe('вспомогательное', () => {
   it('сдвигает дату через границу месяца', () => {
     expect(shiftDays('2026-06-01', -1)).toBe('2026-05-31');
     expect(shiftDays('2026-09-16', -29)).toBe('2026-08-18');
+  });
+
+  it('склоняет существительные при числе', () => {
+    const t = (n: number) => `${n} ${plural(n, 'трасса', 'трассы', 'трасс')}`;
+    expect(t(1)).toBe('1 трасса');
+    expect(t(2)).toBe('2 трассы');
+    expect(t(5)).toBe('5 трасс');
+    expect(t(11)).toBe('11 трасс');
+    expect(t(21)).toBe('21 трасса');
+    expect(t(22)).toBe('22 трассы');
+    expect(t(0)).toBe('0 трасс');
   });
 
   it('форматирует метры и километры', () => {
