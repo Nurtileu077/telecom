@@ -44,3 +44,29 @@ export async function reverseGeocode(lat: number, lon: number): Promise<string> 
     return '';
   }
 }
+
+export interface ReverseAddress {
+  road?: string;
+  houseNumber?: string;
+  neighbourhood?: string;
+  suburb?: string;
+}
+
+export async function reverseAddress(lat: number, lon: number): Promise<ReverseAddress> {
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&addressdetails=1&zoom=18&accept-language=ru`,
+    );
+    if (!res.ok) return {};
+    const data = await res.json();
+    const a = data.address ?? {};
+    return {
+      road: a.road || a.pedestrian || a.footway || a.residential,
+      houseNumber: a.house_number,
+      neighbourhood: a.neighbourhood || a.quarter,
+      suburb: a.suburb || a.city_district,
+    };
+  } catch {
+    return {};
+  }
+}

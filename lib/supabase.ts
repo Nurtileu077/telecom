@@ -41,11 +41,14 @@ export async function dbSaveProject(project: Project): Promise<void> {
   if (!supabase) return;
   await assertSupabaseAccess();
   const orgId = project.orgId ?? getDefaultOrgId();
+  // updated_at детерминированный (= project.updatedAt): так клиент знает точную
+  // ревизию, которую он записал, и игнорирует собственное realtime-событие.
+  const stamp = project.updatedAt ?? new Date().toISOString();
   const row: Record<string, unknown> = {
     id: project.id,
     name: project.name,
     data: project,
-    updated_at: new Date().toISOString(),
+    updated_at: stamp,
   };
   if (project.createdAt) row.created_at = project.createdAt;
   if (orgId) row.org_id = orgId;
@@ -57,6 +60,56 @@ export async function dbDeleteProject(id: string): Promise<void> {
   if (!supabase) return;
   await assertSupabaseAccess();
   const { error } = await supabase.from('gpon_projects').delete().eq('id', id);
+  if (error) throw error;
+}
+
+// ── Project sharing by email ────────────────────────────────────────────────
+// Доступ к проекту, помимо организации (org_id), можно выдать конкретному email.
+// RLS на стороне БД: получатель видит/редактирует проект, если его email есть в
+// gpon_project_shares. Управлять шерами может только владелец (по org_id).
+export interface ProjectShare {
+  id: string;
+  project_id: string;
+  email: string;
+  role: 'editor' | 'viewer';
+  created_at: string;
+}
+
+export async function dbListShares(projectId: string): Promise<ProjectShare[]> {
+  if (!supabase) return [];
+  await assertSupabaseAccess();
+  const { data, error } = await supabase
+    .from('gpon_project_shares')
+    .select('id, project_id, email, role, created_at')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as ProjectShare[];
+}
+
+export async function dbShareProject(
+  projectId: string,
+  email: string,
+  role: 'editor' | 'viewer' = 'editor',
+): Promise<void> {
+  if (!supabase) throw new Error('Supabase не настроен');
+  await assertSupabaseAccess();
+  const clean = email.trim().toLowerCase();
+  if (!clean.includes('@')) throw new Error('Введите корректный email');
+  const { error } = await supabase
+    .from('gpon_project_shares')
+    .upsert({ project_id: projectId, email: clean, role }, { onConflict: 'project_id,email' });
+  if (error) throw error;
+}
+
+export async function dbUnshareProject(projectId: string, email: string): Promise<void> {
+  if (!supabase) return;
+  await assertSupabaseAccess();
+  const { error } = await supabase
+    .from('gpon_project_shares')
+    .delete()
+    .eq('project_id', projectId)
+    .eq('email', email.trim().toLowerCase());
   if (error) throw error;
 }
 
@@ -91,6 +144,40 @@ export async function dbFetchProjectRevision(id: string): Promise<{ updated_at: 
     .single();
   if (error || !data) return null;
   return { updated_at: data.updated_at as string, name: data.name as string };
+}
+
+// ── Project history (audit snapshots) ───────────────────────────────────────
+// Снимки пишутся БД-триггером при каждом изменении data. Здесь только чтение.
+export interface ProjectHistoryEntry {
+  id: string;
+  project_id: string;
+  name: string | null;
+  saved_by_email: string | null;
+  created_at: string;
+}
+
+export async function dbListProjectHistory(projectId: string): Promise<ProjectHistoryEntry[]> {
+  if (!supabase) return [];
+  await assertSupabaseAccess();
+  const { data, error } = await supabase
+    .from('gpon_project_history')
+    .select('id, project_id, name, saved_by_email, created_at')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as ProjectHistoryEntry[];
+}
+
+export async function dbLoadHistorySnapshot(historyId: string): Promise<Project | null> {
+  if (!supabase) return null;
+  await assertSupabaseAccess();
+  const { data, error } = await supabase
+    .from('gpon_project_history')
+    .select('data')
+    .eq('id', historyId)
+    .single();
+  if (error || !data) return null;
+  return (data as { data: Project }).data;
 }
 
 // ── Equipment catalog ─────────────────────────────────────────────────────────

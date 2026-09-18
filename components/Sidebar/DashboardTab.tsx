@@ -53,10 +53,10 @@ export default function DashboardTab({
       </div>
 
       <div className="grid grid-cols-2 gap-2">
-        <StatCard label="Камеры" value={String(d.subscribers)} color="#38bdf8" />
-        <StatCard label="Км кабеля" value={String(d.cableKm)} color="#a78bfa" />
-        <StatCard label="ОРК" value={String(d.orkCount)} color="#f59e0b" />
-        <StatCard label="OLT" value={String(d.oltCount)} color="#34d399" />
+        <StatCard icon="📷" label="Камеры" value={String(d.subscribers)} color="#38bdf8" />
+        <StatCard icon="🧵" label="Км кабеля" value={String(d.cableKm)} color="#a78bfa" />
+        <StatCard icon="📦" label="ОРК" value={String(d.orkCount)} color="#f59e0b" />
+        <StatCard icon="🖥️" label="OLT" value={String(d.oltCount)} color="#34d399" />
       </div>
 
       {d.grandTotal != null && (
@@ -102,10 +102,12 @@ export default function DashboardTab({
   );
 }
 
-function StatCard({ label, value, color }: { label: string; value: string; color: string }) {
+function StatCard({ icon, label, value, color }: { icon?: string; label: string; value: string; color: string }) {
   return (
     <div className="bg-[#0a0e1a] border border-[#1e3a5f] rounded-lg p-2 text-center">
-      <div className="text-lg font-mono font-bold" style={{ color }}>{value}</div>
+      <div className="text-lg font-mono font-bold flex items-center justify-center gap-1" style={{ color }}>
+        {icon && <span className="text-sm">{icon}</span>}{value}
+      </div>
       <div className="text-[10px] text-[#64748b]">{label}</div>
     </div>
   );

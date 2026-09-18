@@ -22,7 +22,8 @@ import {
 import { calculateSubscriberBudgets, budgetStats } from '@/components/Network/PowerBudget';
 import {
   dbListProjects, dbSaveProject, dbDeleteProject, dbLoadProject, dbLoadProjectRow,
-  dbFetchProjectRevision, supabase,
+  dbFetchProjectRevision, dbListProjectHistory, dbLoadHistorySnapshot, supabase,
+  type ProjectHistoryEntry,
 } from '@/lib/supabase';
 import { ProjectSaveConflict } from '@/lib/projectConflict';
 import { appendAudit, newAuditEntry } from '@/lib/audit';
@@ -96,6 +97,11 @@ export function useNetwork() {
   const fieldRemoteSaveRef = useRef(false);
   /** Последняя известная ревизия в Supabase (updated_at строки). */
   const serverUpdatedAtRef = useRef<string | null>(null);
+  /** Realtime: коллега сохранил новую версию, ждём решения пользователя. */
+  const [remoteChange, setRemoteChange] = useState<{ updatedAt: string; name: string; by: string | null } | null>(null);
+  const editModeRef = useRef(false);
+  /** Канал broadcast для оповещения о сохранении. */
+  const syncChannelRef = useRef<ReturnType<NonNullable<typeof supabase>['channel']> | null>(null);
 
   const setFieldRemoteSave = useCallback((enabled: boolean) => {
     fieldRemoteSaveRef.current = enabled;
@@ -127,6 +133,8 @@ export function useNetwork() {
   useEffect(() => {
     setDbEnabled(!!supabase);
   }, []);
+
+  useEffect(() => { editModeRef.current = editMode; }, [editMode]);
 
   // History: push current state to stack on every change to districts/cables/joints
   useEffect(() => {
@@ -807,7 +815,10 @@ export function useNetwork() {
   }, [allSubscribers, runBuild]);
 
   // Move a TB or ORK (manual edit): update coords and rebuild cables only (no re-cluster)
-  const moveEntity = useCallback((kind: 'tb' | 'ork' | 'olt', id: string, lat: number, lon: number) => {
+  const moveEntity = useCallback((kind: 'tb' | 'ork' | 'olt' | 'joint' | 'sub', id: string, lat: number, lon: number) => {
+    if (kind === 'joint') {
+      setJoints((prev) => prev.map((j) => (j.id === id ? { ...j, lat, lon } : j)));
+    }
     setDistricts((prev) => prev.map((d) => {
       if (kind === 'olt' && d.olt.id === id) {
         return { ...d, olt: { ...d.olt, lat, lon } };
@@ -820,12 +831,21 @@ export function useNetwork() {
             if (kind === 'tb' && tb.id === id) return { ...tb, lat, lon };
             return {
               ...tb,
-              orks: tb.orks.map((ork) => kind === 'ork' && ork.id === id ? { ...ork, lat, lon } : ork),
+              orks: tb.orks.map((ork) => {
+                if (kind === 'ork' && ork.id === id) return { ...ork, lat, lon };
+                if (kind === 'sub') {
+                  return { ...ork, subscribers: ork.subscribers.map((s) => (s.id === id ? { ...s, lat, lon } : s)) };
+                }
+                return ork;
+              }),
             };
           }),
         },
       };
     }));
+    if (kind === 'sub') {
+      setAllSubscribers((prev) => prev.map((s) => (s.id === id ? { ...s, lat, lon } : s)));
+    }
     // Update cable endpoints touching this id
     setCables((prev) => prev.map((c) => {
       if (c.fromId === id || c.toId === id) {
@@ -1659,8 +1679,15 @@ export function useNetwork() {
       }
       try {
         await dbSaveProject(project);
-        const after = await dbFetchProjectRevision(projectId);
-        serverUpdatedAtRef.current = after?.updated_at ?? now;
+        // updated_at в БД = project.updatedAt (= now), поэтому собственное
+        // realtime-событие совпадёт с baseline и будет проигнорировано.
+        serverUpdatedAtRef.current = project.updatedAt;
+        // Оповещаем коллег о новой версии (broadcast надёжнее postgres_changes).
+        syncChannelRef.current?.send({
+          type: 'broadcast',
+          event: 'saved',
+          payload: { updatedAt: project.updatedAt, name: project.name, by: getActorName() },
+        });
       } catch (e) {
         if (e instanceof ProjectSaveConflict) throw e;
         console.warn('[DB] save failed, using localStorage only', e);
@@ -1687,8 +1714,51 @@ export function useNetwork() {
     if (!row?.data) return;
     loadProjectInternal(row.data);
     serverUpdatedAtRef.current = row.updated_at;
-    recordAudit('Загрузка с сервера', 'конфликт версий');
+    setRemoteChange(null);
+    recordAudit('Загрузка с сервера', 'обновление от коллеги');
   }, [projectId, recordAudit]);
+
+  // Realtime: синхронизация через broadcast (тот же транспорт, что presence —
+  // надёжнее postgres_changes, не зависит от RLS realtime). Когда коллега
+  // сохраняет, он шлёт broadcast 'saved'; в просмотре подтягиваем автоматически,
+  // в режиме правки показываем баннер (чтобы не затереть несохранённое).
+  useEffect(() => {
+    if (!supabase || !dbEnabled || !projectId) return;
+    const channel = supabase.channel(`optiq-sync:${projectId}`, {
+      config: { broadcast: { self: false } },
+    });
+    channel.on('broadcast', { event: 'saved' }, (msg) => {
+      const p = (msg.payload ?? {}) as { updatedAt?: string; name?: string; by?: string };
+      const ua = p.updatedAt;
+      if (!ua || ua === serverUpdatedAtRef.current) return;
+      if (!editModeRef.current) {
+        reloadProjectFromServer();
+      } else {
+        setRemoteChange({ updatedAt: ua, name: p.name ?? '', by: p.by ?? null });
+      }
+    });
+    channel.subscribe();
+    syncChannelRef.current = channel;
+    return () => {
+      supabase?.removeChannel(channel);
+      syncChannelRef.current = null;
+    };
+  }, [projectId, dbEnabled, reloadProjectFromServer]);
+
+  const dismissRemoteChange = useCallback(() => setRemoteChange(null), []);
+
+  const listProjectHistory = useCallback(
+    (): Promise<ProjectHistoryEntry[]> => dbListProjectHistory(projectId),
+    [projectId],
+  );
+
+  const restoreHistoryVersion = useCallback(async (historyId: string) => {
+    const snap = await dbLoadHistorySnapshot(historyId);
+    if (!snap) throw new Error('Версия не найдена');
+    loadProjectInternal(snap);
+    recordAudit('Восстановление из истории', new Date(snap.updatedAt).toLocaleString('ru-RU'));
+    await saveProject({ force: true, audit: false });
+  }, [recordAudit, saveProject]);
 
   function loadProjectInternal(p: Project) {
     setProjectId(p.id);
@@ -1844,6 +1914,7 @@ export function useNetwork() {
     addAnnotation, updateAnnotation, deleteAnnotation,
     addSubscriberAt, deleteSubscriber, moveEntity, rebuildFromCurrent, autoRepair, loadRaw, loadStructured,
     saveProject, setFieldRemoteSave, mergeProjectWithServer, reloadProjectFromServer, loadProject, deleteProject, listProjects, newProject,
+    remoteChange, dismissRemoteChange, listProjectHistory, restoreHistoryVersion,
     serverUpdatedAt: serverUpdatedAtRef.current,
     exportProjectJSON, importProjectJSON,
     totalSubscribers, totalCableKm, totalOrks,

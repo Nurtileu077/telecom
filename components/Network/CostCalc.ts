@@ -1,8 +1,23 @@
 import { Materials, PriceCatalog, CABLE_SIZES } from '@/types/network';
 
+export interface CostLine {
+  /** стабильный id строки (для ручных правок количества) */
+  id: string;
+  /** путь к цене в PriceCatalog (для инлайн-редактирования цены) */
+  priceKey: string;
+  name: string;
+  qty: number;
+  /** авто-количество из расчёта (до ручной правки) */
+  autoQty: number;
+  unit: string;
+  unitPrice: number;
+  total: number;
+}
+
 export interface CostBreakdown {
-  cables: { type: string; qty: number; unit: string; unitPrice: number; total: number }[];
-  equipment: { name: string; qty: number; unit: string; unitPrice: number; total: number }[];
+  cables: CostLine[];
+  equipment: CostLine[];
+  labor: CostLine;
   subtotalCables: number;
   subtotalEquipment: number;
   subtotalLabor: number;
@@ -11,35 +26,47 @@ export interface CostBreakdown {
 }
 
 export function calculateCost(materials: Materials, prices: PriceCatalog): CostBreakdown {
-  const cables = CABLE_SIZES.map((t) => ({
-    type: t,
-    qty: materials.cables[t] || 0,
-    unit: 'м',
-    unitPrice: prices.cables[t] || 0,
-    total: (materials.cables[t] || 0) * (prices.cables[t] || 0),
-  })).filter((r) => r.qty > 0);
+  const ov = prices.qtyOverrides ?? {};
+  const qty = (id: string, auto: number) => (ov[id] != null ? ov[id] : auto);
 
-  const equipment = [
-    { name: 'OLT Huawei MA5800-X7', qty: materials.equipment.oltUnits, unit: 'шт', unitPrice: prices.olt, total: materials.equipment.oltUnits * prices.olt },
-    { name: 'Сплиттер 1:4', qty: materials.equipment.splitter_1x4_L1 + materials.equipment.splitter_1x4_L2, unit: 'шт', unitPrice: prices.splitter_1x4, total: (materials.equipment.splitter_1x4_L1 + materials.equipment.splitter_1x4_L2) * prices.splitter_1x4 },
-    { name: 'Сплиттер 1:8', qty: materials.equipment.splitter_1x8_L1 + materials.equipment.splitter_1x8_L2, unit: 'шт', unitPrice: prices.splitter_1x8, total: (materials.equipment.splitter_1x8_L1 + materials.equipment.splitter_1x8_L2) * prices.splitter_1x8 },
-    { name: 'Сплиттер 1:16', qty: materials.equipment.splitter_1x16_L2, unit: 'шт', unitPrice: prices.splitter_1x16, total: materials.equipment.splitter_1x16_L2 * prices.splitter_1x16 },
-    { name: 'Муфта МТОК-96А', qty: materials.equipment.muftaMTOK96A, unit: 'шт', unitPrice: prices.mufta, total: materials.equipment.muftaMTOK96A * prices.mufta },
-    { name: 'Бокс распределительный', qty: materials.equipment.boksCount, unit: 'шт', unitPrice: prices.boks, total: materials.equipment.boksCount * prices.boks },
-    { name: 'ONT ZTE F601', qty: materials.equipment.ontZTE_F601, unit: 'шт', unitPrice: prices.ont, total: materials.equipment.ontZTE_F601 * prices.ont },
-    { name: 'Пигтейл SC/APC', qty: materials.equipment.pigtailSCAPC, unit: 'шт', unitPrice: prices.pigtail, total: materials.equipment.pigtailSCAPC * prices.pigtail },
-    { name: 'Патч-корд', qty: materials.equipment.patchcord, unit: 'шт', unitPrice: prices.patchcord, total: materials.equipment.patchcord * prices.patchcord },
-    { name: 'Гильза КДЗС', qty: materials.equipment.kdzsGilzy, unit: 'шт', unitPrice: prices.kdzs, total: materials.equipment.kdzsGilzy * prices.kdzs },
-    { name: 'Анкерный зажим', qty: materials.equipment.clamps, unit: 'шт', unitPrice: prices.clamp, total: materials.equipment.clamps * prices.clamp },
+  const cables: CostLine[] = CABLE_SIZES.map((t) => {
+    const id = `cable:${t}`;
+    const autoQty = materials.cables[t] || 0;
+    const q = qty(id, autoQty);
+    const unitPrice = prices.cables[t] || 0;
+    return { id, priceKey: `cables.${t}`, name: t, qty: q, autoQty, unit: 'м', unitPrice, total: q * unitPrice };
+  }).filter((r) => r.qty > 0 || r.autoQty > 0);
+
+  const eqDefs: { id: string; priceKey: keyof PriceCatalog; name: string; auto: number; unitPrice: number }[] = [
+    { id: 'olt', priceKey: 'olt', name: 'OLT Huawei MA5800-X7', auto: materials.equipment.oltUnits, unitPrice: prices.olt },
+    { id: 'splitter_1x4', priceKey: 'splitter_1x4', name: 'Сплиттер 1:4', auto: materials.equipment.splitter_1x4_L1 + materials.equipment.splitter_1x4_L2, unitPrice: prices.splitter_1x4 },
+    { id: 'splitter_1x8', priceKey: 'splitter_1x8', name: 'Сплиттер 1:8', auto: materials.equipment.splitter_1x8_L1 + materials.equipment.splitter_1x8_L2, unitPrice: prices.splitter_1x8 },
+    { id: 'splitter_1x16', priceKey: 'splitter_1x16', name: 'Сплиттер 1:16', auto: materials.equipment.splitter_1x16_L2, unitPrice: prices.splitter_1x16 },
+    { id: 'mufta', priceKey: 'mufta', name: 'Муфта МТОК-96А', auto: materials.equipment.muftaMTOK96A, unitPrice: prices.mufta },
+    { id: 'boks', priceKey: 'boks', name: 'Бокс распределительный', auto: materials.equipment.boksCount, unitPrice: prices.boks },
+    { id: 'ont', priceKey: 'ont', name: 'ONT ZTE F601', auto: materials.equipment.ontZTE_F601, unitPrice: prices.ont },
+    { id: 'pigtail', priceKey: 'pigtail', name: 'Пигтейл SC/APC', auto: materials.equipment.pigtailSCAPC, unitPrice: prices.pigtail },
+    { id: 'patchcord', priceKey: 'patchcord', name: 'Патч-корд', auto: materials.equipment.patchcord, unitPrice: prices.patchcord },
+    { id: 'kdzs', priceKey: 'kdzs', name: 'Гильза КДЗС', auto: materials.equipment.kdzsGilzy, unitPrice: prices.kdzs },
+    { id: 'clamp', priceKey: 'clamp', name: 'Анкерный зажим', auto: materials.equipment.clamps, unitPrice: prices.clamp },
   ];
+  const equipment: CostLine[] = eqDefs.map((d) => {
+    const q = qty(d.id, d.auto);
+    return { id: d.id, priceKey: d.priceKey, name: d.name, qty: q, autoQty: d.auto, unit: 'шт', unitPrice: d.unitPrice, total: q * d.unitPrice };
+  });
 
   const subtotalCables = cables.reduce((s, c) => s + c.total, 0);
   const subtotalEquipment = equipment.reduce((s, e) => s + e.total, 0);
-  const totalMeters = cables.reduce((s, c) => s + c.qty, 0);
-  const subtotalLabor = totalMeters * prices.installLabor;
+  const autoMeters = cables.reduce((s, c) => s + c.qty, 0);
+  const laborQty = qty('labor', Math.round(autoMeters));
+  const labor: CostLine = {
+    id: 'labor', priceKey: 'installLabor', name: 'Прокладка кабеля', qty: laborQty, autoQty: Math.round(autoMeters),
+    unit: 'м', unitPrice: prices.installLabor, total: laborQty * prices.installLabor,
+  };
+  const subtotalLabor = labor.total;
   const grandTotal = subtotalCables + subtotalEquipment + subtotalLabor;
 
-  return { cables, equipment, subtotalCables, subtotalEquipment, subtotalLabor, grandTotal, currency: prices.currency };
+  return { cables, equipment, labor, subtotalCables, subtotalEquipment, subtotalLabor, grandTotal, currency: prices.currency };
 }
 
 export function formatMoney(n: number, currency = '₸'): string {

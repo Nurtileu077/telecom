@@ -11,6 +11,7 @@ interface Props {
 /** Маркеры курсоров коллег на Leaflet-карте. */
 export default function PresenceCursors({ map, peers }: Props) {
   const markersRef = useRef<Map<string, any>>(new Map());
+  const htmlRef = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
     if (!map) return;
@@ -25,12 +26,21 @@ export default function PresenceCursors({ map, peers }: Props) {
         if (!p.lat && !p.lon) continue;
         seen.add(p.userId);
         let m = existing.get(p.userId);
+        const activityLine = p.activity
+          ? `<div style="margin-top:1px;padding:1px 5px;background:${p.color};color:#0a0e1a;font-size:8px;font-weight:700;border-radius:4px;white-space:nowrap;max-width:150px;overflow:hidden;text-overflow:ellipsis">${escapeHtml(p.activity)}</div>`
+          : '';
         const html = `<div style="pointer-events:none;transform:translate(-4px,-4px)">
           <div style="width:14px;height:14px;border-radius:50%;background:${p.color};border:2px solid #fff;box-shadow:0 0 6px ${p.color}"></div>
           <div style="margin-top:2px;padding:1px 5px;background:#0d1b2ae6;color:#e2e8f0;font-size:9px;font-weight:600;border-radius:4px;white-space:nowrap;border:1px solid ${p.color}55">${escapeHtml(p.name)}</div>
+          ${activityLine}
         </div>`;
         if (m) {
           m.setLatLng([p.lat, p.lon]);
+          // Обновляем иконку только при смене текста (имя/активность) — без мерцания.
+          if (htmlRef.current.get(p.userId) !== html) {
+            m.setIcon(L.divIcon({ className: '', html, iconSize: [0, 0], iconAnchor: [0, 0] }));
+            htmlRef.current.set(p.userId, html);
+          }
         } else {
           m = L.marker([p.lat, p.lon], {
             icon: L.divIcon({ className: '', html, iconSize: [0, 0], iconAnchor: [0, 0] }),
@@ -38,6 +48,7 @@ export default function PresenceCursors({ map, peers }: Props) {
             zIndexOffset: 2000,
           }).addTo(map);
           existing.set(p.userId, m);
+          htmlRef.current.set(p.userId, html);
         }
       }
 
@@ -45,6 +56,7 @@ export default function PresenceCursors({ map, peers }: Props) {
         if (!seen.has(id)) {
           m.remove();
           existing.delete(id);
+          htmlRef.current.delete(id);
         }
       }
     });

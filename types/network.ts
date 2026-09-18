@@ -75,6 +75,7 @@ export interface EntityFieldPhoto {
 
 export interface ORK {
   id: string;
+  displayName?: string;
   lat: number;
   lon: number;
   district: string;
@@ -94,6 +95,7 @@ export type BoxType = 'Бокс-8' | 'Бокс-16' | 'ОРКСп-16' | 'ОРКС
 
 export interface TransitBox {
   id: string;
+  displayName?: string;
   lat: number;
   lon: number;
   district: string;
@@ -108,6 +110,7 @@ export interface TransitBox {
 
 export interface OLT {
   id: string;
+  displayName?: string;
   lat: number;
   lon: number;
   district: string;
@@ -169,6 +172,7 @@ export interface District {
 
 export interface InlineJoint {
   id: string;
+  displayName?: string;
   lat: number;
   lon: number;
   parentId: string;
@@ -418,6 +422,8 @@ export interface PriceCatalog {
   kdzs: number;
   clamp: number;
   installLabor: number;
+  /** Ручные правки количества по строкам сметы (id строки → шт/метры). */
+  qtyOverrides?: Record<string, number>;
 }
 
 export const DEFAULT_PRICES: PriceCatalog = {

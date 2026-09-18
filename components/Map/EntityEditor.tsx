@@ -84,6 +84,39 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
+function NameRow({ value, lat, lon, onChange }: { value: string; lat: number; lon: number; onChange: (v: string) => void }) {
+  const [name, setName] = useState(value);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setName(value); }, [value]);
+  const auto = async () => {
+    setBusy(true);
+    try {
+      const { suggestStreetName } = await import('@/lib/streetNaming');
+      const s = await suggestStreetName(lat, lon);
+      if (s) { setName(s); onChange(s); }
+    } finally { setBusy(false); }
+  };
+  return (
+    <Row label="Название">
+      <div className="flex gap-1">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onBlur={() => { if (name !== value) onChange(name); }}
+          placeholder="авто по улице / вручную"
+          className="flex-1 min-w-0 bg-[#0a0e1a] border border-[#1e3a5f] rounded px-2 py-1 text-xs text-[#e2e8f0] focus:outline-none focus:border-[#38bdf8]"
+        />
+        <button
+          type="button" onClick={auto} disabled={busy} title="Автоназвание по перекрёстку улиц"
+          className="px-2 py-1 text-[11px] rounded border border-[#34d399]/40 text-[#34d399] hover:bg-[#34d399]/10 disabled:opacity-40 shrink-0"
+        >
+          {busy ? '…' : '📍 По улице'}
+        </button>
+      </div>
+    </Row>
+  );
+}
+
 function Sel({ value, options, onChange }: { value: string; options: string[]; onChange: (v: string) => void }) {
   return (
     <select
@@ -103,6 +136,7 @@ function OLTEditor({ olt, onSave }: { olt: OLT; onSave: (patch: Partial<Omit<OLT
   useEffect(() => { setModel(olt.model); setCapacity(String(olt.capacity)); setSplitter(olt.l1Splitter); }, [olt]);
   return (
     <div className="space-y-2">
+      <NameRow value={olt.displayName ?? ''} lat={olt.lat} lon={olt.lon} onChange={(displayName) => onSave({ displayName })} />
       <Row label="Модель OLT"><Sel value={model} options={[...OLT_MODELS, model].filter((v, i, a) => a.indexOf(v) === i)} onChange={setModel} /></Row>
       <Row label="Ёмкость">
         <input type="number" min={1} max={512} value={capacity} onChange={(e) => setCapacity(e.target.value)}
@@ -122,6 +156,7 @@ function TBEditor({ tb, onSave }: { tb: TransitBox; onSave: (patch: Partial<Omit
   useEffect(() => { setMufta(tb.muftaType); setInCable(tb.inCable); setOutCable(tb.outCable); }, [tb]);
   return (
     <div className="space-y-2">
+      <NameRow value={tb.displayName ?? ''} lat={tb.lat} lon={tb.lon} onChange={(displayName) => onSave({ displayName })} />
       <Row label="Тип муфты"><Sel value={mufta} options={[...MUFTA_TYPES, mufta].filter((v, i, a) => a.indexOf(v) === i)} onChange={setMufta} /></Row>
       <Row label="Вход"><Sel value={inCable} options={CABLE_SIZES} onChange={(v) => setInCable(v as typeof inCable)} /></Row>
       <Row label="Выход"><Sel value={outCable} options={CABLE_SIZES} onChange={(v) => setOutCable(v as typeof outCable)} /></Row>
@@ -144,6 +179,7 @@ function ORKEditor({ ork, districts, onSave, onReassign }: {
   const districtTBs = districts.find((d) => d.name === ork.district)?.olt.transitBoxes ?? [];
   return (
     <div className="space-y-2">
+      <NameRow value={ork.displayName ?? ''} lat={ork.lat} lon={ork.lon} onChange={(displayName) => onSave({ displayName })} />
       <Row label="Сплиттер"><Sel value={splitter} options={SPLITTERS} onChange={(v) => setSplitter(v as SplitterRatio)} /></Row>
       <Row label="Тип бокса"><Sel value={boxType} options={[...BOX_TYPES, boxType].filter((v, i, a) => a.indexOf(v) === i)} onChange={setBoxType} /></Row>
       <Row label="Кабель"><Sel value={cableType} options={CABLE_SIZES} onChange={(v) => setCableType(v as typeof cableType)} /></Row>
@@ -249,7 +285,7 @@ export default function EntityEditor({
   if (kind === 'olt') {
     const olt = findOLT(districts, sel.id);
     if (!olt) return null;
-    title = olt.id;
+    title = olt.displayName || olt.id;
     propsPanel = allowStructure
       ? <OLTEditor olt={olt} onSave={(patch) => { onUpdateOLT(olt.id, patch); }} />
       : <p className="text-[10px] text-[#64748b]">Просмотр OLT — правки в режиме редактирования</p>;
@@ -262,7 +298,7 @@ export default function EntityEditor({
         title = view.id;
       } else return null;
     } else {
-      title = tb.id;
+      title = tb.displayName || tb.id;
       const tbCheck = ensureFieldChecklist(tb.fieldChecklist, DEFAULT_TB_CHECKLIST);
       propsPanel = (
         <>
@@ -304,7 +340,7 @@ export default function EntityEditor({
   } else if (kind === 'ork') {
     const ork = findORK(districts, sel.id);
     if (!ork) return null;
-    title = ork.id;
+    title = ork.displayName || ork.id;
     const orkCheck = ensureFieldChecklist(ork.fieldChecklist, DEFAULT_ORK_CHECKLIST);
     propsPanel = (
       <>

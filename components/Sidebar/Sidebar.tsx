@@ -112,6 +112,9 @@ interface Props {
   takeSnapshot: (name: string) => ProjectSnapshot;
   restoreSnapshot: (id: string) => void;
   deleteSnapshot: (id: string) => void;
+  listProjectHistory?: () => Promise<import('@/lib/supabase').ProjectHistoryEntry[]>;
+  restoreHistoryVersion?: (id: string) => Promise<void>;
+  dbEnabled?: boolean;
   hasNetwork: boolean;
   settings?: ProjectSettings;
   scenarios?: ProjectScenarios;
@@ -169,7 +172,7 @@ export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Prop
   const pipelineStep = props.hasNetwork ? (props.osrmStatus === 'routing' ? 2 : 3) : props.materials ? 1 : 0;
 
   return (
-    <aside className="flex shrink-0 h-full border-r border-[var(--border)] bg-[var(--bg-surface)] max-md:h-[100dvh]">
+    <aside className="flex flex-1 min-h-0 border-r border-[var(--border)] bg-[var(--bg-surface)]">
       <nav className="w-11 md:w-12 flex flex-col items-center py-2 gap-1 border-r border-[var(--border)] bg-[var(--bg-canvas)] shrink-0">
         {GROUPS.map((g) => {
           const Icon = g.icon;
@@ -191,19 +194,23 @@ export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Prop
         })}
       </nav>
 
-      <div className="w-[min(268px,calc(100vw-44px))] md:w-[268px] flex flex-col min-w-0 flex-1">
-        <div className="px-3 py-2 border-b border-[var(--border)] flex items-start justify-between gap-2">
+      <div className="w-[min(268px,calc(100vw-44px))] md:w-[268px] flex flex-col min-w-0 min-h-0 flex-1">
+        <div className="px-3 py-2 border-b border-[var(--border)] flex items-start justify-between gap-2 shrink-0">
           <div className="min-w-0 flex-1">
           <p className="section-title">{currentGroup.label}</p>
-          <div className="flex flex-wrap gap-1 mt-2">
+          <div
+            className="grid gap-1 mt-2 p-1 rounded-lg bg-[var(--bg-canvas)]"
+            style={{ gridTemplateColumns: `repeat(${currentGroup.tabs.length === 4 ? 2 : currentGroup.tabs.length}, minmax(0, 1fr))` }}
+          >
             {currentGroup.tabs.map((t) => (
               <button
                 key={t.id}
                 type="button"
                 onClick={() => selectTab(t.id)}
-                className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition-colors ${
+                title={t.label}
+                className={`px-2 py-1 text-[11px] font-medium rounded-md transition-colors truncate text-center ${
                   activeTab === t.id
-                    ? 'bg-[var(--accent-dim)] text-[var(--accent)]'
+                    ? 'bg-[var(--accent-dim)] text-[var(--accent)] shadow-sm'
                     : 'text-[var(--text-2)] hover:bg-[var(--bg-hover)]'
                 }`}
               >
@@ -248,7 +255,9 @@ export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Prop
           </button>
         )}
 
-        <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
+        {/* Обёртка со страховочным max-h — иначе меню не долистывается до
+            нижних кнопок; слои стройки идут рядом со слоями сети. */}
+        <div className="flex-1 min-h-0 max-h-[100dvh] overflow-y-auto flex flex-col">
           {activeTab === 'layers' && <LayersTab
               districts={props.districts}
               layers={props.layers}
@@ -398,6 +407,9 @@ export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Prop
               takeSnapshot={props.takeSnapshot}
               restoreSnapshot={props.restoreSnapshot}
               deleteSnapshot={props.deleteSnapshot}
+              listProjectHistory={props.listProjectHistory}
+              restoreHistoryVersion={props.restoreHistoryVersion}
+              dbEnabled={props.dbEnabled}
             />
           )}
         </div>

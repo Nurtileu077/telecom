@@ -236,20 +236,43 @@ export default function HomePage() {
     net.setFieldRemoteSave(appMode === 'field');
   }, [appMode, net]);
 
+  // Уникальный ключ на вкладку: иначе две сессии под одним аккаунтом
+  // схлопываются в одну запись presence (счётчик и курсоры показывали бы 1).
+  const presenceSessionRef = useRef<string>(Math.random().toString(36).slice(2, 10));
   const presenceSelf = useMemo(() => {
     const name = authUser?.email?.split('@')[0]
       || getActorName()
       || 'Гость';
-    const key = authUser?.id ?? getGuestPresenceKey();
-    return { key, name };
+    const baseKey = authUser?.id ?? getGuestPresenceKey();
+    return { key: `${baseKey}:${presenceSessionRef.current}`, name, email: authUser?.email ?? undefined };
   }, [authUser]);
 
   const presenceEnabled = net.dbEnabled && net.districts.length > 0 && !cloudBlocked;
-  const { peers: presencePeers, onlineCount, publishCursor } = useProjectPresence(
+  const { peers: presencePeers, onlineCount, publishCursor, publishActivity } = useProjectPresence(
     net.projectId,
     presenceSelf,
     presenceEnabled,
   );
+
+  // Транслируем коллегам, что пользователь сейчас делает (рядом с курсором).
+  useEffect(() => {
+    if (!presenceEnabled) return;
+    const kindLabel = (k?: string) =>
+      k === 'olt' ? 'OLT'
+        : k === 'tb' || k === 'joint' ? 'муфту'
+          : k === 'ork' ? 'ОРК'
+            : k === 'sub' ? 'камеру' : 'объект';
+    let activity: string | null = null;
+    if (moveEntityTarget) activity = `двигает ${kindLabel(moveEntityTarget.kind)}`;
+    else if (editingCableId) activity = 'правит кабель';
+    else if (connectMode) activity = 'соединяет узлы';
+    else if (measureMode) activity = 'измеряет';
+    else if (placing) activity = 'добавляет объект';
+    else if (selectedCableId) activity = 'смотрит кабель';
+    else if (entitySelection) activity = `смотрит ${kindLabel(entitySelection.kind)}`;
+    else if (net.editMode) activity = 'редактирует';
+    publishActivity(activity);
+  }, [presenceEnabled, moveEntityTarget, editingCableId, connectMode, measureMode, placing, selectedCableId, entitySelection, net.editMode, publishActivity]);
 
   const handleSaveProject = useCallback(async (opts?: { audit?: boolean; force?: boolean }) => {
     setSaveError(null);
@@ -411,7 +434,12 @@ export default function HomePage() {
   // For subscribers: if dropped near another ORK (≤120m), reassign.
   const SNAP_TB_M = 80;
   const SNAP_ORK_M = 120;
-  const handleMoveEntity = useCallback(async (kind: 'tb' | 'ork' | 'olt', id: string, lat: number, lon: number) => {
+  const handleMoveEntity = useCallback(async (kind: 'tb' | 'ork' | 'olt' | 'joint' | 'sub', id: string, lat: number, lon: number) => {
+    // Муфты и абоненты двигаем как есть, без снаппинга/репарентинга.
+    if (kind === 'joint' || kind === 'sub') {
+      net.moveEntity(kind, id, lat, lon);
+      return;
+    }
     const { nearestEntity, SNAP_ENTITY_M } = await import('@/components/Network/SnapConnect');
     const snap = nearestEntity(lat, lon, net.districts, SNAP_ENTITY_M, id);
     const placeLat = snap?.lat ?? lat;
@@ -772,7 +800,27 @@ export default function HomePage() {
   return (
     <div className="app-shell flex flex-col overflow-hidden">
       <ReadOnlyBanner mode={appMode} role={userRole} onCopyShareLink={readOnly ? copyShareViewLink : undefined} />
-      {presenceEnabled && <PresenceBar onlineCount={onlineCount} peers={presencePeers} />}
+      {presenceEnabled && <PresenceBar onlineCount={onlineCount} peers={presencePeers} selfName={presenceSelf.email || presenceSelf.name} />}
+      {net.remoteChange && (
+        <div className="shrink-0 flex items-center justify-center gap-3 px-3 py-1.5 text-center text-[12px] text-[#fde68a] border-b border-[#f59e0b]/40 bg-[#f59e0b]/15">
+          <span>
+            {net.remoteChange.by ? `${net.remoteChange.by} обновил` : 'Коллега обновил'} проект.
+            Ваши несохранённые правки могут быть затёрты.
+          </span>
+          <button
+            onClick={() => net.reloadProjectFromServer()}
+            className="px-2 py-0.5 rounded bg-[#f59e0b] text-black font-medium hover:bg-[#fbbf24]"
+          >
+            Обновить
+          </button>
+          <button
+            onClick={() => net.dismissRemoteChange()}
+            className="px-2 py-0.5 rounded border border-[#f59e0b]/40 text-[#fde68a] hover:bg-[#f59e0b]/20"
+          >
+            Позже
+          </button>
+        </div>
+      )}
       {saveError && (
         <div className="shrink-0 px-3 py-1 text-center text-[11px] text-[#f87171] border-b border-[#f87171]/30 bg-[#f87171]/10">
           {saveError}
@@ -832,7 +880,7 @@ export default function HomePage() {
             onClick={() => setMobileMenuOpen(false)}
           />
         )}
-        <div className={`sidebar-drawer shrink-0 h-full md:relative md:translate-x-0 ${mobileMenuOpen ? 'is-open' : ''}`}>
+        <div className={`sidebar-drawer shrink-0 md:h-full md:relative md:translate-x-0 ${mobileMenuOpen ? 'is-open' : ''}`}>
         <Sidebar
           onMobileClose={goHomeMobile}
           mobilePersist
@@ -900,6 +948,9 @@ export default function HomePage() {
           takeSnapshot={net.takeSnapshot}
           restoreSnapshot={net.restoreSnapshot}
           deleteSnapshot={net.deleteSnapshot}
+          listProjectHistory={net.listProjectHistory}
+          restoreHistoryVersion={net.restoreHistoryVersion}
+          dbEnabled={net.dbEnabled}
           hasNetwork={net.districts.length > 0}
           settings={net.settings}
           onSearchHit={handleSearchHit}
