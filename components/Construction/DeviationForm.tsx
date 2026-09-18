@@ -1,6 +1,7 @@
 'use client';
 import { useState, useMemo, useEffect } from 'react';
-import { X, Check, AlertTriangle, FileWarning } from 'lucide-react';
+import { X, Check, AlertTriangle, FileWarning, Crosshair, MapPin, Loader2 } from 'lucide-react';
+import { getCurrentPosition, positionErrorText } from './currentPosition';
 import {
   Deviation, DeviationKind, DEVIATION_KIND_LABEL, DEVIATION_REASONS,
   DESIGN_DEPTH_M, needsProtocol, isKzLat, isKzLon,
@@ -20,13 +21,16 @@ interface Props {
   journal: JournalState;
   initial?: Deviation | null;
   onSave: (d: Deviation) => void;
+  onRequestPick?: (label: string) => Promise<{ lat: number; lon: number } | null>;
   onClose: () => void;
 }
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
 const numToStr = (v?: number) => (v === undefined || v === null ? '' : String(v));
 
-export default function DeviationForm({ journal, initial, onSave, onClose }: Props) {
+export default function DeviationForm({ journal, initial, onSave, onRequestPick, onClose }: Props) {
+  const [geoBusy, setGeoBusy] = useState<'a' | 'b' | null>(null);
+  const [geoNote, setGeoNote] = useState('');
   const [kind, setKind] = useState<DeviationKind>(initial?.kind ?? 'depth');
   const [date, setDate] = useState(initial?.date ?? todayIso);
   const [oblast, setOblast] = useState(initial?.oblast ?? '');
@@ -108,6 +112,31 @@ export default function DeviationForm({ journal, initial, onSave, onClose }: Pro
 
   const coordsTouched = !!(latA || lonA || latB || lonB);
   const coordsValid = !coordsTouched || !!buildCoords();
+
+  const setPoint = (which: 'a' | 'b', p: { lat: number; lon: number }) => {
+    const lat = p.lat.toFixed(6);
+    const lon = p.lon.toFixed(6);
+    if (which === 'a') { setLatA(lat); setLonA(lon); } else { setLatB(lat); setLonB(lon); }
+  };
+
+  /** Координаты с устройства: инженер стоит на месте отклонения. */
+  const takeGps = async (which: 'a' | 'b') => {
+    setGeoBusy(which); setGeoNote('');
+    try {
+      const pos = await getCurrentPosition();
+      setPoint(which, pos);
+      setGeoNote(`Точность ±${pos.accuracyM} м`);
+    } catch (e) {
+      setGeoNote(positionErrorText(e));
+    } finally { setGeoBusy(null); }
+  };
+
+  /** Показать карту и взять точку кликом — для работы из офиса. */
+  const pickOnMap = async (which: 'a' | 'b') => {
+    if (!onRequestPick) return;
+    const p = await onRequestPick(which === 'a' ? 'начало отклонения' : 'конец отклонения');
+    if (p) setPoint(which, p);
+  };
 
   const draft = {
     kind,
@@ -256,8 +285,37 @@ export default function DeviationForm({ journal, initial, onSave, onClose }: Pro
                        placeholder="необяз." className="inp font-mono" />
               </Field>
             </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex gap-1">
+                <button type="button" onClick={() => takeGps('a')} disabled={geoBusy !== null}
+                        className="btn btn-ghost text-[10.5px] flex-1" title="Взять координаты с устройства">
+                  {geoBusy === 'a' ? <Loader2 size={13} className="animate-spin" /> : <Crosshair size={13} />}
+                  Я здесь
+                </button>
+                {onRequestPick && (
+                  <button type="button" onClick={() => pickOnMap('a')}
+                          className="btn btn-ghost text-[10.5px] flex-1" title="Указать началом на карте">
+                    <MapPin size={13} />На карте
+                  </button>
+                )}
+              </div>
+              <div className="flex gap-1">
+                <button type="button" onClick={() => takeGps('b')} disabled={geoBusy !== null}
+                        className="btn btn-ghost text-[10.5px] flex-1" title="Взять координаты конца с устройства">
+                  {geoBusy === 'b' ? <Loader2 size={13} className="animate-spin" /> : <Crosshair size={13} />}
+                  Конец здесь
+                </button>
+                {onRequestPick && (
+                  <button type="button" onClick={() => pickOnMap('b')}
+                          className="btn btn-ghost text-[10.5px] flex-1" title="Указать концом на карте">
+                    <MapPin size={13} />На карте
+                  </button>
+                )}
+              </div>
+            </div>
             <p className="text-[10.5px] text-[var(--text-muted)] -mt-1">
               Одна точка — отметка на карте, две — отрезок трассы.
+              {geoNote && <span className="text-[var(--accent)]"> {geoNote}</span>}
               {coordsTouched && !coordsValid && (
                 <span className="text-[var(--danger)]"> Координаты вне границ Казахстана — проверьте порядок широты и долготы.</span>
               )}

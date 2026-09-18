@@ -107,6 +107,37 @@ export default function HomePage() {
   }, []);
   useEffect(() => { refreshJournalLayers(); }, [refreshJournalLayers]);
 
+  /**
+   * Выбор точки на карте для журнала: панель прячется, следующий клик по
+   * карте возвращает координаты и панель открывается обратно. Обещание
+   * разрешается null, если человек передумал (Esc).
+   */
+  const pickResolverRef = useRef<((p: { lat: number; lon: number } | null) => void) | null>(null);
+  const [pickLabel, setPickLabel] = useState<string | null>(null);
+
+  const requestPickOnMap = useCallback((label: string) => (
+    new Promise<{ lat: number; lon: number } | null>((resolve) => {
+      pickResolverRef.current = resolve;
+      setPickLabel(label);
+      setShowJournal(false);
+    })
+  ), []);
+
+  const cancelPick = useCallback(() => {
+    const resolve = pickResolverRef.current;
+    pickResolverRef.current = null;
+    setPickLabel(null);
+    setShowJournal(true);
+    resolve?.(null);
+  }, []);
+
+  useEffect(() => {
+    if (!pickLabel) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') cancelPick(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [pickLabel, cancelPick]);
+
   /** Перетащили колонну на карте — сохраняем новое место. */
   const handleMoveCrew = useCallback((id: string, lat: number, lon: number) => {
     const next = moveCrew(loadJournal(), id, lat, lon);
@@ -438,6 +469,16 @@ export default function HomePage() {
     if (typeof window !== 'undefined' && window.innerWidth < 768) {
       setMobileMenuOpen(false);
       setMobileSheetOpen(false);
+    }
+    // Выбор точки для журнала стройки идёт первым: панель в это время
+    // спрятана, и клик по карте означает именно «вот здесь».
+    if (pickResolverRef.current) {
+      const resolve = pickResolverRef.current;
+      pickResolverRef.current = null;
+      setPickLabel(null);
+      setShowJournal(true);
+      resolve({ lat, lon });
+      return;
     }
     // Лассо-выделение: каждый клик — вершина полигона (замыкаем кнопкой «Готово»).
     if (selecting) {
@@ -892,7 +933,7 @@ export default function HomePage() {
             deleteAnnotation={net.deleteAnnotation}
             editMode={!readOnly && net.editMode}
             placingMode={!!placing}
-            selectingMode={selecting || !!cableLink?.allowMap}
+            selectingMode={selecting || !!cableLink?.allowMap || !!pickLabel}
             onMapClick={handleMapClickAddSub}
             onMapContextMenu={(lat, lon, x, y) => setContextMenu({ lat, lon, x, y })}
             selectionBBox={selectionBBox}
@@ -1128,6 +1169,19 @@ export default function HomePage() {
             </div>
           )}
 
+          {pickLabel && (
+            <div className="absolute top-2 md:top-3 left-1/2 -translate-x-1/2 z-[600]
+                            bg-[var(--bg-elevated)] border border-[var(--accent)] rounded-lg
+                            px-3 py-2 shadow-2xl flex items-center gap-3 max-w-[92vw]">
+              <span className="text-[12px] text-[var(--text)]">
+                Кликните на карте: <b className="text-[var(--accent)]">{pickLabel}</b>
+              </span>
+              <button type="button" className="btn btn-ghost text-[11px]" onClick={cancelPick}>
+                Отмена <kbd className="ml-1 opacity-60">Esc</kbd>
+              </button>
+            </div>
+          )}
+
           {/* Экран приветствия закрывает карту, поэтому показываем его только
               когда на ней действительно пусто. Журнал стройки — проколы ГНБ,
               колонны, отклонения — это тоже содержимое карты: с ним подсказка
@@ -1315,7 +1369,10 @@ export default function HomePage() {
 
       {/* Help modal */}
       {showJournal && (
-        <ConstructionPanel onClose={() => { setShowJournal(false); refreshJournalLayers(); }} />
+        <ConstructionPanel
+          onClose={() => { setShowJournal(false); refreshJournalLayers(); }}
+          onRequestPick={requestPickOnMap}
+        />
       )}
 
       {showHelp && (

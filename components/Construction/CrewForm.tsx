@@ -1,6 +1,7 @@
 'use client';
 import { useState, useMemo, useEffect } from 'react';
-import { X, Check } from 'lucide-react';
+import { X, Check, Crosshair, MapPin, Loader2 } from 'lucide-react';
+import { getCurrentPosition, positionErrorText } from './currentPosition';
 import {
   Crew, CrewKind, CrewStatus, CrewMember,
   CREW_KINDS, CREW_KIND_LIST, CREW_STATUS, EQUIPMENT_KINDS,
@@ -17,12 +18,15 @@ interface Props {
   journal: JournalState;
   initial?: Crew | null;
   onSave: (c: Crew) => void;
+  onRequestPick?: (label: string) => Promise<{ lat: number; lon: number } | null>;
   onClose: () => void;
 }
 
 const STATUSES = Object.keys(CREW_STATUS) as CrewStatus[];
 
-export default function CrewForm({ journal, initial, onSave, onClose }: Props) {
+export default function CrewForm({ journal, initial, onSave, onRequestPick, onClose }: Props) {
+  const [geoBusy, setGeoBusy] = useState(false);
+  const [geoNote, setGeoNote] = useState('');
   const [kind, setKind] = useState<CrewKind>(initial?.kind ?? 'mkt');
   const [name, setName] = useState(initial?.name ?? '');
   const [status, setStatus] = useState<CrewStatus>(initial?.status ?? 'working');
@@ -188,8 +192,35 @@ export default function CrewForm({ journal, initial, onSave, onClose }: Props) {
                        placeholder="69.41" className="inp font-mono" />
               </Field>
             </div>
+            <div className="flex gap-1">
+              <button type="button" disabled={geoBusy} className="btn btn-ghost text-[10.5px] flex-1"
+                      title="Взять координаты с устройства"
+                      onClick={async () => {
+                        setGeoBusy(true); setGeoNote('');
+                        try {
+                          const pos = await getCurrentPosition();
+                          setLat(pos.lat.toFixed(6)); setLon(pos.lon.toFixed(6));
+                          setGeoNote(`Точность ±${pos.accuracyM} м`);
+                        } catch (e) { setGeoNote(positionErrorText(e)); }
+                        finally { setGeoBusy(false); }
+                      }}>
+                {geoBusy ? <Loader2 size={13} className="animate-spin" /> : <Crosshair size={13} />}
+                Колонна здесь
+              </button>
+              {onRequestPick && (
+                <button type="button" className="btn btn-ghost text-[10.5px] flex-1"
+                        title="Указать место на карте"
+                        onClick={async () => {
+                          const p = await onRequestPick(`колонна ${name || ''}`.trim());
+                          if (p) { setLat(p.lat.toFixed(6)); setLon(p.lon.toFixed(6)); }
+                        }}>
+                  <MapPin size={13} />На карте
+                </button>
+              )}
+            </div>
             <p className="text-[10.5px] text-[var(--text-muted)] -mt-1">
               Координаты можно не заполнять: поставьте колонну на карту перетаскиванием.
+              {geoNote && <span className="text-[var(--accent)]"> {geoNote}</span>}
             </p>
           </Group>
 

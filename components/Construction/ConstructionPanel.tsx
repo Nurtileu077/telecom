@@ -38,9 +38,13 @@ const PERIOD_LABEL: Record<Period, string> = {
   day: 'Последний день', week: '7 дней', month: '30 дней', all: 'Всё время',
 };
 
-interface Props { onClose: () => void }
+interface Props {
+  onClose: () => void;
+  /** Спрятать панель и дать выбрать точку на карте. null — передумали. */
+  onRequestPick?: (label: string) => Promise<{ lat: number; lon: number } | null>;
+}
 
-export default function ConstructionPanel({ onClose }: Props) {
+export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
   const [journal, setJournal] = useState<JournalState>(emptyJournal);
   const [period, setPeriod] = useState<Period>('month');
   const [oblast, setOblast] = useState('');
@@ -477,6 +481,7 @@ export default function ConstructionPanel({ onClose }: Props) {
           journal={journal}
           initial={editingDev}
           onSave={handleSaveDeviation}
+          onRequestPick={onRequestPick}
           onClose={() => { setDevFormOpen(false); setEditingDev(null); }}
         />
       )}
@@ -486,6 +491,7 @@ export default function ConstructionPanel({ onClose }: Props) {
           journal={journal}
           initial={editingCrew}
           onSave={handleSaveCrew}
+          onRequestPick={onRequestPick}
           onClose={() => { setCrewFormOpen(false); setEditingCrew(null); }}
         />
       )}
