@@ -1,7 +1,7 @@
 'use client';
 import { useMemo, useState } from 'react';
 import {
-  TrendingUp, AlertTriangle, CalendarClock, Users, MapPin, ChevronRight,
+  TrendingUp, AlertTriangle, CalendarClock, Users, MapPin, ChevronRight, Gauge,
 } from 'lucide-react';
 import { JournalState, fmtKm, fmtMeters, plural, openDeviations, pendingCorrections } from './journalStore';
 import { materialForecast, lowStock, negativeStock, unknownStock } from './materialForecast';
@@ -10,6 +10,7 @@ import {
   regionProgress, pace, attention, daysSince, RegionProgress, AttentionItem,
 } from './management';
 import { MATERIAL_LABEL } from './journalStore';
+import { methodRates, crewRates, shiftsLeft, METHOD_LABEL } from './crewRate';
 
 /**
  * Взгляд руководства.
@@ -119,6 +120,13 @@ export default function ManagementView({ journal, onOpenView }: Props) {
     [ctx, openOblast, openRayon],
   );
   const p = useMemo(() => pace(ctx), [ctx]);
+
+  // Норматив выработки: сколько выходит за смену каждым способом. План
+  // «пройдём село за неделю» держится либо на опыте одного человека,
+  // либо на этих цифрах.
+  const rates = useMemo(() => methodRates(journal.ground), [journal.ground]);
+  const byCrew = useMemo(() => crewRates(journal.ground), [journal.ground]);
+  const shifts = useMemo(() => shiftsLeft(p.remainingM, rates), [p.remainingM, rates]);
 
   const totals = useMemo(() => {
     const planM = regions.reduce((s, r) => s + r.planM, 0);
@@ -258,6 +266,58 @@ export default function ManagementView({ journal, onOpenView }: Props) {
           </div>
         )}
       </section>
+
+      {/* Выработка за смену — основа честного плана */}
+      {rates.length > 0 && (
+        <section className="flex flex-col gap-2">
+          <h4 className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
+            <Gauge size={12} />Выработка за смену
+          </h4>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+            {rates.map((r) => (
+              <div key={r.method} className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] px-3 py-2">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-[12px] text-[var(--text)]">{METHOD_LABEL[r.method]}</span>
+                  <span className="ml-auto text-[13px] font-semibold text-[var(--accent)]">
+                    {fmtMeters(r.median)}
+                  </span>
+                </div>
+                <div className="text-[10.5px] text-[var(--text-muted)]">
+                  обычная смена · среднее {fmtMeters(r.perShift)} · лучшая {fmtMeters(r.best)}
+                  {' · '}{r.shifts} {plural(r.shifts, 'смена', 'смены', 'смен')}
+                </div>
+              </div>
+            ))}
+          </div>
+          {byCrew.length > 0 && (
+            <details className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)]">
+              <summary className="px-3 py-2 text-[11.5px] text-[var(--text-muted)] cursor-pointer hover:text-[var(--text)]">
+                По бригадам ({byCrew.length})
+              </summary>
+              <div className="px-3 pb-2 flex flex-col gap-1">
+                {byCrew.slice(0, 30).map((r) => (
+                  <div key={`${r.key}-${r.method}`} className="flex items-baseline gap-2 text-[11px]">
+                    <span className="text-[var(--text)] truncate">{r.key}</span>
+                    <span className="text-[var(--text-muted)] truncate">{METHOD_LABEL[r.method]}</span>
+                    <span className="ml-auto font-mono text-[var(--text)] shrink-0">{fmtMeters(r.median)}</span>
+                    <span className="text-[10px] text-[var(--text-muted)] shrink-0 w-16 text-right">
+                      {r.shifts} {plural(r.shifts, 'смена', 'смены', 'смен')}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+          <p className="text-[10.5px] text-[var(--text-muted)]">
+            Обычная смена — медиана: одна рекордная смена не должна обещать,
+            что так будет каждый день.
+            {shifts !== null && p.remainingM > 0 && (
+              <> При таком темпе остаток — <b className="text-[var(--text)]">
+                {shifts} {plural(shifts, 'смена', 'смены', 'смен')}</b> ведущим способом.</>
+            )}
+          </p>
+        </section>
+      )}
 
       <p className="text-[10.5px] text-[var(--text-muted)] leading-relaxed">
         План — плановые объёмы ВОЛС из реестра заказа. Факт — подземка и подвес
