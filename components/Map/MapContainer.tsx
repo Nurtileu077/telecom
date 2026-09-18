@@ -73,6 +73,11 @@ interface Props {
   unassignedSubscribers?: import('@/types/network').Subscriber[];
   layers: LayerVisibility;
   flyToRef?: React.MutableRefObject<((lat: number, lon: number, zoom?: number) => void) | null>;
+  /**
+   * Показать целиком: «посмотреть трассу» — это вопрос «от и до», а не
+   * «где середина». Точкой на него не ответить, нужна рамка по всей линии.
+   */
+  fitRef?: React.MutableRefObject<((coords: [number, number][]) => void) | null>;
   mapElRef?: React.MutableRefObject<HTMLElement | null>;
   // Annotations
   annotations: MapAnnotation[];
@@ -451,6 +456,16 @@ export default function LeafletMap(props: Props) {
       if (propsRef.current.flyToRef) {
         propsRef.current.flyToRef.current = (lat, lon, zoom = 16) => {
           map.flyTo([lat, lon], zoom, { duration: 1.0 });
+        };
+      }
+      if (propsRef.current.fitRef) {
+        propsRef.current.fitRef.current = (coords) => {
+          const pts = coords.filter(([la, lo]) => Number.isFinite(la) && Number.isFinite(lo));
+          if (pts.length === 0) return;
+          try {
+            map.fitBounds(L.latLngBounds(pts as [number, number][]),
+              { padding: [70, 70], maxZoom: 16 });
+          } catch { /* вырожденная рамка — пусть остаётся как было */ }
         };
       }
       if (propsRef.current.mapElRef) {

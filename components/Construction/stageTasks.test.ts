@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   isStageReady, pendingTasks, tasksForCrewKind, blockedStages,
   snpCompletion, stageSummary, seedProgress, stageStatus, handoffTasks,
+  nextStageAction,
 } from './stageTasks';
+import { SNP_STAGES } from '@/types/construction';
 import type { SnpProgress, SnpStage, DailyWorkEntry, DrillLogEntry } from '@/types/construction';
 
 const now = '2026-09-18T00:00:00.000Z';
@@ -205,5 +207,32 @@ describe('переданный фронт против бэклога', () => {
     const tasks = pendingTasks([...many, waiting]);
     expect(tasks).toHaveLength(101);
     expect(handoffTasks(tasks).map((t) => t.kato)).toEqual(['w']);
+  });
+});
+
+describe('одно действие на село', () => {
+  it('нетронутое село предлагает взять первый этап', () => {
+    expect(nextStageAction(snp())).toEqual({ stage: 'mkt', status: 'not_started', action: 'take' });
+  });
+
+  it('этап в работе предлагает закрыть его, а не взять следующий', () => {
+    const p = snp({ stages: { mkt: { status: 'in_progress' } } });
+    expect(nextStageAction(p)).toEqual({ stage: 'mkt', status: 'in_progress', action: 'close' });
+  });
+
+  it('после закрытого этапа предлагается следующий', () => {
+    const a = nextStageAction(snp({ stages: { mkt: done() } }));
+    expect(a?.stage).toBe('gnb');
+    expect(a?.action).toBe('take');
+  });
+
+  it('простой предлагает снять простой, а не закрыть этап', () => {
+    const p = snp({ stages: { mkt: { status: 'blocked', blockReason: 'скала' } } });
+    expect(nextStageAction(p)).toEqual({ stage: 'mkt', status: 'blocked', action: 'resume' });
+  });
+
+  it('когда всё закрыто, действия нет', () => {
+    const all = Object.fromEntries(SNP_STAGES.map((s) => [s, done()]));
+    expect(nextStageAction(snp({ stages: all }))).toBeNull();
   });
 });

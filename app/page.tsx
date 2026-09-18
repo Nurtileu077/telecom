@@ -211,6 +211,23 @@ export default function HomePage() {
   /** Вчерашний день в движении: дату выбирают, движение считается. */
   const [playbackDate, setPlaybackDate] = useState<string | null>(null);
   const [playbackMoves, setPlaybackMoves] = useState<DayMove[]>([]);
+  /**
+   * «Посмотреть трассу» у села: рамка по всей линии, от и до.
+   *
+   * Вопрос звучит как «где это», и отвечает на него не точка в центре
+   * села, а вся трасса целиком — с обоими концами в кадре.
+   */
+  const showSnpRoute = useCallback((kato: string) => {
+    const coords = planRoutes
+      .filter((r) => r.kato === kato)
+      .flatMap((r) => r.coords);
+    if (coords.length === 0) return;
+    setShowJournal(false);
+    // Панель закрывается тем же кадром — рамку считаем после, иначе карта
+    // померит себя по ещё зажатой ширине и трасса уедет под панель.
+    setTimeout(() => fitRef.current?.(coords), 120);
+  }, [planRoutes]);
+
   const playDay = useCallback((date: string) => {
     const j = loadJournal();
     setPlaybackDate(date);
@@ -496,6 +513,7 @@ export default function HomePage() {
     budgetMap.current = m;
   }, [net.powerBudgets]);
   const flyToRef = useRef<((lat: number, lon: number, zoom?: number) => void) | null>(null);
+  const fitRef = useRef<((coords: [number, number][]) => void) | null>(null);
   const mapElRef = useRef<HTMLElement | null>(null);
 
   const onExportPDF = useCallback(async () => {
@@ -1145,6 +1163,7 @@ export default function HomePage() {
             unassignedSubscribers={net.allSubscribers}
             layers={net.layers}
             flyToRef={flyToRef}
+            fitRef={fitRef}
             mapElRef={mapElRef}
             annotations={net.annotations}
             activeTool={activeTool}
@@ -1630,6 +1649,7 @@ export default function HomePage() {
       {showJournal && (
         <ConstructionPanel
           onPlayDay={(date) => { playDay(date); setShowJournal(false); }}
+          onShowRoute={showSnpRoute}
           editObjectId={editObjectId}
           onDoneEditObject={() => setEditObjectId(null)}
           onClose={() => { setShowJournal(false); setEditObjectId(null); refreshJournalLayers(); }}

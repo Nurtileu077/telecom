@@ -1,6 +1,8 @@
 'use client';
 import { useState, useMemo } from 'react';
-import { ListChecks, Play, Check, Ban, RotateCcw, Sparkles } from 'lucide-react';
+import {
+  ListChecks, Play, Check, Ban, RotateCcw, Sparkles, MoreHorizontal, Route,
+} from 'lucide-react';
 import {
   SnpStage, SNP_STAGES, SNP_STAGE_SPECS, StageStatus, STAGE_STATUS_SPECS,
   CREW_KINDS, BLOCK_REASONS, CrewKind, SnpProgress,
@@ -8,6 +10,7 @@ import {
 import { JournalState, plural, fmtMeters } from './journalStore';
 import {
   pendingTasks, stageStatus, stageState, blockedStages, snpCompletion, handoffTasks,
+  nextStageAction,
 } from './stageTasks';
 
 /**
@@ -15,15 +18,33 @@ import {
  *
  * Наряд не рассылается вручную: он появляется сам, когда предыдущий этап
  * закрыт. Закрыли МКТ на Еленовке — у ГНБ в списке возникла Еленовка.
+ *
+ * На строке села одно действие, а не восемнадцать. Шесть этапов, у
+ * каждого «закрыть», «стоит» и «вернуть» — это доска, на которую боятся
+ * нажимать. Работа всегда идёт по ближайшему незакрытому этапу, его и
+ * предлагаем; остальные — под «…», когда действительно нужно.
  */
 
 interface Props {
   journal: JournalState;
   onSeed: () => void;
   onSetStage: (kato: string, stage: SnpStage, patch: { status: StageStatus; blockReason?: string; crew?: string }) => void;
+  /** Показать трассу этого села на карте — «от и до». */
+  onShowRoute?: (kato: string) => void;
+  /** У каких сёл трасса вообще есть: кнопка, которая ничего не делает, врёт. */
+  routeKatos?: Set<string>;
 }
 
-export default function StagesView({ journal, onSeed, onSetStage }: Props) {
+export default function StagesView({
+  journal, onSeed, onSetStage, onShowRoute, routeKatos,
+}: Props) {
+  /** Раскрытые строки: там, где нужно отметить не ближайший этап. */
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggle = (kato: string) => setExpanded((prev) => {
+    const next = new Set(prev);
+    if (next.has(kato)) next.delete(kato); else next.add(kato);
+    return next;
+  });
   const [crewFilter, setCrewFilter] = useState<CrewKind | ''>('');
   const [onlyActive, setOnlyActive] = useState(true);
 
@@ -172,7 +193,11 @@ export default function StagesView({ journal, onSeed, onSetStage }: Props) {
         </div>
 
         <div className="flex flex-col gap-1.5">
-          {rows.slice(0, 200).map((p) => (
+          {rows.slice(0, 200).map((p) => {
+            const open = expanded.has(p.kato);
+            const next = nextStageAction(p);
+            const hasRoute = !routeKatos || routeKatos.has(p.kato);
+            return (
             <div key={p.kato} className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] px-3 py-2 flex flex-col gap-1.5">
               <div className="flex items-baseline gap-2 flex-wrap">
                 <span className="text-[12.5px] font-medium text-[var(--text)] truncate">{p.snp}</span>
@@ -181,56 +206,123 @@ export default function StagesView({ journal, onSeed, onSetStage }: Props) {
                 </span>
                 <span className="ml-auto font-mono text-[10px] text-[var(--text-muted)]">{p.kato}</span>
               </div>
+
+              {/* Этапы — чтобы видеть положение дел, а не чтобы нажимать. */}
               <div className="flex flex-wrap gap-1">
                 {SNP_STAGES.map((s) => {
                   const st = stageStatus(p, s);
                   const spec = STAGE_STATUS_SPECS[st];
                   const info = stageState(p, s);
                   return (
-                    <div key={s} className="flex items-center gap-0.5">
-                      <span className="text-[10px] px-1.5 py-0.5 rounded border"
-                            style={{
-                              color: spec.color,
-                              borderColor: spec.color,
-                              borderStyle: info.derived ? 'dashed' : 'solid',
-                            }}
-                            title={`${SNP_STAGE_SPECS[s].label}: ${spec.label}`
-                              + (info.derived ? ' · по журналу, не подтверждено' : '')
-                              + (info.by ? ` · ${info.by}` : '')
-                              + (info.blockReason ? ` · ${info.blockReason}` : '')}>
-                        {SNP_STAGE_SPECS[s].label}
-                      </span>
-                      {st !== 'done' && (
-                        <span className="flex">
-                          <button type="button" title="Закрыть этап"
-                                  onClick={() => onSetStage(p.kato, s, { status: 'done' })}
-                                  className="px-1 text-[var(--text-muted)] hover:text-[var(--accent)]">
-                            <Check size={12} />
-                          </button>
-                          <button type="button" title="Отметить простой"
-                                  onClick={() => {
-                                    const reason = prompt(`Почему стоит «${SNP_STAGE_SPECS[s].label}»?\n${BLOCK_REASONS.join(', ')}`);
-                                    if (reason === null) return;
-                                    onSetStage(p.kato, s, { status: 'blocked', blockReason: reason.trim() || undefined });
-                                  }}
-                                  className="px-1 text-[var(--text-muted)] hover:text-[var(--danger)]">
-                            <Ban size={12} />
-                          </button>
-                        </span>
-                      )}
-                      {st === 'done' && (
-                        <button type="button" title="Вернуть в работу"
-                                onClick={() => onSetStage(p.kato, s, { status: 'in_progress' })}
-                                className="px-1 text-[var(--text-muted)] hover:text-[var(--warn)]">
-                          <RotateCcw size={12} />
-                        </button>
-                      )}
-                    </div>
+                    <span key={s} className="text-[10px] px-1.5 py-0.5 rounded border"
+                          style={{
+                            color: spec.color,
+                            borderColor: spec.color,
+                            borderStyle: info.derived ? 'dashed' : 'solid',
+                          }}
+                          title={`${SNP_STAGE_SPECS[s].label}: ${spec.label}`
+                            + (info.derived ? ' · по журналу, не подтверждено' : '')
+                            + (info.by ? ` · ${info.by}` : '')
+                            + (info.blockReason ? ` · ${info.blockReason}` : '')}>
+                      {SNP_STAGE_SPECS[s].label}
+                    </span>
                   );
                 })}
               </div>
+
+              {/* Одно действие на село: ближайший незакрытый этап. */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                {next && (
+                  <button type="button" className="btn btn-primary text-[11px]"
+                          title={`Этап «${SNP_STAGE_SPECS[next.stage].label}»`}
+                          onClick={() => onSetStage(p.kato, next.stage, {
+                            status: next.action === 'close' ? 'done' : 'in_progress',
+                          })}>
+                    {next.action === 'close'
+                      ? <><Check size={13} />Закрыть {SNP_STAGE_SPECS[next.stage].label}</>
+                      : next.action === 'resume'
+                        ? <><RotateCcw size={13} />Снять простой</>
+                        : <><Play size={13} />Взять {SNP_STAGE_SPECS[next.stage].label}</>}
+                  </button>
+                )}
+                {next && next.action !== 'resume' && (
+                  <button type="button" className="btn btn-ghost text-[11px] text-[var(--text-muted)]"
+                          title="Отметить простой по этому этапу"
+                          onClick={() => {
+                            const reason = prompt(`Почему стоит «${SNP_STAGE_SPECS[next.stage].label}»?\n${BLOCK_REASONS.join(', ')}`);
+                            if (reason === null) return;
+                            onSetStage(p.kato, next.stage, { status: 'blocked', blockReason: reason.trim() || undefined });
+                          }}>
+                    <Ban size={13} />Стоит
+                  </button>
+                )}
+                {onShowRoute && hasRoute && (
+                  <button type="button" className="btn btn-ghost text-[11px] text-[var(--text-muted)]"
+                          title="Показать трассу этого села на карте — от и до"
+                          onClick={() => onShowRoute(p.kato)}>
+                    <Route size={13} />Посмотреть трассу
+                  </button>
+                )}
+                <button type="button" onClick={() => toggle(p.kato)}
+                        className="btn btn-ghost text-[11px] text-[var(--text-muted)] ml-auto"
+                        title="Отметить не ближайший этап">
+                  <MoreHorizontal size={14} />
+                </button>
+              </div>
+
+              {/* Остальные этапы — когда действительно нужно поправить не тот,
+                  что идёт следующим: пересдача, возврат в работу, простой. */}
+              {open && (
+                <div className="flex flex-col gap-1 pt-1 border-t border-[var(--border)]">
+                  {SNP_STAGES.map((s) => {
+                    const st = stageStatus(p, s);
+                    const spec = STAGE_STATUS_SPECS[st];
+                    return (
+                      <div key={s} className="flex items-center gap-2 text-[11px]">
+                        <span className="w-24 shrink-0 text-[var(--text-muted)]">{SNP_STAGE_SPECS[s].label}</span>
+                        <span style={{ color: spec.color }}>{spec.label}</span>
+                        <span className="ml-auto flex gap-0.5">
+                          {st !== 'in_progress' && (
+                            <button type="button" title="В работу"
+                                    onClick={() => onSetStage(p.kato, s, { status: 'in_progress' })}
+                                    className="px-1 text-[var(--text-muted)] hover:text-[var(--accent)]">
+                              <Play size={12} />
+                            </button>
+                          )}
+                          {st !== 'done' && (
+                            <button type="button" title="Закрыть этап"
+                                    onClick={() => onSetStage(p.kato, s, { status: 'done' })}
+                                    className="px-1 text-[var(--text-muted)] hover:text-[var(--accent)]">
+                              <Check size={12} />
+                            </button>
+                          )}
+                          {st !== 'blocked' && (
+                            <button type="button" title="Отметить простой"
+                                    onClick={() => {
+                                      const reason = prompt(`Почему стоит «${SNP_STAGE_SPECS[s].label}»?\n${BLOCK_REASONS.join(', ')}`);
+                                      if (reason === null) return;
+                                      onSetStage(p.kato, s, { status: 'blocked', blockReason: reason.trim() || undefined });
+                                    }}
+                                    className="px-1 text-[var(--text-muted)] hover:text-[var(--danger)]">
+                              <Ban size={12} />
+                            </button>
+                          )}
+                          {st === 'done' && (
+                            <button type="button" title="Вернуть в работу"
+                                    onClick={() => onSetStage(p.kato, s, { status: 'in_progress' })}
+                                    className="px-1 text-[var(--text-muted)] hover:text-[var(--warn)]">
+                              <RotateCcw size={12} />
+                            </button>
+                          )}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          ))}
+            );
+          })}
           {rows.length > 200 && (
             <p className="text-[11px] text-[var(--text-muted)] text-center py-2">
               Показаны первые 200 из {rows.length}.

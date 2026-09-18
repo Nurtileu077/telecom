@@ -22,6 +22,7 @@ import {
   upsertObject, removeObject, setSectionProgress, scopeJournal, smuList,
 } from './journalStore';
 import { crewsFromJournal, type DerivedCrew } from './crewDerive';
+import { routeViews } from './routeStyle';
 import DeviationForm from './DeviationForm';
 import CrewForm from './CrewForm';
 import SectionClosing from './SectionClosing';
@@ -65,10 +66,12 @@ interface Props {
   onDoneEditObject?: () => void;
   /** Показать движение колонн за день на карте. */
   onPlayDay?: (date: string) => void;
+  /** Показать трассу села на карте — «от и до». */
+  onShowRoute?: (kato: string) => void;
 }
 
 export default function ConstructionPanel({
-  onClose, onRequestPick, editObjectId, onDoneEditObject, onPlayDay,
+  onClose, onRequestPick, editObjectId, onDoneEditObject, onPlayDay, onShowRoute,
 }: Props) {
   const [journal, setJournal] = useState<JournalState>(emptyJournal);
   const [period, setPeriod] = useState<Period>('month');
@@ -378,6 +381,13 @@ export default function ConstructionPanel({
   // заводить их руками — работа ради работы.
   const autoCrews = useMemo(() => crewsFromJournal(scoped), [scoped]);
 
+  // У каких сёл трасса вообще есть: кнопка «посмотреть трассу», которая
+  // ничего не показывает, хуже отсутствующей.
+  const routeKatos = useMemo(() => {
+    const views = routeViews(scoped.planRoutes, { progress: live.progress });
+    return new Set(views.map((v) => v.kato).filter((k): k is string => !!k));
+  }, [scoped.planRoutes, live.progress]);
+
   const pending = useMemo(() => pendingCorrections(journal), [journal]);
   const openDevs = useMemo(() => openDeviations(journal), [journal]);
   const tasks = useMemo(
@@ -664,6 +674,8 @@ export default function ConstructionPanel({
         ) : view === 'stages' ? (
           <StagesView
             journal={live}
+            onShowRoute={onShowRoute}
+            routeKatos={routeKatos}
             onSeed={() => {
               const base = loadJournal();
               persist(setProgress(base, seedProgress(base.orders, base.ground, base.progress)));

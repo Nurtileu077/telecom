@@ -168,3 +168,24 @@ export function seedProgress(
 
   return [...byKato.values()];
 }
+
+/**
+ * Ближайший этап, по которому есть что делать, и что с ним делать.
+ *
+ * На доске у села одно действие, а не восемнадцать: шесть этапов с
+ * «закрыть», «стоит» и «вернуть» на каждом — это экран, на который
+ * боятся нажимать. Работа всегда идёт по первому незакрытому этапу, его
+ * и предлагаем; остальные остаются под раскрытием строки.
+ */
+export function nextStageAction(p: SnpProgress): {
+  stage: SnpStage; status: StageStatus; action: 'take' | 'close' | 'resume';
+} | null {
+  for (const s of SNP_STAGES) {
+    const st = stageStatus(p, s);
+    if (st === 'done') continue;
+    if (st === 'in_progress') return { stage: s, status: st, action: 'close' };
+    if (st === 'blocked') return { stage: s, status: st, action: 'resume' };
+    return { stage: s, status: st, action: 'take' };
+  }
+  return null;
+}
