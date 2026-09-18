@@ -1,12 +1,15 @@
 'use client';
 import { useState, useMemo } from 'react';
-import { Printer, AlertTriangle, FileCheck2 } from 'lucide-react';
-import { LAY_METHODS, LAY_METHOD_LABEL } from '@/types/construction';
+import { Printer, AlertTriangle, FileCheck2, FileDown } from 'lucide-react';
 import { JournalState, documentContractor } from './journalStore';
 import {
-  computeSectionAct, entriesOfSection, deviationsOfSection, actKm,
+  computeSectionAct, entriesOfSection, deviationsOfSection,
   SectionActManual, DEFAULT_ACT_MANUAL, Recultivation, PavementRestore,
 } from './sectionAct';
+import {
+  actRows, actDocHtml, actFileName, fmtDate, withRayonWord,
+  ActKind, ACT_KIND_SPECS, DOC_MIME,
+} from './actDocument';
 
 /**
  * Закрытие участка: таблица АСР/ОСР, заполненная из дневных записей.
@@ -52,6 +55,39 @@ export default function SectionClosing({ journal, onChangeFields }: Props) {
     ? documentContractor(journal.contractors, performerName)
     : undefined;
 
+  /**
+   * Акт файлом. Word-совместимый HTML: открывается как документ, правится
+   * и уходит в письме — печать в PDF для этого не годится.
+   */
+  // Пустой акт хуже отсутствующего: его подпишут не глядя.
+  const nothingToSign = totals.variants.length === 0;
+
+  const downloadAct = (kind: ActKind) => {
+    if (nothingToSign) return;
+    const html = actDocHtml({
+      kind,
+      uchastok,
+      oblast: first?.oblast,
+      rayon: first?.rayon,
+      contractor: docContractor?.fullName ?? docContractor?.name,
+      performer: performerName,
+      dateFrom: totals.dateFrom,
+      dateTo: totals.dateTo,
+      totals, variants: totals.variants, fields,
+    });
+    // BOM — иначе Word открывает кириллицу кракозябрами.
+    const blob = new Blob(['\ufeff', html], { type: DOC_MIME });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = actFileName(kind, uchastok, fields.actDate);
+    document.body.appendChild(a);
+    a.click();
+    // Якорь убираем не сразу: если удалить его в тот же тик, браузер
+    // успевает потерять имя файла и сохраняет документ как «download».
+    setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 1000);
+  };
+
   if (sections.length === 0) {
     return (
       <div className="text-center py-12 flex flex-col items-center gap-2">
@@ -71,10 +107,30 @@ export default function SectionClosing({ journal, onChangeFields }: Props) {
                 className="flex-1 min-w-[220px] bg-[var(--bg-canvas)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[12px] text-[var(--text)]">
           {sections.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
+        {(['ASR', 'OSR'] as ActKind[]).map((k) => (
+          <button key={k} type="button" className="btn text-[11px]"
+                  disabled={nothingToSign}
+                  title={nothingToSign
+                    ? 'По участку нет объёмов прокладки — акт составлять не из чего'
+                    : `Скачать ${ACT_KIND_SPECS[k].short} — открывается в Word`}
+                  onClick={() => downloadAct(k)}>
+            <FileDown size={14} />{ACT_KIND_SPECS[k].short}
+          </button>
+        ))}
         <button type="button" className="btn btn-primary text-[11px]" onClick={() => window.print()}>
           <Printer size={14} />Печать
         </button>
       </div>
+
+      {nothingToSign && (
+        <div className="no-print flex items-start gap-2 p-2.5 rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] text-[12px] text-[var(--text-muted)]">
+          <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+          <span>
+            По участку «{uchastok}» нет объёмов прокладки — в дневных отчётах
+            метры по способам не проставлены. Акт составлять не из чего.
+          </span>
+        </div>
+      )}
 
       {totals.openDeviations.length > 0 && (
         <div className="no-print flex items-start gap-2 p-2.5 rounded-lg border border-[var(--warn)]/50 bg-[var(--warn)]/10 text-[12px] text-[var(--text)]">
@@ -154,37 +210,10 @@ export default function SectionClosing({ journal, onChangeFields }: Props) {
 
             <table className="w-full text-[11.5px] border-collapse">
               <tbody>
-                <Row n="1" label="Защитной МКТ проложено всего" value={actKm(v.lengthM)} unit="км" strong />
-                {LAY_METHODS.map((m) => (
-                  <Row key={m} label={methodActLabel(m)}
-                       value={actKm(share(totals.byMethod[m], totals.totalM, v.lengthM))} unit="км" indent />
+                {actRows(totals, v, fields).map((r, ri) => (
+                  <Row key={ri} n={r.n} label={r.label} value={r.value} unit={r.unit}
+                       indent={r.indent} strong={r.strong} manual={r.manual} />
                 ))}
-                <Row label="Переходы ГНБ с защитой ПЭТ-63мм" value={actKm(fields.gnbPet63M ?? 0)} unit="км" indent manual />
-                <Row label="Переходы ГНБ с защитой ПЭТ-110мм" value={actKm(fields.gnbPet110M ?? 0)} unit="км" indent manual />
-                <Row label="Переходы открытым способом, ПЭТ-63мм" value={actKm(fields.openPet63M ?? 0)} unit="км" indent manual />
-                <Row label="Переходы открытым способом, ст. труба 63мм" value={actKm(fields.openSteel63M ?? 0)} unit="км" indent manual />
-                <Row n="2" label="Глубина прокладки защитной МКТ"
-                     value={`по проекту — ${fmtDepth(v.designDepthM)} м, фактически — ${fmtDepth(v.actualDepthM)} м`} />
-                <Row n="3" label="Комплектов для сращивания защитной МКТ (фитинги)"
-                     value={String(shareInt(totals.splicingKits, totals.totalM, v.lengthM))} unit="шт" />
-                <Row n="4" label="Прокладка предупредительно-сигнальной ленты на глубине ½ от МКТ"
-                     value={actKm(share(totals.tapeM, totals.totalM, v.lengthM))} unit="км" />
-                <Row n="5" label="На участке выполнено переходов"
-                     value={String(v.isMain ? totals.crossingsTotal : 0)} unit="пер." />
-                <Row n="6" label="Рекультивация" value={fields.recultivation ?? '—'} manual />
-                <Row n="7" label="Восстановление а/бетонных покрытий" value={fields.pavement ?? '—'} manual />
-                {(fields.markerPosts || fields.ballMarkers) && (
-                  <>
-                    <Row label="Установлено идентификационных столбиков" value={String(fields.markerPosts ?? 0)} unit="шт" manual />
-                    <Row label="Установлено шаровых маркеров" value={String(fields.ballMarkers ?? 0)} unit="шт" manual />
-                  </>
-                )}
-                {!v.isMain && (
-                  <Row label="Отклонения от ПСД"
-                       value={v.protocols.length
-                         ? v.protocols.map((p) => `Протокол МГ №${p.number} от ${fmtDate(p.date)}`).join('; ')
-                         : 'протокол мобильной группы не оформлен'} />
-                )}
               </tbody>
             </table>
 
@@ -221,38 +250,6 @@ export default function SectionClosing({ journal, onChangeFields }: Props) {
       `}</style>
     </div>
   );
-}
-
-/** Доля показателя, приходящаяся на этот акт по длине. */
-function share(value: number, total: number, part: number): number {
-  if (!total) return 0;
-  return Math.round((value * part) / total);
-}
-function shareInt(value: number, total: number, part: number): number {
-  if (!total) return 0;
-  return Math.round((value * part) / total);
-}
-
-function methodActLabel(m: string): string {
-  // В акте у кабелеукладчика формулировка своя, остальные совпадают.
-  if (m === 'кабелеукладчик') return 'Кабелеукладчиком с двукратной пропоркой';
-  return LAY_METHOD_LABEL[m as never] ?? m;
-}
-
-function fmtDate(iso?: string): string {
-  if (!iso) return '—';
-  const d = new Date(`${iso}T00:00:00Z`);
-  return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('ru');
-}
-
-function fmtDepth(m: number): string {
-  return String(m).replace('.', ',');
-}
-
-/** В журнале район пишут и с словом «район», и без — не удваиваем. */
-function withRayonWord(rayon: string): string {
-  const r = rayon.trim();
-  return /район/i.test(r) ? r : `${r} район`;
 }
 
 function Row({ n, label, value, unit, indent, strong, manual }: {

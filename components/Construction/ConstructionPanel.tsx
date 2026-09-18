@@ -3,7 +3,7 @@ import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   X, Upload, Loader2, AlertTriangle, MapPin, Wrench, Boxes,
   Plus, Download, Trash2, CloudOff, Pencil, Check, Ban, Building2, Clock,
-  Ruler, FileWarning, RefreshCw, CloudCheck, Route,
+  Ruler, FileWarning, RefreshCw, CloudCheck, Route, FileDown,
 } from 'lucide-react';
 import { getActorName } from '@/lib/appRole';
 import { importJournal, type JournalImportResult } from './JournalImport';
@@ -25,6 +25,7 @@ import SectionClosing from './SectionClosing';
 import MaterialsView from './MaterialsView';
 import StagesView from './StagesView';
 import ManagementView from './ManagementView';
+import { protocolDocHtml, protocolFileName, DOC_MIME } from './actDocument';
 import {
   journalCloudEnabled, syncJournal, loadLastSyncAt, saveLastSyncAt,
 } from './journalRemote';
@@ -660,6 +661,27 @@ function CrewsList({ rows, onAdd, onEdit, onDelete }: {
   );
 }
 
+/**
+ * Протокол мобильной группы файлом.
+ *
+ * Пустой бланк заполнять руками незачем: обстоятельства уже записаны в
+ * карточке отклонения. Оформленный протокол выгружается с номером и
+ * решением, неоформленный — бланком с прочерками под подпись.
+ */
+function downloadProtocol(d: Deviation) {
+  const html = protocolDocHtml({ deviation: d, protocol: d.protocol });
+  // BOM — иначе Word открывает кириллицу кракозябрами.
+  const blob = new Blob(['\ufeff', html], { type: DOC_MIME });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = protocolFileName(d);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function DeviationsList({ rows, onAdd, onEdit, onDelete }: {
   rows: Deviation[];
   onAdd: () => void;
@@ -732,8 +754,13 @@ function DeviationsList({ rows, onAdd, onEdit, onDelete }: {
                   <FileWarning size={12} />Протокол мобильной группы не оформлен
                 </span>
               )}
-              <button type="button" onClick={() => onEdit(d)} title="Изменить"
+              <button type="button" onClick={() => downloadProtocol(d)}
+                      title="Скачать протокол мобильной группы — откроется в Word"
                       className="btn btn-ghost btn-icon ml-auto text-[var(--text-muted)] hover:text-[var(--accent)]">
+                <FileDown size={14} />
+              </button>
+              <button type="button" onClick={() => onEdit(d)} title="Изменить"
+                      className="btn btn-ghost btn-icon text-[var(--text-muted)] hover:text-[var(--accent)]">
                 <Pencil size={14} />
               </button>
               <button type="button" onClick={() => onDelete(d.id)} title="Удалить"
