@@ -16,6 +16,22 @@ import { SNP_POINT_SOURCE } from '@/components/Construction/snpMap';
 import { areaColor } from '@/components/Construction/areaProgress';
 import { routeTitle } from '@/components/Construction/routeStyle';
 
+/**
+ * Ссылка «доехать».
+ *
+ * Свой навигатор в системе не нужен и не будет лучше телефонного: на
+ * машине едут с тем приложением, к которому привыкли. Даём обе ссылки —
+ * 2ГИС в Казахстане популярнее, но Google есть у всех.
+ */
+function routeLinks(lat: number, lon: number): string {
+  const g = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}`;
+  const d = `https://2gis.kz/routeSearch/rsType/car/to/${lon},${lat}`;
+  return `<div style="margin-top:6px;display:flex;gap:8px;font-size:11px">
+    <a href="${g}" target="_blank" rel="noreferrer" style="color:#38bdf8;text-decoration:none">🚗 Google</a>
+    <a href="${d}" target="_blank" rel="noreferrer" style="color:#38bdf8;text-decoration:none">🚗 2ГИС</a>
+  </div>`;
+}
+
 /** Цвет прокола: свой, не пересекается с цветами этапов трассы. */
 const DRILL_COLOR: Record<'ГНБ' | 'ГНП', string> = {
   'ГНБ': '#f472b6',
@@ -1016,7 +1032,8 @@ export default function LeafletMap(props: Props) {
           `<b>${p.drillKind}</b> · ${len}<br/>` +
           `${p.uchastok || '—'}<br/>` +
           `<span style="color:#64748b;font-size:11px">${p.oblast || ''} · ${when}</span>` +
-          (p.note ? `<br/><span style="font-size:11px">${p.note.replace(/</g, '&lt;')}</span>` : ''),
+          (p.note ? `<br/><span style="font-size:11px">${p.note.replace(/</g, '&lt;')}</span>` : '') +
+          routeLinks(p.lat, p.lon),
         );
         group.addLayer(m);
       }
@@ -1115,6 +1132,7 @@ export default function LeafletMap(props: Props) {
                    Встала по отчёту от ${new Date(`${c.placement.date}T00:00:00Z`).toLocaleDateString('ru')}
                  </div>`
               : ''}
+            ${routeLinks(c.lat as number, c.lon as number)}
             ${draggable ? '<div style="margin-top:6px;font-size:10px;color:#64748b">Перетащите метку, чтобы перебросить колонну</div>' : ''}
           </div>`);
 
@@ -1177,6 +1195,7 @@ export default function LeafletMap(props: Props) {
                 ? `✓ Протокол МГ №${esc(d.protocolNumber ?? '')}`
                 : '⚠ Протокол мобильной группы не оформлен'}
             </div>
+            ${d.coords[0] ? routeLinks(d.coords[0].lat, d.coords[0].lon) : ''}
           </div>`;
 
         if (d.coords.length >= 2) {
@@ -1289,8 +1308,17 @@ export default function LeafletMap(props: Props) {
           + (d.count ? ` · ${d.count} шт` : '')
           + `<br/>${esc(d.uchastok || '—')}`
           + `<br/><span style="color:#64748b;font-size:11px">${esc(d.oblast || '')} · ${when}</span>`
+          + (d.crossings?.length
+            ? `<br/><span style="font-size:11px">Кололи: ${esc(d.crossings.join(', '))}</span>` : '')
           + (d.contractor ? `<br/><span style="font-size:11px">${esc(d.contractor)}</span>` : '')
-          + (d.note ? `<br/><span style="font-size:11px">${esc(d.note)}</span>` : ''),
+          + (d.note ? `<br/><span style="font-size:11px">${esc(d.note)}</span>` : '')
+          + (d.historyCount > 1
+            ? `<div style="margin-top:5px;padding-top:4px;border-top:1px solid #1e293b;font-size:11px;color:#94a3b8">
+                 Здесь же ${d.historyCount} ${d.historyCount % 10 === 1 && d.historyCount % 100 !== 11 ? 'прокол' : 'проколов'}
+                 · ${(d.historyMeters / 1000).toFixed(2)} км бестраншейно
+               </div>`
+            : '')
+          + routeLinks(d.coords[0].lat, d.coords[0].lon),
         );
         group.addLayer(line);
       }
@@ -1440,6 +1468,7 @@ export default function LeafletMap(props: Props) {
             <div style="margin-top:5px;font-size:10px;color:#64748b">
               Место ${esc(SNP_POINT_SOURCE[p.from])}
             </div>
+            ${routeLinks(p.lat, p.lon)}
           </div>`);
         group.addLayer(m);
       }

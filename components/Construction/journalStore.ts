@@ -362,6 +362,7 @@ export function deviationMapItems(state: JournalState): DeviationMapItem[] {
 export function drillMapPoints(state: JournalState): DrillMapPoint[] {
   const out: DrillMapPoint[] = [];
   for (const d of state.drills) {
+    if (d.status === 'planned') continue; // план на карте не показываем
     if (d.points.length >= 2) continue; // это линия, она рисуется отдельно
     d.points.forEach((p, i) => {
       out.push({
@@ -388,15 +389,33 @@ export interface DrillMapLine {
   date: string;
   note?: string;
   contractor?: string;
+  crossings?: string[];
+  /** Сколько проколов сделано здесь же раньше — история по месту. */
+  historyCount: number;
+  /** Всего метров бестраншейно по этому селу. */
+  historyMeters: number;
 }
 
 export function drillMapLines(state: JournalState): DrillMapLine[] {
+  // История по месту: через три года сюда приедет аварийная бригада, и
+  // вопрос будет один — что здесь под землёй и сколько раз тут кололи.
+  const byKato = new Map<string, { count: number; meters: number }>();
+  for (const d of state.drills) {
+    if (!d.kato || d.status === 'planned') continue;
+    const cur = byKato.get(d.kato) ?? { count: 0, meters: 0 };
+    cur.count += Math.max(1, d.count || 1);
+    cur.meters += d.meters || 0;
+    byKato.set(d.kato, cur);
+  }
+
   const out: DrillMapLine[] = [];
   for (const d of state.drills) {
+    if (d.status === 'planned') continue; // план под землёй не лежит
     const pts = d.points.filter(
       (p) => Number.isFinite(p.lat) && Number.isFinite(p.lon),
     );
     if (pts.length < 2) continue;
+    const hist = byKato.get(d.kato) ?? { count: 0, meters: 0 };
     out.push({
       id: d.id,
       coords: pts.map((p) => ({ lat: p.lat, lon: p.lon })),
@@ -408,6 +427,9 @@ export function drillMapLines(state: JournalState): DrillMapLine[] {
       date: d.date,
       note: d.note,
       contractor: d.contractor,
+      crossings: d.crossings,
+      historyCount: hist.count,
+      historyMeters: hist.meters,
     });
   }
   return out;
@@ -779,6 +801,25 @@ export function saveJournalRole(r: JournalRole): void {
 function withTombstone(base: JournalState, id: string, at: string): DeletedMark[] {
   const rest = base.deleted.filter((d) => d.id !== id);
   return [...rest, { id, at }];
+}
+
+/**
+ * Прокол: добавляем новый или заменяем правленый.
+ *
+ * Метки на карте рождаются отсюда — из руки того, кто колет, а не из
+ * разметки обследования.
+ */
+export function upsertDrill(base: JournalState, d: DrillLogEntry): JournalState {
+  const now = new Date().toISOString();
+  const next = { ...d, updatedAt: now };
+  const exists = base.drills.some((x) => x.id === d.id);
+  return {
+    ...base,
+    drills: exists
+      ? base.drills.map((x) => (x.id === d.id ? next : x))
+      : [...base.drills, next],
+    updatedAt: now,
+  };
 }
 
 export function removeEntry(base: JournalState, id: string): JournalState {

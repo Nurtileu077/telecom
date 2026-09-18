@@ -18,7 +18,7 @@ import {
   addDeviation, removeDeviation, openDeviations, isDeviationClosed,
   upsertCrew, removeCrew, upsertDelivery, removeDelivery,
   addPlanRoutes, removePlanSource, planSources, plural, setProgress, setStage,
-  addAreas, removeAreaSource, areaSources, setMaterialPrice,
+  addAreas, removeAreaSource, areaSources, setMaterialPrice, upsertDrill,
 } from './journalStore';
 import DeviationForm from './DeviationForm';
 import CrewForm from './CrewForm';
@@ -28,6 +28,8 @@ import StagesView from './StagesView';
 import ManagementView from './ManagementView';
 import DayReport from './DayReport';
 import TodayView from './TodayView';
+import DrillsView from './DrillsView';
+import DrillForm from './DrillForm';
 import { protocolDocHtml, protocolFileName, DOC_MIME } from './actDocument';
 import {
   journalCloudEnabled, syncJournal, loadLastSyncAt, saveLastSyncAt,
@@ -41,10 +43,11 @@ import {
   CREW_KINDS, CREW_STATUS,
   type LayMethod, type MaterialKind, type DailyWorkEntry,
   type CorrectionRequest, type JournalRole, type Deviation, type Crew,
+  type DrillLogEntry,
 } from '@/types/construction';
 
 type Period = 'day' | 'week' | 'month' | 'all';
-type View = 'today' | 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages';
+type View = 'today' | 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages' | 'drills';
 
 const PERIOD_LABEL: Record<Period, string> = {
   day: 'Последний день', week: '7 дней', month: '30 дней', all: 'Всё время',
@@ -73,6 +76,8 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
   const [devFormOpen, setDevFormOpen] = useState(false);
   const [editingDev, setEditingDev] = useState<Deviation | null>(null);
   const [dayOpen, setDayOpen] = useState<string | null>(null);
+  const [drillFormOpen, setDrillFormOpen] = useState(false);
+  const [editingDrill, setEditingDrill] = useState<DrillLogEntry | null>(null);
   const [crewFormOpen, setCrewFormOpen] = useState(false);
   const [editingCrew, setEditingCrew] = useState<Crew | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -405,7 +410,7 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
       {!empty && (
         <div className="flex flex-wrap items-center gap-1.5 px-3 md:px-4 py-2 border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0">
           <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md mr-1">
-            {([['today', 'Сегодня'], ['summary', 'Сводка'], ['management', 'Руководству'], ['entries', 'Записи'], ['crews', 'Колонны'], ['stages', 'Этапы'], ['deviations', 'Отклонения'], ['materials', 'Материалы'], ['closing', 'Закрытие'], ['corrections', 'Заявки']] as [View, string][]).map(([v, label]) => {
+            {([['today', 'Сегодня'], ['summary', 'Сводка'], ['management', 'Руководству'], ['entries', 'Записи'], ['crews', 'Колонны'], ['stages', 'Этапы'], ['drills', 'Проколы'], ['deviations', 'Отклонения'], ['materials', 'Материалы'], ['closing', 'Закрытие'], ['corrections', 'Заявки']] as [View, string][]).map(([v, label]) => {
               const badge = v === 'corrections' ? pending.length
                 : v === 'deviations' ? openDevs.length
                 : v === 'materials' ? lowMaterials.length
@@ -524,6 +529,22 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
           />
         ) : view === 'management' ? (
           <ManagementView journal={live} onOpenView={(v) => setView(v)} />
+        ) : view === 'drills' ? (
+          <DrillsView
+            journal={journal}
+            onAdd={() => { setEditingDrill(null); setDrillFormOpen(true); }}
+            onEdit={(d) => { setEditingDrill(d); setDrillFormOpen(true); }}
+            onMarkDone={(d) => {
+              // Закрытие прокола — та же форма, но открытая на «сделано»:
+              // метраж и координаты без неё взять неоткуда.
+              setEditingDrill({ ...d, status: 'done', date: new Date().toISOString().slice(0, 10) });
+              setDrillFormOpen(true);
+            }}
+            onDelete={(id) => {
+              if (!confirm('Удалить прокол?')) return;
+              persist(removeEntry(loadJournal(), id));
+            }}
+          />
         ) : view === 'stages' ? (
           <StagesView
             journal={live}
@@ -631,6 +652,17 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
           </div>
         )}
       </div>
+
+      {drillFormOpen && (
+        <DrillForm
+          journal={journal}
+          initial={editingDrill}
+          author={actor}
+          onRequestPick={onRequestPick}
+          onSave={(d) => persist(upsertDrill(loadJournal(), d))}
+          onClose={() => { setDrillFormOpen(false); setEditingDrill(null); }}
+        />
+      )}
 
       {dayOpen && (
         <DayReport journal={journal} date={dayOpen} onClose={() => setDayOpen(null)} />

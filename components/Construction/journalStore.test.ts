@@ -534,3 +534,34 @@ describe('вспомогательное', () => {
     expect(norm(fmtMeters(1500))).toBe('1,5 км');
   });
 });
+
+describe('проколы на карте: план и история', () => {
+  it('запланированный прокол на карту не попадает — план под землёй не лежит', () => {
+    const state: JournalState = {
+      ...emptyJournal(),
+      drills: [
+        d({ id: 'p', status: 'planned', points: [{ lat: 51, lon: 71 }, { lat: 51, lon: 71.001 }] }),
+        d({ id: 'p2', status: 'planned', points: [{ lat: 51, lon: 71 }] }),
+      ],
+    };
+    expect(drillMapLines(state)).toHaveLength(0);
+    expect(drillMapPoints(state)).toHaveLength(0);
+  });
+
+  it('история по месту считает все сделанные проколы села', () => {
+    const state: JournalState = {
+      ...emptyJournal(),
+      drills: [
+        d({ id: 'a', kato: '191', meters: 70, count: 1, points: [{ lat: 51, lon: 71 }, { lat: 51, lon: 71.001 }] }),
+        d({ id: 'b', kato: '191', meters: 30, count: 2, points: [{ lat: 51, lon: 71.01 }, { lat: 51, lon: 71.011 }] }),
+        d({ id: 'c', kato: '999', meters: 90, count: 1, points: [{ lat: 52, lon: 72 }, { lat: 52, lon: 72.001 }] }),
+      ],
+    };
+    const lines = drillMapLines(state);
+    const first = lines.find((l) => l.id === 'a')!;
+    expect(first.historyCount).toBe(3);
+    expect(first.historyMeters).toBe(100);
+    const other = lines.find((l) => l.id === 'c')!;
+    expect(other.historyCount).toBe(1);
+  });
+});
