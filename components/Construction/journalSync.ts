@@ -124,6 +124,8 @@ export function mergeJournalStates(
     crews: mergeCollection<Crew>(local.crews, remote.crews, tombs, stats),
     corrections: mergeCorrections(local.corrections, remote.corrections, stats),
     contractors: mergeContractors(local.contractors, remote.contractors),
+    // Поля актов: своё заполнение в приоритете, чужие участки добираем.
+    actFields: { ...(remote.actFields ?? {}), ...(local.actFields ?? {}) },
     deleted: pruneTombstones(
       [...tombs.entries()].map(([id, at]) => ({ id, at })),
       now,

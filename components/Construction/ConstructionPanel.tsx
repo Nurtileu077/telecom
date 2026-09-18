@@ -20,6 +20,7 @@ import {
 } from './journalStore';
 import DeviationForm from './DeviationForm';
 import CrewForm from './CrewForm';
+import SectionClosing from './SectionClosing';
 import {
   journalCloudEnabled, syncJournal, loadLastSyncAt, saveLastSyncAt,
 } from './journalRemote';
@@ -31,7 +32,7 @@ import {
 } from '@/types/construction';
 
 type Period = 'day' | 'week' | 'month' | 'all';
-type View = 'summary' | 'entries' | 'corrections' | 'deviations' | 'crews';
+type View = 'summary' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing';
 
 const PERIOD_LABEL: Record<Period, string> = {
   day: 'Последний день', week: '7 дней', month: '30 дней', all: 'Всё время',
@@ -294,7 +295,7 @@ export default function ConstructionPanel({ onClose }: Props) {
       {!empty && (
         <div className="flex flex-wrap items-center gap-1.5 px-3 md:px-4 py-2 border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0">
           <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md mr-1">
-            {([['summary', 'Сводка'], ['entries', 'Записи'], ['crews', 'Колонны'], ['deviations', 'Отклонения'], ['corrections', 'Заявки']] as [View, string][]).map(([v, label]) => {
+            {([['summary', 'Сводка'], ['entries', 'Записи'], ['crews', 'Колонны'], ['deviations', 'Отклонения'], ['closing', 'Закрытие'], ['corrections', 'Заявки']] as [View, string][]).map(([v, label]) => {
               const badge = v === 'corrections' ? pending.length : v === 'deviations' ? openDevs.length : 0;
               return (
                 <button key={v} type="button" onClick={() => setView(v)}
@@ -391,6 +392,14 @@ export default function ConstructionPanel({ onClose }: Props) {
 
         {empty ? (
           <EmptyJournal onPick={() => fileRef.current?.click()} onAdd={() => setFormOpen(true)} busy={busy} />
+        ) : view === 'closing' ? (
+          <SectionClosing
+            journal={journal}
+            onChangeFields={(uch, f) => {
+              const base = loadJournal();
+              persist({ ...base, actFields: { ...base.actFields, [uch]: f } });
+            }}
+          />
         ) : view === 'crews' ? (
           <CrewsList
             rows={journal.crews}

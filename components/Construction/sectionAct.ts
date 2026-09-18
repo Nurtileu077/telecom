@@ -51,6 +51,33 @@ export interface SectionActVariant {
   blocked: boolean;
 }
 
+/**
+ * Поля акта, которых нет в дневном отчёте по существу: их заполняют при
+ * закрытии участка. Хранятся по участку, чтобы не вводить заново.
+ */
+export interface SectionActManual {
+  /** Переходы ГНБ с защитой ПЭТ-63 и ПЭТ-110, метры. */
+  gnbPet63M?: number;
+  gnbPet110M?: number;
+  /** Переходы открытым способом: ПЭТ-63 и стальная труба 63, метры. */
+  openPet63M?: number;
+  openSteel63M?: number;
+  recultivation?: Recultivation;
+  pavement?: PavementRestore;
+  /** Идентификационные столбики и шаровые маркеры, штуки. */
+  markerPosts?: number;
+  ballMarkers?: number;
+  /** Реквизиты акта. */
+  actNumber?: string;
+  actDate?: string;
+  city?: string;
+}
+
+export const DEFAULT_ACT_MANUAL: SectionActManual = {
+  recultivation: 'выполнена',
+  pavement: 'не предусматривается проектом',
+};
+
 /** Считается из журнала. */
 export interface SectionActTotals {
   /** Защитной МКТ проложено всего, метры. */

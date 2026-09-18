@@ -18,6 +18,8 @@ export interface JournalState {
   /** Колонны на карте. */
   crews: Crew[];
   contractors: Contractor[];
+  /** Поля актов, заполняемые при закрытии, по участкам. */
+  actFields: Record<string, import('./sectionAct').SectionActManual>;
   /**
    * Надгробия удалённых записей.
    *
@@ -39,7 +41,7 @@ export function emptyJournal(): JournalState {
   return {
     orders: [], ground: [], aerial: [], drills: [],
     corrections: [], deviations: [], crews: [],
-    contractors: DEFAULT_CONTRACTORS, deleted: [], updatedAt: '',
+    contractors: DEFAULT_CONTRACTORS, actFields: {}, deleted: [], updatedAt: '',
   };
 }
 
@@ -227,6 +229,7 @@ export function loadJournal(): JournalState {
       corrections: p.corrections ?? [],
       deviations: p.deviations ?? [],
       crews: p.crews ?? [],
+      actFields: p.actFields ?? {},
       deleted: p.deleted ?? [],
       // Пустой справочник заменяем стартовым — иначе подрядчика не из чего выбрать.
       contractors: p.contractors?.length ? p.contractors : DEFAULT_CONTRACTORS,
@@ -269,6 +272,7 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     deviations: base.deviations,
     crews: base.crews,
     contractors: base.contractors.length ? base.contractors : DEFAULT_CONTRACTORS,
+    actFields: base.actFields,
     deleted: base.deleted,
     updatedAt: new Date().toISOString(),
   };
