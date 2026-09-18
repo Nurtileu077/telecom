@@ -7,6 +7,7 @@ import Logo from '@/components/Brand/Logo';
 import GeocodeSearch from '@/components/Geocoding/GeocodeSearch';
 import { PROJECT_STATUS_LABELS, ProjectStatus, type UserRole } from '@/types/network';
 import RoleSelector from '@/components/Layout/RoleSelector';
+import { WORKSPACE_SPECS } from '@/lib/workspace';
 
 export type PlacingMode = 'olt' | 'tb' | 'ork' | 'box' | null;
 
@@ -35,6 +36,9 @@ interface Props {
   undoHint?: string | null;
   dbEnabled: boolean;
   onCatalog: () => void;
+  /** Рабочее место и переключение между ними. */
+  workspace?: import('@/lib/workspace').Workspace;
+  onWorkspaceChange?: (w: import('@/lib/workspace').Workspace) => void;
   /** Журнал стройки — дневная выработка, ГНБ, материалы. */
   onJournal?: () => void;
   onProjects: () => void;
@@ -108,6 +112,18 @@ export default function AppHeader(p: Props) {
           <Redo2 size={16} />
         </button>
       </div>
+
+      {p.workspace && p.onWorkspaceChange && (
+        <div className="seg shrink-0" title="Рабочее место">
+          {(['construction', 'design'] as const).map((w) => (
+            <button key={w} type="button" data-active={p.workspace === w}
+                    onClick={() => p.workspace !== w && p.onWorkspaceChange!(w)}>
+              <span className="mr-1">{WORKSPACE_SPECS[w].icon}</span>
+              <span className="hidden sm:inline">{WORKSPACE_SPECS[w].short}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="hidden lg:flex items-center gap-1 flex-wrap shrink min-w-0">
         <span className="chip chip-accent">{p.totalSubscribers} аб.</span>

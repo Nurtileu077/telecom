@@ -13,6 +13,8 @@ interface Props {
   toggleConstructionLayer?: (key: keyof ConstructionLayers) => void;
   /** Сколько объектов сейчас в каждом слое — чтобы не искать пустое. */
   constructionCounts?: Partial<Record<keyof ConstructionLayers, number>>;
+  /** На стройке слои проектной сети не показываем — они не про эту работу. */
+  building?: boolean;
 }
 
 function Toggle({ on, onChange, label }: { on: boolean; onChange: () => void; label: string }) {
@@ -39,7 +41,7 @@ const CABLE_COLORS: Record<string, string> = {
 
 export default function LayersTab({
   districts, layers, toggleLayer,
-  constructionLayers, toggleConstructionLayer, constructionCounts,
+  constructionLayers, toggleConstructionLayer, constructionCounts, building,
 }: Props) {
   const hasConstruction = constructionLayers && toggleConstructionLayer
     && Object.values(constructionCounts ?? {}).some((n) => (n ?? 0) > 0);
@@ -75,6 +77,7 @@ export default function LayersTab({
       )}
 
       {/* Object Types */}
+      {!building && (
       <section>
         <h3 className="text-[10px] uppercase tracking-widest text-[#64748b] mb-2">Типы объектов</h3>
         <div className="space-y-0.5">
@@ -85,8 +88,10 @@ export default function LayersTab({
           <Toggle on={layers.cables} onChange={() => toggleLayer('cables')} label="〰 Кабели (все)" />
         </div>
       </section>
+      )}
 
       {/* Cable Types */}
+      {!building && (
       <section>
         <h3 className="text-[10px] uppercase tracking-widest text-[#64748b] mb-2">Типы кабелей</h3>
         <div className="space-y-0.5">
@@ -116,6 +121,7 @@ export default function LayersTab({
           ))}
         </div>
       </section>
+      )}
 
       {/* Districts */}
       {districts.length > 0 && (
@@ -137,6 +143,7 @@ export default function LayersTab({
       )}
 
       {/* Legend */}
+      {!building && (
       <section>
         <h3 className="text-[10px] uppercase tracking-widest text-[#64748b] mb-2">Легенда</h3>
         <div className="space-y-1">
@@ -156,6 +163,14 @@ export default function LayersTab({
           ))}
         </div>
       </section>
+      )}
+
+      {building && (
+        <p className="text-[11px] text-[#64748b] leading-relaxed">
+          Слои проектной сети спрятаны: это рабочее место стройки. Переключиться
+          на проектирование можно в шапке.
+        </p>
+      )}
     </div>
   );
 }

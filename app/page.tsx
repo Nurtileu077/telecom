@@ -8,6 +8,8 @@ import { Subscriber, ProjectSettings, AnnotationType, Project, ProjectStatus, PR
 import type { DrawingTool } from '@/components/Sidebar/NotesTab';
 import AppHeader from '@/components/Layout/AppHeader';
 import EmptyState from '@/components/Layout/EmptyState';
+import WorkspacePicker from '@/components/Layout/WorkspacePicker';
+import { loadWorkspace, saveWorkspace, WORKSPACE_SPECS, type Workspace } from '@/lib/workspace';
 import { exportPDF } from '@/components/Export/ExportPDF';
 import { calculateCost } from '@/components/Network/CostCalc';
 import ProjectListModal from '@/components/Projects/ProjectListModal';
@@ -117,6 +119,21 @@ export default function HomePage() {
   const [planRoutes, setPlanRoutes] = useState<PlanRoute[]>([]);
   const [snpPoints, setSnpPoints] = useState<SnpMapPoint[]>([]);
   const [areas, setAreas] = useState<AreaMapItem[]>([]);
+
+  // Рабочее место: проектирование или стройка. null — ещё не спрашивали.
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [wsAsked, setWsAsked] = useState(false);
+  useEffect(() => {
+    setWorkspace(loadWorkspace());
+    setWsAsked(true);
+  }, []);
+  const pickWorkspace = useCallback((w: Workspace) => {
+    setWorkspace(w);
+    saveWorkspace(w);
+    // На стройке первым делом открывают журнал — там вся работа.
+    if (w === 'construction') setShowJournal(true);
+  }, []);
+  const building = workspace === 'construction';
   const refreshJournalLayers = useCallback(() => {
     const j = loadJournal();
     setDrillPoints(drillMapPoints(j));
@@ -807,6 +824,10 @@ export default function HomePage() {
     return <AuthGateScreen />;
   }
 
+  if (wsAsked && !workspace) {
+    return <WorkspacePicker onPick={pickWorkspace} />;
+  }
+
   return (
     <div className="app-shell flex flex-col overflow-hidden">
       <ReadOnlyBanner mode={appMode} role={userRole} onCopyShareLink={readOnly ? copyShareViewLink : undefined} />
@@ -837,6 +858,8 @@ export default function HomePage() {
         </div>
       )}
       <AppHeader
+        workspace={workspace ?? undefined}
+        onWorkspaceChange={pickWorkspace}
         projectName={net.projectName}
         onProjectNameChange={net.setProjectName}
         projectStatus={net.projectStatus}
@@ -903,6 +926,7 @@ export default function HomePage() {
           materials={net.materials}
           layers={net.layers}
           toggleLayer={net.toggleLayer}
+          building={building}
           constructionLayers={conLayers}
           toggleConstructionLayer={toggleConstructionLayer}
           constructionCounts={{
@@ -1014,6 +1038,7 @@ export default function HomePage() {
 
         <main className={`flex-1 relative overflow-hidden isolate min-w-0 max-md:pb-[calc(var(--mobile-dock-h)+max(8px,var(--sab)))] md:pb-0 ${(entitySelection || interiorView) ? 'md:pr-[min(400px,42vw)]' : ''}`}>
           <LeafletMap
+            hideNetwork={building}
             districts={net.districts}
             cables={net.cables}
             joints={net.joints}

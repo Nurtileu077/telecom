@@ -82,6 +82,11 @@ interface Props {
   snpPoints?: import('@/components/Construction/snpMap').SnpMapPoint[];
   /** Обведённые районы и сёла с ходом работ. */
   areas?: import('@/components/Construction/areaProgress').AreaMapItem[];
+  /**
+   * Рабочее место — стройка: сеть на карте не рисуем. Прорабу проектные
+   * узлы и кабели мешают искать своё, а проектировщику — наоборот.
+   */
+  hideNetwork?: boolean;
   /** Перетаскивание колонны на новое место. */
   onMoveCrew?: (id: string, lat: number, lon: number) => void;
   // Bounding-box overlay for "export selection".  Drawn as a translucent
@@ -569,6 +574,9 @@ export default function LeafletMap(props: Props) {
     if (!map || !group) return;
     import('leaflet').then((L) => {
       group.clearLayers();
+      // На стройке проектная сеть не рисуется: она не помогает прорабу и
+      // забивает карту объектами, которых он не ведёт.
+      if (propsRef.current.hideNetwork) return;
       const { districts, cables, layers, joints, moveEntityTarget, snapHighlightId, snapHighlightIds } = propsRef.current;
       const isSnapTarget = (id: string) =>
         snapHighlightId === id || (snapHighlightIds?.has(id) ?? false);
@@ -1550,6 +1558,7 @@ export default function LeafletMap(props: Props) {
   useEffect(() => { renderPlanRoutes(); }, [props.planRoutes, mapReady]);
   useEffect(() => { renderSnpPoints(); }, [props.snpPoints, mapReady]);
   useEffect(() => { renderAreas(); }, [props.areas, mapReady]);
+  useEffect(() => { renderData(); }, [props.hideNetwork]);
 
   /**
    * Первый показ журнала без проекта сети: подвинуть карту к данным.

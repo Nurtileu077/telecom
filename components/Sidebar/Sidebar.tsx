@@ -71,6 +71,7 @@ interface Props {
   constructionLayers?: import('@/components/Construction/mapLayers').ConstructionLayers;
   toggleConstructionLayer?: (key: keyof import('@/components/Construction/mapLayers').ConstructionLayers) => void;
   constructionCounts?: Partial<Record<keyof import('@/components/Construction/mapLayers').ConstructionLayers, number>>;
+  building?: boolean;
   validationIssues: ValidationIssue[];
   flyTo: ((lat: number, lon: number, zoom?: number) => void) | null;
   annotations: MapAnnotation[];
@@ -265,6 +266,7 @@ export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Prop
               constructionLayers={props.constructionLayers}
               toggleConstructionLayer={props.toggleConstructionLayer}
               constructionCounts={props.constructionCounts}
+              building={props.building}
             />}
           {activeTab === 'create' && props.onSetPlacing && (
             <CreateTab
