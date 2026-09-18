@@ -1,5 +1,8 @@
-import { Crew, DailyWorkEntry, AerialWorkEntry, DrillLogEntry } from '@/types/construction';
+import {
+  Crew, DailyWorkEntry, AerialWorkEntry, DrillLogEntry, PlanRoute, SnpProgress,
+} from '@/types/construction';
 import { placeFinder, SnpMapContext } from './snpMap';
+import { routeViews } from './routeStyle';
 
 /**
  * Колонна встаёт туда, откуда она отчиталась.
@@ -30,12 +33,34 @@ export interface CrewPlacement {
   rayon?: string;
 }
 
+/**
+ * Откуда и куда едет колонна.
+ *
+ * Вопрос «где её ждать» задают каждый день, и отвечает на него не точка на
+ * карте, а направление. Откуда вышли — видно по её же отчётам: предыдущее
+ * село, из которого она отчитывалась. Куда идёт — по трассе, на которой
+ * стоит: у трассы есть конец, и до него остались метры.
+ */
+export interface CrewTrip {
+  /** Откуда вышла — предыдущий участок по отчётам или начало трассы. */
+  from?: string;
+  /** Куда идёт — конец трассы. */
+  to?: string;
+  /** Название трассы, по которой идёт. */
+  route?: string;
+  /** Сколько осталось до конца трассы, метры. */
+  leftM?: number;
+}
+
 export interface CrewPlaceContext extends SnpMapContext {
   ground: DailyWorkEntry[];
   aerial: AerialWorkEntry[];
   drills: DrillLogEntry[];
   /** Докуда дошли по трассе — точка вернее центра села. */
   sectionProgress?: Record<string, { lat: number; lon: number; date: string; doneM: number }>;
+  /** Трассы — по ним видно, куда колонна идёт. */
+  planRoutes?: PlanRoute[];
+  progress?: SnpProgress[];
 }
 
 /** Сопоставление «эта запись — про эту колонну». */
@@ -89,8 +114,35 @@ function reportMoment(date: string): string {
   return `${date}T23:59:59.999Z`;
 }
 
-export function placeCrews(crews: Crew[], ctx: CrewPlaceContext): (Crew & { placement?: CrewPlacement })[] {
+/**
+ * Трасса, по которой сейчас идёт колонна, — самая длинная у этого села.
+ * Коротких отводов на селе несколько, но едет колонна по основной.
+ */
+function tripFinder(ctx: CrewPlaceContext) {
+  const routes = ctx.planRoutes ?? [];
+  if (routes.length === 0) return () => undefined;
+  const views = routeViews(routes, { progress: ctx.progress ?? [] });
+  const byKato = new Map<string, (typeof views)[number]>();
+  for (const v of views) {
+    if (!v.kato) continue;
+    const prev = byKato.get(v.kato);
+    if (!prev || v.lengthM > prev.lengthM) byKato.set(v.kato, v);
+  }
+
+  return (kato: string, doneM?: number): CrewTrip | undefined => {
+    const v = byKato.get(kato);
+    if (!v) return undefined;
+    const left = doneM === undefined ? undefined : Math.max(0, Math.round(v.lengthM - doneM));
+    return { from: v.from, to: v.to, route: v.name, leftM: left };
+  };
+}
+
+export function placeCrews(
+  crews: Crew[],
+  ctx: CrewPlaceContext,
+): (Crew & { placement?: CrewPlacement; trip?: CrewTrip })[] {
   const findPlace = placeFinder(ctx);
+  const findTrip = tripFinder(ctx);
   const all = visits(ctx);
 
   return crews.map((c) => {
@@ -115,8 +167,14 @@ export function placeCrews(crews: Crew[], ctx: CrewPlaceContext): (Crew & { plac
       : findPlace(last.kato, last.uchastok);
     if (!place) return manual ? { ...c, placement: manual } : c;
 
+    // Откуда вышла: предыдущее село по её же отчётам. Если колонна не
+    // переезжала, остаётся начало трассы — оно тоже отвечает на вопрос.
+    const prev = all.find((v) => matchesCrew(v, c) && v.kato !== last.kato);
+    const trip = findTrip(last.kato, along?.doneM);
+
     return {
       ...c,
+      trip: trip && { ...trip, from: prev?.uchastok || trip.from },
       lat: place.lat,
       lon: place.lon,
       // Область и участок подтягиваем из отчёта: иначе в карточке останется

@@ -525,7 +525,11 @@ export function moveCrew(base: JournalState, id: string, lat: number, lon: numbe
 }
 
 /** Колонны, которым есть что показать на карте. */
-export function placedCrews(base: JournalState): Crew[] {
+export function placedCrews<T extends Pick<Crew, 'lat' | 'lon'>>(
+  base: { crews: T[] },
+): T[] {
+  // Обобщённо: колонна приходит сюда уже с расчётной точкой и маршрутом,
+  // и обрезать её до голой карточки значит потерять их по дороге к карте.
   return base.crews.filter(
     (c) => typeof c.lat === 'number' && typeof c.lon === 'number'
       && Number.isFinite(c.lat) && Number.isFinite(c.lon),
@@ -777,7 +781,18 @@ export function approveCorrection(
   return {
     ...base,
     ground: base.ground.map((e) =>
-      e.id === req.entryId ? { ...req.proposed, updatedAt: now, sync: 'local' } : e,
+      e.id === req.entryId
+        ? {
+          ...req.proposed,
+          // День закрыл инженер на объекте — им он и остаётся. Кто принёс
+          // правку, видно отдельно: иначе подтверждённое исправление молча
+          // переписывало бы авторство дня на того, кто его не закрывал.
+          author: req.before.author ?? req.proposed.author,
+          editedBy: req.author,
+          updatedAt: now,
+          sync: 'local' as const,
+        }
+        : e,
     ),
     corrections: base.corrections.map((c) =>
       c.id === id ? { ...c, status: 'approved', decidedBy: by, decidedAt: now, decisionNote: note } : c,

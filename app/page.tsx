@@ -44,7 +44,8 @@ import {
 } from '@/components/Construction/journalStore';
 import { snpMapPoints, type SnpMapPoint } from '@/components/Construction/snpMap';
 import { effectiveProgress } from '@/components/Construction/stageDerive';
-import { placeCrews, type CrewPlacement } from '@/components/Construction/crewPlace';
+import { placeCrews, type CrewPlacement, type CrewTrip } from '@/components/Construction/crewPlace';
+import { crewsFromJournal } from '@/components/Construction/crewDerive';
 import { areaMapItems, type AreaMapItem } from '@/components/Construction/areaProgress';
 import { routeViews, type RouteView } from '@/components/Construction/routeStyle';
 import { dayMoves, playableDates, type DayMove } from '@/components/Construction/playback';
@@ -97,6 +98,18 @@ const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
  */
 const EMPTY_LAYER: never[] = [];
 
+/**
+ * Колонны для карты: заведённые руками плюс выведенные по журналу.
+ *
+ * Справочник бригад никто не ведёт — их десятки и они меняются. Но в
+ * дневных отчётах они названы, и этого хватает, чтобы показать, где
+ * сколько их примерно работает. Выведенная колонна помечена пунктиром:
+ * состава и техники у неё нет, потому что их в отчёте нет.
+ */
+function withAutoCrews(j: Parameters<typeof crewsFromJournal>[0]): Crew[] {
+  return [...j.crews, ...crewsFromJournal(j)];
+}
+
 export default function HomePage() {
   const net = useNetwork();
   const [urlMode] = useState<AppViewMode>(() =>
@@ -123,7 +136,7 @@ export default function HomePage() {
   const [showJournal, setShowJournal] = useState(false);
   // Проколы ГНБ из журнала стройки — отдельный слой на карте.
   const [drillPoints, setDrillPoints] = useState<DrillMapPoint[]>([]);
-  const [crews, setCrews] = useState<(Crew & { placement?: CrewPlacement })[]>([]);
+  const [crews, setCrews] = useState<(Crew & { placement?: CrewPlacement; trip?: CrewTrip })[]>([]);
   const [mapDeviations, setMapDeviations] = useState<DeviationMapItem[]>([]);
   const [planRoutes, setPlanRoutes] = useState<RouteView[]>([]);
   const [drillLines, setDrillLines] = useState<DrillMapLine[]>([]);
@@ -171,7 +184,7 @@ export default function HomePage() {
     setDrillPoints(drillMapPoints(j));
     // Колонна встаёт туда, откуда отчиталась: двигать метки руками каждый
     // день никто не станет, а отчёт бригада сдаёт и так.
-    setCrews(placedCrews({ ...j, crews: placeCrews(j.crews, j) }));
+    setCrews(placedCrews({ ...j, crews: placeCrews(withAutoCrews(j), j) }));
     setMapDeviations(deviationMapItems(j));
     setDrillLines(drillMapLines(j));
     // Этапы считаем из журнала: на карте должно быть видно положение дел,
@@ -281,7 +294,7 @@ export default function HomePage() {
   const handleMoveCrew = useCallback((id: string, lat: number, lon: number) => {
     const next = moveCrew(loadJournal(), id, lat, lon);
     saveJournal(next);
-    setCrews(placedCrews({ ...next, crews: placeCrews(next.crews, next) }));
+    setCrews(placedCrews({ ...next, crews: placeCrews(withAutoCrews(next), next) }));
   }, []);
   const [showProjects, setShowProjects] = useState(false);
   const [showCatalog, setShowCatalog] = useState(false);

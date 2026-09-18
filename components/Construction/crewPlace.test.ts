@@ -141,3 +141,41 @@ describe('продвижение по трассе точнее центра с�
     expect(c.placement?.source).toBe('report');
   });
 });
+
+describe('откуда и куда едет колонна', () => {
+  const route = {
+    id: 'r1', name: 'Еленовка Ивановка', coords: [[51.5, 71.5], [51.6, 71.6]] as [number, number][],
+    lengthM: 10000, source: 'kml', createdAt: now, updatedAt: now,
+  };
+  const progress = [{
+    kato: '191', snp: 'Еленовка', oblast: 'Акмолинская область', rayon: 'Зерендинский',
+    stages: {}, updatedAt: now,
+  }];
+
+  it('называет конец трассы и сколько до него осталось', () => {
+    const [c] = placeCrews([crew()], ctx({
+      ground: [ground()], drills: [drill()],
+      planRoutes: [route], progress,
+      sectionProgress: { '191': { lat: 51.55, lon: 71.55, date: '2026-09-10', doneM: 4200 } },
+    }));
+    expect(c.trip?.to).toBe('Ивановка');
+    expect(c.trip?.leftM).toBe(5800);
+  });
+
+  it('откуда — предыдущее село по её же отчётам, а не начало трассы', () => {
+    const [c] = placeCrews([crew()], ctx({
+      ground: [
+        ground(),
+        ground({ id: 'g0', date: '2026-09-08', uchastok: 'Кусеп', kato: '190' }),
+      ],
+      drills: [drill()],
+      planRoutes: [route], progress,
+    }));
+    expect(c.trip?.from).toBe('Кусеп');
+  });
+
+  it('трассы нет — направление не выдумывается', () => {
+    const [c] = placeCrews([crew()], ctx({ ground: [ground()], drills: [drill()] }));
+    expect(c.trip).toBeUndefined();
+  });
+});

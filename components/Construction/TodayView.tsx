@@ -13,6 +13,7 @@ import { pendingTasks, handoffTasks, blockedStages } from './stageTasks';
 import { materialForecast, lowStock, daysLeftText } from './materialForecast';
 import { MATERIAL_LABEL } from './journalStore';
 import { placeCrews } from './crewPlace';
+import { crewsFromJournal } from './crewDerive';
 
 /**
  * Первый экран стройки: что делать сегодня.
@@ -40,7 +41,12 @@ export default function TodayView({ journal, onOpenView, onSetStage, onAddEntry 
     () => lowStock(materialForecast(journal.ground, journal.deliveries)),
     [journal.ground, journal.deliveries],
   );
-  const crews = useMemo(() => placeCrews(journal.crews, journal), [journal]);
+  // Колонны считаем вместе с выведенными по журналу: вопрос «сколько их
+  // в поле» не различает, кто как попал в список.
+  const crews = useMemo(
+    () => placeCrews([...journal.crews, ...crewsFromJournal(journal)], journal),
+    [journal],
+  );
 
   const last = useMemo(() => lastWorkDate(journal.ground), [journal.ground]);
   const lastMeters = useMemo(() => {
@@ -48,6 +54,7 @@ export default function TodayView({ journal, onOpenView, onSetStage, onAddEntry 
     return day?.meters ?? 0;
   }, [journal.ground, last]);
 
+  const auto = crews.filter((c) => c.derived).length;
   const working = crews.filter((c) => c.status === 'working');
   const idle = crews.filter((c) => c.status === 'idle' || c.status === 'waiting');
 
@@ -141,6 +148,14 @@ export default function TodayView({ journal, onOpenView, onSetStage, onAddEntry 
                     <div className="text-[10px] truncate" style={{ color: st.color }}>
                       {st.label}{c.uchastok ? ` · ${c.uchastok}` : ''}
                     </div>
+                    {/* Куда едет: «где её ждать» спрашивают каждый день */}
+                    {(c.trip?.from || c.trip?.to) && (
+                      <div className="text-[10px] text-[var(--text-muted)] truncate"
+                           title={c.trip.route}>
+                        🚚 {[c.trip.from, c.trip.to].filter(Boolean).join(' → ')}
+                        {c.trip.leftM ? ` · ${fmtKm(c.trip.leftM)} км` : ''}
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -149,6 +164,7 @@ export default function TodayView({ journal, onOpenView, onSetStage, onAddEntry 
           <p className="text-[10.5px] text-[var(--text-muted)]">
             Работают {working.length}, ждут или стоят {idle.length}.
             Место берётся из последнего отчёта.
+            {auto > 0 && <> {auto} выведены по журналу — их состав не заполнен.</>}
           </p>
         </Section>
       )}

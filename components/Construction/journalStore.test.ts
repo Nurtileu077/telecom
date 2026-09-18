@@ -211,6 +211,17 @@ describe('исправление отчёта', () => {
     expect(pendingCorrections(a)).toHaveLength(0);
   });
 
+  it('подтверждённая правка не переписывает авторство дня', () => {
+    const mine = { ...entry, author: 'Ербол' };
+    const s = submitCorrection(
+      { ...base, ground: [mine] },
+      { entry: mine, proposed: { ...proposed, author: 'Асет' }, reason: 'ошиблись', author: 'Асет' },
+    );
+    const a = approveCorrection(s, s.corrections[0].id, 'Отчётность');
+    expect(a.ground[0].author).toBe('Ербол');
+    expect(a.ground[0].editedBy).toBe('Асет');
+  });
+
   it('отказ оставляет запись прежней и сохраняет причину', () => {
     const s = submitCorrection(base, { entry, proposed, reason: 'ошиблись', author: 'Иван' });
     const r = rejectCorrection(s, s.corrections[0].id, 'Отчётность', 'нет подтверждения');

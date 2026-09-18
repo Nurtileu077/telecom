@@ -38,6 +38,23 @@ function routeLinks(lat: number, lon: number): string {
   </div>`;
 }
 
+/**
+ * «Откуда и куда едет» одной строкой.
+ *
+ * Спрашивают об этом каждый день, и отвечает не точка, а направление:
+ * из какого села вышли, к какому идут и сколько до него осталось.
+ */
+function crewTripLine(
+  trip?: import('@/components/Construction/crewPlace').CrewTrip,
+): string {
+  if (!trip || (!trip.from && !trip.to)) return '';
+  const way = [trip.from, trip.to].filter(Boolean).map((v) => esc(v as string)).join(' → ');
+  const left = trip.leftM && trip.leftM > 0
+    ? ` <span style="color:#64748b">· осталось ${(trip.leftM / 1000).toFixed(1)} км</span>`
+    : '';
+  return `<br/><span style="font-size:11px;color:#2dd4bf">🚚 ${way}</span>${left}`;
+}
+
 /** Цвет прокола: свой, не пересекается с цветами этапов трассы. */
 const DRILL_COLOR: Record<'ГНБ' | 'ГНП', string> = {
   'ГНБ': '#f472b6',
@@ -119,6 +136,7 @@ interface Props {
   deviations?: import('@/components/Construction/journalStore').DeviationMapItem[];
   /** Колонны на карте: где стоит бригада, чем занята, каким составом. */
   crews?: (import('@/types/construction').Crew & {
+    trip?: import('@/components/Construction/crewPlace').CrewTrip;
     placement?: import('@/components/Construction/crewPlace').CrewPlacement;
   })[];
   /** Этапы по населённым пунктам: где ждут фронт, где работают, где закрыто. */
@@ -1090,6 +1108,9 @@ export default function LeafletMap(props: Props) {
           ? 'animation: optiq-crew-pulse 2.2s ease-in-out infinite;'
           : '';
 
+        // Выведенная по журналу — пунктиром: это счёт бригад, а не карточка.
+        const ring = c.derived ? 'dashed' : 'solid';
+
         const icon = L.divIcon({
           className: '',
           iconSize: [46, 58],
@@ -1098,7 +1119,7 @@ export default function LeafletMap(props: Props) {
             <div style="display:flex;flex-direction:column;align-items:center;pointer-events:none">
               <div style="
                 width:38px;height:38px;border-radius:50%;
-                background:${kind.color}22;border:3px solid ${st.color};
+                background:${kind.color}22;border:3px ${ring} ${st.color};
                 box-shadow:0 0 10px ${st.color}66, 0 2px 6px rgba(0,0,0,.6);
                 display:flex;align-items:center;justify-content:center;
                 font-size:19px;line-height:1;${pulse}
@@ -1112,7 +1133,9 @@ export default function LeafletMap(props: Props) {
             </div>`,
         });
 
-        const draggable = !!propsRef.current.onMoveCrew;
+        // Выведенную колонну таскать нечего: её место считается по журналу,
+        // и ручной сдвиг некуда записать — карточки в справочнике нет.
+        const draggable = !!propsRef.current.onMoveCrew && !c.derived;
         const m = L.marker([c.lat, c.lon], { icon, draggable, zIndexOffset: 800 });
 
         const roster = c.members.length === 0
@@ -1137,7 +1160,14 @@ export default function LeafletMap(props: Props) {
             <span style="color:${st.color};font-size:11px">● ${esc(st.label)}</span>
             ${c.uchastok ? `<br/><span style="font-size:11px">${esc(c.uchastok)}</span>` : ''}
             ${c.contractor ? `<br/><span style="color:#64748b;font-size:11px">${esc(c.contractor)}</span>` : ''}
-            <div style="margin-top:6px;padding-top:5px;border-top:1px solid #1e293b">
+            ${crewTripLine(c.trip)}
+            ${c.derived
+              ? `<div style="margin-top:6px;padding-top:5px;border-top:1px solid #1e293b;font-size:11px;color:#94a3b8">
+                   Колонна выведена по журналу — состав и технику в дневном
+                   отчёте не пишут. Заведите её в разделе «Колонны», чтобы
+                   вписать людей и машины.
+                 </div>`
+              : `<div style="margin-top:6px;padding-top:5px;border-top:1px solid #1e293b">
               <b style="font-size:11px">Состав</b>
               <span style="color:#64748b;font-size:11px">— в строю ${onDuty} из ${c.members.length}</span>
               <div style="font-size:11px;margin-top:2px">${roster}</div>
@@ -1146,7 +1176,7 @@ export default function LeafletMap(props: Props) {
               <b style="font-size:11px">Техника</b>
               <span style="color:#64748b;font-size:11px">— ${equip} ед.</span>
               <div style="font-size:11px;margin-top:2px">${equipList}</div>
-            </div>
+            </div>`}
             ${c.note ? `<div style="margin-top:5px;font-size:11px;color:#94a3b8">${esc(c.note)}</div>` : ''}
             ${c.placement?.date && c.placement.source !== 'manual'
               ? `<div style="margin-top:6px;font-size:10px;color:#64748b">

@@ -3,7 +3,7 @@ import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   X, Upload, Loader2, AlertTriangle, MapPin, Wrench, Boxes,
   Plus, Download, Trash2, CloudOff, Pencil, Check, Ban, Building2, Clock,
-  Ruler, FileWarning, RefreshCw, CloudCheck, Route, FileDown,
+  Ruler, FileWarning, RefreshCw, CloudCheck, Route, FileDown, HardHat,
 } from 'lucide-react';
 import { getActorName } from '@/lib/appRole';
 import { importJournal, type JournalImportResult } from './JournalImport';
@@ -21,6 +21,7 @@ import {
   addAreas, removeAreaSource, areaSources, setMaterialPrice, upsertDrill,
   upsertObject, removeObject, setSectionProgress,
 } from './journalStore';
+import { crewsFromJournal, type DerivedCrew } from './crewDerive';
 import DeviationForm from './DeviationForm';
 import CrewForm from './CrewForm';
 import SectionClosing from './SectionClosing';
@@ -139,7 +140,8 @@ export default function ConstructionPanel({
       persist(submitCorrection(base, { entry: editing, proposed: entry, reason, author: actor }));
       setView('corrections');
     } else {
-      let next = addGroundEntry(base, entry);
+      // День закрывает инженер на объекте — его имя и остаётся в записи.
+      let next = addGroundEntry(base, { ...entry, author: entry.author || actor });
       // Докуда дошли — по этому потом едет метка колонны и строится
       // вчерашний день в движении.
       if (stop && entry.kato) {
@@ -362,6 +364,10 @@ export default function ConstructionPanel({
     ...journal,
     progress: effectiveProgress(journal.progress, journal),
   }), [journal]);
+
+  // Колонны, которых нет в справочнике, но которые видно по журналу:
+  // заводить их руками — работа ради работы.
+  const autoCrews = useMemo(() => crewsFromJournal(journal), [journal]);
 
   const pending = useMemo(() => pendingCorrections(journal), [journal]);
   const openDevs = useMemo(() => openDeviations(journal), [journal]);
@@ -677,9 +683,15 @@ export default function ConstructionPanel({
         ) : view === 'crews' ? (
           <CrewsList
             rows={journal.crews}
+            derived={autoCrews}
             onAdd={() => { setEditingCrew(null); setCrewFormOpen(true); }}
             onEdit={(c) => { setEditingCrew(c); setCrewFormOpen(true); }}
             onDelete={handleDeleteCrew}
+            onAdopt={(list) => {
+              let base = loadJournal();
+              for (const c of list) base = upsertCrew(base, c);
+              persist(base);
+            }}
           />
         ) : view === 'deviations' ? (
           <DeviationsList
@@ -799,17 +811,21 @@ export default function ConstructionPanel({
   );
 }
 
-function CrewsList({ rows, onAdd, onEdit, onDelete }: {
+function CrewsList({ rows, derived, onAdd, onEdit, onDelete, onAdopt }: {
   rows: Crew[];
+  /** Видны по журналу, но в справочник не заведены. */
+  derived: DerivedCrew[];
   onAdd: () => void;
   onEdit: (c: Crew) => void;
   onDelete: (id: string) => void;
+  onAdopt: (list: Crew[]) => void;
 }) {
   const sorted = useMemo(
-    () => [...rows].sort((a, b) => a.name.localeCompare(b.name, 'ru')),
-    [rows],
+    () => [...rows, ...derived].sort((a, b) => a.name.localeCompare(b.name, 'ru')),
+    [rows, derived],
   );
   const placed = sorted.filter((c) => typeof c.lat === 'number' && typeof c.lon === 'number').length;
+  const isDerived = (c: Crew) => derived.some((d) => d.id === c.id);
 
   return (
     <div className="flex flex-col gap-2">
@@ -824,10 +840,29 @@ function CrewsList({ rows, onAdd, onEdit, onDelete }: {
         </button>
       </div>
 
+      {/* Выведенные по журналу: заводить их руками — работа ради работы,
+          но состав и технику знает только тот, кто там был. */}
+      {derived.length > 0 && (
+        <div className="flex items-start gap-2 p-2.5 rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] text-[11.5px] text-[var(--text-muted)]">
+          <HardHat size={15} className="shrink-0 mt-0.5" />
+          <span className="flex-1">
+            По журналу работают ещё <b className="text-[var(--text)]">{derived.length}</b> колонн —
+            они уже на карте пунктиром. Заведите, чтобы вписать состав и технику.
+          </span>
+          <button type="button" className="btn text-[11px] shrink-0"
+                  onClick={() => onAdopt(derived.map(({ derived: _d, days: _n, lastDate: _l, ...c }) => c))}>
+            Завести все
+          </button>
+        </div>
+      )}
+
       {sorted.length === 0 ? (
         <div className="text-center py-12 flex flex-col items-center gap-2">
           <span className="text-2xl">🚜</span>
-          <p className="text-[12.5px] text-[var(--text-muted)]">Колонны не заведены</p>
+          <p className="text-[12.5px] text-[var(--text-muted)]">
+            Колонны не заведены, и в журнале их не видно — в дневных отчётах
+            нет ни номера колонны, ни подрядчика
+          </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
@@ -838,8 +873,13 @@ function CrewsList({ rows, onAdd, onEdit, onDelete }: {
             const off = c.members.length - onDuty;
             const equip = Object.values(c.equipment ?? {}).reduce((s, v) => s + (v || 0), 0);
             const onMap = typeof c.lat === 'number' && typeof c.lon === 'number';
+            const auto = isDerived(c);
             return (
-              <div key={c.id} className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-3 flex flex-col gap-1.5">
+              <div key={c.id}
+                   className="rounded-lg border bg-[var(--bg-surface)] p-3 flex flex-col gap-1.5"
+                   style={auto
+                     ? { borderColor: 'var(--border)', borderStyle: 'dashed' }
+                     : { borderColor: 'var(--border)' }}>
                 <div className="flex items-start gap-2">
                   <span className="w-8 h-8 rounded-full flex items-center justify-center text-base shrink-0"
                         style={{ background: `${kind.color}22`, border: `2px solid ${st.color}` }}>
@@ -854,19 +894,39 @@ function CrewsList({ rows, onAdd, onEdit, onDelete }: {
                       {[kind.label, c.uchastok, c.contractor].filter(Boolean).join(' · ')}
                     </div>
                   </div>
-                  <button type="button" onClick={() => onEdit(c)} title="Изменить"
-                          className="btn btn-ghost btn-icon shrink-0 text-[var(--text-muted)] hover:text-[var(--accent)]">
-                    <Pencil size={14} />
-                  </button>
-                  <button type="button" onClick={() => onDelete(c.id)} title="Удалить"
-                          className="btn btn-ghost btn-icon shrink-0 text-[var(--text-muted)] hover:text-[var(--danger)]">
-                    <Trash2 size={14} />
-                  </button>
+                  {auto ? (
+                    <button type="button" className="btn text-[10.5px] shrink-0"
+                            title="Завести колонну в справочник — чтобы вписать состав и технику"
+                            onClick={() => {
+                              const { derived: _d, days: _n, lastDate: _l, ...plain } =
+                                derived.find((d) => d.id === c.id)!;
+                              onAdopt([plain]);
+                            }}>
+                      Завести
+                    </button>
+                  ) : (
+                    <>
+                      <button type="button" onClick={() => onEdit(c)} title="Изменить"
+                              className="btn btn-ghost btn-icon shrink-0 text-[var(--text-muted)] hover:text-[var(--accent)]">
+                        <Pencil size={14} />
+                      </button>
+                      <button type="button" onClick={() => onDelete(c.id)} title="Удалить"
+                              className="btn btn-ghost btn-icon shrink-0 text-[var(--text-muted)] hover:text-[var(--danger)]">
+                        <Trash2 size={14} />
+                      </button>
+                    </>
+                  )}
                 </div>
                 <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-[var(--text-muted)]">
-                  <span>👷 в строю <b className="text-[var(--text)]">{onDuty}</b> из {c.members.length}</span>
-                  {off > 0 && <span className="text-[var(--warn)]">выходной: {off}</span>}
-                  <span>🔧 техника: <b className="text-[var(--text)]">{equip}</b></span>
+                  {auto ? (
+                    <span className="text-[var(--text-muted)]">{c.note}</span>
+                  ) : (
+                    <>
+                      <span>👷 в строю <b className="text-[var(--text)]">{onDuty}</b> из {c.members.length}</span>
+                      {off > 0 && <span className="text-[var(--warn)]">выходной: {off}</span>}
+                      <span>🔧 техника: <b className="text-[var(--text)]">{equip}</b></span>
+                    </>
+                  )}
                   {!onMap && <span className="text-[var(--warn)]">не на карте</span>}
                 </div>
               </div>

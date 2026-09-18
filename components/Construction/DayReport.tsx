@@ -212,14 +212,24 @@ export default function DayReport({ journal, date, onClose, onPlay }: Props) {
               Записи дня ({data.ground.length + data.aerial.length})
             </h4>
             {[...data.ground, ...data.aerial].map((e) => (
-              <div key={e.id} className="flex items-baseline gap-2 text-[11.5px] rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] px-3 py-1.5">
-                <span className="text-[var(--text)] truncate">{e.uchastok || '—'}</span>
-                <span className="text-[10.5px] text-[var(--text-muted)] truncate">
-                  {e.contractor || e.smu || ''}{e.column ? ` · ${e.column}` : ''}
-                </span>
-                <span className="ml-auto font-mono text-[var(--text-muted)] shrink-0">
-                  {e.kind === 'ground' ? fmtKm(entryMeters(e.byMethod)) : fmtKm(e.totalM ?? 0)} км
-                </span>
+              <div key={e.id} className="rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] px-3 py-1.5">
+                <div className="flex items-baseline gap-2 text-[11.5px]">
+                  <span className="text-[var(--text)] truncate">{e.uchastok || '—'}</span>
+                  <span className="text-[10.5px] text-[var(--text-muted)] truncate">
+                    {e.contractor || e.smu || ''}{e.column ? ` · ${e.column}` : ''}
+                  </span>
+                  <span className="ml-auto font-mono text-[var(--text-muted)] shrink-0">
+                    {e.kind === 'ground' ? fmtKm(entryMeters(e.byMethod)) : fmtKm(e.totalM ?? 0)} км
+                  </span>
+                </div>
+                {/* Кто закрыл день: спрашивать «чья это запись» не должно
+                    приходиться — у дня есть автор, и он тут написан. */}
+                {(e.author || e.editedBy) && (
+                  <div className="text-[10px] text-[var(--text-muted)] mt-0.5">
+                    {e.author ? `закрыл ${e.author}` : 'автор не указан'}
+                    {e.editedBy && `, правка от ${e.editedBy} подтверждена`}
+                  </div>
+                )}
               </div>
             ))}
           </section>
