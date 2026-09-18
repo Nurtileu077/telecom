@@ -139,7 +139,9 @@ export function crewsFromJournal(ctx: CrewDeriveContext, today?: string): Derive
       uchastok: s.uchastok,
       members: [],
       equipment: {},
-      note: `Заведена по журналу: ${s.dates.size} смен, последняя ${fmtDay(s.lastDate)}`,
+      // Без склонения числительных: «1 смен» читается как опечатка, а
+      // правило склонения в подписи метки — лишний повод ошибиться.
+      note: `Заведена по журналу · смен: ${s.dates.size} · последняя ${fmtDay(s.lastDate)}`,
       updatedAt: stamp,
       derived: true as const,
       days: s.dates.size,

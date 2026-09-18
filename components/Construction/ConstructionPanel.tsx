@@ -23,6 +23,7 @@ import {
   restoreRoute,
 } from './journalStore';
 import { crewsFromJournal, type DerivedCrew } from './crewDerive';
+import { placeCrews } from './crewPlace';
 import { routeViews } from './routeStyle';
 import ChangeLogView from './ChangeLogView';
 import DeviationForm from './DeviationForm';
@@ -383,6 +384,14 @@ export default function ConstructionPanel({
   // заводить их руками — работа ради работы.
   const autoCrews = useMemo(() => crewsFromJournal(scoped), [scoped]);
 
+  // Список колонн показывает то же, что карта: место у бригады считается
+  // по последнему отчёту, и «не на карте» должно означать «её там нет»,
+  // а не «мы не посчитали».
+  const placed = useMemo(
+    () => placeCrews([...scoped.crews, ...autoCrews], scoped),
+    [scoped, autoCrews],
+  );
+
   // У каких сёл трасса вообще есть: кнопка «посмотреть трассу», которая
   // ничего не показывает, хуже отсутствующей.
   const routeKatos = useMemo(() => {
@@ -715,8 +724,8 @@ export default function ConstructionPanel({
           />
         ) : view === 'crews' ? (
           <CrewsList
-            rows={scoped.crews}
-            derived={autoCrews}
+            rows={placed.filter((c) => !c.derived)}
+            derived={placed.filter((c): c is DerivedCrew => !!c.derived)}
             onAdd={() => { setEditingCrew(null); setCrewFormOpen(true); }}
             onEdit={(c) => { setEditingCrew(c); setCrewFormOpen(true); }}
             onDelete={handleDeleteCrew}

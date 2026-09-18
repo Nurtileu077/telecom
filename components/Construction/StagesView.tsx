@@ -238,11 +238,13 @@ export default function StagesView({
                           onClick={() => onSetStage(p.kato, next.stage, {
                             status: next.action === 'close' ? 'done' : 'in_progress',
                           })}>
+                    {/* С двоеточием: «Закрыть Прокладка МКТ» не по-русски,
+                        а склонять названия этапов — не наша задача. */}
                     {next.action === 'close'
-                      ? <><Check size={13} />Закрыть {SNP_STAGE_SPECS[next.stage].label}</>
+                      ? <><Check size={13} />Закрыть: {SNP_STAGE_SPECS[next.stage].label}</>
                       : next.action === 'resume'
                         ? <><RotateCcw size={13} />Снять простой</>
-                        : <><Play size={13} />Взять {SNP_STAGE_SPECS[next.stage].label}</>}
+                        : <><Play size={13} />Взять в работу: {SNP_STAGE_SPECS[next.stage].label}</>}
                   </button>
                 )}
                 {next && next.action !== 'resume' && (

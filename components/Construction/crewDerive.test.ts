@@ -119,6 +119,7 @@ describe('колонны по журналу', () => {
     expect(c.members).toEqual([]);
     expect(c.equipment).toEqual({});
     expect(c.note).toContain('по журналу');
+    expect(c.note).toContain('смен: 1');
   });
 });
 
