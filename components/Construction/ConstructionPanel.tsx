@@ -24,6 +24,7 @@ import CrewForm from './CrewForm';
 import SectionClosing from './SectionClosing';
 import MaterialsView from './MaterialsView';
 import StagesView from './StagesView';
+import ManagementView from './ManagementView';
 import {
   journalCloudEnabled, syncJournal, loadLastSyncAt, saveLastSyncAt,
 } from './journalRemote';
@@ -38,7 +39,7 @@ import {
 } from '@/types/construction';
 
 type Period = 'day' | 'week' | 'month' | 'all';
-type View = 'summary' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages';
+type View = 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages';
 
 const PERIOD_LABEL: Record<Period, string> = {
   day: 'Последний день', week: '7 дней', month: '30 дней', all: 'Всё время',
@@ -284,6 +285,13 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
   const smus = useMemo(() => distinct(journal.ground, (e) => e.smu), [journal.ground]);
   const empty = journal.ground.length === 0 && journal.orders.length === 0;
 
+  // Фильтры показываем только там, где они что-то меняют. Переключатель,
+  // который ничего не делает, хуже отсутствующего: он врёт о том, что
+  // цифры на экране отфильтрованы.
+  const usesPeriod = view === 'summary' || view === 'entries' || view === 'deviations';
+  const usesOblast = usesPeriod || view === 'materials';
+  const usesSmu = view === 'summary' || view === 'entries';
+
   return (
     <div className="fixed inset-0 z-[9998] bg-[var(--bg-canvas)] flex flex-col">
       {/* Шапка */}
@@ -342,7 +350,7 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
       {!empty && (
         <div className="flex flex-wrap items-center gap-1.5 px-3 md:px-4 py-2 border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0">
           <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md mr-1">
-            {([['summary', 'Сводка'], ['entries', 'Записи'], ['crews', 'Колонны'], ['stages', 'Этапы'], ['deviations', 'Отклонения'], ['materials', 'Материалы'], ['closing', 'Закрытие'], ['corrections', 'Заявки']] as [View, string][]).map(([v, label]) => {
+            {([['summary', 'Сводка'], ['management', 'Руководству'], ['entries', 'Записи'], ['crews', 'Колонны'], ['stages', 'Этапы'], ['deviations', 'Отклонения'], ['materials', 'Материалы'], ['closing', 'Закрытие'], ['corrections', 'Заявки']] as [View, string][]).map(([v, label]) => {
               const badge = v === 'corrections' ? pending.length
                 : v === 'deviations' ? openDevs.length
                 : v === 'materials' ? lowMaterials.length
@@ -371,26 +379,32 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
               </button>
             ))}
           </div>
-          <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md">
-            {(Object.keys(PERIOD_LABEL) as Period[]).map((p) => (
-              <button key={p} type="button" onClick={() => setPeriod(p)}
-                className={`px-2 py-1 text-[11px] rounded transition-colors ${
-                  period === p ? 'bg-[var(--accent-dim)] text-[var(--accent)]' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}>
-                {PERIOD_LABEL[p]}
-              </button>
-            ))}
-          </div>
-          <select value={oblast} onChange={(e) => setOblast(e.target.value)}
-                  className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded-md px-2 py-1 text-[11px] text-[var(--text)] max-w-[190px]">
-            <option value="">Все области</option>
-            {oblasts.map((o) => <option key={o} value={o}>{o}</option>)}
-          </select>
-          <select value={smu} onChange={(e) => setSmu(e.target.value)}
-                  className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded-md px-2 py-1 text-[11px] text-[var(--text)]">
-            <option value="">Все СМУ</option>
-            {smus.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-          {(oblast || smu) && (
+          {usesPeriod && (
+            <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md">
+              {(Object.keys(PERIOD_LABEL) as Period[]).map((p) => (
+                <button key={p} type="button" onClick={() => setPeriod(p)}
+                  className={`px-2 py-1 text-[11px] rounded transition-colors ${
+                    period === p ? 'bg-[var(--accent-dim)] text-[var(--accent)]' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}>
+                  {PERIOD_LABEL[p]}
+                </button>
+              ))}
+            </div>
+          )}
+          {usesOblast && (
+            <select value={oblast} onChange={(e) => setOblast(e.target.value)}
+                    className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded-md px-2 py-1 text-[11px] text-[var(--text)] max-w-[190px]">
+              <option value="">Все области</option>
+              {oblasts.map((o) => <option key={o} value={o}>{o}</option>)}
+            </select>
+          )}
+          {usesSmu && (
+            <select value={smu} onChange={(e) => setSmu(e.target.value)}
+                    className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded-md px-2 py-1 text-[11px] text-[var(--text)]">
+              <option value="">Все СМУ</option>
+              {smus.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          )}
+          {(usesOblast || usesSmu) && (oblast || smu) && (
             <button type="button" className="btn btn-ghost text-[11px]" onClick={() => { setOblast(''); setSmu(''); }}>Сбросить</button>
           )}
         </div>
@@ -442,6 +456,8 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
 
         {empty ? (
           <EmptyJournal onPick={() => fileRef.current?.click()} onAdd={() => setFormOpen(true)} busy={busy} />
+        ) : view === 'management' ? (
+          <ManagementView journal={journal} onOpenView={(v) => setView(v)} />
         ) : view === 'stages' ? (
           <StagesView
             journal={journal}
