@@ -8,6 +8,7 @@ import {
   addDeviation, removeDeviation, openDeviations, isDeviationClosed, needsProtocol,
   documentContractor, upsertCrew, removeCrew, moveCrew, placedCrews,
   crewOnDuty, crewEquipmentCount, deviationMapItems, plural,
+  scopeJournal, smuList, DEFAULT_SMUS,
 } from './journalStore';
 import type { DailyWorkEntry, DrillLogEntry, Deviation, Crew } from '@/types/construction';
 
@@ -574,5 +575,57 @@ describe('проколы на карте: план и история', () => {
     expect(first.historyMeters).toBe(100);
     const other = lines.find((l) => l.id === 'c')!;
     expect(other.historyCount).toBe(1);
+  });
+});
+
+describe('область держится во всех разрезах', () => {
+  const base: JournalState = {
+    ...emptyJournal(),
+    ground: [
+      g({ id: 'g-akm', oblast: 'Акмолинская область' }),
+      g({ id: 'g-man', oblast: 'Мангистауская область' }),
+    ],
+    drills: [d()],
+    progress: [
+      { kato: '111', snp: 'Еленовка', oblast: 'Акмолинская область', stages: {}, updatedAt: now },
+      { kato: '471', snp: 'Шетпе', oblast: 'Мангистауская область', stages: {}, updatedAt: now },
+    ],
+  };
+
+  it('чужие области выпадают из журнала целиком', () => {
+    const s = scopeJournal(base, 'Акмолинская область');
+    expect(s.ground.map((e) => e.id)).toEqual(['g-akm']);
+    expect(s.drills).toHaveLength(0);
+    expect(s.progress.map((p) => p.kato)).toEqual(['111']);
+  });
+
+  it('без выбора область ничего не сужает', () => {
+    expect(scopeJournal(base, '')).toBe(base);
+    expect(scopeJournal(base, undefined)).toBe(base);
+  });
+
+  it('записи без области не теряются: мы прячем только заведомо чужое', () => {
+    const withUnknown: JournalState = {
+      ...base,
+      crews: [{
+        id: 'c1', kind: 'mkt', name: '1-колонна', status: 'working',
+        members: [], equipment: {}, updatedAt: now,
+      }],
+    };
+    expect(scopeJournal(withUnknown, 'Акмолинская область').crews).toHaveLength(1);
+  });
+});
+
+describe('справочник СМУ', () => {
+  it('семь постоянных доступны, даже когда журнал пуст', () => {
+    expect(smuList(emptyJournal())).toEqual(DEFAULT_SMUS);
+  });
+
+  it('своё значение добавляется к списку, а не заменяет его', () => {
+    const list = smuList({ ...emptyJournal(), ground: [g({ smu: 'СМУ-10' })] });
+    expect(list).toContain('СМУ-10');
+    expect(list).toContain('СМУ-1');
+    // «СМУ-10» после «СМУ-9», а не между «СМУ-1» и «СМУ-2».
+    expect(list.indexOf('СМУ-10')).toBeGreaterThan(list.indexOf('СМУ-9'));
   });
 });

@@ -19,6 +19,12 @@ import { JournalState, fmtKm, fmtMeters, MATERIAL_LABEL, plural } from './journa
 interface Props {
   journal: JournalState;
   date: string;
+  /**
+   * Область, выбранная в сводке. Журнал приходит уже суженным — здесь
+   * она нужна только чтобы сказать об этом вслух: иначе непонятно,
+   * почему день выглядит меньше, чем был.
+   */
+  oblast?: string;
   onClose: () => void;
   /** Показать движение колонн этого дня на карте. */
   onPlay?: () => void;
@@ -30,7 +36,7 @@ function entryMeters(byMethod: Partial<Record<LayMethod, number>>): number {
   return m;
 }
 
-export default function DayReport({ journal, date, onClose, onPlay }: Props) {
+export default function DayReport({ journal, date, oblast, onClose, onPlay }: Props) {
   const data = useMemo(() => {
     const ground = journal.ground.filter((e) => e.date === date);
     const aerial = journal.aerial.filter((e) => e.date === date);
@@ -104,6 +110,9 @@ export default function DayReport({ journal, date, onClose, onPlay }: Props) {
             <p className="text-[11px] text-[var(--text-muted)]">
               {fmtKm(total)} км за день · {data.ground.length + data.aerial.length}{' '}
               {plural(data.ground.length + data.aerial.length, 'запись', 'записи', 'записей')}
+              {/* Область выбрана в сводке — говорим об этом прямо, иначе
+                  день выглядит меньше, чем он был, без объяснения. */}
+              {oblast && <> · только <b className="text-[var(--text)]">{oblast}</b></>}
             </p>
           </div>
           {onPlay && (

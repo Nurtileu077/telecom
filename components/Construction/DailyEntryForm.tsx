@@ -7,7 +7,10 @@ import {
   OperationKind, OPERATIONS, OPERATION_KINDS, OPERATION_GROUPS,
   EQUIPMENT_KINDS, DuctMark,
 } from '@/types/construction';
-import { JournalState, loadLastContext, saveLastContext, MATERIAL_LABEL, suggestContractor } from './journalStore';
+import {
+  JournalState, loadLastContext, saveLastContext, MATERIAL_LABEL,
+  suggestContractor, smuList,
+} from './journalStore';
 import { advanceAlong, routeForSection } from './routeProgress';
 import { normName } from './areaImport';
 
@@ -133,11 +136,8 @@ export default function DailyEntryForm({
     return [...s].sort((a, b) => a.localeCompare(b, 'ru'));
   }, [journal]);
 
-  const smus = useMemo(() => {
-    const s = new Set<string>();
-    for (const g of journal.ground) if (g.smu) s.add(g.smu);
-    return [...s].sort((a, b) => a.localeCompare(b, 'ru'));
-  }, [journal]);
+  // СМУ снова ставят: список начинается с семи постоянных, а не с пустоты.
+  const smus = useMemo(() => smuList(journal), [journal]);
 
   // Участок знаем — подставим КАТО, область и район из журнала или реестра
   useEffect(() => {

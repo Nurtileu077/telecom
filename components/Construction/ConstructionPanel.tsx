@@ -19,7 +19,7 @@ import {
   upsertCrew, removeCrew, upsertDelivery, removeDelivery,
   addPlanRoutes, removePlanSource, planSources, plural, setProgress, setStage,
   addAreas, removeAreaSource, areaSources, setMaterialPrice, upsertDrill,
-  upsertObject, removeObject, setSectionProgress,
+  upsertObject, removeObject, setSectionProgress, scopeJournal, smuList,
 } from './journalStore';
 import { crewsFromJournal, type DerivedCrew } from './crewDerive';
 import DeviationForm from './DeviationForm';
@@ -357,17 +357,26 @@ export default function ConstructionPanel({
   const mappedPoints = useMemo(() => drills.reduce((s, d) => s + d.points.length, 0), [drills]);
   const drillsWithCoords = useMemo(() => drills.filter((d) => d.points.length > 0).length, [drills]);
 
+  /**
+   * Выбранная область держится во всех разрезах.
+   *
+   * Выбрать «Акмолинская» в сводке, зайти в день и увидеть там Мангистау —
+   * значит один раз поверить чужой цифре. Поэтому сужаем журнал целиком,
+   * а не каждый список по отдельности.
+   */
+  const scoped = useMemo(() => scopeJournal(journal, oblast), [journal, oblast]);
+
   // Доска и сводки смотрят на журнал с выведенными этапами: руками
   // отмечать шесть этапов на шестистах сёлах никто не станет, а журнал
   // и так знает, где что делают.
   const live = useMemo<JournalState>(() => ({
-    ...journal,
-    progress: effectiveProgress(journal.progress, journal),
-  }), [journal]);
+    ...scoped,
+    progress: effectiveProgress(scoped.progress, scoped),
+  }), [scoped]);
 
   // Колонны, которых нет в справочнике, но которые видно по журналу:
   // заводить их руками — работа ради работы.
-  const autoCrews = useMemo(() => crewsFromJournal(journal), [journal]);
+  const autoCrews = useMemo(() => crewsFromJournal(scoped), [scoped]);
 
   const pending = useMemo(() => pendingCorrections(journal), [journal]);
   const openDevs = useMemo(() => openDeviations(journal), [journal]);
@@ -389,14 +398,18 @@ export default function ConstructionPanel({
     [ground],
   );
   const oblasts = useMemo(() => distinct(journal.ground, (e) => e.oblast), [journal.ground]);
-  const smus = useMemo(() => distinct(journal.ground, (e) => e.smu), [journal.ground]);
+  // СМУ снова ставят: в списке семь постоянных плюс всё, что встретилось.
+  const smus = useMemo(() => smuList(journal), [journal]);
   const empty = journal.ground.length === 0 && journal.orders.length === 0;
 
   // Фильтры показываем только там, где они что-то меняют. Переключатель,
   // который ничего не делает, хуже отсутствующего: он врёт о том, что
   // цифры на экране отфильтрованы.
   const usesPeriod = view === 'summary' || view === 'entries' || view === 'deviations';
-  const usesOblast = usesPeriod || view === 'materials';
+  // Область сужает журнал целиком, поэтому переключатель нужен везде,
+  // где этот журнал показывают. В заявках его нет: там очередь на
+  // подтверждение, а не разрез по местам.
+  const usesOblast = view !== 'corrections';
   const usesSmu = view === 'summary' || view === 'entries';
 
   return (
@@ -621,7 +634,7 @@ export default function ConstructionPanel({
           <ManagementView journal={live} onOpenView={(v) => setView(v)} />
         ) : view === 'objects' ? (
           <ObjectsView
-            journal={journal}
+            journal={scoped}
             author={actor}
             editingId={editObjectId}
             onRequestPick={onRequestPick}
@@ -634,7 +647,7 @@ export default function ConstructionPanel({
           />
         ) : view === 'drills' ? (
           <DrillsView
-            journal={journal}
+            journal={scoped}
             onAdd={() => { setEditingDrill(null); setDrillFormOpen(true); }}
             onEdit={(d) => { setEditingDrill(d); setDrillFormOpen(true); }}
             onMarkDone={(d) => {
@@ -663,7 +676,7 @@ export default function ConstructionPanel({
           />
         ) : view === 'materials' ? (
           <MaterialsView
-            journal={journal}
+            journal={scoped}
             author={actor}
             onAddDelivery={(d) => persist(upsertDelivery(loadJournal(), d))}
             onSetPrice={(m, price) => persist(setMaterialPrice(loadJournal(), m, price))}
@@ -674,7 +687,7 @@ export default function ConstructionPanel({
           />
         ) : view === 'closing' ? (
           <SectionClosing
-            journal={journal}
+            journal={scoped}
             onChangeFields={(uch, f) => {
               const base = loadJournal();
               persist({ ...base, actFields: { ...base.actFields, [uch]: f } });
@@ -682,7 +695,7 @@ export default function ConstructionPanel({
           />
         ) : view === 'crews' ? (
           <CrewsList
-            rows={journal.crews}
+            rows={scoped.crews}
             derived={autoCrews}
             onAdd={() => { setEditingCrew(null); setCrewFormOpen(true); }}
             onEdit={(c) => { setEditingCrew(c); setCrewFormOpen(true); }}
@@ -774,7 +787,8 @@ export default function ConstructionPanel({
       )}
 
       {dayOpen && (
-        <DayReport journal={journal} date={dayOpen} onClose={() => setDayOpen(null)}
+        <DayReport journal={scoped} date={dayOpen} oblast={oblast || undefined}
+                   onClose={() => setDayOpen(null)}
                    onPlay={onPlayDay ? () => { onPlayDay(dayOpen); setDayOpen(null); } : undefined} />
       )}
 

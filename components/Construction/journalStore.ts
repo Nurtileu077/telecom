@@ -129,6 +129,27 @@ export function suggestContractor(
   );
 }
 
+/**
+ * СМУ заказчика: их семь, и номера постоянные.
+ *
+ * Поле было свободным текстом со списком из уже введённого — пока в
+ * журнале ни одного СМУ, выбирать было не из чего, и их перестали
+ * ставить. Стартовый список возвращает выбор; всё, что введут своё,
+ * добавляется к нему, а не заменяет.
+ */
+export const DEFAULT_SMUS = [
+  'СМУ-1', 'СМУ-2', 'СМУ-3', 'СМУ-4', 'СМУ-5', 'СМУ-6', 'СМУ-7',
+];
+
+export function smuList(base: Pick<JournalState, 'ground' | 'aerial' | 'drills'>): string[] {
+  const s = new Set<string>(DEFAULT_SMUS);
+  for (const e of base.ground) if (e.smu?.trim()) s.add(e.smu.trim());
+  for (const e of base.aerial) if (e.smu?.trim()) s.add(e.smu.trim());
+  for (const e of base.drills) if (e.smu?.trim()) s.add(e.smu.trim());
+  // «СМУ-10» после «СМУ-9», а не между «СМУ-1» и «СМУ-2».
+  return [...s].sort((a, b) => a.localeCompare(b, 'ru', { numeric: true }));
+}
+
 // ── Фильтрация ───────────────────────────────────────────────────────────────
 
 export interface JournalFilter {
@@ -149,6 +170,36 @@ export function matchesFilter(e: Filterable, f: JournalFilter): boolean {
   if (f.smu && e.smu !== f.smu) return false;
   if (f.kato && e.kato !== f.kato) return false;
   return true;
+}
+
+/**
+ * Область, выбранная один раз, держится во всех разрезах.
+ *
+ * Выбрать «Акмолинская» в сводке, зайти в день и увидеть там Мангистау —
+ * значит один раз поверить цифре, которая к выбранной области отношения
+ * не имеет. Поэтому фильтр применяется не к отдельному списку, а к
+ * журналу целиком: дальше каждый экран считает как считал.
+ *
+ * Записи без области не прячем: мы отбрасываем только то, про что точно
+ * знаем, что оно из другого места. Потерять запись фильтром хуже, чем
+ * показать лишнюю.
+ */
+export function scopeJournal(base: JournalState, oblast?: string): JournalState {
+  const o = oblast?.trim();
+  if (!o) return base;
+  const keep = (v?: string) => !v || v === o;
+  return {
+    ...base,
+    orders: base.orders.filter((r) => keep(r.oblast)),
+    ground: base.ground.filter((e) => keep(e.oblast)),
+    aerial: base.aerial.filter((e) => keep(e.oblast)),
+    drills: base.drills.filter((e) => keep(e.oblast)),
+    deviations: base.deviations.filter((d) => keep(d.oblast)),
+    deliveries: base.deliveries.filter((d) => keep(d.oblast)),
+    objects: base.objects.filter((r) => keep(r.oblast)),
+    crews: base.crews.filter((c) => keep(c.oblast)),
+    progress: base.progress.filter((p) => keep(p.oblast)),
+  };
 }
 
 // ── Сводки ───────────────────────────────────────────────────────────────────
