@@ -7,7 +7,7 @@ import {
   hasPendingCorrection, diffEntries, suggestContractor, DEFAULT_CONTRACTORS,
   addDeviation, removeDeviation, openDeviations, isDeviationClosed, needsProtocol,
   documentContractor, upsertCrew, removeCrew, moveCrew, placedCrews,
-  crewOnDuty, crewEquipmentCount,
+  crewOnDuty, crewEquipmentCount, deviationMapItems,
 } from './journalStore';
 import type { DailyWorkEntry, DrillLogEntry, Deviation, Crew } from '@/types/construction';
 
@@ -365,6 +365,63 @@ describe('отклонения и протокол мобильной групп
   it('удаление убирает отклонение', () => {
     const s = addDeviation(emptyJournal(), dev({ id: 'x' }));
     expect(removeDeviation(s, 'x').deviations).toHaveLength(0);
+  });
+});
+
+describe('отклонения на карте', () => {
+  const dv = (over: Partial<Deviation> = {}): Deviation => ({
+    id: 'dv1', kind: 'depth', date: '2026-09-05',
+    oblast: 'Акмолинская область', uchastok: 'Акадыр', kato: '191',
+    lengthM: 50, designDepthM: 1.2, actualDepthM: 0.5,
+    reason: 'Скальный грунт', author: 'Инженер',
+    createdAt: now, updatedAt: now, ...over,
+  });
+
+  it('без координат на карту не попадает', () => {
+    const s: JournalState = { ...emptyJournal(), deviations: [dv()] };
+    expect(deviationMapItems(s)).toHaveLength(0);
+  });
+
+  it('одна точка даёт отметку', () => {
+    const s: JournalState = {
+      ...emptyJournal(),
+      deviations: [dv({ coords: [{ lat: 44.48, lon: 52.09 }] })],
+    };
+    const items = deviationMapItems(s);
+    expect(items).toHaveLength(1);
+    expect(items[0].coords).toHaveLength(1);
+    expect(items[0].actualDepthM).toBe(0.5);
+  });
+
+  it('две точки дают отрезок', () => {
+    const s: JournalState = {
+      ...emptyJournal(),
+      deviations: [dv({ coords: [{ lat: 44.48, lon: 52.09 }, { lat: 44.49, lon: 52.10 }] })],
+    };
+    expect(deviationMapItems(s)[0].coords).toHaveLength(2);
+  });
+
+  it('битые координаты отбрасываются, запись не ломается', () => {
+    const s: JournalState = {
+      ...emptyJournal(),
+      deviations: [dv({ coords: [{ lat: NaN, lon: 52.09 }, { lat: 44.49, lon: 52.10 }] })],
+    };
+    expect(deviationMapItems(s)[0].coords).toHaveLength(1);
+  });
+
+  it('признак закрытия переносится на карту', () => {
+    const s: JournalState = {
+      ...emptyJournal(),
+      deviations: [
+        dv({ id: 'a', coords: [{ lat: 44.48, lon: 52.09 }] }),
+        dv({ id: 'b', coords: [{ lat: 44.48, lon: 52.09 }],
+             protocol: { number: '14', date: '2026-09-06' } }),
+      ],
+    };
+    const items = deviationMapItems(s);
+    expect(items.find((x) => x.id === 'a')!.closed).toBe(false);
+    expect(items.find((x) => x.id === 'b')!.closed).toBe(true);
+    expect(items.find((x) => x.id === 'b')!.protocolNumber).toBe('14');
   });
 });
 

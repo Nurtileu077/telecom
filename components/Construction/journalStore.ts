@@ -294,6 +294,42 @@ export interface DrillMapPoint {
   note?: string;
 }
 
+/** Отклонение, у которого есть что показать на карте. */
+export interface DeviationMapItem {
+  id: string;
+  coords: { lat: number; lon: number }[];
+  kind: Deviation['kind'];
+  uchastok: string;
+  date: string;
+  lengthM: number;
+  designDepthM?: number;
+  actualDepthM?: number;
+  reason: string;
+  contractor?: string;
+  /** Есть ли протокол мобильной группы. */
+  closed: boolean;
+  protocolNumber?: string;
+}
+
+export function deviationMapItems(state: JournalState): DeviationMapItem[] {
+  const out: DeviationMapItem[] = [];
+  for (const d of state.deviations) {
+    const pts = (d.coords ?? []).filter(
+      (p) => Number.isFinite(p?.lat) && Number.isFinite(p?.lon),
+    );
+    if (pts.length === 0) continue;
+    out.push({
+      id: d.id, coords: pts, kind: d.kind,
+      uchastok: d.uchastok, date: d.date, lengthM: d.lengthM,
+      designDepthM: d.designDepthM, actualDepthM: d.actualDepthM,
+      reason: d.reason, contractor: d.contractor,
+      closed: isDeviationClosed(d),
+      protocolNumber: d.protocol?.number,
+    });
+  }
+  return out;
+}
+
 /** Разворачивает записи журнала в плоский список точек для отрисовки. */
 export function drillMapPoints(state: JournalState): DrillMapPoint[] {
   const out: DrillMapPoint[] = [];

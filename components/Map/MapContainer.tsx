@@ -65,6 +65,8 @@ interface Props {
   heatmapEnabled: boolean;
   /** Проколы ГНБ/ГНП из журнала стройки — отдельный слой поверх сети. */
   drillPoints?: import('@/components/Construction/journalStore').DrillMapPoint[];
+  /** Отклонения от проекта — глубина и трасса — как контекст на карте. */
+  deviations?: import('@/components/Construction/journalStore').DeviationMapItem[];
   /** Колонны на карте: где стоит бригада, чем занята, каким составом. */
   crews?: import('@/types/construction').Crew[];
   /** Перетаскивание колонны на новое место. */
@@ -274,6 +276,7 @@ export default function LeafletMap(props: Props) {
   const annoGroupRef = useRef<any>(null);
   const drillGroupRef = useRef<any>(null);
   const crewGroupRef = useRef<any>(null);
+  const deviationGroupRef = useRef<any>(null);
   const drawGroupRef = useRef<any>(null);
   const measureGroupRef = useRef<any>(null);
   const heatLayerRef = useRef<any>(null);
@@ -313,6 +316,7 @@ export default function LeafletMap(props: Props) {
       annoGroupRef.current = L.layerGroup().addTo(map);
       drillGroupRef.current = L.layerGroup().addTo(map);
       crewGroupRef.current = L.layerGroup().addTo(map);
+      deviationGroupRef.current = L.layerGroup().addTo(map);
       drawGroupRef.current = L.layerGroup().addTo(map);
       measureGroupRef.current = L.layerGroup().addTo(map);
       waypointGroupRef.current = L.layerGroup().addTo(map);
@@ -985,6 +989,90 @@ export default function LeafletMap(props: Props) {
     });
   }
 
+  /**
+   * Отклонения от проекта на карте.
+   *
+   * Это память трассы: через три года аварийная бригада приедет копать и
+   * увидит, что здесь кабель на 0,5 м, потому что скальник, а не на
+   * проектных 1,2 м. Поэтому подпись несёт глубину и причину, а не только
+   * факт отклонения.
+   *
+   * Красный пунктир — протокол мобильной группы не оформлен, янтарный —
+   * оформлен: незакрытые видно сразу, не заходя в список.
+   */
+  function renderDeviations() {
+    const group = deviationGroupRef.current;
+    if (!mapRef.current || !group) return;
+    import('leaflet').then((L) => {
+      group.clearLayers();
+      const items = propsRef.current.deviations ?? [];
+      if (items.length === 0) return;
+
+      for (const d of items) {
+        const color = d.closed ? '#fbbf24' : '#f87171';
+        const depth = d.actualDepthM !== undefined
+          ? `${String(d.actualDepthM).replace('.', ',')} м`
+          : null;
+        const design = d.designDepthM !== undefined
+          ? `${String(d.designDepthM).replace('.', ',')} м`
+          : '1,2 м';
+
+        const popup = `
+          <div style="min-width:200px">
+            <b style="color:${color}">
+              ${d.kind === 'depth' ? 'Отклонение по глубине' : 'Отклонение по трассе'}
+            </b><br/>
+            ${depth
+              ? `<span style="font-size:12px">Глубина <b>${depth}</b>
+                 <span style="color:#64748b">вместо ${design}</span></span><br/>`
+              : ''}
+            <span style="font-size:12px">${esc(d.reason)}</span><br/>
+            <span style="font-size:11px;color:#64748b">
+              ${esc(d.uchastok || '—')} · ${d.lengthM} м
+              ${d.date ? ` · ${new Date(`${d.date}T00:00:00Z`).toLocaleDateString('ru')}` : ''}
+            </span>
+            ${d.contractor ? `<br/><span style="font-size:11px;color:#64748b">${esc(d.contractor)}</span>` : ''}
+            <div style="margin-top:5px;font-size:11px;color:${color}">
+              ${d.closed
+                ? `✓ Протокол МГ №${esc(d.protocolNumber ?? '')}`
+                : '⚠ Протокол мобильной группы не оформлен'}
+            </div>
+          </div>`;
+
+        if (d.coords.length >= 2) {
+          const line = L.polyline(d.coords.map((p) => [p.lat, p.lon]), {
+            color, weight: 5, opacity: 0.9, dashArray: '10,6',
+          });
+          line.bindPopup(popup);
+          line.bindTooltip(
+            depth ? `${depth} — ${esc(d.reason)}` : esc(d.reason),
+            { sticky: true, className: 'text-xs' },
+          );
+          group.addLayer(line);
+        }
+
+        // Метка всегда на начале: отрезок в 50 м на общем плане не виден,
+        // а знать о нём нужно.
+        const [p0] = d.coords;
+        const icon = L.divIcon({
+          className: '',
+          iconSize: [26, 26],
+          iconAnchor: [13, 13],
+          html: `<div style="
+            width:22px;height:22px;border-radius:50%;
+            background:${color}22;border:2px solid ${color};
+            display:flex;align-items:center;justify-content:center;
+            font-size:11px;font-weight:700;color:${color};
+            box-shadow:0 0 8px ${color}66;
+          ">${depth ? depth.replace(' м', '') : '!'}</div>`,
+        });
+        const m = L.marker([p0.lat, p0.lon], { icon, zIndexOffset: 700 });
+        m.bindPopup(popup);
+        group.addLayer(m);
+      }
+    });
+  }
+
   function handleDrawClick(L: any, lat: number, lon: number) {
     const tool = propsRef.current.activeTool;
     const type = propsRef.current.activeAnnotationType;
@@ -1205,6 +1293,7 @@ export default function LeafletMap(props: Props) {
   useEffect(() => { renderAnnotations(); }, [props.annotations]);
   useEffect(() => { renderDrillPoints(); }, [props.drillPoints, mapReady]);
   useEffect(() => { renderCrews(); }, [props.crews, mapReady]);
+  useEffect(() => { renderDeviations(); }, [props.deviations, mapReady]);
 
   // Draw the lasso selection overlay (independent layer so it doesn't get
   // cleared by the data-layer rerender): in-progress vertices + closed polygon.

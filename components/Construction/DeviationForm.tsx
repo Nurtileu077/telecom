@@ -3,7 +3,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { X, Check, AlertTriangle, FileWarning } from 'lucide-react';
 import {
   Deviation, DeviationKind, DEVIATION_KIND_LABEL, DEVIATION_REASONS,
-  DESIGN_DEPTH_M, needsProtocol,
+  DESIGN_DEPTH_M, needsProtocol, isKzLat, isKzLon,
 } from '@/types/construction';
 import { JournalState, suggestContractor } from './journalStore';
 
@@ -39,6 +39,10 @@ export default function DeviationForm({ journal, initial, onSave, onClose }: Pro
   const [lengthM, setLengthM] = useState(numToStr(initial?.lengthM));
   const [designDepth, setDesignDepth] = useState(numToStr(initial?.designDepthM ?? DESIGN_DEPTH_M));
   const [actualDepth, setActualDepth] = useState(numToStr(initial?.actualDepthM));
+  const [latA, setLatA] = useState(initial?.coords?.[0] ? String(initial.coords[0].lat) : '');
+  const [lonA, setLonA] = useState(initial?.coords?.[0] ? String(initial.coords[0].lon) : '');
+  const [latB, setLatB] = useState(initial?.coords?.[1] ? String(initial.coords[1].lat) : '');
+  const [lonB, setLonB] = useState(initial?.coords?.[1] ? String(initial.coords[1].lon) : '');
   const [reason, setReason] = useState(initial?.reason ?? '');
   const [protoNumber, setProtoNumber] = useState(initial?.protocol?.number ?? '');
   const [protoDate, setProtoDate] = useState(initial?.protocol?.date ?? '');
@@ -87,6 +91,24 @@ export default function DeviationForm({ journal, initial, onSave, onClose }: Pro
     [journal.contractors, oblast, rayon],
   );
 
+  /**
+   * Координаты отклонения: начало обязательно, конец нет.
+   * Одна точка — отметка на карте, две — отрезок трассы.
+   * Проверка по границам Казахстана отсекает опечатки вроде
+   * перепутанных широты и долготы.
+   */
+  const buildCoords = (): { lat: number; lon: number }[] | undefined => {
+    const pts: { lat: number; lon: number }[] = [];
+    const a = { lat: num(latA), lon: num(lonA) };
+    if (isKzLat(a.lat) && isKzLon(a.lon)) pts.push(a);
+    const b = { lat: num(latB), lon: num(lonB) };
+    if (isKzLat(b.lat) && isKzLon(b.lon)) pts.push(b);
+    return pts.length ? pts : undefined;
+  };
+
+  const coordsTouched = !!(latA || lonA || latB || lonB);
+  const coordsValid = !coordsTouched || !!buildCoords();
+
   const draft = {
     kind,
     designDepthM: kind === 'depth' ? num(designDepth) : undefined,
@@ -113,6 +135,7 @@ export default function DeviationForm({ journal, initial, onSave, onClose }: Pro
       lengthM: Math.round(num(lengthM)),
       designDepthM: kind === 'depth' ? num(designDepth) : undefined,
       actualDepthM: kind === 'depth' && actualDepth ? num(actualDepth) : undefined,
+      coords: buildCoords(),
       reason: reason.trim(),
       protocol: protocolFilled
         ? { number: protoNumber.trim(), date: protoDate }
@@ -208,6 +231,37 @@ export default function DeviationForm({ journal, initial, onSave, onClose }: Pro
                        placeholder="ПК или ориентир" className="inp" />
               </Field>
             </div>
+          </Group>
+
+          <Group title="Координаты — чтобы отклонение было видно на карте">
+            <div className="grid grid-cols-2 gap-2">
+              <Field label="Широта начала">
+                <input id="dv-lat-a" inputMode="decimal" value={latA}
+                       onChange={(e) => setLatA(e.target.value.replace(/[^\d.,-]/g, ''))}
+                       placeholder="44.480565" className="inp font-mono" />
+              </Field>
+              <Field label="Долгота начала">
+                <input id="dv-lon-a" inputMode="decimal" value={lonA}
+                       onChange={(e) => setLonA(e.target.value.replace(/[^\d.,-]/g, ''))}
+                       placeholder="52.091435" className="inp font-mono" />
+              </Field>
+              <Field label="Широта конца">
+                <input id="dv-lat-b" inputMode="decimal" value={latB}
+                       onChange={(e) => setLatB(e.target.value.replace(/[^\d.,-]/g, ''))}
+                       placeholder="необяз." className="inp font-mono" />
+              </Field>
+              <Field label="Долгота конца">
+                <input id="dv-lon-b" inputMode="decimal" value={lonB}
+                       onChange={(e) => setLonB(e.target.value.replace(/[^\d.,-]/g, ''))}
+                       placeholder="необяз." className="inp font-mono" />
+              </Field>
+            </div>
+            <p className="text-[10.5px] text-[var(--text-muted)] -mt-1">
+              Одна точка — отметка на карте, две — отрезок трассы.
+              {coordsTouched && !coordsValid && (
+                <span className="text-[var(--danger)]"> Координаты вне границ Казахстана — проверьте порядок широты и долготы.</span>
+              )}
+            </p>
           </Group>
 
           {kind === 'depth' && (

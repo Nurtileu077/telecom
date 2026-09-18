@@ -36,8 +36,8 @@ import {
 import { diffScenarioCables, highlightCurrentCableIds } from '@/lib/scenarioDiff';
 import AuthButton from '@/components/Auth/AuthButton';
 import {
-  loadJournal, saveJournal, drillMapPoints, placedCrews, moveCrew,
-  type DrillMapPoint,
+  loadJournal, saveJournal, drillMapPoints, placedCrews, moveCrew, deviationMapItems,
+  type DrillMapPoint, type DeviationMapItem,
 } from '@/components/Construction/journalStore';
 import type { Crew } from '@/types/construction';
 const ConstructionPanel = dynamic(() => import('@/components/Construction/ConstructionPanel'), { ssr: false });
@@ -98,10 +98,12 @@ export default function HomePage() {
   // Проколы ГНБ из журнала стройки — отдельный слой на карте.
   const [drillPoints, setDrillPoints] = useState<DrillMapPoint[]>([]);
   const [crews, setCrews] = useState<Crew[]>([]);
+  const [mapDeviations, setMapDeviations] = useState<DeviationMapItem[]>([]);
   const refreshJournalLayers = useCallback(() => {
     const j = loadJournal();
     setDrillPoints(drillMapPoints(j));
     setCrews(placedCrews(j));
+    setMapDeviations(deviationMapItems(j));
   }, []);
   useEffect(() => { refreshJournalLayers(); }, [refreshJournalLayers]);
 
@@ -951,6 +953,7 @@ export default function HomePage() {
             drillPoints={drillPoints}
             crews={crews}
             onMoveCrew={handleMoveCrew}
+            deviations={mapDeviations}
             budgetMap={budgetMap.current}
             budgetColoring={budgetColoring}
           />
@@ -1125,7 +1128,12 @@ export default function HomePage() {
             </div>
           )}
 
-          {net.districts.length === 0 && net.annotations.length === 0 && net.status === 'idle' && (
+          {/* Экран приветствия закрывает карту, поэтому показываем его только
+              когда на ней действительно пусто. Журнал стройки — проколы ГНБ,
+              колонны, отклонения — это тоже содержимое карты: с ним подсказка
+              «импортируйте Excel» только мешает смотреть на объекты. */}
+          {net.districts.length === 0 && net.annotations.length === 0 && net.status === 'idle'
+            && drillPoints.length === 0 && crews.length === 0 && mapDeviations.length === 0 && (
             <EmptyState onImport={() => setShowImport(true)} onHelp={() => setShowHelp(true)} />
           )}
         </main>
