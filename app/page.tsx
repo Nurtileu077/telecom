@@ -41,6 +41,7 @@ import {
 } from '@/components/Construction/journalStore';
 import { snpMapPoints, type SnpMapPoint } from '@/components/Construction/snpMap';
 import { effectiveProgress } from '@/components/Construction/stageDerive';
+import { placeCrews, type CrewPlacement } from '@/components/Construction/crewPlace';
 import {
   loadConstructionLayers, saveConstructionLayers,
   DEFAULT_CONSTRUCTION_LAYERS, type ConstructionLayers,
@@ -110,14 +111,16 @@ export default function HomePage() {
   const [showJournal, setShowJournal] = useState(false);
   // Проколы ГНБ из журнала стройки — отдельный слой на карте.
   const [drillPoints, setDrillPoints] = useState<DrillMapPoint[]>([]);
-  const [crews, setCrews] = useState<Crew[]>([]);
+  const [crews, setCrews] = useState<(Crew & { placement?: CrewPlacement })[]>([]);
   const [mapDeviations, setMapDeviations] = useState<DeviationMapItem[]>([]);
   const [planRoutes, setPlanRoutes] = useState<PlanRoute[]>([]);
   const [snpPoints, setSnpPoints] = useState<SnpMapPoint[]>([]);
   const refreshJournalLayers = useCallback(() => {
     const j = loadJournal();
     setDrillPoints(drillMapPoints(j));
-    setCrews(placedCrews(j));
+    // Колонна встаёт туда, откуда отчиталась: двигать метки руками каждый
+    // день никто не станет, а отчёт бригада сдаёт и так.
+    setCrews(placedCrews({ ...j, crews: placeCrews(j.crews, j) }));
     setMapDeviations(deviationMapItems(j));
     setPlanRoutes(j.planRoutes);
     // Этапы считаем из журнала: на карте должно быть видно положение дел,
@@ -175,7 +178,7 @@ export default function HomePage() {
   const handleMoveCrew = useCallback((id: string, lat: number, lon: number) => {
     const next = moveCrew(loadJournal(), id, lat, lon);
     saveJournal(next);
-    setCrews(placedCrews(next));
+    setCrews(placedCrews({ ...next, crews: placeCrews(next.crews, next) }));
   }, []);
   const [showProjects, setShowProjects] = useState(false);
   const [showCatalog, setShowCatalog] = useState(false);

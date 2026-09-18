@@ -73,7 +73,19 @@ export function currentStage(p: SnpProgress): SnpStage | null {
     ?? null;
 }
 
-export function snpMapPoints(progress: SnpProgress[], ctx: SnpMapContext = {}): SnpMapPoint[] {
+export interface KatoPlace {
+  lat: number;
+  lon: number;
+  from: SnpMapPoint['from'];
+}
+
+/**
+ * Где искать место населённого пункта.
+ *
+ * Отдельная функция, потому что место нужно не только доске этапов: по
+ * нему же ставится колонна, отчитавшаяся за этот участок.
+ */
+export function placeFinder(ctx: SnpMapContext = {}): (kato: string, snp?: string) => KatoPlace | null {
   // Проколы — точка с поля, поэтому они в приоритете над проектом.
   const byKato = new Map<string, { lat: number; lon: number }[]>();
   for (const d of ctx.drills ?? []) {
@@ -95,24 +107,34 @@ export function snpMapPoints(progress: SnpProgress[], ctx: SnpMapContext = {}): 
     byName.set(label, list);
   }
 
+  return (kato: string, snp?: string): KatoPlace | null => {
+    const drill = centroid(byKato.get(kato) ?? []);
+    if (drill) return { ...drill, from: 'drill' };
+
+    const key = normName(snp ?? '');
+    if (key.length < 3) return null;
+    let hits = byName.get(key);
+    if (!hits && key.length >= 4) {
+      // Частичное совпадение — только когда имя длинное: короткие
+      // основы («Уй», «Ащы») склеивают разные сёла в одну точку.
+      for (const [name, list] of byName) {
+        if (name.includes(key) || key.includes(name)) { hits = list; break; }
+      }
+    }
+    const plan = centroid(hits ?? []);
+    return plan ? { ...plan, from: 'plan' } : null;
+  };
+}
+
+export function snpMapPoints(progress: SnpProgress[], ctx: SnpMapContext = {}): SnpMapPoint[] {
+  const findPlace = placeFinder(ctx);
+
   const out: SnpMapPoint[] = [];
   for (const p of progress) {
-    let pos = centroid(byKato.get(p.kato) ?? []);
-    let from: SnpMapPoint['from'] = 'drill';
-    if (!pos) {
-      const key = normName(p.snp);
-      let hits = key.length >= 3 ? byName.get(key) : undefined;
-      if (!hits && key.length >= 4) {
-        // Частичное совпадение — только когда имя длинное: короткие
-        // основы («Уй», «Ащы») склеивают разные сёла в одну точку.
-        for (const [name, list] of byName) {
-          if (name.includes(key) || key.includes(name)) { hits = list; break; }
-        }
-      }
-      pos = centroid(hits ?? []);
-      from = 'plan';
-    }
-    if (!pos) continue;
+    const place = findPlace(p.kato, p.snp);
+    if (!place) continue;
+    const pos = { lat: place.lat, lon: place.lon };
+    const from = place.from;
 
     const stage = currentStage(p);
     const st = stage ? stageState(p, stage) : { status: 'done' as StageStatus };

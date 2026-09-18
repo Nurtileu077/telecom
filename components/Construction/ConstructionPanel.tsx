@@ -25,6 +25,7 @@ import SectionClosing from './SectionClosing';
 import MaterialsView from './MaterialsView';
 import StagesView from './StagesView';
 import ManagementView from './ManagementView';
+import DayReport from './DayReport';
 import { protocolDocHtml, protocolFileName, DOC_MIME } from './actDocument';
 import {
   journalCloudEnabled, syncJournal, loadLastSyncAt, saveLastSyncAt,
@@ -67,6 +68,7 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
   const [editing, setEditing] = useState<DailyWorkEntry | null>(null);
   const [devFormOpen, setDevFormOpen] = useState(false);
   const [editingDev, setEditingDev] = useState<Deviation | null>(null);
+  const [dayOpen, setDayOpen] = useState<string | null>(null);
   const [crewFormOpen, setCrewFormOpen] = useState(false);
   const [editingCrew, setEditingCrew] = useState<Crew | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -546,12 +548,16 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
             </div>
 
             {/* Выработка по дням */}
-            {days.length > 1 && <DayChart days={days} />}
+            {days.length > 1 && (
+              <DayChart days={days} picked={dayOpen} onPick={(d) => setDayOpen(d)} />
+            )}
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-              <BarList title="По областям" icon={<MapPin size={13} />} rows={byOblast} />
+              <BarList title="По областям" icon={<MapPin size={13} />} rows={byOblast}
+                       picked={oblast} onPick={(n) => setOblast(oblast === n ? '' : n)} />
               <BarList title="По подрядчикам" icon={<Building2 size={13} />} rows={byContractor} />
-              <BarList title="По СМУ" icon={<Wrench size={13} />} rows={bySmu} />
+              <BarList title="По СМУ" icon={<Wrench size={13} />} rows={bySmu}
+                       picked={smu} onPick={(n) => setSmu(smu === n ? '' : n)} />
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -561,6 +567,10 @@ export default function ConstructionPanel({ onClose, onRequestPick }: Props) {
           </div>
         )}
       </div>
+
+      {dayOpen && (
+        <DayReport journal={journal} date={dayOpen} onClose={() => setDayOpen(null)} />
+      )}
 
       {formOpen && (
         <DailyEntryForm
@@ -963,22 +973,32 @@ function Kpi({ label, value, unit, accent, warn }: {
   );
 }
 
-function DayChart({ days }: { days: { date: string; meters: number }[] }) {
+function DayChart({ days, onPick, picked }: {
+  days: { date: string; meters: number }[];
+  onPick?: (date: string) => void;
+  picked?: string | null;
+}) {
   const max = Math.max(...days.map((d) => d.meters), 1);
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-3">
-      <div className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] mb-2">Выработка по дням</div>
+      <div className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] mb-2">
+        Выработка по дням
+        <span className="ml-1.5 normal-case tracking-normal text-[10px]">— нажмите на день</span>
+      </div>
       <div className="flex items-end gap-[3px] h-24">
         {days.map((d) => (
-          <div key={d.date} className="flex-1 min-w-[3px] group relative flex items-end h-full">
-            <div className="w-full rounded-t-sm bg-[var(--accent)]/60 group-hover:bg-[var(--accent)] transition-colors"
+          <button key={d.date} type="button" onClick={() => onPick?.(d.date)}
+                  title={`${new Date(`${d.date}T00:00:00Z`).toLocaleDateString('ru')} — открыть день`}
+                  className="flex-1 min-w-[3px] group relative flex items-end h-full cursor-pointer">
+            <div className={`w-full rounded-t-sm transition-colors ${
+                   picked === d.date ? 'bg-[var(--accent)]' : 'bg-[var(--accent)]/60 group-hover:bg-[var(--accent)]'}`}
                  style={{ height: `${Math.max(2, (d.meters / max) * 100)}%` }} />
             <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block
                             whitespace-nowrap rounded border border-[var(--border-strong)] bg-[var(--bg-elevated)]
                             px-1.5 py-0.5 text-[10px] font-mono text-[var(--text)] z-10">
               {new Date(`${d.date}T00:00:00Z`).toLocaleDateString('ru', { day: '2-digit', month: '2-digit' })} · {fmtKm(d.meters)} км
             </div>
-          </div>
+          </button>
         ))}
       </div>
       <div className="mt-1.5 flex justify-between text-[10px] font-mono text-[var(--text-muted)]">
@@ -990,9 +1010,11 @@ function DayChart({ days }: { days: { date: string; meters: number }[] }) {
   );
 }
 
-function BarList({ title, icon, rows }: {
+function BarList({ title, icon, rows, onPick, picked }: {
   title: string; icon: React.ReactNode;
   rows: { name: string; meters: number; entries: number }[];
+  onPick?: (name: string) => void;
+  picked?: string;
 }) {
   const max = Math.max(...rows.map((r) => r.meters), 1);
   return (
@@ -1005,17 +1027,21 @@ function BarList({ title, icon, rows }: {
       ) : (
         <div className="flex flex-col gap-1.5">
           {rows.slice(0, 9).map((r) => (
-            <div key={r.name}>
+            <button key={r.name} type="button" disabled={!onPick}
+                    onClick={() => onPick?.(r.name)}
+                    className={`text-left w-full ${onPick ? 'cursor-pointer hover:opacity-80' : ''}`}>
               <div className="flex items-baseline justify-between gap-2 text-[11px]">
-                <span className="text-[var(--text)] truncate" title={r.name}>{r.name}</span>
+                <span className={`truncate ${picked === r.name ? 'text-[var(--accent)]' : 'text-[var(--text)]'}`}
+                      title={r.name}>{r.name}</span>
                 <span className="font-mono tabular-nums text-[var(--text-muted)] shrink-0">
                   {fmtKm(r.meters)} км · {r.entries}
                 </span>
               </div>
               <div className="mt-0.5 h-1 rounded-full bg-[var(--bg-canvas)] overflow-hidden">
-                <div className="h-full rounded-full bg-[var(--accent)]/70" style={{ width: `${(r.meters / max) * 100}%` }} />
+                <div className={`h-full rounded-full ${picked === r.name ? 'bg-[var(--accent)]' : 'bg-[var(--accent)]/70'}`}
+                     style={{ width: `${(r.meters / max) * 100}%` }} />
               </div>
-            </div>
+            </button>
           ))}
         </div>
       )}

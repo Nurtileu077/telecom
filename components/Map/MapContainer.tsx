@@ -73,7 +73,9 @@ interface Props {
   /** Отклонения от проекта — глубина и трасса — как контекст на карте. */
   deviations?: import('@/components/Construction/journalStore').DeviationMapItem[];
   /** Колонны на карте: где стоит бригада, чем занята, каким составом. */
-  crews?: import('@/types/construction').Crew[];
+  crews?: (import('@/types/construction').Crew & {
+    placement?: import('@/components/Construction/crewPlace').CrewPlacement;
+  })[];
   /** Этапы по населённым пунктам: где ждут фронт, где работают, где закрыто. */
   snpPoints?: import('@/components/Construction/snpMap').SnpMapPoint[];
   /** Перетаскивание колонны на новое место. */
@@ -1032,6 +1034,11 @@ export default function LeafletMap(props: Props) {
               <div style="font-size:11px;margin-top:2px">${equipList}</div>
             </div>
             ${c.note ? `<div style="margin-top:5px;font-size:11px;color:#94a3b8">${esc(c.note)}</div>` : ''}
+            ${c.placement?.source === 'report' && c.placement.date
+              ? `<div style="margin-top:6px;font-size:10px;color:#64748b">
+                   Встала по отчёту от ${new Date(`${c.placement.date}T00:00:00Z`).toLocaleDateString('ru')}
+                 </div>`
+              : ''}
             ${draggable ? '<div style="margin-top:6px;font-size:10px;color:#64748b">Перетащите метку, чтобы перебросить колонну</div>' : ''}
           </div>`);
 

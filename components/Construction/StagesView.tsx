@@ -3,7 +3,7 @@ import { useState, useMemo } from 'react';
 import { ListChecks, Play, Check, Ban, RotateCcw, Sparkles } from 'lucide-react';
 import {
   SnpStage, SNP_STAGES, SNP_STAGE_SPECS, StageStatus, STAGE_STATUS_SPECS,
-  CREW_KINDS, BLOCK_REASONS, CrewKind,
+  CREW_KINDS, BLOCK_REASONS, CrewKind, SnpProgress,
 } from '@/types/construction';
 import { JournalState, plural, fmtMeters } from './journalStore';
 import {
@@ -41,9 +41,20 @@ export default function StagesView({ journal, onSeed, onSetStage }: Props) {
 
   const rows = useMemo(() => {
     const list = [...journal.progress];
-    // Сначала те, где что-то идёт: список СНП длинный, а смотрят в него,
-    // чтобы понять текущее положение, а не листать архив.
-    list.sort((a, b) => snpCompletion(a) - snpCompletion(b) || a.snp.localeCompare(b.snp, 'ru'));
+    // Сначала то, где идёт работа, потом начатое, и только потом нетронутое.
+    // Сортировка «по доле выполнения» поднимала наверх шестьсот непочатых
+    // сёл, и доска выглядела мёртвой, хотя стройка шла.
+    const rank = (p: SnpProgress) => {
+      const done = snpCompletion(p);
+      if (SNP_STAGES.some((s) => stageStatus(p, s) === 'blocked')) return 0;
+      if (SNP_STAGES.some((s) => stageStatus(p, s) === 'in_progress')) return 1;
+      if (done >= 1) return 4;
+      return done > 0 ? 2 : 3;
+    };
+    list.sort((a, b) =>
+      rank(a) - rank(b)
+      || snpCompletion(b) - snpCompletion(a)
+      || a.snp.localeCompare(b.snp, 'ru'));
     return onlyActive ? list.filter((p) => snpCompletion(p) < 1) : list;
   }, [journal.progress, onlyActive]);
 
@@ -150,6 +161,9 @@ export default function StagesView({ journal, onSeed, onSetStage }: Props) {
           <h4 className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
             Населённые пункты ({rows.length})
           </h4>
+          <span className="text-[10.5px] text-[var(--text-muted)]">
+            пунктиром — посчитано по журналу
+          </span>
           <label className="ml-auto flex items-center gap-1.5 text-[11px] text-[var(--text-muted)] cursor-pointer">
             <input type="checkbox" checked={onlyActive} onChange={(e) => setOnlyActive(e.target.checked)}
                    className="accent-[var(--accent)]" />
@@ -175,8 +189,15 @@ export default function StagesView({ journal, onSeed, onSetStage }: Props) {
                   return (
                     <div key={s} className="flex items-center gap-0.5">
                       <span className="text-[10px] px-1.5 py-0.5 rounded border"
-                            style={{ color: spec.color, borderColor: spec.color }}
-                            title={`${SNP_STAGE_SPECS[s].label}: ${spec.label}${info.by ? ` · ${info.by}` : ''}${info.blockReason ? ` · ${info.blockReason}` : ''}`}>
+                            style={{
+                              color: spec.color,
+                              borderColor: spec.color,
+                              borderStyle: info.derived ? 'dashed' : 'solid',
+                            }}
+                            title={`${SNP_STAGE_SPECS[s].label}: ${spec.label}`
+                              + (info.derived ? ' · по журналу, не подтверждено' : '')
+                              + (info.by ? ` · ${info.by}` : '')
+                              + (info.blockReason ? ` · ${info.blockReason}` : '')}>
                         {SNP_STAGE_SPECS[s].label}
                       </span>
                       {st !== 'done' && (
