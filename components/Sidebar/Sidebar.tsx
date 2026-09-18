@@ -72,6 +72,8 @@ interface Props {
   toggleConstructionLayer?: (key: keyof import('@/components/Construction/mapLayers').ConstructionLayers) => void;
   constructionCounts?: Partial<Record<keyof import('@/components/Construction/mapLayers').ConstructionLayers, number>>;
   building?: boolean;
+  routeColorMode?: import('@/components/Construction/mapLayers').RouteColorMode;
+  onToggleRouteColor?: () => void;
   validationIssues: ValidationIssue[];
   flyTo: ((lat: number, lon: number, zoom?: number) => void) | null;
   annotations: MapAnnotation[];
@@ -287,6 +289,8 @@ export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Prop
               toggleConstructionLayer={props.toggleConstructionLayer}
               constructionCounts={props.constructionCounts}
               building={props.building}
+              routeColorMode={props.routeColorMode}
+              onToggleRouteColor={props.onToggleRouteColor}
             />}
           {activeTab === 'create' && props.onSetPlacing && (
             <CreateTab

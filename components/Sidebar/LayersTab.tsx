@@ -2,6 +2,7 @@
 import { District, LayerVisibility } from '@/types/network';
 import {
   ConstructionLayers, CONSTRUCTION_LAYER_LABELS,
+  ROUTE_COLOR_LABEL, type RouteColorMode,
 } from '@/components/Construction/mapLayers';
 
 interface Props {
@@ -15,6 +16,8 @@ interface Props {
   constructionCounts?: Partial<Record<keyof ConstructionLayers, number>>;
   /** На стройке слои проектной сети не показываем — они не про эту работу. */
   building?: boolean;
+  routeColorMode?: RouteColorMode;
+  onToggleRouteColor?: () => void;
 }
 
 function Toggle({ on, onChange, label }: { on: boolean; onChange: () => void; label: string }) {
@@ -42,6 +45,7 @@ const CABLE_COLORS: Record<string, string> = {
 export default function LayersTab({
   districts, layers, toggleLayer,
   constructionLayers, toggleConstructionLayer, constructionCounts, building,
+  routeColorMode, onToggleRouteColor,
 }: Props) {
   const hasConstruction = constructionLayers && toggleConstructionLayer
     && Object.values(constructionCounts ?? {}).some((n) => (n ?? 0) > 0);
@@ -73,6 +77,26 @@ export default function LayersTab({
               );
             })}
           </div>
+          {routeColorMode && onToggleRouteColor && (
+            <div className="mt-2 pt-2 border-t border-[#1e3a5f]">
+              <p className="text-[10px] uppercase tracking-widest text-[#64748b] mb-1.5">Цвет трассы</p>
+              <div className="flex gap-0.5 bg-[#0a0e1a] p-0.5 rounded-md">
+                {(['stage', 'method'] as RouteColorMode[]).map((m) => (
+                  <button key={m} type="button"
+                          onClick={() => { if (routeColorMode !== m) onToggleRouteColor(); }}
+                          className={`flex-1 px-2 py-1 text-[11px] rounded ${
+                            routeColorMode === m ? 'bg-[#2dd4bf]/15 text-[#2dd4bf]' : 'text-[#64748b]'}`}>
+                    {ROUTE_COLOR_LABEL[m]}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-[#64748b] mt-1 leading-snug">
+                {routeColorMode === 'stage'
+                  ? 'Янтарная — труба, голубая — кабель задут, фиолетовая — подвес.'
+                  : 'Отрезки по способам; голубой квадрат — конец участка по колодцам.'}
+              </p>
+            </div>
+          )}
         </section>
       )}
 

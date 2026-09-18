@@ -48,6 +48,10 @@ import { placeCrews, type CrewPlacement } from '@/components/Construction/crewPl
 import { areaMapItems, type AreaMapItem } from '@/components/Construction/areaProgress';
 import { routeViews, type RouteView } from '@/components/Construction/routeStyle';
 import { dayMoves, playableDates, type DayMove } from '@/components/Construction/playback';
+import { allRouteSegments, type RouteSegment } from '@/components/Construction/routeSegments';
+import {
+  loadRouteColorMode, saveRouteColorMode, type RouteColorMode,
+} from '@/components/Construction/mapLayers';
 import RouteDrawForm from '@/components/Construction/RouteDrawForm';
 import { addPlanRoutes, addDeviation } from '@/components/Construction/journalStore';
 import { polylineLengthM } from '@/components/Construction/planImport';
@@ -125,6 +129,17 @@ export default function HomePage() {
   const [drillLines, setDrillLines] = useState<DrillMapLine[]>([]);
   const [snpPoints, setSnpPoints] = useState<SnpMapPoint[]>([]);
   const [areas, setAreas] = useState<AreaMapItem[]>([]);
+  const [routeSegs, setRouteSegs] = useState<RouteSegment[]>([]);
+  // Чем красить трассу: пройденным этапом или способом прокладки.
+  const [routeColorMode, setRouteColorMode] = useState<RouteColorMode>('stage');
+  useEffect(() => { setRouteColorMode(loadRouteColorMode()); }, []);
+  const toggleRouteColor = useCallback(() => {
+    setRouteColorMode((prev) => {
+      const next: RouteColorMode = prev === 'stage' ? 'method' : 'stage';
+      saveRouteColorMode(next);
+      return next;
+    });
+  }, []);
 
   // Рабочее место: проектирование или стройка. null — ещё не спрашивали.
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -166,7 +181,14 @@ export default function HomePage() {
     setAreas(areaMapItems(j.areas, progress));
     // Цвет трассы — от того, как далеко по ней зашли: считаем здесь, чтобы
     // карта получала готовый вид, а не лезла в журнал сама.
-    setPlanRoutes(routeViews(j.planRoutes, { progress }));
+    const views = routeViews(j.planRoutes, { progress });
+    setPlanRoutes(views);
+    // Отрезки по способам: считаются из дневных метров и порядка дней.
+    setRouteSegs(allRouteSegments(
+      j.planRoutes,
+      new Map(views.filter((v) => v.kato).map((v) => [v.id, v.kato as string])),
+      j.ground,
+    ));
     setSiteObjects(j.objects);
   }, []);
   useEffect(() => { refreshJournalLayers(); }, [refreshJournalLayers]);
@@ -989,6 +1011,8 @@ export default function HomePage() {
           layers={net.layers}
           toggleLayer={net.toggleLayer}
           building={building}
+          routeColorMode={routeColorMode}
+          onToggleRouteColor={toggleRouteColor}
           constructionLayers={conLayers}
           toggleConstructionLayer={toggleConstructionLayer}
           constructionCounts={{
@@ -1189,6 +1213,8 @@ export default function HomePage() {
             onUpdateRouteCoords={handleUpdateRoute}
             onDeleteRoute={handleDeleteRoute}
             siteObjects={conLayers.objects ? siteObjects : EMPTY_LAYER}
+            routeSegments={conLayers.plan ? routeSegs : EMPTY_LAYER}
+            routeColorMode={routeColorMode}
             playbackMoves={playbackMoves}
             playbackDate={playbackDate}
             onEditSiteObject={building ? (id) => { setEditObjectId(id); setShowJournal(true); } : undefined}

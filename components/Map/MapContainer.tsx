@@ -18,6 +18,9 @@ import {
   SITE_OBJECT_SPECS, MUFTA_STATES, siteObjectColor,
 } from '@/types/construction';
 import { routeTitle } from '@/components/Construction/routeStyle';
+import {
+  METHOD_COLOR, METHOD_LABEL, kksPoints,
+} from '@/components/Construction/routeSegments';
 
 /**
  * Ссылка «доехать».
@@ -125,6 +128,9 @@ interface Props {
   /** Муфты, столбы, конечные точки, ККС. */
   siteObjects?: import('@/types/construction').SiteObject[];
   onEditSiteObject?: (id: string) => void;
+  /** Отрезки трассы по способам прокладки — когда красим по способу. */
+  routeSegments?: import('@/components/Construction/routeSegments').RouteSegment[];
+  routeColorMode?: 'stage' | 'method';
   /** Вчерашний день в движении: откуда куда дошли колонны. */
   playbackMoves?: import('@/components/Construction/playback').DayMove[];
   playbackDate?: string | null;
@@ -1265,16 +1271,20 @@ export default function LeafletMap(props: Props) {
       if (routes.length === 0 && drillLines.length === 0) return;
       const zoom = mapRef.current?.getZoom?.() ?? 10;
 
+      const byMethod = propsRef.current.routeColorMode === 'method';
+      const segments = propsRef.current.routeSegments ?? [];
+      const segmented = new Set(segments.map((sg) => sg.routeId));
+
       for (const r of routes) {
         if (r.coords.length < 2) continue;
-        // Пунктир говорит «так задумано», сплошная — «так лежит». Цвет
-        // берётся от самого дальнего пройденного этапа: труба проложена —
-        // один цвет, кабель задут — другой.
+        // В режиме «по способу» трассу рисуют её отрезки, а сама линия
+        // остаётся бледной подложкой: два смысла одним цветом не читаются.
+        const asBase = byMethod && segmented.has(r.id);
         const line = L.polyline(r.coords, {
-          color: r.color,
-          weight: (r.dashed ? 3 : 4.5) * lineScale(zoom),
-          opacity: r.dashed ? 0.75 : 0.95,
-          dashArray: r.dashed ? '10,8' : undefined,
+          color: asBase ? '#475569' : r.color,
+          weight: (asBase ? 2 : r.dashed ? 3 : 4.5) * lineScale(zoom),
+          opacity: asBase ? 0.5 : r.dashed ? 0.75 : 0.95,
+          dashArray: !asBase && r.dashed ? '10,8' : undefined,
         });
         const title = routeTitle(r);
         const stageLabel = r.stage ? SNP_STAGE_SPECS[r.stage].label : 'работ не было';
@@ -1302,6 +1312,60 @@ export default function LeafletMap(props: Props) {
             : ''),
         );
         group.addLayer(line);
+      }
+
+      // Отрезки по способам: где шли баром, где по колодцам.
+      if (byMethod) {
+        for (const sg of segments) {
+          if (sg.coords.length < 2) continue;
+          const color = METHOD_COLOR[sg.method];
+          const seg = L.polyline(sg.coords, {
+            color, weight: 5 * lineScale(zoom), opacity: 0.95,
+          });
+          const when = sg.dates.length
+            ? `${new Date(`${sg.dates[0]}T00:00:00Z`).toLocaleDateString('ru')}`
+              + (sg.dates.length > 1
+                ? ` — ${new Date(`${sg.dates[sg.dates.length - 1]}T00:00:00Z`).toLocaleDateString('ru')}`
+                : '')
+            : '';
+          seg.bindTooltip(
+            `${esc(METHOD_LABEL[sg.method])} · ${Math.round(sg.meters).toLocaleString('ru')} м`,
+            { sticky: true, className: 'text-xs' },
+          );
+          seg.bindPopup(
+            `<b style="color:${color}">${esc(METHOD_LABEL[sg.method])}</b>`
+            + `<br/><span style="font-size:11px">${Math.round(sg.meters).toLocaleString('ru')} м`
+            + ` · с ${Math.round(sg.fromM).toLocaleString('ru')} по ${Math.round(sg.toM).toLocaleString('ru')} м трассы</span>`
+            + (when ? `<br/><span style="color:#64748b;font-size:11px">${when}</span>` : '')
+            + '<div style="margin-top:5px;font-size:10px;color:#64748b">'
+            + 'Границы отрезка посчитаны по дневным метрам: внутри дня порядок способов неизвестен.'
+            + '</div>',
+          );
+          group.addLayer(seg);
+        }
+
+        // ККС: досюда по колодцам, дальше по земле.
+        for (const k of kksPoints(segments)) {
+          const m = L.marker([k.lat, k.lon], {
+            zIndexOffset: 550,
+            icon: L.divIcon({
+              className: '',
+              iconSize: [16, 16],
+              iconAnchor: [8, 8],
+              html: `<div style="width:12px;height:12px;border-radius:2px;
+                     background:#0c1018;border:2px solid #38bdf8;
+                     box-shadow:0 0 6px #38bdf899"></div>`,
+            }),
+          });
+          m.bindTooltip('ККС — досюда по колодцам', { sticky: true, className: 'text-xs' });
+          m.bindPopup(
+            '<b style="color:#38bdf8">ККС</b>'
+            + `<br/><span style="font-size:11px">Досюда по существующей канализации, `
+            + `${Math.round(k.atM).toLocaleString('ru')} м от начала</span>`
+            + '<br/><span style="font-size:11px">Дальше — по земле</span>',
+          );
+          group.addLayer(m);
+        }
       }
 
       // Проколы линией: у ГНБ есть вход и выход, и на карте это отрезок,
@@ -1946,7 +2010,9 @@ export default function LeafletMap(props: Props) {
   useEffect(() => { renderDrillPoints(); }, [props.drillPoints, mapReady]);
   useEffect(() => { renderCrews(); }, [props.crews, mapReady]);
   useEffect(() => { renderDeviations(); }, [props.deviations, mapReady]);
-  useEffect(() => { renderPlanRoutes(); }, [props.planRoutes, props.drillLines, mapReady]);
+  useEffect(() => {
+    renderPlanRoutes();
+  }, [props.planRoutes, props.drillLines, props.routeSegments, props.routeColorMode, mapReady]);
   useEffect(() => { renderRouteEdit(); }, [props.editingRouteId, props.planRoutes, mapReady]);
 
   // Рисование: Enter заканчивает линию, Esc бросает начатое. Клавиатура

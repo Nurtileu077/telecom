@@ -42,6 +42,36 @@ export const DEFAULT_CONSTRUCTION_LAYERS: ConstructionLayers = {
   areas: false, objects: true,
 };
 
+/**
+ * Чем красить трассу: пройденным этапом или способом прокладки.
+ *
+ * Два смысла на одной линии одновременно не читаются, поэтому это
+ * переключатель, а не второй слой.
+ */
+export type RouteColorMode = 'stage' | 'method';
+
+export const ROUTE_COLOR_LABEL: Record<RouteColorMode, string> = {
+  stage: 'По этапу',
+  method: 'По способу',
+};
+
+const COLOR_KEY = 'optiq-route-color-v1';
+
+export function loadRouteColorMode(): RouteColorMode {
+  if (typeof window === 'undefined') return 'stage';
+  try {
+    const v = window.localStorage.getItem(COLOR_KEY);
+    return v === 'method' ? 'method' : 'stage';
+  } catch {
+    return 'stage';
+  }
+}
+
+export function saveRouteColorMode(v: RouteColorMode): void {
+  if (typeof window === 'undefined') return;
+  try { window.localStorage.setItem(COLOR_KEY, v); } catch { /* приватный режим */ }
+}
+
 const KEY = 'optiq-construction-layers-v1';
 
 export function loadConstructionLayers(): ConstructionLayers {
