@@ -4,7 +4,7 @@ import {
   LAY_METHOD_LABEL, Deviation, isDeviationClosed, needsProtocol,
   Crew, crewOnDuty, crewEquipmentCount, MaterialDelivery, PlanRoute,
   SnpProgress, SnpStage, StageState, MapArea, SiteObject, ChangeLogEntry,
-  CableDrum, FieldPhoto,
+  CableDrum, FieldPhoto, SpliceRecord,
 } from '@/types/construction';
 
 /** Состояние журнала стройки — Слой 2. */
@@ -25,6 +25,8 @@ export interface JournalState {
   drums: CableDrum[];
   /** Карточки полевых фото. Сами файлы лежат отдельно — см. photoStore. */
   photos: FieldPhoto[];
+  /** Протоколы сварки: чем подтверждается, что линия работает. */
+  splices: SpliceRecord[];
   /** Проектные трассы из KML: план, который стройка не переписывает. */
   planRoutes: PlanRoute[];
   /** Обведённые районы и сёла из KML — границы, а не трассы. */
@@ -70,7 +72,7 @@ export function emptyJournal(): JournalState {
   return {
     orders: [], ground: [], aerial: [], drills: [],
     corrections: [], deviations: [], crews: [], deliveries: [], drums: [],
-    photos: [], planRoutes: [],
+    photos: [], splices: [], planRoutes: [],
     areas: [], prices: {}, objects: [], sectionProgress: {}, progress: [],
     contractors: DEFAULT_CONTRACTORS, changes: [], actFields: {},
     deleted: [], updatedAt: '',
@@ -318,6 +320,7 @@ export function loadJournal(): JournalState {
       deliveries: p.deliveries ?? [],
       drums: p.drums ?? [],
       photos: p.photos ?? [],
+      splices: p.splices ?? [],
       areas: p.areas ?? [],
       prices: p.prices ?? {},
       objects: p.objects ?? [],
@@ -370,6 +373,7 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     corrections: base.corrections,
     drums: base.drums,
     photos: base.photos,
+    splices: base.splices,
     changes: base.changes,
     deviations: base.deviations,
     crews: base.crews,
@@ -675,6 +679,27 @@ export function removeDrumRecord(base: JournalState, id: string): JournalState {
   return {
     ...base,
     drums: base.drums.filter((d) => d.id !== id),
+    deleted: [...base.deleted, { id, at: now }],
+    updatedAt: now,
+  };
+}
+
+// ── Сварка ───────────────────────────────────────────────────────────────────
+
+export function upsertSplice(base: JournalState, rec: SpliceRecord): JournalState {
+  const now = new Date().toISOString();
+  return {
+    ...base,
+    splices: [...base.splices.filter((r) => r.id !== rec.id), { ...rec, updatedAt: now }],
+    updatedAt: now,
+  };
+}
+
+export function removeSplice(base: JournalState, id: string): JournalState {
+  const now = new Date().toISOString();
+  return {
+    ...base,
+    splices: base.splices.filter((r) => r.id !== id),
     deleted: [...base.deleted, { id, at: now }],
     updatedAt: now,
   };

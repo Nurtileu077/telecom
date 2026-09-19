@@ -468,6 +468,29 @@ export interface SiteObject {
   endpointKind?: string;
   /** Для столба — номер по проекту. */
   number?: string;
+
+  // ── Паспорт сети (Слой 3) ──────────────────────────────────────────────
+  /**
+   * Откуда и куда питается. Через три года аварийная бригада открывает
+   * муфту и первым делом спрашивает именно это: с какой стороны придёт
+   * свет и что погаснет, если её разварить.
+   */
+  feedFrom?: string;
+  feedTo?: string;
+  /** Тип муфты или бокса — как написано на корпусе. */
+  model?: string;
+  /** Тип кабеля, заходящего в объект: ОК-24, ОК-48. */
+  cable?: string;
+  /** Всего волокон в кабеле. */
+  fibers?: number;
+  /** Занятые волокна: номер → куда заведено. */
+  fiberUse?: Record<string, string>;
+  /** Тип защитной трубы и её диаметр: «МКТ 14/10», «ПЭТ-63». */
+  duct?: string;
+  /** Глубина заложения в этом месте, м. */
+  depthM?: number;
+  /** Фактический метраж от предыдущего объекта. */
+  spanM?: number;
   note?: string;
   /** Дата установки или заварки. */
   date?: string;
@@ -481,6 +504,57 @@ export interface SiteObject {
 export function siteObjectColor(o: Pick<SiteObject, 'kind' | 'state'>): string {
   if (o.kind === 'mufta') return MUFTA_STATES[o.state ?? 'planned'].color;
   return SITE_OBJECT_SPECS[o.kind].color;
+}
+
+/**
+ * Сварка волокон в муфте.
+ *
+ * Протокол сварки — единственное, чем подтверждается, что линия не просто
+ * проложена, а работает. Затухание по каждому волокну измеряют рефлектометром
+ * и записывают; рефлектограмму прикладывают файлом.
+ *
+ * Норму держим отдельной константой и не прячем: «плохая сварка» — это не
+ * мнение приёмщика, а число больше нормы.
+ */
+export const SPLICE_LOSS_LIMIT_DB = 0.1;
+
+export interface FiberSplice {
+  /** Номер волокна в кабеле. */
+  fiber: number;
+  /** Затухание на стыке, дБ. */
+  lossDb?: number;
+  /** Куда уходит это волокно — «на Еленовку», «школа». */
+  to?: string;
+  note?: string;
+}
+
+export interface SpliceRecord {
+  id: string;
+  /** id муфты, в которой варили. */
+  objectId: string;
+  /** YYYY-MM-DD */
+  date: string;
+  /** Кто варил. */
+  crew?: string;
+  contractor?: string;
+  /** Тип и номер сварочного аппарата — его пишут в протоколе. */
+  device?: string;
+  /** Длина волны измерения, нм: обычно 1310 и 1550. */
+  waveNm?: number;
+  fibers: FiberSplice[];
+  /** Рефлектограмма файлом — ссылка после обмена. */
+  otdrUrl?: string;
+  otdrName?: string;
+  note?: string;
+  author?: string;
+  createdAt: string;
+  updatedAt: string;
+  sync?: 'local' | 'synced';
+}
+
+/** Сварка не по норме — её видно сразу, а не после приёмки. */
+export function badSplices(r: SpliceRecord, limit = SPLICE_LOSS_LIMIT_DB): FiberSplice[] {
+  return r.fibers.filter((f) => f.lossDb !== undefined && f.lossDb > limit);
 }
 
 // ── Территория на карте ──────────────────────────────────────────────────────

@@ -36,7 +36,7 @@ describe('тетрадь технадзора', () => {
     const dev: Deviation = {
       id: 'd1', kind: 'depth', date: '2026-09-17',
       oblast: 'Акмолинская область', uchastok: 'Еленовка', kato: '191',
-      lengthM: 50, designDepthM: 1.2, actualDepthM: 0.5, reason: 'скала',
+      lengthM: 50, designDepthM: 1.2, actualDepthM: 0.5, reason: 'скала', author: 'Ербол',
       createdAt: now, updatedAt: now,
     };
     const rows = supervisionRows({

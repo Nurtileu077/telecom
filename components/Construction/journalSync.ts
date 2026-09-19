@@ -3,6 +3,7 @@ import {
   DailyWorkEntry, AerialWorkEntry, DrillLogEntry, Deviation, Crew,
   CorrectionRequest, SettlementOrder, Contractor, MaterialDelivery, PlanRoute,
   SnpProgress, MapArea, SiteObject, ChangeLogEntry, CableDrum, FieldPhoto,
+  SpliceRecord,
 } from '@/types/construction';
 
 /**
@@ -141,6 +142,7 @@ export function mergeJournalStates(
     deliveries: mergeCollection<MaterialDelivery>(local.deliveries, remote.deliveries, tombs, stats),
     drums: mergeCollection<CableDrum>(local.drums ?? [], remote.drums ?? [], tombs, stats),
     photos: mergeCollection<FieldPhoto>(local.photos ?? [], remote.photos ?? [], tombs, stats),
+    splices: mergeCollection<SpliceRecord>(local.splices ?? [], remote.splices ?? [], tombs, stats),
     planRoutes: mergeCollection<PlanRoute>(local.planRoutes, remote.planRoutes, tombs, stats),
     areas: mergeCollection<MapArea>(local.areas, remote.areas, tombs, stats),
     objects: mergeCollection<SiteObject>(local.objects, remote.objects, tombs, stats),

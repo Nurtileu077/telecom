@@ -187,6 +187,16 @@ function ObjectForm({ journal, initial, author, onSave, onClose, onRequestPick }
   const [uchastok, setUchastok] = useState(initial?.uchastok ?? '');
   const [date, setDate] = useState(initial?.date ?? todayIso());
   const [note, setNote] = useState(initial?.note ?? '');
+  // Паспорт сети: то, что спросят через три года, а не на стройке.
+  const [feedFrom, setFeedFrom] = useState(initial?.feedFrom ?? '');
+  const [feedTo, setFeedTo] = useState(initial?.feedTo ?? '');
+  const [model, setModel] = useState(initial?.model ?? '');
+  const [cable, setCable] = useState(initial?.cable ?? '');
+  const [fibers, setFibers] = useState(initial?.fibers ? String(initial.fibers) : '');
+  const [duct, setDuct] = useState(initial?.duct ?? '');
+  const [depthM, setDepthM] = useState(initial?.depthM ? String(initial.depthM) : '');
+  const [spanM, setSpanM] = useState(initial?.spanM ? String(initial.spanM) : '');
+
   const [lat, setLat] = useState(initial ? String(initial.lat) : '');
   const [lon, setLon] = useState(initial ? String(initial.lon) : '');
   const [geoBusy, setGeoBusy] = useState(false);
@@ -236,6 +246,15 @@ function ObjectForm({ journal, initial, author, onSave, onClose, onRequestPick }
       endpointKind: kind === 'endpoint' ? endpointKind : undefined,
       date: date || undefined,
       note: note.trim() || undefined,
+      feedFrom: feedFrom.trim() || undefined,
+      feedTo: feedTo.trim() || undefined,
+      model: model.trim() || undefined,
+      cable: cable.trim() || undefined,
+      fibers: numOrUndef(fibers),
+      fiberUse: initial?.fiberUse,
+      duct: duct.trim() || undefined,
+      depthM: numOrUndef(depthM),
+      spanM: numOrUndef(spanM),
       author: initial?.author ?? author,
       createdAt: initial?.createdAt ?? now,
       updatedAt: now,
@@ -353,6 +372,23 @@ function ObjectForm({ journal, initial, author, onSave, onClose, onRequestPick }
             </label>
           </div>
 
+          {/* Паспорт сети — вопросы аварийной бригады, а не стройки */}
+          <details className="rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)]">
+            <summary className="px-3 py-2 text-[11.5px] text-[var(--text-muted)] cursor-pointer hover:text-[var(--text)]">
+              Паспорт: кабель, волокна, глубина
+            </summary>
+            <div className="p-3 pt-0 grid grid-cols-2 gap-2">
+              <Txt label="Питается от" value={feedFrom} onChange={setFeedFrom} ph="АТС Еленовка" />
+              <Txt label="Питает" value={feedTo} onChange={setFeedTo} ph="Школа" />
+              <Txt label="Тип / модель" value={model} onChange={setModel} ph="FOSC 400" />
+              <Txt label="Кабель" value={cable} onChange={setCable} ph="ОК-24" />
+              <Txt label="Волокон" value={fibers} onChange={(v) => setFibers(v.replace(/[^\d]/g, ''))} ph="24" mono />
+              <Txt label="Труба" value={duct} onChange={setDuct} ph="МКТ 14/10" />
+              <Txt label="Глубина, м" value={depthM} onChange={(v) => setDepthM(v.replace(/[^\d.,]/g, ''))} ph="1,2" mono />
+              <Txt label="Пролёт, м" value={spanM} onChange={(v) => setSpanM(v.replace(/[^\d.,]/g, ''))} ph="2000" mono />
+            </div>
+          </details>
+
           <div className="flex gap-2 pt-1">
             <button type="button" className="btn btn-primary text-[12px]" disabled={!coordsOk} onClick={save}>
               <Check size={14} />Сохранить
@@ -368,5 +404,24 @@ function ObjectForm({ journal, initial, author, onSave, onClose, onRequestPick }
         </div>
       </div>
     </div>
+  );
+}
+
+/** Число или ничего: пустое поле не должно превращаться в ноль. */
+function numOrUndef(v: string): number | undefined {
+  const n = parseFloat(v.replace(',', '.'));
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function Txt({ label, value, onChange, ph, mono }: {
+  label: string; value: string; onChange: (v: string) => void; ph?: string; mono?: boolean;
+}) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-[10.5px] text-[var(--text-muted)]">{label}</span>
+      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={ph}
+             className={`bg-[var(--bg-surface)] border border-[var(--border)] rounded px-2 py-1.5 text-[12px] text-[var(--text)]${
+               mono ? ' font-mono tabular-nums' : ''}`} />
+    </label>
   );
 }
