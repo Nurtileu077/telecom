@@ -110,22 +110,32 @@ export default function IncidentsView({
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          {open.length > 0 && (
-            <h4 className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
-              Открытые ({open.length})
-            </h4>
-          )}
-          {sorted.map((i) => (
-            <IncidentCard
-              key={i.id}
-              incident={i}
-              journal={journal}
-              open={expanded === i.id}
-              onToggle={() => setExpanded(expanded === i.id ? null : i.id)}
-              onEdit={() => { setEditing(i); setFormOpen(true); }}
-              onRemove={() => onRemove(i.id)}
-              onClose={() => onSave({ ...i, fixedAt: new Date().toISOString() })}
-            />
+          {/* Сначала открытые: они требуют выезда сегодня. Устранённые —
+              ниже и отдельно, потому что через год важно не то, что их
+              закрыли, а что они были. */}
+          {([
+            ['Открытые', open],
+            ['Устранённые', sorted.filter((i) => !!i.fixedAt)],
+          ] as [string, typeof sorted][]).map(([title, group]) => (
+            group.length === 0 ? null : (
+              <div key={title} className="flex flex-col gap-2">
+                <h4 className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
+                  {title} ({group.length})
+                </h4>
+                {group.map((i) => (
+                  <IncidentCard
+                    key={i.id}
+                    incident={i}
+                    journal={journal}
+                    open={expanded === i.id}
+                    onToggle={() => setExpanded(expanded === i.id ? null : i.id)}
+                    onEdit={() => { setEditing(i); setFormOpen(true); }}
+                    onRemove={() => onRemove(i.id)}
+                    onClose={() => onSave({ ...i, fixedAt: new Date().toISOString() })}
+                  />
+                ))}
+              </div>
+            )
           ))}
         </div>
       )}

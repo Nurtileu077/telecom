@@ -65,7 +65,57 @@ const DRILL_COLOR: Record<'ГНБ' | 'ГНП', string> = {
   'ГНП': '#fb923c',
 };
 import GpsLocateButton from '@/components/Map/GpsLocateButton';
+import OfflineTilesButton from '@/components/Map/OfflineTilesButton';
+import { getTile, putTile } from '@/lib/tileCache';
 import PresenceCursors from '@/components/Map/PresenceCursors';
+
+/**
+ * Подложка, которая сначала смотрит на устройство.
+ *
+ * Обычный слой Leaflet идёт в сеть и в поле показывает серый квадрат.
+ * Этот сначала ищет тайл в локальном хранилище, и только если не нашёл —
+ * качает и заодно кладёт себе. Ничего не скачал заранее — работает как
+ * обычный: хуже не становится.
+ */
+function cachedTileLayer(L: any, url: string, opts: any): any {
+  const Cached = L.TileLayer.extend({
+    createTile(coords: { x: number; y: number; z: number }, done: (e: unknown, t: HTMLImageElement) => void) {
+      const img = document.createElement('img');
+      img.setAttribute('role', 'presentation');
+      img.alt = '';
+      const src = (this as any).getTileUrl(coords);
+
+      let objectUrl: string | null = null;
+      const finish = (err: unknown) => {
+        if (objectUrl) {
+          // Ссылку освобождаем после отрисовки: иначе память течёт на
+          // каждом движении карты, а у телефона её и так мало.
+          const u = objectUrl;
+          setTimeout(() => URL.revokeObjectURL(u), 1000);
+        }
+        done(err, img);
+      };
+      img.onload = () => finish(null);
+      img.onerror = (e) => finish(e);
+
+      void getTile(src).then((blob) => {
+        if (blob) {
+          objectUrl = URL.createObjectURL(blob);
+          img.src = objectUrl;
+          return;
+        }
+        // Нет в кэше — обычная загрузка. Складывать в хранилище каждый
+        // просмотренный тайл не станем: это решение человека, а не
+        // побочный эффект прокрутки карты.
+        img.crossOrigin = '';
+        img.src = src;
+      });
+
+      return img;
+    },
+  });
+  return new Cached(url, opts);
+}
 
 interface Props {
   districts: District[];
@@ -161,6 +211,8 @@ interface Props {
   incidents?: import('@/types/construction').Incident[];
   /** Поток по кабелю — украшение, включается слоем. */
   showFlow?: boolean;
+  /** Кнопка «скачать карту на устройство» — нужна только на стройке. */
+  offlineTiles?: boolean;
   onEditSiteObject?: (id: string) => void;
   /** Отрезки трассы по способам прокладки — когда красим по способу. */
   routeSegments?: import('@/components/Construction/routeSegments').RouteSegment[];
@@ -436,7 +488,7 @@ export default function LeafletMap(props: Props) {
       L.control.zoom({ position: 'bottomright' }).addTo(map);
 
       // Base layer
-      const tile = L.tileLayer(BASEMAPS.dark.url, {
+      const tile = cachedTileLayer(L, BASEMAPS.dark.url, {
         attribution: BASEMAPS.dark.attribution,
         subdomains: (BASEMAPS.dark.subdomains ?? '') as any,
         maxZoom: BASEMAPS.dark.maxZoom ?? 20,
@@ -643,7 +695,7 @@ export default function LeafletMap(props: Props) {
       if (tileLayerRef.current) tileLayerRef.current.remove();
       if (hybridLabelsRef.current) { hybridLabelsRef.current.remove(); hybridLabelsRef.current = null; }
       const bm = BASEMAPS[baseMap];
-      const tile = L.tileLayer(bm.url, {
+      const tile = cachedTileLayer(L, bm.url, {
         attribution: bm.attribution, subdomains: (bm.subdomains ?? '') as any, maxZoom: bm.maxZoom ?? 20,
       }).addTo(mapRef.current);
       tileLayerRef.current = tile;
@@ -2385,6 +2437,23 @@ export default function LeafletMap(props: Props) {
 
       {mapReady && (
         <PresenceCursors map={mapRef.current} peers={props.presencePeers ?? []} />
+      )}
+
+      {props.offlineTiles && (
+        <OfflineTilesButton
+          className="absolute bottom-[calc(162px+env(safe-area-inset-bottom))] md:bottom-auto md:top-[104px] right-2 md:right-3 z-[400]"
+          template={BASEMAPS[baseMap].url}
+          getBounds={() => {
+            const map = mapRef.current;
+            if (!map) return null;
+            const b = map.getBounds();
+            return {
+              north: b.getNorth(), south: b.getSouth(),
+              east: b.getEast(), west: b.getWest(),
+              zoom: map.getZoom(),
+            };
+          }}
+        />
       )}
 
       <GpsLocateButton

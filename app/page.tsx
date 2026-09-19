@@ -1243,6 +1243,7 @@ export default function HomePage() {
             siteObjects={conLayers.objects ? siteObjects : EMPTY_LAYER}
             incidents={conLayers.incidents ? incidents : EMPTY_LAYER}
             showFlow={building && conLayers.flow}
+            offlineTiles={building}
             routeSegments={conLayers.plan ? routeSegs : EMPTY_LAYER}
             routeColorMode={routeColorMode}
             playbackMoves={playbackMoves}
