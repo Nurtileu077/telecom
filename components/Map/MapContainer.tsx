@@ -13,7 +13,7 @@ import {
   AREA_KIND_LABEL,
 } from '@/types/construction';
 import { SNP_POINT_SOURCE } from '@/components/Construction/snpMap';
-import { areaColor } from '@/components/Construction/areaProgress';
+import { areaColor, visibleAtZoom } from '@/components/Construction/areaProgress';
 import {
   SITE_OBJECT_SPECS, MUFTA_STATES, siteObjectColor,
 } from '@/types/construction';
@@ -647,6 +647,9 @@ export default function LeafletMap(props: Props) {
         // План рисуется с толщиной по зуму — иначе на отдалении он снова
         // превращается в волос.
         renderPlanRoutes();
+        // Контуры раскрываются вглубь по мере приближения: издали область,
+        // ближе районы, ещё ближе сёла.
+        renderAreas();
       });
 
       // After map ready: render existing data and fit bounds if already loaded
@@ -1823,7 +1826,11 @@ export default function LeafletMap(props: Props) {
       const order: Record<string, number> = { oblast: 0, rayon: 1, snp: 2 };
       const sorted = [...items].sort((a, b) => (order[a.kind] ?? 3) - (order[b.kind] ?? 3));
 
-      for (const a of sorted) {
+      // Издали область, ближе районы, ещё ближе сёла — правило живёт
+      // рядом с самими контурами, а не в разметке карты.
+      const shown = visibleAtZoom(sorted, mapRef.current?.getZoom?.() ?? 10);
+
+      for (const a of shown) {
         if (a.coords.length < 3) continue;
         const blocked = a.blockedSnp > 0;
         const color = areaColor(a.completion, blocked);
@@ -1874,6 +1881,13 @@ export default function LeafletMap(props: Props) {
           + snpLine
           + (a.kato ? `<br/><span style="color:#64748b;font-size:10px;font-family:ui-monospace,monospace">${esc(a.kato)}</span>` : '')
           + `<br/><span style="color:#64748b;font-size:10px">${esc(a.source)}</span>`
+          + (a.kind !== 'snp'
+            ? `<div style="margin-top:6px">`
+              + `<button onclick="window.__optiqArea__('zoom','${esc(a.id)}')"
+                   style="padding:3px 8px;background:#1e3a5f;color:#e2e8f0;border:none;border-radius:3px;
+                          font-size:10px;cursor:pointer;font-weight:600">⤢ Раскрыть</button>`
+              + `</div>`
+            : '')
           + (editable
             ? `<div style="margin-top:6px">`
               + btn(editing ? 'done' : 'edit', editing ? '✓ Готово' : '✏️ Изменить', '#2dd4bf')
@@ -2544,6 +2558,19 @@ export default function LeafletMap(props: Props) {
     // три, а обработчик пусть будет один.
     (window as any).__optiqArea__ = (act: string, id: string) => {
       mapRef.current?.closePopup?.();
+      if (act === 'zoom') {
+        // «Раскрыть» — это подвинуть карту так, чтобы стало видно то,
+        // что внутри: районы у области, сёла у района.
+        const a = (propsRef.current.areas ?? []).find((x) => x.id === id);
+        if (a?.coords?.length) {
+          import('leaflet').then((L) => {
+            try {
+              mapRef.current?.fitBounds(L.latLngBounds(a.coords), { padding: [40, 40] });
+            } catch { /* вырожденная рамка */ }
+          });
+        }
+        return;
+      }
       if (act === 'edit') propsRef.current.onEditArea?.(id);
       if (act === 'done') propsRef.current.onEditArea?.(null);
       if (act === 'rename') propsRef.current.onRenameArea?.(id);

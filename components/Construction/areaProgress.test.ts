@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { areaMapItems, areaColor, sameSnpName } from './areaProgress';
+import {
+  areaMapItems, areaColor, sameSnpName, areaDepthFor, visibleAtZoom,
+} from './areaProgress';
 import type { MapArea, SnpProgress } from '@/types/construction';
 
 const now = '2026-09-18T00:00:00.000Z';
@@ -233,5 +235,42 @@ describe('падежи в названиях', () => {
       [a, b],
     );
     expect(item.completion).toBeNull();
+  });
+});
+
+describe('глубина контуров по приближению', () => {
+  const three = [
+    { kind: 'oblast' as const, name: 'Акмолинская' },
+    { kind: 'rayon' as const, name: 'Зерендинский' },
+    { kind: 'snp' as const, name: 'Еленовка' },
+  ];
+
+  it('издали — только область', () => {
+    expect(areaDepthFor(6)).toBe(0);
+    expect(visibleAtZoom(three, 6).map((a) => a.kind)).toEqual(['oblast']);
+  });
+
+  it('ближе — область и районы', () => {
+    expect(areaDepthFor(9)).toBe(1);
+    expect(visibleAtZoom(three, 9).map((a) => a.kind)).toEqual(['oblast', 'rayon']);
+  });
+
+  it('вплотную — всё, включая сёла', () => {
+    expect(areaDepthFor(12)).toBe(2);
+    expect(visibleAtZoom(three, 12)).toHaveLength(3);
+  });
+
+  it('один уровень в файле показывается на любом зуме', () => {
+    // Иначе человек решит, что контуры пропали, хотя они просто ниже уровнем.
+    const onlySnp = [{ kind: 'snp' as const, name: 'Еленовка' }];
+    expect(visibleAtZoom(onlySnp, 5)).toHaveLength(1);
+    expect(visibleAtZoom(onlySnp, 15)).toHaveLength(1);
+  });
+
+  it('границы порогов не плавают', () => {
+    expect(areaDepthFor(7.9)).toBe(0);
+    expect(areaDepthFor(8)).toBe(1);
+    expect(areaDepthFor(9.9)).toBe(1);
+    expect(areaDepthFor(10)).toBe(2);
   });
 });

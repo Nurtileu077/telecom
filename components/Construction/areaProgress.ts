@@ -211,3 +211,30 @@ export function areaColor(completion: number | null, blocked = false): string {
   if (completion > 0) return '#fbbf24';
   return '#475569';
 }
+
+// ── Глубина по зуму ──────────────────────────────────────────────────────────
+
+/**
+ * Какие контуры показывать на этом приближении.
+ *
+ * Восемь десятков контуров разом — каша, в которой не видно ни трассы, ни
+ * работы. Издали нужна область, ближе районы, ещё ближе сёла: так ведёт
+ * себя любая карта, и так же об этом думает человек.
+ *
+ * Если в файле один уровень — показываем его на любом зуме. Прятать
+ * единственное, что есть, незачем: человек решит, что контуры пропали.
+ */
+export function areaDepthFor(zoom: number): 0 | 1 | 2 {
+  if (zoom < 8) return 0;
+  if (zoom < 10) return 1;
+  return 2;
+}
+
+const AREA_LEVEL: Record<AreaKind, 0 | 1 | 2> = { oblast: 0, rayon: 1, snp: 2 };
+
+export function visibleAtZoom<T extends { kind: AreaKind }>(items: T[], zoom: number): T[] {
+  const kinds = new Set(items.map((a) => a.kind));
+  if (kinds.size <= 1) return items;
+  const depth = areaDepthFor(zoom);
+  return items.filter((a) => AREA_LEVEL[a.kind] <= depth);
+}
