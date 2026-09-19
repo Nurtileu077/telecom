@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { changeFeed, filterFeed } from './changeLog';
 import {
   emptyJournal, updateRouteCoords, deleteRoute, restoreShape, logChange,
-  updateAreaCoords, renameArea, removeArea,
+  updateAreaCoords, renameArea, removeArea, addDrawnArea, DRAWN_SOURCE,
   type JournalState,
 } from './journalStore';
 import type { PlanRoute } from '@/types/construction';
@@ -190,5 +190,35 @@ describe('обводка правится и возвращается', () => {
     const next = removeArea(withArea(), 'ar1', 'Ербол');
     const item = changeFeed(next).find((i) => i.kind === 'route')!;
     expect(item.text).toContain('обводка удалена');
+  });
+});
+
+describe('контур, нарисованный на карте', () => {
+  const ring: [number, number][] = [[51, 71], [51, 72], [52, 72]];
+
+  it('ложится в свой слой и оставляет запись', () => {
+    const next = addDrawnArea(emptyJournal(), {
+      name: 'Площадка под барабан', coords: ring, author: 'Ербол',
+    });
+    expect(next.areas).toHaveLength(1);
+    expect(next.areas[0].name).toBe('Площадка под барабан');
+    expect(next.areas[0].source).toBe(DRAWN_SOURCE);
+    expect(next.changes[0].kind).toBe('area_add');
+    expect(next.changes[0].detail).toBe('3 вершин');
+  });
+
+  it('из двух точек контур не получится', () => {
+    const base = emptyJournal();
+    expect(addDrawnArea(base, { name: 'x', coords: [[51, 71], [52, 72]], author: 'Ербол' })).toBe(base);
+  });
+
+  it('без названия контур не безымянный, а «Без названия»', () => {
+    const next = addDrawnArea(emptyJournal(), { name: '   ', coords: ring, author: 'Ербол' });
+    expect(next.areas[0].name).toBe('Без названия');
+  });
+
+  it('в ленте это названо рисованием, а не правкой', () => {
+    const next = addDrawnArea(emptyJournal(), { name: 'Контур', coords: ring, author: 'Ербол' });
+    expect(changeFeed(next)[0].text).toContain('обводка нарисована');
   });
 });

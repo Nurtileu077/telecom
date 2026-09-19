@@ -184,7 +184,14 @@ interface Props {
    * правая кнопка или Enter заканчивают линию, Esc отменяет.
    */
   drawingRoute?: boolean;
+  /**
+   * Что рисуем: линию или замкнутый контур. Механика одна и та же —
+   * клики ставят вершины, — поэтому и режим один, с двумя исходами.
+   */
+  drawShape?: 'route' | 'area';
   onToggleDrawRoute?: () => void;
+  /** Включить рисование замкнутого контура. */
+  onToggleDrawArea?: () => void;
   onRouteDrawn?: (coords: [number, number][]) => void;
   /** Трасса, у которой сейчас видны ручки: её можно тянуть и править. */
   editingRouteId?: string | null;
@@ -1981,15 +1988,24 @@ export default function LeafletMap(props: Props) {
     const pts = routeDraftRef.current;
     if (pts.length === 0) return;
 
+    // Контур показываем замкнутым с самого начала: иначе до последнего
+    // клика непонятно, что рисуешь — линию или площадку.
+    const area = propsRef.current.drawShape === 'area';
+    const color = area ? '#38bdf8' : '#f472b6';
     if (pts.length >= 2) {
-      group.addLayer(L.polyline(pts, {
-        color: '#f472b6', weight: 4, opacity: 0.95, dashArray: '8,6',
-      }));
+      group.addLayer(area && pts.length >= 3
+        ? L.polygon(pts, {
+          color, weight: 3, opacity: 0.95, dashArray: '8,6',
+          fillColor: color, fillOpacity: 0.12,
+        })
+        : L.polyline(pts, {
+          color, weight: 4, opacity: 0.95, dashArray: '8,6',
+        }));
     }
     pts.forEach((c, i) => {
       group.addLayer(L.circleMarker(c, {
         radius: i === 0 ? 6 : 4,
-        color: '#f472b6', fillColor: '#0c1018', fillOpacity: 1, weight: 2,
+        color, fillColor: '#0c1018', fillOpacity: 1, weight: 2,
       }));
     });
   }
@@ -2003,8 +2019,10 @@ export default function LeafletMap(props: Props) {
     const pts = routeDraftRef.current;
     routeDraftRef.current = [];
     drawGroupRef.current?.clearLayers();
-    if (pts.length >= 2) propsRef.current.onRouteDrawn?.(pts);
-    else propsRef.current.onRouteDrawn?.([]);
+    // Линии хватает двух точек, контуру нужно три: из двух контур не
+    // получится, а молча превратить его в линию — подсунуть не то.
+    const need = propsRef.current.drawShape === 'area' ? 3 : 2;
+    propsRef.current.onRouteDrawn?.(pts.length >= need ? pts : []);
   }
 
   /**
@@ -2633,6 +2651,17 @@ export default function LeafletMap(props: Props) {
             ✏️ Трасса
           </button>
         )}
+        {props.onRouteDrawn && props.onToggleDrawArea && (
+          <button
+            onClick={() => props.onToggleDrawArea?.()}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium border shadow-lg transition-all ${
+              props.drawingRoute && props.drawShape === 'area'
+                ? 'bg-[#38bdf8]/15 border-[#38bdf8] text-[#38bdf8]'
+                : 'bg-[#0d1b2a] border-[#1e3a5f] text-[#94a3b8] hover:text-[#e2e8f0]'}`}
+          >
+            ✏️ Контур
+          </button>
+        )}
         {props.playbackDate && (
           <div className="bg-[#0d1b2a]/95 border border-[#4ade80]/50 rounded-lg px-3 py-1.5 text-[10px] text-[#e2e8f0] shadow-lg max-w-[220px]">
             {new Date(`${props.playbackDate}T00:00:00Z`).toLocaleDateString('ru')}:{' '}
@@ -2651,9 +2680,12 @@ export default function LeafletMap(props: Props) {
           </div>
         )}
         {props.drawingRoute && (
-          <div className="bg-[#0d1b2a]/95 border border-[#f472b6]/50 rounded-lg px-3 py-1.5 text-[10px] text-[#e2e8f0] shadow-lg max-w-[220px]">
-            Кликайте по карте — вершины трассы. Двойной клик, ПКМ или Enter —
-            закончить. Backspace — убрать последнюю. Esc — отмена.
+          <div className="bg-[#0d1b2a]/95 rounded-lg px-3 py-1.5 text-[10px] text-[#e2e8f0] shadow-lg max-w-[220px] border"
+               style={{ borderColor: props.drawShape === 'area' ? '#38bdf880' : '#f472b680' }}>
+            Кликайте по карте — вершины {props.drawShape === 'area' ? 'контура' : 'трассы'}.
+            Двойной клик, ПКМ или Enter — закончить. Backspace — убрать
+            последнюю. Esc — отмена.
+            {props.drawShape === 'area' && ' Контуру нужно минимум три точки.'}
           </div>
         )}
         {(props.activeTool || props.editMode || props.measureMode) && (

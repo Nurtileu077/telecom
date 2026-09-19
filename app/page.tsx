@@ -57,6 +57,7 @@ import RouteDrawForm from '@/components/Construction/RouteDrawForm';
 import {
   addPlanRoutes, addDeviation, updateRouteCoords, deleteRoute,
   removePlanSource, removeAreaSource, updateAreaCoords, renameArea, removeArea,
+  addDrawnArea,
 } from '@/components/Construction/journalStore';
 import { polylineLengthM } from '@/components/Construction/planImport';
 import {
@@ -177,12 +178,13 @@ export default function HomePage() {
   // Готовую линию показываем в форме — там решают, отклонение это или
   // недостающая трасса.
   const [drawingRoute, setDrawingRoute] = useState(false);
+  /**
+   * Что рисуем. Линия уходит в форму — там решают, отклонение это или
+   * недостающая трасса. Контур решать нечего: спрашиваем название и
+   * кладём в слой «нарисовано на карте».
+   */
+  const [drawShape, setDrawShape] = useState<'route' | 'area'>('route');
   const [drawnCoords, setDrawnCoords] = useState<[number, number][] | null>(null);
-  const handleRouteDrawn = useCallback((c: [number, number][]) => {
-    setDrawingRoute(false);
-    // Пустой массив приходит при отмене: линии не было.
-    setDrawnCoords(c.length >= 2 ? c : null);
-  }, []);
   const refreshJournalLayers = useCallback(() => {
     const j = loadJournal();
     setDrillPoints(drillMapPoints(j));
@@ -216,6 +218,22 @@ export default function HomePage() {
   /** Вчерашний день в движении: дату выбирают, движение считается. */
   const [playbackDate, setPlaybackDate] = useState<string | null>(null);
   const [playbackMoves, setPlaybackMoves] = useState<DayMove[]>([]);
+  const handleRouteDrawn = useCallback((c: [number, number][]) => {
+    setDrawingRoute(false);
+    // Пустой массив приходит при отмене: рисовать было нечего.
+    if (drawShape === 'area') {
+      if (c.length < 3) return;
+      const name = prompt('Название контура:', '');
+      if (name === null) return;
+      saveJournal(addDrawnArea(loadJournal(), {
+        name, coords: c, author: getActorName() || 'Без имени',
+      }));
+      refreshJournalLayers();
+      return;
+    }
+    setDrawnCoords(c.length >= 2 ? c : null);
+  }, [drawShape, refreshJournalLayers]);
+
   /**
    * «Посмотреть трассу» у села: рамка по всей линии, от и до.
    *
@@ -1319,7 +1337,15 @@ export default function HomePage() {
             planRoutes={conLayers.plan ? visibleRoutes : EMPTY_LAYER}
             drillLines={conLayers.drills ? drillLines : EMPTY_LAYER}
             drawingRoute={drawingRoute}
-            onToggleDrawRoute={building ? () => setDrawingRoute((v) => !v) : undefined}
+            drawShape={drawShape}
+            onToggleDrawRoute={building ? () => {
+              setDrawShape('route');
+              setDrawingRoute((v) => !(v && drawShape === 'route'));
+            } : undefined}
+            onToggleDrawArea={building ? () => {
+              setDrawShape('area');
+              setDrawingRoute((v) => !(v && drawShape === 'area'));
+            } : undefined}
             onRouteDrawn={building ? handleRouteDrawn : undefined}
             editingRouteId={editingRouteId}
             onEditRoute={building ? setEditingRouteId : undefined}

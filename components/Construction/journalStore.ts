@@ -1011,6 +1011,41 @@ export function removeAreaSource(base: JournalState, source: string): JournalSta
 }
 
 /**
+ * Контур, нарисованный на карте.
+ *
+ * До сих пор рисовать можно было только линию, а обводку — лишь принести
+ * из Google Земли. Но обводят на месте то же, что и чертят: границу села,
+ * кусок, который нельзя трогать, площадку под барабан. Рисуется она здесь
+ * же и ложится в свой слой «нарисовано», чтобы не путаться с импортом.
+ */
+export function addDrawnArea(
+  base: JournalState,
+  args: { name: string; coords: [number, number][]; kind?: MapArea['kind']; author: string },
+): JournalState {
+  const coords = args.coords;
+  if (coords.length < 3) return base;
+  const now = new Date().toISOString();
+  const area: MapArea = {
+    id: `area-draw-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    kind: args.kind ?? 'snp',
+    name: args.name.trim() || 'Без названия',
+    coords,
+    source: DRAWN_SOURCE,
+    createdAt: now,
+    updatedAt: now,
+  };
+  return logChange({ ...base, areas: [...base.areas, area], updatedAt: now }, {
+    at: now, author: args.author, kind: 'area_add',
+    target: area.name,
+    detail: `${coords.length} вершин`,
+    areaId: area.id,
+  });
+}
+
+/** Слой для всего, что нарисовали руками: он не приходит из файла. */
+export const DRAWN_SOURCE = 'нарисовано на карте';
+
+/**
  * Правка контура с записью в журнал.
  *
  * Обводка — такая же нарисованная вещь, как трасса, и правится так же:
