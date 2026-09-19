@@ -8,7 +8,7 @@ import {
   addDeviation, removeDeviation, openDeviations, isDeviationClosed, needsProtocol,
   documentContractor, upsertCrew, removeCrew, moveCrew, placedCrews,
   crewOnDuty, crewEquipmentCount, deviationMapItems, plural,
-  scopeJournal, smuList, DEFAULT_SMUS,
+  scopeJournal, smuList, DEFAULT_SMUS, isOneDrill,
 } from './journalStore';
 import type { DailyWorkEntry, DrillLogEntry, Deviation, Crew } from '@/types/construction';
 
@@ -154,9 +154,15 @@ describe('точки для карты', () => {
   });
 
   it('прокол со входом и выходом — линия, а не две метки', () => {
+    // Вход и выход настоящего прокола в 72 м стоят в 72 м друг от друга,
+    // а не в километре: раньше здесь была километровая пара, и правило
+    // «две точки — линия» протягивало прокол через всю трассу.
     const state: JournalState = {
       ...emptyJournal(),
-      drills: [d({ id: 'd1', points: [{ lat: 44.48, lon: 52.09, meters: 72 }, { lat: 44.49, lon: 52.10 }] })],
+      drills: [d({
+        id: 'd1',
+        points: [{ lat: 44.4800, lon: 52.0900, meters: 72 }, { lat: 44.4806, lon: 52.0900 }],
+      })],
     };
     // Иначе один прокол выглядел бы на карте как два разных.
     expect(drillMapPoints(state)).toHaveLength(0);
@@ -627,5 +633,65 @@ describe('справочник СМУ', () => {
     expect(list).toContain('СМУ-1');
     // «СМУ-10» после «СМУ-9», а не между «СМУ-1» и «СМУ-2».
     expect(list.indexOf('СМУ-10')).toBeGreaterThan(list.indexOf('СМУ-9'));
+  });
+});
+
+describe('прокол — это переход, а не вся трасса', () => {
+  // Вход и выход прокола через дорогу: 72 м, концы рядом.
+  const near = (over: Partial<DrillLogEntry> = {}) => d({
+    id: 'near', meters: 72,
+    points: [{ lat: 51.5000, lon: 71.5000 }, { lat: 51.5006, lon: 71.5000 }],
+    ...over,
+  });
+  // Две координаты за километры друг от друга — это два разных прокола,
+  // записанных одной строкой журнала.
+  const far = (over: Partial<DrillLogEntry> = {}) => d({
+    id: 'far', meters: 72,
+    points: [{ lat: 51.50, lon: 71.50 }, { lat: 51.58, lon: 71.72 }],
+    ...over,
+  });
+
+  it('близкие концы — линия', () => {
+    const s: JournalState = { ...emptyJournal(), drills: [near()] };
+    expect(drillMapLines(s)).toHaveLength(1);
+    expect(drillMapPoints(s)).toHaveLength(0);
+  });
+
+  it('далёкие концы — два отдельных прокола, а не линия через всю трассу', () => {
+    const s: JournalState = { ...emptyJournal(), drills: [far()] };
+    expect(drillMapLines(s)).toHaveLength(0);
+    expect(drillMapPoints(s)).toHaveLength(2);
+  });
+
+  it('три координаты в записи — три прокола, их не соединяют', () => {
+    const s: JournalState = {
+      ...emptyJournal(),
+      drills: [d({
+        points: [
+          { lat: 51.500, lon: 71.500 },
+          { lat: 51.501, lon: 71.500 },
+          { lat: 51.502, lon: 71.500 },
+        ],
+      })],
+    };
+    expect(drillMapLines(s)).toHaveLength(0);
+    expect(drillMapPoints(s)).toHaveLength(3);
+  });
+
+  it('длинный прокол остаётся линией, если длина записана', () => {
+    // 400 м под рекой — концы за 400 м, и это честный один прокол.
+    const s: JournalState = {
+      ...emptyJournal(),
+      drills: [d({
+        meters: 400,
+        points: [{ lat: 51.5, lon: 71.5 }, { lat: 51.5036, lon: 71.5 }],
+      })],
+    };
+    expect(drillMapLines(s)).toHaveLength(1);
+  });
+
+  it('без записанной длины предел один для всех', () => {
+    expect(isOneDrill({ lat: 51.5, lon: 71.5 }, { lat: 51.503, lon: 71.5 })).toBe(true);
+    expect(isOneDrill({ lat: 51.5, lon: 71.5 }, { lat: 51.51, lon: 71.5 })).toBe(false);
   });
 });

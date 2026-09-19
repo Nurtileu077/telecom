@@ -6,6 +6,7 @@ import {
   SnpProgress, SnpStage, StageState, MapArea, SiteObject, ChangeLogEntry,
   CableDrum, FieldPhoto, SpliceRecord, Incident, normalizeRole,
 } from '@/types/construction';
+import { haversineM } from '@/components/Network/KMeans';
 
 /** Состояние журнала стройки — Слой 2. */
 export interface JournalState {
@@ -451,11 +452,53 @@ export function deviationMapItems(state: JournalState): DeviationMapItem[] {
  * записи сняли обе координаты, рисуем линию; когда одну — метку. Так на
  * карте видно, где ГНБ прошла под дорогой, а не просто «здесь что-то было».
  */
+/**
+ * Насколько далеко друг от друга могут быть концы одного прокола.
+ *
+ * Прокол — это переход: через дорогу, арык, речку. Десятки метров, редко
+ * сотня-другая. Если в одной записи журнала стоят две координаты за
+ * километры друг от друга, это не вход и выход одного прокола — это два
+ * разных прокола, записанных одной строкой. Так в журнале и пишут:
+ * «Координаты: 1. …; 2. …».
+ *
+ * Считать их концами одного — значит протянуть розовую линию через всю
+ * трассу и сказать, что там пробурено. Поэтому меряем: длина прокола в
+ * записи есть, и концы должны в неё укладываться.
+ */
+export const DRILL_SPAN_LIMIT_M = 500;
+
+export function isOneDrill(
+  a: { lat: number; lon: number },
+  b: { lat: number; lon: number },
+  meters?: number,
+): boolean {
+  const d = haversineM(a.lat, a.lon, b.lat, b.lon);
+  // Запас на точность координат: телефон врёт на десятки метров, и
+  // прокол в 72 м может лечь как 90. Но не как 9 000.
+  const limit = meters && meters > 0
+    ? Math.max(meters * 2 + 100, 150)
+    : DRILL_SPAN_LIMIT_M;
+  return d <= limit;
+}
+
+/** Точки записи, годные для карты. */
+function drillPointsOf(d: DrillLogEntry): { lat: number; lon: number; meters?: number }[] {
+  return d.points.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon));
+}
+
+/** Запись рисуется линией только если её концы — это и правда один прокол. */
+function drillIsLine(d: DrillLogEntry): boolean {
+  const pts = drillPointsOf(d);
+  return pts.length === 2 && isOneDrill(pts[0], pts[1], d.meters);
+}
+
 export function drillMapPoints(state: JournalState): DrillMapPoint[] {
   const out: DrillMapPoint[] = [];
   for (const d of state.drills) {
     if (d.status === 'planned') continue; // план на карте не показываем
-    if (d.points.length >= 2) continue; // это линия, она рисуется отдельно
+    // Линией рисуется только настоящий прокол с входом и выходом.
+    // Всё остальное — отдельные проколы, каждый своей меткой.
+    if (drillIsLine(d)) continue;
     d.points.forEach((p, i) => {
       out.push({
         id: `${d.id}#${i}`,
@@ -503,10 +546,8 @@ export function drillMapLines(state: JournalState): DrillMapLine[] {
   const out: DrillMapLine[] = [];
   for (const d of state.drills) {
     if (d.status === 'planned') continue; // план под землёй не лежит
-    const pts = d.points.filter(
-      (p) => Number.isFinite(p.lat) && Number.isFinite(p.lon),
-    );
-    if (pts.length < 2) continue;
+    if (!drillIsLine(d)) continue;
+    const pts = drillPointsOf(d);
     const hist = byKato.get(d.kato) ?? { count: 0, meters: 0 };
     out.push({
       id: d.id,

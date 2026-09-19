@@ -1413,9 +1413,13 @@ export default function LeafletMap(props: Props) {
         const asBase = byMethod && segmented.has(r.id);
         const line = L.polyline(r.coords, {
           color: asBase ? '#475569' : r.color,
-          weight: (asBase ? 2 : r.dashed ? 3 : 4.5) * lineScale(zoom),
-          opacity: asBase ? 0.5 : r.dashed ? 0.75 : 0.95,
-          dashArray: !asBase && r.dashed ? '10,8' : undefined,
+          // Проект — сплошная синяя, тоньше факта. Пунктир превращал её в
+          // такую же штриховку, как у границ района, и трасса терялась
+          // среди контуров. Тонкая и сплошная читается как трасса, а
+          // толщина и цвет по-прежнему отличают проект от построенного.
+          weight: (asBase ? 2 : r.dashed ? 2.5 : 4.5) * lineScale(zoom),
+          opacity: asBase ? 0.5 : r.dashed ? 0.8 : 0.95,
+          dashArray: undefined,
         });
         const title = routeTitle(r);
         const stageLabel = r.stage ? SNP_STAGE_SPECS[r.stage].label : 'работ не было';
