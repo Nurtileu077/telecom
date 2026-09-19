@@ -1,7 +1,7 @@
 'use client';
 import { useMemo, useState } from 'react';
 import {
-  TrendingUp, AlertTriangle, CalendarClock, Users, MapPin, ChevronRight, Gauge,
+  TrendingUp, AlertTriangle, CalendarClock, Users, MapPin, ChevronRight, Gauge, Ban,
 } from 'lucide-react';
 import { JournalState, fmtKm, fmtMeters, plural, openDeviations, pendingCorrections } from './journalStore';
 import { materialForecast, lowStock, negativeStock, unknownStock } from './materialForecast';
@@ -11,6 +11,7 @@ import {
 } from './management';
 import { MATERIAL_LABEL } from './journalStore';
 import { methodRates, crewRates, shiftsLeft, METHOD_LABEL } from './crewRate';
+import { downtimeReasons } from './dayPlan';
 
 /**
  * Взгляд руководства.
@@ -127,6 +128,10 @@ export default function ManagementView({ journal, onOpenView }: Props) {
   const rates = useMemo(() => methodRates(journal.ground), [journal.ground]);
   const byCrew = useMemo(() => crewRates(journal.ground), [journal.ground]);
   const shifts = useMemo(() => shiftsLeft(p.remainingM, rates), [p.remainingM, rates]);
+
+  // Причины простоя пишут в каждом отчёте, но никто их не складывал.
+  // Сложенные, они отвечают на вопрос, ради которого их и пишут.
+  const stalls = useMemo(() => downtimeReasons(journal.ground), [journal.ground]);
 
   const totals = useMemo(() => {
     const planM = regions.reduce((s, r) => s + r.planM, 0);
@@ -266,6 +271,33 @@ export default function ManagementView({ journal, onOpenView }: Props) {
           </div>
         )}
       </section>
+
+      {/* Почему не делали — из причин простоя, которые и так пишут */}
+      {stalls.length > 0 && (
+        <section className="flex flex-col gap-1.5">
+          <h4 className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
+            <Ban size={12} />Почему стояли ({stalls.length})
+          </h4>
+          {stalls.slice(0, 8).map((r, i) => (
+            <div key={i} className="flex items-baseline gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] px-3 py-1.5">
+              <span className="text-[12px] text-[var(--text)] min-w-0 flex-1">{r.text}</span>
+              {r.places.length > 0 && (
+                <span className="text-[10.5px] text-[var(--text-muted)] truncate max-w-[40%]">
+                  {r.places.slice(0, 3).join(', ')}
+                  {r.places.length > 3 && ` и ещё ${r.places.length - 3}`}
+                </span>
+              )}
+              <span className="font-mono text-[11px] text-[var(--text-muted)] shrink-0">
+                {r.count} {plural(r.count, 'раз', 'раза', 'раз')}
+              </span>
+            </div>
+          ))}
+          <p className="text-[10.5px] text-[var(--text-muted)]">
+            Формулировки не сводятся к общим категориям: разница между
+            «скальный грунт» и «ждали согласование» — это и есть ответ.
+          </p>
+        </section>
+      )}
 
       {/* Выработка за смену — основа честного плана */}
       {rates.length > 0 && (

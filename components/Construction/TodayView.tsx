@@ -14,6 +14,7 @@ import { materialForecast, lowStock, daysLeftText } from './materialForecast';
 import { MATERIAL_LABEL } from './journalStore';
 import { placeCrews } from './crewPlace';
 import { crewsFromJournal } from './crewDerive';
+import { lastPlans, lastEquipment } from './dayPlan';
 
 /**
  * Первый экран стройки: что делать сегодня.
@@ -48,6 +49,11 @@ export default function TodayView({ journal, onOpenView, onSetStage, onAddEntry 
     [journal],
   );
 
+  // Что собирались сделать — утренний вопрос важнее вечернего «сколько
+  // сделали». Поле «план на завтра» заполняют и так, его нужно показать.
+  const plans = useMemo(() => lastPlans(journal.ground), [journal.ground]);
+  const equip = useMemo(() => lastEquipment(journal.ground), [journal.ground]);
+
   const last = useMemo(() => lastWorkDate(journal.ground), [journal.ground]);
   const lastMeters = useMemo(() => {
     const day = metersByDay(journal.ground).find((d) => d.date === last);
@@ -59,7 +65,7 @@ export default function TodayView({ journal, onOpenView, onSetStage, onAddEntry 
   const idle = crews.filter((c) => c.status === 'idle' || c.status === 'waiting');
 
   const nothing = tasks.length === 0 && blocked.length === 0
-    && devs.length === 0 && low.length === 0;
+    && devs.length === 0 && low.length === 0 && plans.length === 0;
 
   return (
     <div className="flex flex-col gap-4">
@@ -82,6 +88,33 @@ export default function TodayView({ journal, onOpenView, onSetStage, onAddEntry 
           сводка
         </button>
       </div>
+
+      {/* Что планировали на сегодня */}
+      {plans.length > 0 && (
+        <Section title={`Планировали (${plans.length})`} icon={<CalendarDays size={13} />}
+                 onMore={() => onOpenView('entries')}>
+          {plans.slice(0, 6).map((p) => (
+            <div key={p.entryId}
+                 className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] px-3 py-2">
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <span className="text-[12px] text-[var(--text)]">{p.crew || p.uchastok}</span>
+                <span className="text-[10.5px] text-[var(--text-muted)] truncate">
+                  {p.uchastok}{p.rayon ? `, ${p.rayon}` : ''}
+                </span>
+                <span className="ml-auto text-[10px] font-mono text-[var(--text-muted)]">
+                  {new Date(`${p.date}T00:00:00Z`).toLocaleDateString('ru')}
+                </span>
+              </div>
+              <div className="text-[11.5px] text-[var(--text-muted)]">{p.text}</div>
+            </div>
+          ))}
+          {equip.length > 0 && (
+            <p className="text-[10.5px] text-[var(--text-muted)]">
+              Техника на той смене: {equip.map((e) => `${e.name} — ${e.count}`).join(', ')}.
+            </p>
+          )}
+        </Section>
+      )}
 
       {nothing && (
         <p className="text-[12.5px] text-[var(--text-muted)]">
