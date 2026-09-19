@@ -3,6 +3,7 @@ import {
   actRows, actDocHtml, actFileName, protocolDocHtml, protocolFileName,
   share, withRayonWord, esc, ruDateWords, bareOblast, bareRayon,
   deviationSummary, protocolRef, volsTitle, actHeading, ActRowKey,
+  fixationDocHtml, fixationFileName,
 } from './actDocument';
 import { computeSectionAct, DEFAULT_ACT_MANUAL } from './sectionAct';
 import type { DailyWorkEntry, Deviation } from '@/types/construction';
@@ -354,5 +355,44 @@ describe('мелочи, на которых ломаются документы'
 
   it('угловые скобки в названии не ломают разметку', () => {
     expect(esc('<b>СМУ</b>')).toBe('&lt;b&gt;СМУ&lt;/b&gt;');
+  });
+});
+
+describe('акт фиксации участка', () => {
+  it('несёт границы, протяжённость и обе глубины', () => {
+    const html = fixationDocHtml({
+      uchastok: 'Еленовка', oblast: 'Акмолинская область', rayon: 'Аршалынский',
+      contractor: 'ТОО «СК Фаворит Инжиниринг»',
+      fromPoint: 'НРП', toPoint: 'здание АТС',
+      lengthM: 11100, designDepthM: 1.2, actualDepthM: 1.2,
+      dateFrom: '2026-08-25', dateTo: '2026-09-03', tusm: '10',
+    });
+    expect(html).toContain('Акт фиксации участка прокладки');
+    expect(html).toContain('НРП');
+    expect(html).toContain('здание АТС');
+    expect(html).toContain('11,100 км');
+    expect(html).toContain('ТУСМ-10');
+    expect(html).toContain('ЦКС');
+    expect(html).toContain('25.08.2026 — 03.09.2026');
+  });
+
+  it('меньшая глубина названа прямо, а не спрятана в цифре', () => {
+    const html = fixationDocHtml({
+      uchastok: 'Еленовка', lengthM: 50, designDepthM: 1.2, actualDepthM: 0.5,
+    });
+    expect(html).toContain('меньше проектной');
+    expect(html).toContain('протокол мобильной группы');
+  });
+
+  it('проектная глубина — обычный акт без оговорок', () => {
+    const html = fixationDocHtml({
+      uchastok: 'Еленовка', lengthM: 5000, designDepthM: 1.2, actualDepthM: 1.2,
+    });
+    expect(html).toContain('в соответствии с проектной глубиной');
+    expect(html).not.toContain('меньше проектной');
+  });
+
+  it('имя файла содержит участок', () => {
+    expect(fixationFileName('Еленовка', '2026-09-18')).toBe('Акт фиксации Еленовка 2026-09-18.doc');
   });
 });

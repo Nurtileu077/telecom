@@ -9,7 +9,9 @@ import {
 import {
   actDocBody, actDocHtml, actFileName, ACT_DOC_CSS,
   ActKind, ACT_KIND_SPECS, DOC_MIME, ActDocInput,
+  fixationDocHtml, fixationFileName,
 } from './actDocument';
+import { supervisionDocHtml, supervisionFileName } from './supervisionLog';
 
 /**
  * Закрытие участка: АСР и ОСР по бланкам заказчика, заполненные из журнала.
@@ -78,20 +80,63 @@ export default function SectionClosing({ journal, onChangeFields }: Props) {
    * Акт файлом. Word-совместимый HTML: открывается как документ, правится
    * и уходит в письме — печать в PDF для этого не годится.
    */
-  const downloadAct = (k: ActKind) => {
-    if (nothingToSign) return;
-    const html = actDocHtml(docInput(k));
+  /** Один способ отдать документ файлом — для всех бланков сразу. */
+  const download = (html: string, name: string) => {
     // BOM — иначе Word открывает кириллицу кракозябрами.
     const blob = new Blob(['﻿', html], { type: DOC_MIME });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = actFileName(k, uchastok, fields.actDate);
+    a.download = name;
     document.body.appendChild(a);
     a.click();
     // Якорь убираем не сразу: если удалить его в тот же тик, браузер
     // успевает потерять имя файла и сохраняет документ как «download».
     setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 1000);
+  };
+
+  const downloadAct = (k: ActKind) => {
+    if (nothingToSign) return;
+    download(actDocHtml(docInput(k)), actFileName(k, uchastok, fields.actDate));
+  };
+
+  /**
+   * Акт фиксации участка. Берём тот же первый вариант, что и в
+   * освидетельствовании: основной по проектной глубине, а если весь
+   * участок прошёл с отклонением — его, с фактической глубиной.
+   */
+  const downloadFixation = () => {
+    if (nothingToSign) return;
+    const v = totals.variants[0];
+    download(fixationDocHtml({
+      uchastok,
+      oblast: first?.oblast,
+      rayon: first?.rayon,
+      contractor: docContractor?.fullName ?? docContractor?.name,
+      performer: performerName,
+      fromPoint: fields.volsFrom,
+      toPoint: fields.volsTo,
+      lengthM: v.lengthM,
+      designDepthM: v.designDepthM,
+      actualDepthM: v.actualDepthM,
+      dateFrom: totals.dateFrom,
+      dateTo: totals.dateTo,
+      tusm: fields.tusm,
+    }), fixationFileName(uchastok, fields.actDate));
+  };
+
+  /** Тетрадь технадзора за период работ — из тех же дневных записей. */
+  const downloadSupervision = () => {
+    download(supervisionDocHtml({
+      entries,
+      deviations: devs,
+      from: totals.dateFrom,
+      to: totals.dateTo,
+      contractor: docContractor?.fullName ?? docContractor?.name,
+      oblast: first?.oblast,
+      rayon: first?.rayon,
+      uchastok,
+    }), supervisionFileName(uchastok, totals.dateFrom, totals.dateTo));
   };
 
   if (sections.length === 0) {
@@ -129,6 +174,18 @@ export default function SectionClosing({ journal, onChangeFields }: Props) {
                   : `Скачать ${ACT_KIND_SPECS[kind].short} — открывается в Word`}
                 onClick={() => downloadAct(kind)}>
           <FileDown size={14} />Скачать {ACT_KIND_SPECS[kind].short}
+        </button>
+        <button type="button" className="btn text-[11px]"
+                disabled={nothingToSign}
+                title="Акт фиксации участка: границы, протяжённость, фактическая глубина"
+                onClick={downloadFixation}>
+          <FileDown size={14} />Акт фиксации
+        </button>
+        <button type="button" className="btn text-[11px]"
+                disabled={entries.length === 0}
+                title="Тетрадь технадзора по форме КТ/33.07.25 за период работ по участку"
+                onClick={downloadSupervision}>
+          <FileDown size={14} />Тетрадь
         </button>
         <button type="button" className="btn btn-primary text-[11px]" onClick={() => window.print()}>
           <Printer size={14} />Печать

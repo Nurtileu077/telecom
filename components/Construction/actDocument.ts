@@ -493,6 +493,92 @@ export function actFileName(kind: ActKind, uchastok: string, date?: string): str
   return `${ACT_KIND_SPECS[kind].short} ${safe} ${d}.doc`;
 }
 
+// ── Акт фиксации участка прокладки ───────────────────────────────────────────
+
+export interface FixationDocInput {
+  uchastok: string;
+  oblast?: string;
+  rayon?: string;
+  contractor?: string;
+  performer?: string;
+  /** Начало и конец участка — как их называют, а не координатами. */
+  fromPoint?: string;
+  toPoint?: string;
+  lengthM: number;
+  designDepthM: number;
+  actualDepthM: number;
+  dateFrom?: string;
+  dateTo?: string;
+  /** Номер ТУСМ в подписи. */
+  tusm?: string;
+  /** Координаты концов, если их снимали. */
+  coords?: { lat: number; lon: number }[];
+}
+
+/**
+ * Акт фиксации участка прокладки.
+ *
+ * Составляется на каждый участок и подписывается подрядчиком, ТУСМ и ЦКС.
+ * Всё, что в нём есть, уже записано: границы, протяжённость, фактическая
+ * глубина. Набирать это заново в Word — работа, которой быть не должно.
+ */
+export function fixationDocHtml(i: FixationDocInput): string {
+  const place = [i.oblast, i.rayon ? withRayonWord(i.rayon) : ''].filter(Boolean).join(', ');
+  const deep = i.actualDepthM < i.designDepthM - 0.01;
+
+  return `<html xmlns:o="urn:schemas-microsoft-com:office:office"
+      xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8"/><title>Акт фиксации участка — ${esc(i.uchastok)}</title>
+<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml><![endif]-->
+<style>
+  @page { size: A4; margin: 2cm 1.5cm; }
+  body { font-family: "Times New Roman", serif; font-size: 12pt; color: #000; }
+  h1 { font-size: 12pt; text-align: center; margin: 10pt 0; font-weight: bold; }
+  p { margin: 0 0 3pt; text-align: justify; }
+  table { width: 100%; border-collapse: collapse; margin: 8pt 0; }
+  td { border: 0.5pt solid #000; padding: 3pt 5pt; font-size: 12pt; }
+  td.k { width: 55%; }
+  td.v { text-align: center; }
+  .cap { font-size: 9pt; text-align: center; margin: 0 0 6pt; }
+  .sign td { border: none; padding: 10pt 6pt 2pt; font-size: 11pt; vertical-align: bottom; }
+</style></head>
+<body>
+  <h1>Акт фиксации участка прокладки</h1>
+  <p>Объект: ${esc(i.uchastok)}${place ? `, ${esc(place)}` : ''}</p>
+  <p class="cap">(наименование и место расположения участка)</p>
+  <p>Подрядчик: ${esc(i.contractor ?? '____________________')}${
+    i.performer && i.performer !== i.contractor ? `; работы вёл ${esc(i.performer)}` : ''}</p>
+  <table>
+    <tr><td class="k">Начало участка</td><td class="v">${esc(i.fromPoint || '____________')}</td></tr>
+    <tr><td class="k">Конец участка</td><td class="v">${esc(i.toPoint || '____________')}</td></tr>
+    <tr><td class="k">Протяжённость участка</td><td class="v">${actKm(i.lengthM)} км</td></tr>
+    <tr><td class="k">Глубина заложения по проекту</td><td class="v">${fmtDepth(i.designDepthM)} м</td></tr>
+    <tr><td class="k">Глубина заложения фактическая</td><td class="v">${fmtDepth(i.actualDepthM)} м</td></tr>
+    <tr><td class="k">Даты производства работ</td><td class="v">${
+      esc(fmtDate(i.dateFrom))} — ${esc(fmtDate(i.dateTo))}</td></tr>
+  </table>
+  ${i.coords?.length
+    ? `<p>Координаты: ${i.coords.map((c) => `${c.lat.toFixed(6)}, ${c.lon.toFixed(6)}`).join('; ')}</p>`
+    : ''}
+  ${deep
+    ? `<p><b>Глубина заложения меньше проектной.</b> Участок закрывается отдельным
+        актом освидетельствования со ссылкой на протокол мобильной группы.</p>`
+    : '<p>Работы выполнены в соответствии с проектной глубиной заложения.</p>'}
+  <table class="sign">
+    <tr>
+      <td>Представитель подрядчика<br/>________________________<br/><span class="cap">(ФИО, подпись)</span></td>
+      <td>ТУСМ-${esc((i.tusm ?? '').trim() || '____')}<br/>________________________<br/><span class="cap">(ФИО, подпись)</span></td>
+      <td>ЦКС<br/>________________________<br/><span class="cap">(ФИО, подпись)</span></td>
+    </tr>
+  </table>
+</body></html>`;
+}
+
+export function fixationFileName(uchastok: string, date?: string): string {
+  const safe = uchastok.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 60) || 'участок';
+  return `Акт фиксации ${safe} ${date || new Date().toISOString().slice(0, 10)}.doc`;
+}
+
 // ── Протокол мобильной группы ────────────────────────────────────────────────
 
 export interface ProtocolDocInput {
