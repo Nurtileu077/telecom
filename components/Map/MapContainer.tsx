@@ -21,6 +21,9 @@ import { routeTitle } from '@/components/Construction/routeStyle';
 import {
   METHOD_COLOR, METHOD_LABEL, kksPoints,
 } from '@/components/Construction/routeSegments';
+import {
+  problemSpots, nearbyIncidents, incidentHours, SAME_SPOT_M,
+} from '@/components/Construction/incidents';
 
 /**
  * Ссылка «доехать».
@@ -150,6 +153,11 @@ interface Props {
   areas?: import('@/components/Construction/areaProgress').AreaMapItem[];
   /** Муфты, столбы, конечные точки, ККС. */
   siteObjects?: import('@/types/construction').SiteObject[];
+  /**
+   * Аварии. Открытая горит красным и пульсирует; место, где рвётся не в
+   * первый раз, обведено кольцом — его видно, не открывая карточку.
+   */
+  incidents?: import('@/types/construction').Incident[];
   onEditSiteObject?: (id: string) => void;
   /** Отрезки трассы по способам прокладки — когда красим по способу. */
   routeSegments?: import('@/components/Construction/routeSegments').RouteSegment[];
@@ -396,6 +404,7 @@ export default function LeafletMap(props: Props) {
   /** Ручки правки трассы — отдельная группа, чтобы не мешать слоям. */
   const routeEditGroupRef = useRef<any>(null);
   const objectGroupRef = useRef<any>(null);
+  const incidentGroupRef = useRef<any>(null);
   const playbackGroupRef = useRef<any>(null);
   const playbackRafRef = useRef<number | null>(null);
   const measureStateRef = useRef<{ coords: [number, number][]; layer?: any; total: number }>({ coords: [], total: 0 });
@@ -439,6 +448,7 @@ export default function LeafletMap(props: Props) {
       areaGroupRef.current = L.layerGroup().addTo(map);
       snpGroupRef.current = L.layerGroup().addTo(map);
       objectGroupRef.current = L.layerGroup().addTo(map);
+      incidentGroupRef.current = L.layerGroup().addTo(map);
       playbackGroupRef.current = L.layerGroup().addTo(map);
       routeEditGroupRef.current = L.layerGroup().addTo(map);
       drawGroupRef.current = L.layerGroup().addTo(map);
@@ -1588,6 +1598,79 @@ export default function LeafletMap(props: Props) {
   }
 
   /**
+   * Аварии на карте.
+   *
+   * Открытая авария — красная и пульсирует: она требует выезда сегодня.
+   * Устранённая остаётся серой точкой, потому что через год важно не то,
+   * что её закрыли, а что она здесь была. Место, где рвалось больше
+   * одного раза, обведено кольцом — это и есть карта проблемных мест.
+   */
+  function renderIncidents() {
+    const group = incidentGroupRef.current;
+    if (!mapRef.current || !group) return;
+    import('leaflet').then((L) => {
+      group.clearLayers();
+      const list = propsRef.current.incidents ?? [];
+      if (list.length === 0) return;
+      const spots = problemSpots(list);
+
+      // Сначала кольца проблемных мест — чтобы точки легли поверх.
+      for (const s of spots) {
+        group.addLayer(L.circle([s.lat, s.lon], {
+          radius: SAME_SPOT_M,
+          color: '#f87171',
+          weight: 1,
+          opacity: 0.6,
+          fillColor: '#f87171',
+          fillOpacity: 0.07,
+          interactive: false,
+        }));
+      }
+
+      for (const i of list) {
+        if (!Number.isFinite(i.lat) || !Number.isFinite(i.lon)) continue;
+        const open = !i.fixedAt;
+        const color = open ? '#f87171' : '#64748b';
+        const size = open ? 22 : 16;
+        const pulse = open
+          ? 'animation: optiq-crew-pulse 2.2s ease-in-out infinite;'
+          : '';
+        const icon = L.divIcon({
+          className: '',
+          iconSize: [size, size],
+          iconAnchor: [size / 2, size / 2],
+          html: `<div style="
+            width:${size}px;height:${size}px;border-radius:50%;
+            background:#0c1018ee;border:2px solid ${color};
+            display:flex;align-items:center;justify-content:center;
+            font-size:${Math.round(size * 0.55)}px;line-height:1;
+            box-shadow:0 0 8px ${color}88;${pulse}
+          ">🚨</div>`,
+        });
+
+        const hours = incidentHours(i);
+        const here = nearbyIncidents(list, i.lat, i.lon, SAME_SPOT_M, i.id);
+        const m = L.marker([i.lat, i.lon], { icon, zIndexOffset: 700 });
+        m.bindTooltip(`🚨 ${esc(i.damage)}`, { sticky: true, className: 'text-xs' });
+        m.bindPopup(
+          `<b style="color:${color}">${esc(i.damage)}</b>`
+          + `<br/><span style="font-size:11px">${open ? 'открыта' : 'устранена'}`
+          + (hours !== null ? ` · ${hours} ч` : '') + '</span>'
+          + (i.uchastok ? `<br/><span style="font-size:11px">${esc(i.uchastok)}</span>` : '')
+          + (i.cause ? `<br/><span style="color:#94a3b8;font-size:11px">причина: ${esc(i.cause)}</span>` : '')
+          + `<br/><span style="color:#64748b;font-size:11px">${
+            new Date(i.reportedAt).toLocaleString('ru')}</span>`
+          + (here.length
+            ? `<br/><span style="color:#fbbf24;font-size:11px">здесь уже рвалось ${here.length} раз</span>`
+            : '')
+          + routeLinks(i.lat, i.lon),
+        );
+        group.addLayer(m);
+      }
+    });
+  }
+
+  /**
    * Районы и сёла, обведённые в Google Earth.
    *
    * Границы не рисуются заново — они читаются из того же KML, которым
@@ -2091,6 +2174,7 @@ export default function LeafletMap(props: Props) {
   useEffect(() => { renderSnpPoints(); }, [props.snpPoints, mapReady]);
   useEffect(() => { renderAreas(); }, [props.areas, mapReady]);
   useEffect(() => { renderSiteObjects(); }, [props.siteObjects, mapReady]);
+  useEffect(() => { renderIncidents(); }, [props.incidents, mapReady]);
   useEffect(() => {
     runPlayback();
     return () => {

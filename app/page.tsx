@@ -62,7 +62,7 @@ import {
   loadConstructionLayers, saveConstructionLayers,
   DEFAULT_CONSTRUCTION_LAYERS, type ConstructionLayers,
 } from '@/components/Construction/mapLayers';
-import type { Crew, SiteObject } from '@/types/construction';
+import type { Crew, SiteObject, Incident } from '@/types/construction';
 const ConstructionPanel = dynamic(() => import('@/components/Construction/ConstructionPanel'), { ssr: false });
 import { useSupabaseAuth } from '@/hooks/useSupabaseAuth';
 import { roleFromUser } from '@/lib/authSession';
@@ -188,6 +188,7 @@ export default function HomePage() {
     // день никто не станет, а отчёт бригада сдаёт и так.
     setCrews(placedCrews({ ...j, crews: placeCrews(withAutoCrews(j), j) }));
     setMapDeviations(deviationMapItems(j));
+    setIncidents(j.incidents);
     setDrillLines(drillMapLines(j));
     // Этапы считаем из журнала: на карте должно быть видно положение дел,
     // даже если доску никто руками не вёл.
@@ -236,6 +237,8 @@ export default function HomePage() {
     setPlaybackMoves(dayMoves({ ground: j.ground, planRoutes: j.planRoutes }, date));
   }, []);
   const [siteObjects, setSiteObjects] = useState<SiteObject[]>([]);
+  // Аварии на карте: открытая горит, место с повтором обведено кольцом.
+  const [incidents, setIncidents] = useState<Incident[]>([]);
 
   /**
    * Правка трассы: пишем сразу — линия на карте и есть форма.
@@ -1238,6 +1241,7 @@ export default function HomePage() {
             onUpdateRouteCoords={handleUpdateRoute}
             onDeleteRoute={handleDeleteRoute}
             siteObjects={conLayers.objects ? siteObjects : EMPTY_LAYER}
+            incidents={conLayers.incidents ? incidents : EMPTY_LAYER}
             routeSegments={conLayers.plan ? routeSegs : EMPTY_LAYER}
             routeColorMode={routeColorMode}
             playbackMoves={playbackMoves}

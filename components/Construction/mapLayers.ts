@@ -22,6 +22,8 @@ export interface ConstructionLayers {
   areas: boolean;
   /** Муфты, столбы, конечные точки, ККС. */
   objects: boolean;
+  /** Аварии: открытые и места, где рвётся не в первый раз. */
+  incidents: boolean;
 }
 
 export const CONSTRUCTION_LAYER_LABELS: Record<keyof ConstructionLayers, string> = {
@@ -32,6 +34,7 @@ export const CONSTRUCTION_LAYER_LABELS: Record<keyof ConstructionLayers, string>
   plan: '┈ Проектная трасса',
   areas: '▦ Районы и сёла',
   objects: '🔗 Муфты и столбы',
+  incidents: '🚨 Аварии',
 };
 
 export const DEFAULT_CONSTRUCTION_LAYERS: ConstructionLayers = {
@@ -39,7 +42,7 @@ export const DEFAULT_CONSTRUCTION_LAYERS: ConstructionLayers = {
   // восемь десятков, они закрывают трассу и отвечают на вопрос, который
   // на стройке никто не задаёт. Включить можно тумблером.
   drills: true, crews: true, snp: true, deviations: true, plan: true,
-  areas: false, objects: true,
+  areas: false, objects: true, incidents: true,
 };
 
 /**

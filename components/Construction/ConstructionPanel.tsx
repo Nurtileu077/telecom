@@ -21,13 +21,14 @@ import {
   addAreas, removeAreaSource, areaSources, setMaterialPrice, upsertDrill,
   upsertObject, removeObject, setSectionProgress, scopeJournal, smuList,
   restoreRoute, upsertDrumRecord, removeDrumRecord, addPhoto, removePhoto,
-  upsertSplice, removeSplice,
+  upsertSplice, removeSplice, upsertIncident, removeIncident,
 } from './journalStore';
 import { crewsFromJournal, type DerivedCrew } from './crewDerive';
 import { placeCrews } from './crewPlace';
 import { routeViews } from './routeStyle';
 import ChangeLogView from './ChangeLogView';
 import PassportView from './PassportView';
+import IncidentsView from './IncidentsView';
 import { uploadPending } from './photoStore';
 import { storageUploadJournalPhoto } from '@/lib/supabase';
 import DeviationForm from './DeviationForm';
@@ -58,7 +59,7 @@ import {
 } from '@/types/construction';
 
 type Period = 'day' | 'week' | 'month' | 'all';
-type View = 'today' | 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages' | 'drills' | 'objects' | 'passport' | 'log';
+type View = 'today' | 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages' | 'drills' | 'objects' | 'passport' | 'incidents' | 'log';
 
 const PERIOD_LABEL: Record<Period, string> = {
   day: 'Последний день', week: '7 дней', month: '30 дней', all: 'Всё время',
@@ -523,7 +524,7 @@ export default function ConstructionPanel({
       {!empty && (
         <div className="flex flex-wrap items-center gap-1.5 px-3 md:px-4 py-2 border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0">
           <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md mr-1">
-            {([['today', 'Сегодня'], ['summary', 'Сводка'], ['management', 'Руководству'], ['entries', 'Записи'], ['crews', 'Колонны'], ['stages', 'Этапы'], ['drills', 'Проколы'], ['objects', 'Объекты'], ['passport', 'Паспорт'], ['deviations', 'Отклонения'], ['materials', 'Материалы'], ['closing', 'Закрытие'], ['corrections', 'Заявки'], ['log', 'Изменения']] as [View, string][]).map(([v, label]) => {
+            {([['today', 'Сегодня'], ['summary', 'Сводка'], ['management', 'Руководству'], ['entries', 'Записи'], ['crews', 'Колонны'], ['stages', 'Этапы'], ['drills', 'Проколы'], ['objects', 'Объекты'], ['passport', 'Паспорт'], ['incidents', 'Аварии'], ['deviations', 'Отклонения'], ['materials', 'Материалы'], ['closing', 'Закрытие'], ['corrections', 'Заявки'], ['log', 'Изменения']] as [View, string][]).map(([v, label]) => {
               const badge = v === 'corrections' ? pending.length
                 : v === 'deviations' ? openDevs.length
                 : v === 'materials' ? lowMaterials.length
@@ -762,6 +763,17 @@ export default function ConstructionPanel({
               persist(removeSplice(loadJournal(), id));
             }}
             onEditObject={(id) => { onDoneEditObject?.(); setView('objects'); void id; }}
+          />
+        ) : view === 'incidents' ? (
+          <IncidentsView
+            journal={scoped}
+            author={actor}
+            onRequestPick={onRequestPick}
+            onSave={(i) => persist(upsertIncident(loadJournal(), i))}
+            onRemove={(id) => {
+              if (!confirm('Удалить запись об аварии?')) return;
+              persist(removeIncident(loadJournal(), id));
+            }}
           />
         ) : view === 'log' ? (
           <ChangeLogView
