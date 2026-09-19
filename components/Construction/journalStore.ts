@@ -4,6 +4,7 @@ import {
   LAY_METHOD_LABEL, Deviation, isDeviationClosed, needsProtocol,
   Crew, crewOnDuty, crewEquipmentCount, MaterialDelivery, PlanRoute,
   SnpProgress, SnpStage, StageState, MapArea, SiteObject, ChangeLogEntry,
+  CableDrum,
 } from '@/types/construction';
 
 /** Состояние журнала стройки — Слой 2. */
@@ -20,6 +21,8 @@ export interface JournalState {
   crews: Crew[];
   /** Приход материалов по областям — без него остаток не из чего вычесть. */
   deliveries: MaterialDelivery[];
+  /** Барабаны кабеля: номер и паспортная длина. Остаток считается. */
+  drums: CableDrum[];
   /** Проектные трассы из KML: план, который стройка не переписывает. */
   planRoutes: PlanRoute[];
   /** Обведённые районы и сёла из KML — границы, а не трассы. */
@@ -64,7 +67,7 @@ export interface DeletedMark {
 export function emptyJournal(): JournalState {
   return {
     orders: [], ground: [], aerial: [], drills: [],
-    corrections: [], deviations: [], crews: [], deliveries: [], planRoutes: [],
+    corrections: [], deviations: [], crews: [], deliveries: [], drums: [], planRoutes: [],
     areas: [], prices: {}, objects: [], sectionProgress: {}, progress: [],
     contractors: DEFAULT_CONTRACTORS, changes: [], actFields: {},
     deleted: [], updatedAt: '',
@@ -202,6 +205,7 @@ export function scopeJournal(base: JournalState, oblast?: string): JournalState 
     drills: base.drills.filter((e) => keep(e.oblast)),
     deviations: base.deviations.filter((d) => keep(d.oblast)),
     deliveries: base.deliveries.filter((d) => keep(d.oblast)),
+    drums: base.drums.filter((d) => keep(d.oblast)),
     objects: base.objects.filter((r) => keep(r.oblast)),
     crews: base.crews.filter((c) => keep(c.oblast)),
     progress: base.progress.filter((p) => keep(p.oblast)),
@@ -308,6 +312,7 @@ export function loadJournal(): JournalState {
       deviations: p.deviations ?? [],
       crews: p.crews ?? [],
       deliveries: p.deliveries ?? [],
+      drums: p.drums ?? [],
       areas: p.areas ?? [],
       prices: p.prices ?? {},
       objects: p.objects ?? [],
@@ -358,6 +363,7 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     objects: base.objects,
     sectionProgress: base.sectionProgress,
     corrections: base.corrections,
+    drums: base.drums,
     changes: base.changes,
     deviations: base.deviations,
     crews: base.crews,
@@ -642,6 +648,30 @@ export function setStage(
       })];
 
   return { ...base, progress, updatedAt: now };
+}
+
+// ── Барабаны кабеля ──────────────────────────────────────────────────────────
+
+export function upsertDrumRecord(base: JournalState, drum: CableDrum): JournalState {
+  const now = new Date().toISOString();
+  const exists = base.drums.some((d) => d.id === drum.id);
+  return {
+    ...base,
+    drums: exists
+      ? base.drums.map((d) => (d.id === drum.id ? { ...drum, updatedAt: now } : d))
+      : [...base.drums, { ...drum, updatedAt: now }],
+    updatedAt: now,
+  };
+}
+
+export function removeDrumRecord(base: JournalState, id: string): JournalState {
+  const now = new Date().toISOString();
+  return {
+    ...base,
+    drums: base.drums.filter((d) => d.id !== id),
+    deleted: [...base.deleted, { id, at: now }],
+    updatedAt: now,
+  };
 }
 
 // ── Плановые трассы ──────────────────────────────────────────────────────────

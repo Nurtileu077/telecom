@@ -20,7 +20,7 @@ import {
   addPlanRoutes, removePlanSource, planSources, plural, setProgress, setStage,
   addAreas, removeAreaSource, areaSources, setMaterialPrice, upsertDrill,
   upsertObject, removeObject, setSectionProgress, scopeJournal, smuList,
-  restoreRoute,
+  restoreRoute, upsertDrumRecord, removeDrumRecord,
 } from './journalStore';
 import { crewsFromJournal, type DerivedCrew } from './crewDerive';
 import { placeCrews } from './crewPlace';
@@ -701,6 +701,11 @@ export default function ConstructionPanel({
           <MaterialsView
             journal={scoped}
             author={actor}
+            onSaveDrum={(d) => persist(upsertDrumRecord(loadJournal(), d))}
+            onRemoveDrum={(id) => {
+              if (!confirm('Удалить барабан? Метки задувки останутся в отчётах.')) return;
+              persist(removeDrumRecord(loadJournal(), id));
+            }}
             onAddDelivery={(d) => persist(upsertDelivery(loadJournal(), d))}
             onSetPrice={(m, price) => persist(setMaterialPrice(loadJournal(), m, price))}
             onRemoveDelivery={(id) => {

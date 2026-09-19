@@ -219,6 +219,11 @@ export interface DailyWorkEntry extends WorkEntryBase {
   equipment?: Record<string, number>;
   /** Метки трубы — чем подтверждается метраж. */
   ductMarks?: DuctMark[];
+  /**
+   * С какого барабана сколько задули. Тот же вид записи, что у меток
+   * трубы: номер и метраж. Из этого считается остаток барабана.
+   */
+  drumMarks?: DuctMark[];
   /** Итог по МКТ за день, как его пишут в отчёте. */
   totalMktM?: number;
   /** Нарастающий итог по участку. */
@@ -536,6 +541,34 @@ export interface MaterialDelivery {
   author?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Барабан кабеля.
+ *
+ * У задувщиков вопрос один и тот же: хватит ли этого барабана до муфты.
+ * Ответ — остаток, а остаток это длина барабана минус то, что с него уже
+ * задули. Длина написана на щеке барабана, расход пишут в дневном отчёте
+ * метками — значит, остаток считается сам, вводить его не нужно.
+ */
+export interface CableDrum {
+  id: string;
+  /** Номер барабана, как он написан на щеке. */
+  number: string;
+  /** Тип кабеля: ОК-24, ОК-48… Пишут как есть. */
+  cable?: string;
+  /** Длина по паспорту, метры. */
+  lengthM: number;
+  /** Где лежит — область и район. */
+  oblast?: string;
+  rayon?: string;
+  /** Когда пришёл. */
+  date?: string;
+  note?: string;
+  author?: string;
+  createdAt: string;
+  updatedAt: string;
+  sync?: 'local' | 'synced';
 }
 
 // ── Колонны на карте ─────────────────────────────────────────────────────────

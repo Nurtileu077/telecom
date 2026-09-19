@@ -77,7 +77,8 @@ export default function DailyEntryForm({
   // Подробная часть — отчёт инженера. По умолчанию свёрнута, чтобы быстрый
   // путь бригадира оставался коротким.
   const [detailed, setDetailed] = useState(
-    !!(initial?.operations || initial?.equipment || initial?.ductMarks?.length),
+    !!(initial?.operations || initial?.equipment
+      || initial?.ductMarks?.length || initial?.drumMarks?.length),
   );
   const [operations, setOperations] = useState<Partial<Record<OperationKind, string>>>(() => {
     const init: Partial<Record<OperationKind, string>> = {};
@@ -108,6 +109,9 @@ export default function DailyEntryForm({
   const [stopConfirmed, setStopConfirmed] = useState(false);
   const [ductMarks, setDuctMarks] = useState<{ coil: string; meters: string }[]>(
     () => (initial?.ductMarks ?? []).map((m) => ({ coil: m.coil, meters: String(m.meters) })),
+  );
+  const [drumMarks, setDrumMarks] = useState<{ coil: string; meters: string }[]>(
+    () => (initial?.drumMarks ?? []).map((m) => ({ coil: m.coil, meters: String(m.meters) })),
   );
   const [totalMkt, setTotalMkt] = useState(numToStr(initial?.totalMktM));
   const [totalUchastok, setTotalUchastok] = useState(numToStr(initial?.totalUchastokM));
@@ -261,6 +265,12 @@ export default function DailyEntryForm({
       })(),
       ductMarks: (() => {
         const list: DuctMark[] = ductMarks
+          .filter((m) => m.coil.trim())
+          .map((m) => ({ coil: m.coil.trim(), meters: Math.round(numOf(m.meters)) }));
+        return list.length ? list : undefined;
+      })(),
+      drumMarks: (() => {
+        const list: DuctMark[] = drumMarks
           .filter((m) => m.coil.trim())
           .map((m) => ({ coil: m.coil.trim(), meters: Math.round(numOf(m.meters)) }));
         return list.length ? list : undefined;
@@ -615,6 +625,48 @@ export default function DailyEntryForm({
                 <button type="button" onClick={() => setDuctMarks((p) => [...p, { coil: '', meters: '' }])}
                         className="self-start text-[11px] text-[var(--accent)] hover:underline">
                   + Добавить метку
+                </button>
+              </Group>
+
+              <Group title="Барабаны кабеля">
+                <p className="text-[10.5px] text-[var(--text-muted)] leading-snug -mt-1">
+                  С какого барабана сколько задули. Из этого считается остаток —
+                  вводить его отдельно не нужно.
+                </p>
+                {drumMarks.map((m, i) => (
+                  <div key={i} className="flex gap-2 items-end">
+                    <label className="flex flex-col gap-1 flex-1">
+                      <span className="text-[10.5px] text-[var(--text-muted)]">Барабан №</span>
+                      <input value={m.coil} placeholder="4003" list="ce-drums"
+                             onChange={(e) => setDrumMarks((p) => p.map((x, j) => j === i ? { ...x, coil: e.target.value } : x))}
+                             className="inp font-mono" />
+                    </label>
+                    <label className="flex flex-col gap-1 flex-1">
+                      <span className="text-[10.5px] text-[var(--text-muted)]">Задуто</span>
+                      <div className="relative">
+                        <input value={m.meters} inputMode="decimal" placeholder="0"
+                               onChange={(e) => setDrumMarks((p) => p.map((x, j) => j === i ? { ...x, meters: e.target.value.replace(/[^\d.,]/g, '') } : x))}
+                               className="inp pr-7 font-mono tabular-nums" />
+                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[var(--text-muted)]">м</span>
+                      </div>
+                    </label>
+                    <button type="button" title="Убрать"
+                            onClick={() => setDrumMarks((p) => p.filter((_, j) => j !== i))}
+                            className="btn btn-ghost btn-icon mb-0.5 text-[var(--text-muted)] hover:text-[var(--danger)]">
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))}
+                <datalist id="ce-drums">
+                  {journal.drums.map((d) => (
+                    <option key={d.id} value={d.number}>
+                      {[d.cable, `${d.lengthM} м`].filter(Boolean).join(' · ')}
+                    </option>
+                  ))}
+                </datalist>
+                <button type="button" onClick={() => setDrumMarks((p) => [...p, { coil: '', meters: '' }])}
+                        className="self-start text-[11px] text-[var(--accent)] hover:underline">
+                  + Добавить барабан
                 </button>
               </Group>
 

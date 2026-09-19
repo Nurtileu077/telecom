@@ -1,8 +1,8 @@
 'use client';
 import { useState, useMemo } from 'react';
-import { Plus, Trash2, AlertTriangle, PackageCheck, TrendingDown } from 'lucide-react';
+import { Plus, Trash2, AlertTriangle, PackageCheck, TrendingDown, Disc } from 'lucide-react';
 import {
-  MaterialKind, MATERIAL_KINDS, MATERIAL_UNIT, MaterialDelivery,
+  MaterialKind, MATERIAL_KINDS, MATERIAL_UNIT, MaterialDelivery, CableDrum,
 } from '@/types/construction';
 import { JournalState, MATERIAL_LABEL, fmtMeters, distinct, plural } from './journalStore';
 import {
@@ -10,6 +10,7 @@ import {
   materialByScope,
 } from './materialForecast';
 import { spendOf, stockValueOf, fmtMoney, hasPrices } from './materialCost';
+import { drumStates, drumTotals, unknownDrums } from './drums';
 
 /**
  * Остатки материалов и прогноз, на сколько хватит.
@@ -24,17 +25,32 @@ interface Props {
   onAddDelivery: (d: MaterialDelivery) => void;
   onRemoveDelivery: (id: string) => void;
   onSetPrice: (material: MaterialKind, price: number | undefined) => void;
+  /** Барабаны кабеля: приход заводят здесь, остаток считается. */
+  onSaveDrum?: (d: CableDrum) => void;
+  onRemoveDrum?: (id: string) => void;
   author: string;
 }
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
 
 export default function MaterialsView({
-  journal, onAddDelivery, onRemoveDelivery, onSetPrice, author,
+  journal, onAddDelivery, onRemoveDelivery, onSetPrice, onSaveDrum, onRemoveDrum, author,
 }: Props) {
   const oblasti = useMemo(() => distinct(journal.ground, (e) => e.oblast), [journal.ground]);
   const [oblast, setOblast] = useState('');
   const [adding, setAdding] = useState(false);
+  const [addingDrum, setAddingDrum] = useState(false);
+
+  // Барабаны: паспортная длина минус то, что с них задули по меткам.
+  const drums = useMemo(
+    () => drumStates(
+      journal.drums.filter((d) => !oblast || !d.oblast || d.oblast === oblast),
+      journal,
+    ),
+    [journal, oblast],
+  );
+  const drumSum = useMemo(() => drumTotals(drums), [drums]);
+  const lostDrums = useMemo(() => unknownDrums(journal.drums, journal), [journal]);
 
   const stocks = useMemo(
     () => materialForecast(journal.ground, journal.deliveries, { oblast: oblast || undefined }),
@@ -282,6 +298,84 @@ export default function MaterialsView({
         )}
       </section>
 
+      {/* Барабаны кабеля: остаток считается, а не вводится */}
+      {onSaveDrum && (
+        <section className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-2 mt-1">
+            <h4 className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
+              <Disc size={12} />Барабаны кабеля {drums.length > 0 && `(${drums.length})`}
+            </h4>
+            {drums.length > 0 && (
+              <span className="text-[10.5px] text-[var(--text-muted)]">
+                остаток {fmtMeters(drumSum.leftM)} из {fmtMeters(drumSum.totalM)}
+                {drumSum.empty > 0 && ` · пустых ${drumSum.empty}`}
+              </span>
+            )}
+            <button type="button" className="btn text-[11px] ml-auto"
+                    onClick={() => setAddingDrum(true)}>
+              <Plus size={14} />Барабан
+            </button>
+          </div>
+
+          {drums.length === 0 ? (
+            <p className="text-[11.5px] text-[var(--text-muted)]">
+              Барабаны не заведены. Номер и длину пишут на щеке барабана —
+              внесите их один раз, остаток дальше считается по меткам задувки.
+            </p>
+          ) : drums.map((d) => (
+            <div key={d.drum.id} className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] px-3 py-2 flex flex-col gap-1">
+              <div className="flex items-baseline gap-2">
+                <span className="font-mono text-[12.5px] text-[var(--text)]">№{d.drum.number}</span>
+                <span className="text-[11px] text-[var(--text-muted)] truncate">
+                  {[d.drum.cable, d.drum.oblast, d.drum.rayon].filter(Boolean).join(' · ')}
+                </span>
+                <span className="ml-auto font-mono tabular-nums text-[12.5px] shrink-0"
+                      style={{ color: d.leftM === 0 ? 'var(--text-muted)' : 'var(--accent)' }}>
+                  {fmtMeters(d.leftM)}
+                </span>
+              </div>
+              <div className="h-1.5 rounded-full bg-[var(--bg-canvas)] overflow-hidden">
+                <div className="h-full rounded-full"
+                     style={{
+                       width: `${Math.round(d.share * 100)}%`,
+                       background: d.overrun > 0 ? 'var(--warn)' : d.share >= 1 ? 'var(--text-muted)' : 'var(--accent)',
+                     }} />
+              </div>
+              <div className="flex items-baseline gap-2 text-[10.5px] text-[var(--text-muted)]">
+                <span>задуто {fmtMeters(d.usedM)} из {fmtMeters(d.drum.lengthM)}</span>
+                {d.days.length > 0 && (
+                  <span>· {d.days.length} {plural(d.days.length, 'смена', 'смены', 'смен')}</span>
+                )}
+                {d.overrun > 0 && (
+                  <span className="text-[var(--warn)]">
+                    · списано на {fmtMeters(d.overrun)} больше паспортной длины — проверьте метки
+                  </span>
+                )}
+                {d.leftM === 0 && d.overrun === 0 && <span>· пустой</span>}
+                {onRemoveDrum && (
+                  <button type="button" onClick={() => onRemoveDrum(d.drum.id)} title="Удалить барабан"
+                          className="ml-auto text-[var(--text-muted)] hover:text-[var(--danger)]">
+                    <Trash2 size={13} />
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+
+          {lostDrums.length > 0 && (
+            <div className="flex items-start gap-2 p-2.5 rounded-lg border border-[var(--warn)]/50 bg-[var(--warn)]/10 text-[11.5px] text-[var(--text)]">
+              <AlertTriangle size={15} className="shrink-0 mt-0.5" style={{ color: 'var(--warn)' }} />
+              <span>
+                Метки есть, а барабанов в списке нет:{' '}
+                {lostDrums.slice(0, 6).map((d) => `№${d.number} (${fmtMeters(d.usedM)})`).join(', ')}
+                {lostDrums.length > 6 && ` и ещё ${lostDrums.length - 6}`}.
+                Заведите их — метры с них уже ушли в трассу.
+              </span>
+            </div>
+          )}
+        </section>
+      )}
+
       <div className="flex flex-col gap-1.5">
         <h4 className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] mt-1">
           Поставки {deliveries.length > 0 && `(${deliveries.length})`}
@@ -313,6 +407,16 @@ export default function MaterialsView({
           </div>
         ))}
       </div>
+
+      {addingDrum && onSaveDrum && (
+        <DrumForm
+          oblasti={oblasti}
+          defaultOblast={oblast}
+          author={author}
+          onSave={(d) => { onSaveDrum(d); setAddingDrum(false); }}
+          onClose={() => setAddingDrum(false)}
+        />
+      )}
 
       {adding && (
         <DeliveryForm
@@ -411,6 +515,118 @@ function DeliveryForm({ oblasti, defaultOblast, author, onSave, onClose }: {
           <button type="button" className="btn btn-ghost flex-1" onClick={onClose}>Отмена</button>
           <button type="button" className="btn btn-primary flex-1" onClick={submit} disabled={!canSave}>
             Записать приход
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Барабан заводят один раз: номер и длина написаны на щеке. Остаток
+ * потом считается сам — по меткам барабана в дневных отчётах.
+ */
+function DrumForm({ oblasti, defaultOblast, author, onSave, onClose }: {
+  oblasti: string[];
+  defaultOblast: string;
+  author: string;
+  onSave: (d: CableDrum) => void;
+  onClose: () => void;
+}) {
+  const [date, setDate] = useState(todayIso);
+  const [number, setNumber] = useState('');
+  const [cable, setCable] = useState('');
+  const [lengthM, setLengthM] = useState('');
+  const [oblast, setOblast] = useState(defaultOblast || oblasti[0] || '');
+  const [rayon, setRayon] = useState('');
+  const [note, setNote] = useState('');
+  const [touched, setTouched] = useState(false);
+
+  const n = parseFloat(lengthM.replace(',', '.'));
+  const canSave = !!number.trim() && Number.isFinite(n) && n > 0;
+
+  const submit = () => {
+    setTouched(true);
+    if (!canSave) return;
+    const now = new Date().toISOString();
+    onSave({
+      id: `drum-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      number: number.trim(),
+      cable: cable.trim() || undefined,
+      lengthM: Math.round(n),
+      oblast: oblast.trim() || undefined,
+      rayon: rayon.trim() || undefined,
+      date,
+      note: note.trim() || undefined,
+      author, createdAt: now, updatedAt: now, sync: 'local',
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-[var(--bg-surface)] w-full max-w-[420px] rounded-xl border border-[var(--border)] overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)]">
+          <h3 className="text-sm font-semibold text-[var(--text)]">Барабан кабеля</h3>
+          <button type="button" className="btn btn-ghost btn-icon" onClick={onClose}>✕</button>
+        </div>
+        <div className="p-4 flex flex-col gap-3">
+          <div className="grid grid-cols-2 gap-2">
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] text-[var(--text-muted)]">Номер барабана</span>
+              <input id="dr-number" value={number} onChange={(e) => setNumber(e.target.value)}
+                     placeholder="4003"
+                     className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[13px] text-[var(--text)] font-mono" />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] text-[var(--text-muted)]">Длина по паспорту, м</span>
+              <input id="dr-length" inputMode="decimal" value={lengthM}
+                     onChange={(e) => setLengthM(e.target.value.replace(/[^\d.,]/g, ''))}
+                     placeholder="4000"
+                     className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[13px] text-[var(--text)] font-mono tabular-nums" />
+            </label>
+          </div>
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-[var(--text-muted)]">Тип кабеля</span>
+            <input id="dr-cable" value={cable} onChange={(e) => setCable(e.target.value)}
+                   placeholder="ОК-24"
+                   className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[13px] text-[var(--text)]" />
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] text-[var(--text-muted)]">Область</span>
+              <input id="dr-oblast" list="dr-oblasti" value={oblast} onChange={(e) => setOblast(e.target.value)}
+                     className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[13px] text-[var(--text)]" />
+              <datalist id="dr-oblasti">{oblasti.map((o) => <option key={o} value={o} />)}</datalist>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] text-[var(--text-muted)]">Район</span>
+              <input id="dr-rayon" value={rayon} onChange={(e) => setRayon(e.target.value)}
+                     className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[13px] text-[var(--text)]" />
+            </label>
+          </div>
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-[var(--text-muted)]">Дата прихода</span>
+            <input id="dr-date" type="date" value={date} onChange={(e) => setDate(e.target.value)}
+                   className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[13px] text-[var(--text)]" />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-[var(--text-muted)]">Примечание</span>
+            <input id="dr-note" value={note} onChange={(e) => setNote(e.target.value)}
+                   placeholder="№ накладной, склад"
+                   className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[13px] text-[var(--text)]" />
+          </label>
+          {touched && !canSave && (
+            <p className="text-[11px] text-[var(--danger)]">Нужны номер барабана и длина больше нуля.</p>
+          )}
+          <p className="text-[10.5px] text-[var(--text-muted)]">
+            Остаток вводить не нужно: он считается по меткам барабана в
+            дневных отчётах — «с какого барабана сколько задули».
+          </p>
+        </div>
+        <div className="flex gap-2 px-4 py-3 border-t border-[var(--border)]">
+          <button type="button" className="btn btn-ghost flex-1" onClick={onClose}>Отмена</button>
+          <button type="button" className="btn btn-primary flex-1" onClick={submit} disabled={!canSave}>
+            Завести барабан
           </button>
         </div>
       </div>
