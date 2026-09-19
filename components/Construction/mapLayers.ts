@@ -24,6 +24,8 @@ export interface ConstructionLayers {
   objects: boolean;
   /** Аварии: открытые и места, где рвётся не в первый раз. */
   incidents: boolean;
+  /** Поток по кабелю — там, где он уже задут и сварен. */
+  flow: boolean;
 }
 
 export const CONSTRUCTION_LAYER_LABELS: Record<keyof ConstructionLayers, string> = {
@@ -35,6 +37,7 @@ export const CONSTRUCTION_LAYER_LABELS: Record<keyof ConstructionLayers, string>
   areas: '▦ Районы и сёла',
   objects: '🔗 Муфты и столбы',
   incidents: '🚨 Аварии',
+  flow: '✨ Поток по кабелю',
 };
 
 export const DEFAULT_CONSTRUCTION_LAYERS: ConstructionLayers = {
@@ -43,6 +46,8 @@ export const DEFAULT_CONSTRUCTION_LAYERS: ConstructionLayers = {
   // на стройке никто не задаёт. Включить можно тумблером.
   drills: true, crews: true, snp: true, deviations: true, plan: true,
   areas: false, objects: true, incidents: true,
+  // Поток — украшение, а не работа: включается по желанию.
+  flow: false,
 };
 
 /**

@@ -24,6 +24,7 @@ import {
 import {
   problemSpots, nearbyIncidents, incidentHours, SAME_SPOT_M,
 } from '@/components/Construction/incidents';
+import { pointAtDistanceM } from '@/components/Construction/routeProgress';
 
 /**
  * Ссылка «доехать».
@@ -158,6 +159,8 @@ interface Props {
    * первый раз, обведено кольцом — его видно, не открывая карточку.
    */
   incidents?: import('@/types/construction').Incident[];
+  /** Поток по кабелю — украшение, включается слоем. */
+  showFlow?: boolean;
   onEditSiteObject?: (id: string) => void;
   /** Отрезки трассы по способам прокладки — когда красим по способу. */
   routeSegments?: import('@/components/Construction/routeSegments').RouteSegment[];
@@ -405,6 +408,8 @@ export default function LeafletMap(props: Props) {
   const routeEditGroupRef = useRef<any>(null);
   const objectGroupRef = useRef<any>(null);
   const incidentGroupRef = useRef<any>(null);
+  const flowGroupRef = useRef<any>(null);
+  const flowRafRef = useRef<number | null>(null);
   const playbackGroupRef = useRef<any>(null);
   const playbackRafRef = useRef<number | null>(null);
   const measureStateRef = useRef<{ coords: [number, number][]; layer?: any; total: number }>({ coords: [], total: 0 });
@@ -449,6 +454,7 @@ export default function LeafletMap(props: Props) {
       snpGroupRef.current = L.layerGroup().addTo(map);
       objectGroupRef.current = L.layerGroup().addTo(map);
       incidentGroupRef.current = L.layerGroup().addTo(map);
+      flowGroupRef.current = L.layerGroup().addTo(map);
       playbackGroupRef.current = L.layerGroup().addTo(map);
       routeEditGroupRef.current = L.layerGroup().addTo(map);
       drawGroupRef.current = L.layerGroup().addTo(map);
@@ -1598,6 +1604,65 @@ export default function LeafletMap(props: Props) {
   }
 
   /**
+   * Поток по кабелю.
+   *
+   * Украшение, и мы его так и называем: работы оно не делает. Но
+   * показывает то, что иначе видно только в цифрах — что сеть уже живая.
+   * Огонёк идёт только по трассам, где кабель задут: по трубе без кабеля
+   * ему идти неоткуда, и рисовать там движение значит врать.
+   */
+  function runFlow() {
+    const group = flowGroupRef.current;
+    if (!mapRef.current || !group) return;
+    if (flowRafRef.current !== null) {
+      cancelAnimationFrame(flowRafRef.current);
+      flowRafRef.current = null;
+    }
+    group.clearLayers();
+
+    if (!propsRef.current.showFlow) return;
+    const routes = (propsRef.current.planRoutes ?? [])
+      .filter((r) => r.stage === 'zaduvka' || r.stage === 'svarka' || r.stage === 'sdacha')
+      .filter((r) => r.coords.length >= 2 && r.lengthM > 0);
+    if (routes.length === 0) return;
+
+    import('leaflet').then((L) => {
+      // Больше трёх десятков огоньков — это уже не картинка, а нагрузка
+      // на телефон, который в поле и так на последнем издыхании.
+      const shown = routes.slice(0, 30);
+      const dots = shown.map((r) => {
+        const dot = L.circleMarker([r.coords[0][0], r.coords[0][1]], {
+          radius: 4,
+          color: '#e0f2fe',
+          weight: 1,
+          fillColor: '#38bdf8',
+          fillOpacity: 0.95,
+          interactive: false,
+        });
+        group.addLayer(dot);
+        // Фаза у каждой трассы своя: одинаковый старт выглядит как парад,
+        // а не как поток.
+        return { route: r, dot, phase: Math.random() };
+      });
+
+      const SPEED_M_S = 1200;
+      let last = performance.now();
+      const step = (t: number) => {
+        const dt = Math.min(0.1, (t - last) / 1000);
+        last = t;
+        for (const d of dots) {
+          d.phase += (SPEED_M_S * dt) / d.route.lengthM;
+          if (d.phase > 1) d.phase -= 1;
+          const at = pointAtDistanceM(d.route.coords, d.phase * d.route.lengthM);
+          if (at) d.dot.setLatLng([at.lat, at.lon]);
+        }
+        flowRafRef.current = requestAnimationFrame(step);
+      };
+      flowRafRef.current = requestAnimationFrame(step);
+    });
+  }
+
+  /**
    * Аварии на карте.
    *
    * Открытая авария — красная и пульсирует: она требует выезда сегодня.
@@ -2175,6 +2240,13 @@ export default function LeafletMap(props: Props) {
   useEffect(() => { renderAreas(); }, [props.areas, mapReady]);
   useEffect(() => { renderSiteObjects(); }, [props.siteObjects, mapReady]);
   useEffect(() => { renderIncidents(); }, [props.incidents, mapReady]);
+  useEffect(() => {
+    runFlow();
+    return () => {
+      if (flowRafRef.current !== null) cancelAnimationFrame(flowRafRef.current);
+      flowRafRef.current = null;
+    };
+  }, [props.planRoutes, props.showFlow, mapReady]);
   useEffect(() => {
     runPlayback();
     return () => {

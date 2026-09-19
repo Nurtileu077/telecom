@@ -1242,6 +1242,7 @@ export default function HomePage() {
             onDeleteRoute={handleDeleteRoute}
             siteObjects={conLayers.objects ? siteObjects : EMPTY_LAYER}
             incidents={conLayers.incidents ? incidents : EMPTY_LAYER}
+            showFlow={building && conLayers.flow}
             routeSegments={conLayers.plan ? routeSegs : EMPTY_LAYER}
             routeColorMode={routeColorMode}
             playbackMoves={playbackMoves}
