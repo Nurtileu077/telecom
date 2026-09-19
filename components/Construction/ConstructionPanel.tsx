@@ -24,6 +24,9 @@ import {
   upsertSplice, removeSplice, upsertIncident, removeIncident,
 } from './journalStore';
 import { crewsFromJournal, type DerivedCrew } from './crewDerive';
+import {
+  groupPoints, endpointKindOf, POINT_GROUPS, type PointGroup,
+} from './pointKind';
 import { placeCrews } from './crewPlace';
 import { routeViews } from './routeStyle';
 import ChangeLogView from './ChangeLogView';
@@ -52,7 +55,7 @@ import { pendingTasks, seedProgress, handoffTasks } from './stageTasks';
 import { effectiveProgress } from './stageDerive';
 import {
   LAY_METHOD_LABEL, MATERIAL_UNIT, JOURNAL_ROLES, JOURNAL_ROLE_LIST, DEVIATION_KIND_LABEL,
-  CREW_KINDS, CREW_STATUS, SITE_OBJECT_KINDS, SITE_OBJECT_SPECS,
+  CREW_KINDS, CREW_STATUS,
   type LayMethod, type MaterialKind, type DailyWorkEntry,
   type CorrectionRequest, type JournalRole, type Deviation, type Crew,
   type DrillLogEntry,
@@ -648,45 +651,32 @@ export default function ConstructionPanel({
         )}
 
         {pendingPoints && (
-          <div className="mb-3 p-3 rounded-lg border border-[var(--warn)]/50 bg-[var(--warn)]/10 flex flex-col gap-2">
-            <div className="text-[12px] text-[var(--text)]">
-              В файле <b>{pendingPoints.points.length}</b>{' '}
-              {plural(pendingPoints.points.length, 'точка', 'точки', 'точек')}.
-              Что это? Система сама не решает: в одном файле это столбы, в другом —
-              разметка обследования, по которой трасса давно изменилась.
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {SITE_OBJECT_KINDS.map((k) => (
-                <button key={k} type="button" className="btn btn-ghost text-[11px]"
-                        onClick={() => {
-                          const now = new Date().toISOString();
-                          let next = loadJournal();
-                          pendingPoints.points.forEach((pt, i) => {
-                            next = upsertObject(next, {
-                              id: `obj-${pendingPoints.source}-${i}`,
-                              kind: k,
-                              name: pt.name || undefined,
-                              lat: pt.lat, lon: pt.lon,
-                              uchastok: pt.folder,
-                              state: k === 'mufta' ? 'planned' : undefined,
-                              author: actor,
-                              createdAt: now, updatedAt: now,
-                              sync: 'local',
-                            });
-                          });
-                          persist(next);
-                          setPendingPoints(null);
-                          setView('objects');
-                        }}>
-                  {SITE_OBJECT_SPECS[k].icon} Как {SITE_OBJECT_SPECS[k].plural.toLowerCase()}
-                </button>
-              ))}
-              <button type="button" className="btn btn-ghost text-[11px] text-[var(--text-muted)]"
-                      onClick={() => setPendingPoints(null)}>
-                Не загружать
-              </button>
-            </div>
-          </div>
+          <PointImport
+            points={pendingPoints.points}
+            source={pendingPoints.source}
+            onCancel={() => setPendingPoints(null)}
+            onImport={(chosen) => {
+              const now = new Date().toISOString();
+              let next = loadJournal();
+              chosen.forEach(({ point, kind, endpointKind }, i) => {
+                next = upsertObject(next, {
+                  id: `obj-${pendingPoints.source}-${i}`,
+                  kind,
+                  name: point.name || undefined,
+                  lat: point.lat, lon: point.lon,
+                  uchastok: point.folder,
+                  endpointKind,
+                  state: kind === 'mufta' ? 'planned' : undefined,
+                  author: actor,
+                  createdAt: now, updatedAt: now,
+                  sync: 'local',
+                });
+              });
+              persist(next);
+              setPendingPoints(null);
+              setView('objects');
+            }}
+          />
         )}
 
         {report && (
@@ -1560,6 +1550,105 @@ function EmptyJournal({ onPick, onAdd, busy }: { onPick: () => void; onAdd: () =
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Что брать из точек KML.
+ *
+ * Раньше спрашивали одним вопросом на тысячу точек: «это всё столбы или
+ * всё муфты?» — и отвечать на него было нечем, поэтому точки не грузили
+ * вовсе. Теперь они разобраны по подписи: конец пути и ККС предложены
+ * сразу, пересечения и проколы — нет, потому что это разметка
+ * обследования, а трасса с тех пор менялась не раз.
+ */
+function PointImport({ points, source, onImport, onCancel }: {
+  points: import('./planImport').RawPoint[];
+  source: string;
+  onImport: (chosen: {
+    point: import('./planImport').RawPoint;
+    kind: import('@/types/construction').SiteObjectKind;
+    endpointKind?: string;
+  }[]) => void;
+  onCancel: () => void;
+}) {
+  const buckets = useMemo(() => groupPoints(points), [points]);
+  const [picked, setPicked] = useState<Set<PointGroup>>(
+    () => new Set(buckets.filter((b) => POINT_GROUPS[b.group].byDefault).map((b) => b.group)),
+  );
+
+  const usable = buckets.filter((b) => POINT_GROUPS[b.group].objectKind);
+  const total = buckets
+    .filter((b) => picked.has(b.group))
+    .reduce((s, b) => s + b.points.length, 0);
+
+  return (
+    <div className="mb-3 p-3 rounded-lg border border-[var(--accent)]/40 bg-[var(--accent-dim)] flex flex-col gap-2">
+      <div className="text-[12px] text-[var(--text)]">
+        В файле <b>{points.length}</b> {plural(points.length, 'точка', 'точки', 'точек')}.
+        Разобраны по подписи — отметьте, что взять.
+      </div>
+
+      <div className="flex flex-col gap-1">
+        {buckets.map((b) => {
+          const spec = POINT_GROUPS[b.group];
+          const can = !!spec.objectKind;
+          return (
+            <label key={b.group}
+                   className={`flex items-start gap-2 px-2 py-1.5 rounded ${
+                     can ? 'cursor-pointer hover:bg-[var(--bg-canvas)]' : 'opacity-60'}`}>
+              <input type="checkbox" disabled={!can} checked={picked.has(b.group)}
+                     onChange={() => setPicked((prev) => {
+                       const next = new Set(prev);
+                       if (next.has(b.group)) next.delete(b.group); else next.add(b.group);
+                       return next;
+                     })}
+                     className="mt-0.5 accent-[var(--accent)]" />
+              <span className="min-w-0 flex-1">
+                <span className="text-[12px] text-[var(--text)]">
+                  {spec.icon} {spec.label}
+                  <b className="ml-1.5 font-mono">{b.points.length}</b>
+                </span>
+                <span className="block text-[10.5px] text-[var(--text-muted)]">
+                  {spec.hint}
+                  {!can && ' — на карту не идут'}
+                </span>
+                <span className="block text-[10px] text-[var(--text-muted)] truncate">
+                  {b.points.slice(0, 3).map((p) => p.name).filter(Boolean).join(' · ')}
+                </span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" className="btn btn-primary text-[11px]" disabled={total === 0}
+                onClick={() => onImport(
+                  buckets
+                    .filter((b) => picked.has(b.group) && POINT_GROUPS[b.group].objectKind)
+                    .flatMap((b) => b.points.map((point) => ({
+                      point,
+                      kind: POINT_GROUPS[b.group].objectKind!,
+                      endpointKind: b.group === 'endpoint' ? endpointKindOf(point.name) : undefined,
+                    }))),
+                )}>
+          Взять {total} {plural(total, 'точку', 'точки', 'точек')}
+        </button>
+        <button type="button" className="btn btn-ghost text-[11px] text-[var(--text-muted)]"
+                onClick={onCancel}>
+          Не загружать
+        </button>
+        <span className="text-[10.5px] text-[var(--text-muted)] truncate">
+          из «{source}»
+        </span>
+      </div>
+      {usable.length === 0 && (
+        <p className="text-[11px] text-[var(--text-muted)]">
+          Ни одна подпись не похожа на конечную точку или ККС — брать нечего.
+        </p>
+      )}
     </div>
   );
 }

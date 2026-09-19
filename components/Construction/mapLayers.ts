@@ -20,7 +20,7 @@ export interface ConstructionLayers {
   plan: boolean;
   /** Обведённые районы и сёла. */
   areas: boolean;
-  /** Муфты, столбы, конечные точки, ККС. */
+  /** Муфты, столбы, конечные точки (АТС, ФАП, школа) и ККС. */
   objects: boolean;
   /** Аварии: открытые и места, где рвётся не в первый раз. */
   incidents: boolean;
@@ -35,7 +35,7 @@ export const CONSTRUCTION_LAYER_LABELS: Record<keyof ConstructionLayers, string>
   deviations: '⚠ Отклонения',
   plan: '┈ Проектная трасса',
   areas: '▦ Районы и сёла',
-  objects: '🔗 Муфты и столбы',
+  objects: '🔗 Муфты, ККС, конечные',
   incidents: '🚨 Аварии',
   flow: '✨ Поток по кабелю',
 };

@@ -1447,6 +1447,36 @@ export default function LeafletMap(props: Props) {
             : ''),
         );
         group.addLayer(line);
+
+        // «Откуда — куда» прямо на концах линии. Название трассы это и
+        // говорит, но читать его в подсказке — значит навести мышь на
+        // каждую: на карте вопрос «куда она ведёт» задают глазами.
+        // На отдалении подписи слипаются, поэтому только вблизи.
+        if (zoom >= 11 && (r.from || r.to)) {
+          const ends: [string | undefined, [number, number]][] = [
+            [r.from, r.coords[0]],
+            [r.to, r.coords[r.coords.length - 1]],
+          ];
+          for (const [label, at] of ends) {
+            if (!label || !at) continue;
+            group.addLayer(L.marker(at, {
+              interactive: false,
+              zIndexOffset: 300,
+              icon: L.divIcon({
+                className: '',
+                iconSize: [0, 0],
+                iconAnchor: [0, 0],
+                html: `<div style="
+                  transform:translate(8px,-8px);white-space:nowrap;
+                  padding:1px 5px;border-radius:4px;
+                  background:#0c1018dd;border:1px solid ${r.color}88;
+                  color:#e2e8f0;font-size:10px;font-weight:600;
+                  font-family:ui-monospace,monospace;
+                ">${esc(label)}</div>`,
+              }),
+            }));
+          }
+        }
       }
 
       // Отрезки по способам: где шли баром, где по колодцам.
