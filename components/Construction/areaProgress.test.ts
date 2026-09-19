@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { areaMapItems, areaColor } from './areaProgress';
+import { areaMapItems, areaColor, sameSnpName } from './areaProgress';
 import type { MapArea, SnpProgress } from '@/types/construction';
 
 const now = '2026-09-18T00:00:00.000Z';
@@ -143,5 +143,95 @@ describe('село без КАТО', () => {
       [snp({ kato: '1' }), snp({ kato: '2', rayon: 'Другой район' })],
     );
     expect(it0.completion).toBeNull();
+  });
+});
+
+describe('обводка, подписанная двумя сёлами', () => {
+  const zerendi: SnpProgress = {
+    kato: '191', snp: 'Зеренди', oblast: 'Акмолинская область', rayon: 'Зерендинский',
+    stages: { mkt: { status: 'done' } }, updatedAt: now,
+  };
+  const serafimovka: SnpProgress = {
+    kato: '192', snp: 'Серафимовка', oblast: 'Акмолинская область', rayon: 'Зерендинский',
+    stages: {}, updatedAt: now,
+  };
+
+  it('перегон считается по тому, куда он ведёт', () => {
+    const [item] = areaMapItems(
+      [area({ id: 'a1', kind: 'snp', name: 'зеренди серафимовка', kato: undefined })],
+      [zerendi, serafimovka],
+    );
+    // Дошли до Серафимовки — по ней и считаем, как у трасс.
+    expect(item.via).toEqual(['Зеренди', 'Серафимовка']);
+    expect(item.completion).toBe(0);
+    expect(item.name).toBe('зеренди серафимовка');
+  });
+
+  it('одно узнанное село — по нему, и без пометки о перегоне', () => {
+    const [item] = areaMapItems(
+      [area({ id: 'a1', kind: 'snp', name: 'путь до серафимовки', kato: undefined })],
+      [serafimovka],
+    );
+    expect(item.completion).not.toBeNull();
+    expect(item.via).toBeUndefined();
+  });
+
+  it('название целиком сильнее разбора по словам', () => {
+    const krasny: SnpProgress = {
+      kato: '193', snp: 'Красный Аул', oblast: 'А', stages: { mkt: { status: 'done' } }, updatedAt: now,
+    };
+    const aul: SnpProgress = {
+      kato: '194', snp: 'Аул', oblast: 'А', stages: {}, updatedAt: now,
+    };
+    const [item] = areaMapItems(
+      [area({ id: 'a1', kind: 'snp', name: 'Красный Аул', kato: undefined })],
+      [krasny, aul],
+    );
+    // Иначе «Красный Аул» посчитался бы по селу «Аул».
+    expect(item.completion).toBeGreaterThan(0);
+    expect(item.via).toBeUndefined();
+  });
+
+  it('ничего не узнали — контур остаётся серым, а не выдуманным', () => {
+    const [item] = areaMapItems(
+      [area({ id: 'a1', kind: 'snp', name: 'кузнецовка ивановка', kato: undefined })],
+      [zerendi],
+    );
+    expect(item.completion).toBeNull();
+  });
+
+  it('предлоги и сокращения за сёла не принимаются', () => {
+    const po: SnpProgress = { kato: '195', snp: 'До', oblast: 'А', stages: {}, updatedAt: now };
+    const [item] = areaMapItems(
+      [area({ id: 'a1', kind: 'snp', name: 'путь до школы', kato: undefined })],
+      [po],
+    );
+    expect(item.completion).toBeNull();
+  });
+});
+
+describe('падежи в названиях', () => {
+  it('«Серафимовки» и «Серафимовка» — одно село', () => {
+    expect(sameSnpName('серафимовки', 'серафимовка')).toBe(true);
+    expect(sameSnpName('еленовку', 'еленовка')).toBe(true);
+  });
+
+  it('«Ивановка» и «Ивановский» — разные', () => {
+    expect(sameSnpName('ивановка', 'ивановский')).toBe(false);
+  });
+
+  it('короткие названия по началу не склеиваются', () => {
+    expect(sameSnpName('акан', 'акша')).toBe(false);
+    expect(sameSnpName('кос', 'косколь')).toBe(false);
+  });
+
+  it('под правило подошли двое — значит, не знаем, кто', () => {
+    const a: SnpProgress = { kato: '1', snp: 'Николаевка', oblast: 'А', stages: { mkt: done }, updatedAt: now };
+    const b: SnpProgress = { kato: '2', snp: 'Николаевки', oblast: 'А', stages: {}, updatedAt: now };
+    const [item] = areaMapItems(
+      [area({ id: 'x', kind: 'snp', name: 'путь до николаевке', kato: undefined })],
+      [a, b],
+    );
+    expect(item.completion).toBeNull();
   });
 });

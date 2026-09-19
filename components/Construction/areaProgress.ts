@@ -26,6 +26,12 @@ export interface AreaMapItem {
   /** Текущий этап села. Для района и области — null. */
   stage: SnpStage | null;
   status: StageStatus | null;
+  /**
+   * Сёла, узнанные в названии обводки. У перегона их два: «зеренди
+   * серафимовка». Показываем оба, чтобы было видно, по какому из них
+   * посчитано.
+   */
+  via?: string[];
   /** Сёл закрыто из скольких — для района и области. */
   doneSnp: number;
   totalSnp: number;
@@ -48,6 +54,70 @@ function matches(a: MapArea, p: SnpProgress): boolean {
   return false;
 }
 
+/**
+ * Слишком короткие куски названия в поиск не берём: «до», «п», «к» — это
+ * предлоги и сокращения, а не сёла.
+ */
+const MIN_TOKEN = 3;
+
+/**
+ * Одно и то же село в разных падежах: «до Серафимовки» — это Серафимовка.
+ *
+ * Полноценного склонения тут не нужно и не будет: достаточно того, что
+ * названия расходятся только хвостом. Общее начало не меньше шести букв,
+ * хвост не длиннее двух — «Серафимовки» и «Серафимовка» сойдутся, а
+ * «Ивановка» и «Ивановский» останутся разными сёлами, как и должно быть.
+ */
+const STEM_MIN = 6;
+const TAIL_MAX = 2;
+
+export function sameSnpName(a: string, b: string): boolean {
+  if (a === b) return true;
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  return i >= STEM_MIN && a.length - i <= TAIL_MAX && b.length - i <= TAIL_MAX;
+}
+
+/**
+ * Обводка, подписанная двумя сёлами, — это перегон между ними: в файле их
+ * подписывают «зеренди серафимовка». Такой контур целиком не совпадёт ни
+ * с одним селом, и половина карты осталась бы серой.
+ *
+ * Правило то же, что у трасс: перегон принадлежит тому, куда он ведёт, —
+ * последнему названному селу. Оба названия возвращаем, чтобы в карточке
+ * было видно, по какому из них посчитано, а не «откуда-то взялось».
+ */
+function snpByTokens(
+  name: string,
+  byName: Map<string, SnpProgress | null>,
+): { hit?: SnpProgress; via: string[] } {
+  const tokens = name.toLowerCase().replace(/ё/g, 'е')
+    .split(/[^a-zа-я0-9]+/)
+    .filter((t) => t.length >= MIN_TOKEN);
+
+  const hits: SnpProgress[] = [];
+  const seen = new Set<string>();
+  for (const t of tokens) {
+    const key = normName(t);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    // Одноимённые сёла лежат в индексе как null: приписать контуру чужую
+    // стройку хуже, чем оставить его серым.
+    let p = byName.get(key);
+    if (p === undefined) {
+      // Точного совпадения нет — пробуем падеж: «до Серафимовки».
+      for (const [k, v] of byName) {
+        if (!sameSnpName(key, k)) continue;
+        // Под правило подошли двое — значит, мы не знаем, кто из них.
+        if (p !== undefined) { p = null; break; }
+        p = v;
+      }
+    }
+    if (p) hits.push(p);
+  }
+  return { hit: hits[hits.length - 1], via: hits.map((h) => h.snp) };
+}
+
 export function areaMapItems(areas: MapArea[], progress: SnpProgress[]): AreaMapItem[] {
   const byKato = new Map(progress.map((p) => [p.kato, p]));
   // Запасной ключ — имя: в KML обводка подписана как «с. Кусеп», а КАТО у
@@ -67,9 +137,12 @@ export function areaMapItems(areas: MapArea[], progress: SnpProgress[]): AreaMap
     };
 
     if (a.kind === 'snp') {
-      const p = (a.kato ? byKato.get(a.kato) : undefined)
+      // Сначала целиком: «Красный Аул» — одно село, а не «красный» и «аул».
+      const direct = (a.kato ? byKato.get(a.kato) : undefined)
         ?? byName.get(normName(a.name))
         ?? undefined;
+      const tokens = direct ? null : snpByTokens(a.name, byName);
+      const p = direct ?? tokens?.hit;
       if (!p) {
         return {
           ...base, completion: null, stage: null, status: null,
@@ -79,6 +152,7 @@ export function areaMapItems(areas: MapArea[], progress: SnpProgress[]): AreaMap
       const stage = currentStage(p);
       return {
         ...base,
+        via: tokens && tokens.via.length > 1 ? tokens.via : undefined,
         completion: snpCompletion(p),
         stage,
         status: stage ? stageStatus(p, stage) : 'done',

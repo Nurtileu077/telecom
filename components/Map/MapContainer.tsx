@@ -1834,12 +1834,19 @@ export default function LeafletMap(props: Props) {
             + '</span>'
           : '';
 
-        poly.bindTooltip(`${esc(a.name)} — ${esc(progress)}`, { sticky: true, className: 'text-xs' });
+        // Перегон подписываем тем, по чему посчитано: «зеренди серафимовка»
+        // — это путь к Серафимовке, и цифра на нём её, а не ничья.
+        const via = a.via && a.via.length > 1
+          ? ` · перегон ${a.via.join(' → ')}, показано по «${a.via[a.via.length - 1]}»`
+          : '';
+        poly.bindTooltip(`${esc(a.name)} — ${esc(progress)}${esc(via)}`,
+          { sticky: true, className: 'text-xs' });
         poly.bindPopup(
           `<b>${esc(a.name)}</b>`
           + `<br/><span style="color:#64748b;font-size:11px">${esc(AREA_KIND_LABEL[a.kind])}`
           + `${a.rayon && a.kind === 'snp' ? ` · ${esc(a.rayon)}` : ''}</span>`
           + `<div style="margin-top:4px;color:${color};font-size:12px">${esc(progress)}</div>`
+          + (via ? `<div style="color:#64748b;font-size:11px">${esc(via.replace(/^ · /, ''))}</div>` : '')
           + snpLine
           + (a.kato ? `<br/><span style="color:#64748b;font-size:10px;font-family:ui-monospace,monospace">${esc(a.kato)}</span>` : ''),
         );
