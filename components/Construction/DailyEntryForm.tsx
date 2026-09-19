@@ -11,6 +11,8 @@ import {
   JournalState, loadLastContext, saveLastContext, MATERIAL_LABEL,
   suggestContractor, smuList,
 } from './journalStore';
+import PhotoAttach from './PhotoAttach';
+import { photosOf } from './photoStore';
 import { advanceAlong, routeForSection } from './routeProgress';
 import { normName } from './areaImport';
 
@@ -36,6 +38,14 @@ interface Props {
     stop?: { lat: number; lon: number; routeId: string; doneM: number; manual: boolean },
   ) => void;
   onClose: () => void;
+  /** Кто вносит — им подписывается фотография. */
+  author?: string;
+  /**
+   * Фото сохраняются сразу, не дожидаясь отправки формы: снимок делают
+   * на месте, а форму могут закрыть и вернуться к ней позже.
+   */
+  onAddPhoto?: (p: import('@/types/construction').FieldPhoto) => void;
+  onRemovePhoto?: (id: string) => void;
 }
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
@@ -43,6 +53,7 @@ const numToStr = (v?: number): string => (v ? String(v) : '');
 
 export default function DailyEntryForm({
   journal, initial, onSave, onClose, onRequestPick,
+  author = '', onAddPhoto, onRemovePhoto,
 }: Props) {
   const correcting = !!initial;
   const last = useMemo(() => (correcting ? null : loadLastContext()), [correcting]);
@@ -110,6 +121,16 @@ export default function DailyEntryForm({
   const [ductMarks, setDuctMarks] = useState<{ coil: string; meters: string }[]>(
     () => (initial?.ductMarks ?? []).map((m) => ({ coil: m.coil, meters: String(m.meters) })),
   );
+  /**
+   * Идентификатор записи заводим сразу, а не при сохранении: к нему
+   * цепляются фотографии, а приложить фото хотят до того, как форма
+   * закрыта. Для правки берём существующий — иначе правка породила бы
+   * вторую запись вместо исправления первой.
+   */
+  const [entryId] = useState(
+    () => initial?.id ?? `g-manual-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+  );
+
   const [drumMarks, setDrumMarks] = useState<{ coil: string; meters: string }[]>(
     () => (initial?.drumMarks ?? []).map((m) => ({ coil: m.coil, meters: String(m.meters) })),
   );
@@ -232,7 +253,7 @@ export default function DailyEntryForm({
 
     onSave({
       kind: 'ground',
-      id: initial?.id ?? `g-manual-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      id: entryId,
       date, smu: smu.trim(),
       contractor: contractor.trim() || undefined,
       column: column.trim() || undefined,
@@ -668,6 +689,16 @@ export default function DailyEntryForm({
                         className="self-start text-[11px] text-[var(--accent)] hover:underline">
                   + Добавить барабан
                 </button>
+              </Group>
+
+              <Group title="Фотографии">
+                <PhotoAttach
+                  photos={photosOf(journal.photos, 'entry', entryId)}
+                  kind="entry" refId={entryId} author={author}
+                  place={{ oblast, rayon, uchastok, kato }}
+                  onAdd={onAddPhoto ?? (() => {})}
+                  onRemove={onRemovePhoto ?? (() => {})}
+                />
               </Group>
 
               <Field label="Причины простоя / невыполнения">

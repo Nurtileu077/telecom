@@ -1,11 +1,13 @@
 'use client';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { X, MapPin, Wrench, Boxes, Building2, Ruler } from 'lucide-react';
 import {
   LAY_METHODS, LAY_METHOD_LABEL, MATERIAL_UNIT, OPERATIONS,
   type LayMethod, type MaterialKind,
 } from '@/types/construction';
 import { JournalState, fmtKm, fmtMeters, MATERIAL_LABEL, plural } from './journalStore';
+import { getPhotoBlob, GEO_SOURCE_LABEL } from './photoStore';
+import type { FieldPhoto } from '@/types/construction';
 
 /**
  * Что было в этот день.
@@ -82,8 +84,15 @@ export default function DayReport({ journal, date, oblast, onClose, onPlay }: Pr
     const drillM = drills.reduce((s, d) => s + (d.meters ?? 0), 0);
     const drillCount = drills.reduce((s, d) => s + (d.count || 0), 0);
 
+    // Фото дня — по записям этого дня, а не по дате файла: снимок могли
+    // приложить назавтра, но относится он к смене, к которой приложен.
+    const ids = new Set([...ground, ...aerial, ...drills].map((e) => e.id));
+    const photos = journal.photos.filter(
+      (p) => ids.has(p.refId) || p.takenAt.slice(0, 10) === date,
+    );
+
     return {
-      ground, aerial, drills, deviations,
+      ground, aerial, drills, deviations, photos,
       groundM, aerialM, drillM, drillCount,
       byMethod, byMaterial,
       oblasts: [...byOblast.entries()].sort((a, b) => b[1] - a[1]),
@@ -216,6 +225,18 @@ export default function DayReport({ journal, date, oblast, onClose, onPlay }: Pr
             </section>
           )}
 
+          {/* Фотографии дня: подтверждение того, что в цифрах не видно */}
+          {data.photos.length > 0 && (
+            <section className="flex flex-col gap-1.5">
+              <h4 className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
+                Фотографии ({data.photos.length})
+              </h4>
+              <div className="flex flex-wrap gap-2">
+                {data.photos.map((p) => <DayPhoto key={p.id} photo={p} />)}
+              </div>
+            </section>
+          )}
+
           <section className="flex flex-col gap-1.5">
             <h4 className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
               Записи дня ({data.ground.length + data.aerial.length})
@@ -290,5 +311,43 @@ function Block({ title, icon, rows }: {
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Снимок в отчёте дня. Пока фото не ушло в облако, показываем локальную
+ * копию: ждать обмена, чтобы увидеть собственную фотографию, незачем.
+ */
+function DayPhoto({ photo }: { photo: FieldPhoto }) {
+  const [src, setSrc] = useState<string | null>(photo.url ?? null);
+
+  useEffect(() => {
+    if (photo.url) { setSrc(photo.url); return; }
+    let url: string | null = null;
+    let alive = true;
+    void getPhotoBlob(photo.id).then((blob) => {
+      if (!alive || !blob) return;
+      url = URL.createObjectURL(blob);
+      setSrc(url);
+    });
+    return () => { alive = false; if (url) URL.revokeObjectURL(url); };
+  }, [photo.id, photo.url]);
+
+  const when = new Date(photo.takenAt);
+  return (
+    <figure className="w-[120px] m-0 rounded-lg border border-[var(--border)] overflow-hidden bg-[var(--bg-canvas)]">
+      {src
+        // eslint-disable-next-line @next/next/no-img-element
+        ? <img src={src} alt="" className="w-full h-[90px] object-cover" />
+        : <div className="w-full h-[90px]" />}
+      <figcaption className="px-1.5 py-1 text-[9.5px] text-[var(--text-muted)] leading-tight">
+        {Number.isNaN(when.getTime())
+          ? '—'
+          : when.toLocaleString('ru', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+        <br />
+        {GEO_SOURCE_LABEL[photo.geoSource]}
+        {photo.uchastok && <><br />{photo.uchastok}</>}
+      </figcaption>
+    </figure>
   );
 }

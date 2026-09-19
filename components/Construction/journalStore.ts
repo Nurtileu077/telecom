@@ -4,7 +4,7 @@ import {
   LAY_METHOD_LABEL, Deviation, isDeviationClosed, needsProtocol,
   Crew, crewOnDuty, crewEquipmentCount, MaterialDelivery, PlanRoute,
   SnpProgress, SnpStage, StageState, MapArea, SiteObject, ChangeLogEntry,
-  CableDrum,
+  CableDrum, FieldPhoto,
 } from '@/types/construction';
 
 /** Состояние журнала стройки — Слой 2. */
@@ -23,6 +23,8 @@ export interface JournalState {
   deliveries: MaterialDelivery[];
   /** Барабаны кабеля: номер и паспортная длина. Остаток считается. */
   drums: CableDrum[];
+  /** Карточки полевых фото. Сами файлы лежат отдельно — см. photoStore. */
+  photos: FieldPhoto[];
   /** Проектные трассы из KML: план, который стройка не переписывает. */
   planRoutes: PlanRoute[];
   /** Обведённые районы и сёла из KML — границы, а не трассы. */
@@ -67,7 +69,8 @@ export interface DeletedMark {
 export function emptyJournal(): JournalState {
   return {
     orders: [], ground: [], aerial: [], drills: [],
-    corrections: [], deviations: [], crews: [], deliveries: [], drums: [], planRoutes: [],
+    corrections: [], deviations: [], crews: [], deliveries: [], drums: [],
+    photos: [], planRoutes: [],
     areas: [], prices: {}, objects: [], sectionProgress: {}, progress: [],
     contractors: DEFAULT_CONTRACTORS, changes: [], actFields: {},
     deleted: [], updatedAt: '',
@@ -206,6 +209,7 @@ export function scopeJournal(base: JournalState, oblast?: string): JournalState 
     deviations: base.deviations.filter((d) => keep(d.oblast)),
     deliveries: base.deliveries.filter((d) => keep(d.oblast)),
     drums: base.drums.filter((d) => keep(d.oblast)),
+    photos: base.photos.filter((p) => keep(p.oblast)),
     objects: base.objects.filter((r) => keep(r.oblast)),
     crews: base.crews.filter((c) => keep(c.oblast)),
     progress: base.progress.filter((p) => keep(p.oblast)),
@@ -313,6 +317,7 @@ export function loadJournal(): JournalState {
       crews: p.crews ?? [],
       deliveries: p.deliveries ?? [],
       drums: p.drums ?? [],
+      photos: p.photos ?? [],
       areas: p.areas ?? [],
       prices: p.prices ?? {},
       objects: p.objects ?? [],
@@ -364,6 +369,7 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     sectionProgress: base.sectionProgress,
     corrections: base.corrections,
     drums: base.drums,
+    photos: base.photos,
     changes: base.changes,
     deviations: base.deviations,
     crews: base.crews,
@@ -669,6 +675,27 @@ export function removeDrumRecord(base: JournalState, id: string): JournalState {
   return {
     ...base,
     drums: base.drums.filter((d) => d.id !== id),
+    deleted: [...base.deleted, { id, at: now }],
+    updatedAt: now,
+  };
+}
+
+// ── Полевые фото ─────────────────────────────────────────────────────────────
+
+export function addPhoto(base: JournalState, photo: FieldPhoto): JournalState {
+  const now = new Date().toISOString();
+  return {
+    ...base,
+    photos: [...base.photos.filter((p) => p.id !== photo.id), { ...photo, updatedAt: now }],
+    updatedAt: now,
+  };
+}
+
+export function removePhoto(base: JournalState, id: string): JournalState {
+  const now = new Date().toISOString();
+  return {
+    ...base,
+    photos: base.photos.filter((p) => p.id !== id),
     deleted: [...base.deleted, { id, at: now }],
     updatedAt: now,
   };

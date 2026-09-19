@@ -20,12 +20,14 @@ import {
   addPlanRoutes, removePlanSource, planSources, plural, setProgress, setStage,
   addAreas, removeAreaSource, areaSources, setMaterialPrice, upsertDrill,
   upsertObject, removeObject, setSectionProgress, scopeJournal, smuList,
-  restoreRoute, upsertDrumRecord, removeDrumRecord,
+  restoreRoute, upsertDrumRecord, removeDrumRecord, addPhoto, removePhoto,
 } from './journalStore';
 import { crewsFromJournal, type DerivedCrew } from './crewDerive';
 import { placeCrews } from './crewPlace';
 import { routeViews } from './routeStyle';
 import ChangeLogView from './ChangeLogView';
+import { uploadPending } from './photoStore';
+import { storageUploadJournalPhoto } from '@/lib/supabase';
 import DeviationForm from './DeviationForm';
 import CrewForm from './CrewForm';
 import SectionClosing from './SectionClosing';
@@ -204,6 +206,21 @@ export default function ConstructionPanel({
   }, [persist]);
 
   /**
+   * Отправка локальных фото. Отдельным шагом перед обменом журналом:
+   * файлы тяжёлые, и их судьба не должна решать судьбу цифр.
+   */
+  const uploadPendingPhotos = useCallback(async (base: JournalState) => {
+    if (!journalCloudEnabled() || base.photos.every((p) => !p.pending)) {
+      return { state: base, sent: 0, failed: 0, changed: false };
+    }
+    const { photos, sent, failed } = await uploadPending(
+      base.photos,
+      (id, blob) => storageUploadJournalPhoto(id, blob),
+    );
+    return { state: { ...base, photos }, sent, failed, changed: sent > 0 || failed > 0 };
+  }, []);
+
+  /**
    * Обмен с облаком. Слитое состояние обязательно сохраняем локально —
    * иначе при следующем обмене чужие правки придут заново.
    */
@@ -211,6 +228,11 @@ export default function ConstructionPanel({
     setSyncing(true);
     setSyncNote(null);
     try {
+      // Сначала файлы, потом журнал: карточка со ссылкой уйдёт в том же
+      // обмене, и у соседа фото откроется сразу, а не «в следующий раз».
+      const withPhotos = await uploadPendingPhotos(loadJournal());
+      if (withPhotos.changed) saveJournal(withPhotos.state);
+
       const res = await syncJournal(loadJournal(), actor);
       if (!res.ok) {
         setSyncNote({ tone: 'warn', text: res.message });
@@ -227,11 +249,18 @@ export default function ConstructionPanel({
         conflicts ? `расхождений ${conflicts}` : '',
         removed ? `удалено ${removed}` : '',
       ].filter(Boolean);
+      const photoNote = withPhotos.sent
+        ? ` Фото отправлено: ${withPhotos.sent}.`
+        : '';
+      const photoWarn = withPhotos.failed
+        ? ` Не ушло фото: ${withPhotos.failed} — попробуйте при связи получше.`
+        : '';
       setSyncNote({
-        tone: 'ok',
-        text: res.firstPush
+        tone: withPhotos.failed ? 'warn' : 'ok',
+        text: (res.firstPush
           ? 'Журнал впервые выгружен в облако.'
-          : parts.length ? `Синхронизировано: ${parts.join(', ')}.` : 'Всё уже совпадало.',
+          : parts.length ? `Синхронизировано: ${parts.join(', ')}.` : 'Всё уже совпадало.')
+          + photoNote + photoWarn,
       });
     } finally {
       setSyncing(false);
@@ -830,6 +859,9 @@ export default function ConstructionPanel({
         <DailyEntryForm
           journal={journal}
           initial={editing}
+          author={actor}
+          onAddPhoto={(p) => persist(addPhoto(loadJournal(), p))}
+          onRemovePhoto={(id) => persist(removePhoto(loadJournal(), id))}
           onRequestPick={onRequestPick}
           onSave={handleFormSave}
           onClose={() => { setFormOpen(false); setEditing(null); }}

@@ -233,6 +233,28 @@ export async function storageUploadFieldPhoto(
   return { url: data.publicUrl, storagePath };
 }
 
+/**
+ * Полевое фото стройки.
+ *
+ * Лежит в том же бакете, но своей веткой: снимки стройки не привязаны
+ * к проекту генератора и живут по своему журналу.
+ */
+export async function storageUploadJournalPhoto(
+  photoId: string,
+  blob: Blob,
+): Promise<{ url: string; storagePath: string }> {
+  if (!supabase) throw new Error('Supabase не настроен');
+  await assertSupabaseAccess();
+  const safeId = photoId.replace(/[^\w.-]/g, '_');
+  const storagePath = `journal/${safeId}.jpg`;
+  const { error } = await supabase.storage
+    .from(FIELD_PHOTOS_BUCKET)
+    .upload(storagePath, blob, { contentType: blob.type || 'image/jpeg', upsert: true });
+  if (error) throw error;
+  const { data } = supabase.storage.from(FIELD_PHOTOS_BUCKET).getPublicUrl(storagePath);
+  return { url: data.publicUrl, storagePath };
+}
+
 export async function storageDeleteFieldPhoto(storagePath: string): Promise<void> {
   if (!supabase || !storagePath) return;
   const { error } = await supabase.storage.from(FIELD_PHOTOS_BUCKET).remove([storagePath]);
