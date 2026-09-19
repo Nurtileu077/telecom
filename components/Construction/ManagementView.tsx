@@ -2,6 +2,7 @@
 import { useMemo, useState } from 'react';
 import {
   TrendingUp, AlertTriangle, CalendarClock, Users, MapPin, ChevronRight, Gauge, Ban,
+  Share2,
 } from 'lucide-react';
 import { JournalState, fmtKm, fmtMeters, plural, openDeviations, pendingCorrections } from './journalStore';
 import { materialForecast, lowStock, negativeStock, unknownStock } from './materialForecast';
@@ -13,6 +14,7 @@ import { MATERIAL_LABEL } from './journalStore';
 import { methodRates, crewRates, shiftsLeft, METHOD_LABEL } from './crewRate';
 import { downtimeReasons } from './dayPlan';
 import { rating, planFor, weekBounds, monthBounds, type RatingBy } from './rating';
+import { publicReportHtml, publicReportFileName } from './publicReport';
 
 /**
  * Взгляд руководства.
@@ -133,6 +135,22 @@ export default function ManagementView({ journal, onOpenView }: Props) {
   // Причины простоя пишут в каждом отчёте, но никто их не складывал.
   // Сложенные, они отвечают на вопрос, ради которого их и пишут.
   const stalls = useMemo(() => downtimeReasons(journal.ground), [journal.ground]);
+
+  /**
+   * Отчёт файлом. Обычная HTML-страница: открывается в любом телефоне,
+   * пересылается в мессенджере и не требует ни входа, ни приложения.
+   */
+  const sendReport = () => {
+    const html = publicReportHtml({ journal, contractor: undefined });
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = publicReportFileName();
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 1000);
+  };
 
   // Рейтинг и план на период. Соревнование ничего не строит само по себе,
   // но отвечает на вопрос, который иначе решают на глаз: кто идёт с
@@ -295,6 +313,17 @@ export default function ManagementView({ journal, onOpenView }: Props) {
           </div>
         )}
       </section>
+
+      {/* Отчёт заказчику: прогресс без доступа внутрь */}
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-[10.5px] text-[var(--text-muted)] flex-1 min-w-[200px]">
+          Заказчику нужен прогресс, а не доступ внутрь. Отчёт — отдельная
+          страница: области, план, факт, срок. Без подрядчиков, простоев и денег.
+        </p>
+        <button type="button" className="btn text-[11px]" onClick={sendReport}>
+          <Share2 size={14} />Отчёт заказчику
+        </button>
+      </div>
 
       {/* План на неделю и месяц — темп, умноженный на рабочие дни */}
       {(weekPlan || monthPlan) && (
