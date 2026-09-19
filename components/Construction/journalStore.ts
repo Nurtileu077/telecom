@@ -4,7 +4,7 @@ import {
   LAY_METHOD_LABEL, Deviation, isDeviationClosed, needsProtocol,
   Crew, crewOnDuty, crewEquipmentCount, MaterialDelivery, PlanRoute,
   SnpProgress, SnpStage, StageState, MapArea, SiteObject, ChangeLogEntry,
-  CableDrum, FieldPhoto, SpliceRecord, Incident,
+  CableDrum, FieldPhoto, SpliceRecord, Incident, normalizeRole,
 } from '@/types/construction';
 
 /** Состояние журнала стройки — Слой 2. */
@@ -1327,10 +1327,12 @@ export function diffEntries(a: DailyWorkEntry, b: DailyWorkEntry): FieldDiff[] {
 const ROLE_KEY = 'optiq-journal-role';
 
 export function loadJournalRole(): JournalRole {
-  if (typeof window === 'undefined') return 'field';
+  if (typeof window === 'undefined') return 'mkt';
   try {
-    return localStorage.getItem(ROLE_KEY) === 'office' ? 'office' : 'field';
-  } catch { return 'field'; }
+    // Старое «field» превращается в МКТ, а не сбрасывает выбор: человек
+    // его однажды уже сделал.
+    return normalizeRole(localStorage.getItem(ROLE_KEY));
+  } catch { return 'mkt'; }
 }
 
 export function saveJournalRole(r: JournalRole): void {

@@ -51,7 +51,7 @@ import { importPlanFile } from './planImport';
 import { pendingTasks, seedProgress, handoffTasks } from './stageTasks';
 import { effectiveProgress } from './stageDerive';
 import {
-  LAY_METHOD_LABEL, MATERIAL_UNIT, JOURNAL_ROLE_LABEL, DEVIATION_KIND_LABEL,
+  LAY_METHOD_LABEL, MATERIAL_UNIT, JOURNAL_ROLES, JOURNAL_ROLE_LIST, DEVIATION_KIND_LABEL,
   CREW_KINDS, CREW_STATUS, SITE_OBJECT_KINDS, SITE_OBJECT_SPECS,
   type LayMethod, type MaterialKind, type DailyWorkEntry,
   type CorrectionRequest, type JournalRole, type Deviation, type Crew,
@@ -109,13 +109,19 @@ export default function ConstructionPanel({
   const [syncNote, setSyncNote] = useState<{ tone: 'ok' | 'warn'; text: string } | null>(null);
   const [syncedAt, setSyncedAt] = useState<string | null>(null);
   const cloud = journalCloudEnabled();
-  const [role, setRole] = useState<JournalRole>('field');
+  const [role, setRole] = useState<JournalRole>('mkt');
+  /** Показать вкладки, которых у этой роли нет в списке по умолчанию. */
+  const [allTabs, setAllTabs] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const planRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setJournal(loadJournal());
-    setRole(loadJournalRole());
+    const r = loadJournalRole();
+    setRole(r);
+    // Журнал открывается там, где у этой роли работа: ГНБщику нужны
+    // проколы, руководству — сводка, отчётности — очередь заявок.
+    setView(JOURNAL_ROLES[r].home as View);
     setSyncedAt(loadLastSyncAt());
   }, []);
 
@@ -465,6 +471,24 @@ export default function ConstructionPanel({
   const usesOblast = view !== 'corrections';
   const usesSmu = view === 'summary' || view === 'entries';
 
+  /**
+   * Вкладки роли. Роль ничего не запрещает — она убирает с глаз чужое:
+   * ГНБщику не нужны акты, руководству не нужна форма закрытия дня.
+   * Всё остальное открывается кнопкой «Ещё», а текущая вкладка видна
+   * всегда, даже если в список роли не входит.
+   */
+  const ALL_VIEWS: [View, string][] = [
+    ['today', 'Сегодня'], ['summary', 'Сводка'], ['management', 'Руководству'],
+    ['entries', 'Записи'], ['crews', 'Колонны'], ['stages', 'Этапы'],
+    ['drills', 'Проколы'], ['objects', 'Объекты'], ['passport', 'Паспорт'],
+    ['incidents', 'Аварии'], ['deviations', 'Отклонения'], ['materials', 'Материалы'],
+    ['closing', 'Закрытие'], ['corrections', 'Заявки'], ['log', 'Изменения'],
+  ];
+  const roleViews = new Set(JOURNAL_ROLES[role].views);
+  const shownViews = allTabs
+    ? ALL_VIEWS
+    : ALL_VIEWS.filter(([v]) => roleViews.has(v) || v === view);
+
   return (
     <div className="fixed inset-0 z-[9998] bg-[var(--bg-canvas)] flex flex-col">
       {/* Шапка */}
@@ -524,7 +548,7 @@ export default function ConstructionPanel({
       {!empty && (
         <div className="flex flex-wrap items-center gap-1.5 px-3 md:px-4 py-2 border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0">
           <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md mr-1">
-            {([['today', 'Сегодня'], ['summary', 'Сводка'], ['management', 'Руководству'], ['entries', 'Записи'], ['crews', 'Колонны'], ['stages', 'Этапы'], ['drills', 'Проколы'], ['objects', 'Объекты'], ['passport', 'Паспорт'], ['incidents', 'Аварии'], ['deviations', 'Отклонения'], ['materials', 'Материалы'], ['closing', 'Закрытие'], ['corrections', 'Заявки'], ['log', 'Изменения']] as [View, string][]).map(([v, label]) => {
+            {shownViews.map(([v, label]) => {
               const badge = v === 'corrections' ? pending.length
                 : v === 'deviations' ? openDevs.length
                 : v === 'materials' ? lowMaterials.length
@@ -542,17 +566,27 @@ export default function ConstructionPanel({
                 </button>
               );
             })}
-          </div>
-          <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md" title="Кто вы в журнале">
-            {(['field', 'office'] as JournalRole[]).map((r) => (
-              <button key={r} type="button"
-                onClick={() => { setRole(r); saveJournalRole(r); }}
-                className={`px-2 py-1 text-[11px] rounded transition-colors ${
-                  role === r ? 'bg-[var(--accent-dim)] text-[var(--accent)]' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}>
-                {JOURNAL_ROLE_LABEL[r]}
+            {shownViews.length < ALL_VIEWS.length && (
+              <button type="button" onClick={() => setAllTabs(true)}
+                      title="Показать все разделы журнала"
+                      className="px-2.5 py-1 text-[11px] rounded text-[var(--text-muted)] hover:text-[var(--text)]">
+                Ещё
               </button>
-            ))}
+            )}
           </div>
+          <select value={role} title="Кто вы в журнале — от этого зависит, что видно сразу"
+                  onChange={(e) => {
+                    const r = e.target.value as JournalRole;
+                    setRole(r);
+                    saveJournalRole(r);
+                    setAllTabs(false);
+                    setView(JOURNAL_ROLES[r].home as View);
+                  }}
+                  className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded-md px-2 py-1 text-[11px] text-[var(--text)]">
+            {JOURNAL_ROLE_LIST.map((r) => (
+              <option key={r} value={r}>{JOURNAL_ROLES[r].icon} {JOURNAL_ROLES[r].label}</option>
+            ))}
+          </select>
           {usesPeriod && (
             <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md">
               {(Object.keys(PERIOD_LABEL) as Period[]).map((p) => (
@@ -804,7 +838,7 @@ export default function ConstructionPanel({
         ) : view === 'corrections' ? (
           <CorrectionsList
             rows={[...journal.corrections].reverse()}
-            canDecide={role === 'office'}
+            canDecide={!!JOURNAL_ROLES[role].canApprove}
             onApprove={handleApprove}
             onReject={handleReject}
           />

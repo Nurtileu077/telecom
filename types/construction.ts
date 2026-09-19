@@ -988,12 +988,81 @@ export interface ChangeLogEntry {
 }
 
 /** Роль внутри журнала: кто вносит и кто подтверждает исправления. */
-export type JournalRole = 'field' | 'office';
+/**
+ * Роль в журнале.
+ *
+ * Их две было — «поле» и «отчётность», — и этого мало: ГНБщику не нужны
+ * материалы и акты, а руководству не нужна форма закрытия дня. Роль не
+ * запрещает ничего: она решает, с чего экран открывается и какие вкладки
+ * видно, чтобы человек не искал своё среди чужого. Всё остальное
+ * доступно через «Ещё».
+ *
+ * Исключение одно и настоящее: подтверждать исправления может только
+ * отчётность. Это не удобство, а смысл заявки — иначе её подтверждал бы
+ * тот же, кто подал.
+ */
+export type JournalRole =
+  | 'mkt' | 'gnb' | 'zaduvka' | 'podves' | 'svarka'
+  | 'office' | 'boss';
 
-export const JOURNAL_ROLE_LABEL: Record<JournalRole, string> = {
-  field: 'Поле',
-  office: 'Отчётность',
+export interface JournalRoleSpec {
+  label: string;
+  icon: string;
+  /** С чего открывается журнал у этой роли. */
+  home: string;
+  /** Вкладки, которые видно сразу. Остальные — под «Ещё». */
+  views: string[];
+  /** Может подтверждать исправления. */
+  canApprove?: boolean;
+}
+
+export const JOURNAL_ROLES: Record<JournalRole, JournalRoleSpec> = {
+  mkt: {
+    label: 'МКТ', icon: '🚜', home: 'today',
+    views: ['today', 'entries', 'stages', 'crews', 'objects', 'deviations', 'materials'],
+  },
+  gnb: {
+    label: 'ГНБ', icon: '🛠', home: 'drills',
+    views: ['today', 'drills', 'stages', 'crews', 'objects'],
+  },
+  zaduvka: {
+    label: 'Задувка', icon: '💨', home: 'today',
+    views: ['today', 'entries', 'stages', 'materials', 'objects'],
+  },
+  podves: {
+    label: 'Подвес', icon: '🗼', home: 'today',
+    views: ['today', 'entries', 'stages', 'objects', 'materials'],
+  },
+  svarka: {
+    label: 'Сварка', icon: '🔥', home: 'passport',
+    views: ['today', 'passport', 'objects', 'stages'],
+  },
+  office: {
+    label: 'Отчётность', icon: '📋', home: 'corrections',
+    views: ['today', 'summary', 'entries', 'corrections', 'closing', 'materials', 'deviations', 'log'],
+    canApprove: true,
+  },
+  boss: {
+    label: 'Руководство', icon: '📈', home: 'management',
+    views: ['management', 'summary', 'today', 'stages', 'incidents', 'materials', 'log'],
+  },
 };
+
+export const JOURNAL_ROLE_LIST = Object.keys(JOURNAL_ROLES) as JournalRole[];
+
+export const JOURNAL_ROLE_LABEL: Record<JournalRole, string> =
+  Object.fromEntries(
+    JOURNAL_ROLE_LIST.map((r) => [r, JOURNAL_ROLES[r].label]),
+  ) as Record<JournalRole, string>;
+
+/**
+ * Роль из того, что записано на устройстве. «field» — старое название
+ * полевой роли: у кого оно осталось, тот и дальше кладёт МКТ.
+ */
+export function normalizeRole(v: string | null | undefined): JournalRole {
+  if (v === 'field') return 'mkt';
+  return (v && v in JOURNAL_ROLES) ? v as JournalRole : 'mkt';
+}
 
 /** Строка реестра заказа — лист «Все СНП заказа» (план). */
 export interface SettlementOrder {
