@@ -56,11 +56,13 @@ import {
 import RouteDrawForm from '@/components/Construction/RouteDrawForm';
 import {
   addPlanRoutes, addDeviation, updateRouteCoords, deleteRoute,
+  removePlanSource, removeAreaSource, updateAreaCoords, renameArea, removeArea,
 } from '@/components/Construction/journalStore';
 import { polylineLengthM } from '@/components/Construction/planImport';
 import {
   loadConstructionLayers, saveConstructionLayers,
   DEFAULT_CONSTRUCTION_LAYERS, type ConstructionLayers,
+  loadHiddenSources, saveHiddenSources, toggleHiddenSource, sourceVisible,
 } from '@/components/Construction/mapLayers';
 import type { Crew, SiteObject, Incident } from '@/types/construction';
 const ConstructionPanel = dynamic(() => import('@/components/Construction/ConstructionPanel'), { ssr: false });
@@ -252,6 +254,37 @@ export default function HomePage() {
     refreshJournalLayers();
   }, [refreshJournalLayers]);
 
+  /**
+   * Правка обводки: как и у трассы, сразу и со следом. Согласований тут
+   * нет — контур рисовал человек, он же его и поправит.
+   */
+  const [editingAreaId, setEditingAreaId] = useState<string | null>(null);
+
+  const handleUpdateArea = useCallback((id: string, coords: [number, number][]) => {
+    saveJournal(updateAreaCoords(loadJournal(), id, coords, getActorName() || 'Без имени'));
+    refreshJournalLayers();
+  }, [refreshJournalLayers]);
+
+  const handleRenameArea = useCallback((id: string) => {
+    const base = loadJournal();
+    const area = base.areas.find((a) => a.id === id);
+    if (!area) return;
+    const name = prompt('Название контура:', area.name);
+    if (name === null) return;
+    saveJournal(renameArea(base, id, name, getActorName() || 'Без имени'));
+    refreshJournalLayers();
+  }, [refreshJournalLayers]);
+
+  const handleDeleteArea = useCallback((id: string) => {
+    const base = loadJournal();
+    const area = base.areas.find((a) => a.id === id);
+    if (!area) return;
+    if (!confirm(`Удалить контур «${area.name}»?\nВернуть можно будет в журнале изменений.`)) return;
+    saveJournal(removeArea(base, id, getActorName() || 'Без имени'));
+    setEditingAreaId((cur) => (cur === id ? null : cur));
+    refreshJournalLayers();
+  }, [refreshJournalLayers]);
+
   const handleDeleteRoute = useCallback((id: string) => {
     if (!confirm('Удалить трассу с карты?\nВернуть её можно будет в журнале изменений.')) return;
     saveJournal(deleteRoute(loadJournal(), id, getActorName() || 'Без имени'));
@@ -264,6 +297,48 @@ export default function HomePage() {
   // проектировщика — разная карта.
   const [conLayers, setConLayers] = useState<ConstructionLayers>(DEFAULT_CONSTRUCTION_LAYERS);
   useEffect(() => { setConLayers(loadConstructionLayers()); }, []);
+
+  /**
+   * Погашенные слои. Один загруженный файл — один слой, как в Google
+   * Земле: его можно спрятать, не удаляя. Видимость живёт на устройстве:
+   * погашенный у прораба слой не должен пропадать у остальных.
+   */
+  const [hiddenSources, setHiddenSources] = useState<string[]>([]);
+  useEffect(() => { setHiddenSources(loadHiddenSources()); }, []);
+  /** Слои для панели: файл, сколько в нём линий и контуров, виден ли. */
+  const mapLayerRows = useMemo(() => {
+    const acc = new Map<string, { routes: number; areas: number }>();
+    for (const r of planRoutes) {
+      const cur = acc.get(r.source) ?? { routes: 0, areas: 0 };
+      cur.routes += 1;
+      acc.set(r.source, cur);
+    }
+    for (const a of areas) {
+      const cur = acc.get(a.source) ?? { routes: 0, areas: 0 };
+      cur.areas += 1;
+      acc.set(a.source, cur);
+    }
+    return [...acc.entries()]
+      .map(([source, v]) => ({ source, ...v, visible: sourceVisible(hiddenSources, source) }))
+      .sort((a, b) => a.source.localeCompare(b.source, 'ru'));
+  }, [planRoutes, areas, hiddenSources]);
+
+  const visibleRoutes = useMemo(
+    () => planRoutes.filter((r) => sourceVisible(hiddenSources, r.source)),
+    [planRoutes, hiddenSources],
+  );
+  const visibleAreas = useMemo(
+    () => areas.filter((a) => sourceVisible(hiddenSources, a.source)),
+    [areas, hiddenSources],
+  );
+
+  const toggleSource = useCallback((source: string) => {
+    setHiddenSources((prev) => {
+      const next = toggleHiddenSource(prev, source);
+      saveHiddenSources(next);
+      return next;
+    });
+  }, []);
   const toggleConstructionLayer = useCallback((key: keyof ConstructionLayers) => {
     setConLayers((prev) => {
       const next = { ...prev, [key]: !prev[key] };
@@ -1044,9 +1119,19 @@ export default function HomePage() {
           toggleConstructionLayer={toggleConstructionLayer}
           constructionCounts={{
             drills: drillPoints.length + drillLines.length, crews: crews.length, snp: snpPoints.length,
-            deviations: mapDeviations.length, plan: planRoutes.length,
-            areas: areas.length,
+            deviations: mapDeviations.length, plan: visibleRoutes.length,
+            areas: visibleAreas.length,
             objects: siteObjects.length,
+            incidents: incidents.length,
+            flow: visibleRoutes.filter((r) => r.stage === 'zaduvka' || r.stage === 'svarka' || r.stage === 'sdacha').length,
+          }}
+          mapLayers={mapLayerRows}
+          onToggleSource={toggleSource}
+          onRemoveSource={(source) => {
+            if (!confirm(`Удалить слой «${source}»? Уйдёт всё, что из него пришло.`)) return;
+            const base = loadJournal();
+            saveJournal(removeAreaSource(removePlanSource(base, source), source));
+            refreshJournalLayers();
           }}
           validationIssues={net.validationIssues}
           flyTo={flyToRef.current}
@@ -1231,7 +1316,7 @@ export default function HomePage() {
             crews={conLayers.crews ? crews : EMPTY_LAYER}
             onMoveCrew={handleMoveCrew}
             deviations={conLayers.deviations ? mapDeviations : EMPTY_LAYER}
-            planRoutes={conLayers.plan ? planRoutes : EMPTY_LAYER}
+            planRoutes={conLayers.plan ? visibleRoutes : EMPTY_LAYER}
             drillLines={conLayers.drills ? drillLines : EMPTY_LAYER}
             drawingRoute={drawingRoute}
             onToggleDrawRoute={building ? () => setDrawingRoute((v) => !v) : undefined}
@@ -1250,7 +1335,12 @@ export default function HomePage() {
             playbackDate={playbackDate}
             onEditSiteObject={building ? (id) => { setEditObjectId(id); setShowJournal(true); } : undefined}
             snpPoints={conLayers.snp ? snpPoints : EMPTY_LAYER}
-            areas={conLayers.areas ? areas : EMPTY_LAYER}
+            areas={conLayers.areas ? visibleAreas : EMPTY_LAYER}
+            editingAreaId={building ? editingAreaId : null}
+            onEditArea={building ? setEditingAreaId : undefined}
+            onUpdateAreaCoords={building ? handleUpdateArea : undefined}
+            onRenameArea={building ? handleRenameArea : undefined}
+            onDeleteArea={building ? handleDeleteArea : undefined}
             budgetMap={budgetMap.current}
             budgetColoring={budgetColoring}
           />

@@ -860,13 +860,15 @@ export function deleteRoute(
  * Возврат сам становится записью: история не переписывается, она
  * продолжается. Удалённая трасса возвращается целиком.
  */
-export function restoreRoute(
+export function restoreShape(
   base: JournalState,
   changeId: string,
   author: string,
 ): JournalState {
   const ch = (base.changes ?? []).find((c) => c.id === changeId);
-  if (!ch?.before?.length || !ch.routeId) return base;
+  if (!ch?.before?.length) return base;
+  if (ch.areaId) return restoreArea(base, changeId, author);
+  if (!ch.routeId) return base;
   const now = new Date().toISOString();
   const lengthM = Math.round(coordsLengthM(ch.before));
   const exists = base.planRoutes.find((r) => r.id === ch.routeId);
@@ -892,6 +894,42 @@ export function restoreRoute(
     target: ch.target,
     detail: `возвращено как было на ${new Date(ch.at).toLocaleString('ru')}`,
     routeId: ch.routeId,
+    before: exists?.coords,
+  });
+}
+
+/**
+ * Вернуть контур как было.
+ *
+ * Удалённый возвращается целиком; у правленого откатывается геометрия.
+ * Возврат сам становится записью: история продолжается, а не переписывается.
+ */
+function restoreArea(base: JournalState, changeId: string, author: string): JournalState {
+  const ch = (base.changes ?? []).find((c) => c.id === changeId);
+  if (!ch?.before?.length || !ch.areaId) return base;
+  const now = new Date().toISOString();
+  const exists = base.areas.find((a) => a.id === ch.areaId);
+
+  const areas = exists
+    ? base.areas.map((a) => (a.id === ch.areaId ? { ...a, coords: ch.before!, updatedAt: now } : a))
+    : [...base.areas, {
+      id: ch.areaId,
+      kind: 'snp' as const,
+      name: ch.target,
+      coords: ch.before,
+      oblast: ch.oblast,
+      rayon: ch.rayon,
+      kato: ch.kato,
+      source: 'восстановлено',
+      createdAt: now,
+      updatedAt: now,
+    }];
+
+  return logChange({ ...base, areas, updatedAt: now }, {
+    at: now, author, kind: 'area_edit',
+    target: ch.target,
+    detail: `возвращено как было на ${new Date(ch.at).toLocaleString('ru')}`,
+    areaId: ch.areaId,
     before: exists?.coords,
   });
 }
@@ -970,6 +1008,84 @@ export function removeAreaSource(base: JournalState, source: string): JournalSta
     areas: base.areas.filter((a) => a.source !== source),
     updatedAt: new Date().toISOString(),
   };
+}
+
+/**
+ * Правка контура с записью в журнал.
+ *
+ * Обводка — такая же нарисованная вещь, как трасса, и правится так же:
+ * без согласования, но со следом. Отличие одно — у неё замкнутое кольцо,
+ * и рвать его правкой нельзя.
+ */
+export function updateAreaCoords(
+  base: JournalState,
+  id: string,
+  coords: [number, number][],
+  author: string,
+): JournalState {
+  const prev = base.areas.find((a) => a.id === id);
+  if (!prev || coords.length < 3) return base;
+  const now = new Date().toISOString();
+  const next: JournalState = {
+    ...base,
+    areas: base.areas.map((a) => (a.id === id ? { ...a, coords, updatedAt: now } : a)),
+    updatedAt: now,
+  };
+  return logChange(next, {
+    at: now, author, kind: 'area_edit',
+    target: prev.name,
+    detail: `вершин было ${prev.coords.length}, стало ${coords.length}`,
+    areaId: id,
+    oblast: prev.oblast, rayon: prev.rayon, kato: prev.kato,
+    before: prev.coords,
+  });
+}
+
+/** Переименование: в KML контуры подписаны как попало, и это поправимо. */
+export function renameArea(
+  base: JournalState,
+  id: string,
+  name: string,
+  author: string,
+): JournalState {
+  const prev = base.areas.find((a) => a.id === id);
+  const clean = name.trim();
+  if (!prev || !clean || clean === prev.name) return base;
+  const now = new Date().toISOString();
+  const next: JournalState = {
+    ...base,
+    areas: base.areas.map((a) => (a.id === id ? { ...a, name: clean, updatedAt: now } : a)),
+    updatedAt: now,
+  };
+  return logChange(next, {
+    at: now, author, kind: 'area_rename',
+    target: clean,
+    detail: `было «${prev.name}»`,
+    areaId: id,
+    oblast: prev.oblast, rayon: prev.rayon, kato: prev.kato,
+    before: prev.coords,
+  });
+}
+
+/** Удаление одного контура — тоже с записью: вернуть иначе неоткуда. */
+export function removeArea(base: JournalState, id: string, author: string): JournalState {
+  const prev = base.areas.find((a) => a.id === id);
+  if (!prev) return base;
+  const now = new Date().toISOString();
+  const next: JournalState = {
+    ...base,
+    areas: base.areas.filter((a) => a.id !== id),
+    deleted: [...base.deleted, { id, at: now }],
+    updatedAt: now,
+  };
+  return logChange(next, {
+    at: now, author, kind: 'area_delete',
+    target: prev.name,
+    detail: 'контур удалён',
+    areaId: id,
+    oblast: prev.oblast, rayon: prev.rayon, kato: prev.kato,
+    before: prev.coords,
+  });
 }
 
 /** Файлы контуров со сводкой — для списка в интерфейсе. */

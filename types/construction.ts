@@ -962,7 +962,9 @@ export interface CorrectionRequest {
  * это не надзор, а возможность вернуть: через неделю никто не вспомнит,
  * где линия шла до того, как её «поправили».
  */
-export type ChangeKind = 'route_edit' | 'route_delete' | 'route_add';
+export type ChangeKind =
+  | 'route_edit' | 'route_delete' | 'route_add'
+  | 'area_edit' | 'area_rename' | 'area_delete';
 
 export interface ChangeLogEntry {
   id: string;
@@ -979,6 +981,8 @@ export interface ChangeLogEntry {
   kato?: string;
   /** id трассы — чтобы вернуть как было. */
   routeId?: string;
+  /** id обводки — то же самое для контуров. */
+  areaId?: string;
   /** Прежняя геометрия. Без неё «как было» — просто слова. */
   before?: [number, number][];
 }

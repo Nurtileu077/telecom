@@ -213,6 +213,12 @@ interface Props {
   showFlow?: boolean;
   /** Кнопка «скачать карту на устройство» — нужна только на стройке. */
   offlineTiles?: boolean;
+  /** Контур, который сейчас правят: у него появляются ручки вершин. */
+  editingAreaId?: string | null;
+  onEditArea?: (id: string | null) => void;
+  onUpdateAreaCoords?: (id: string, coords: [number, number][]) => void;
+  onRenameArea?: (id: string) => void;
+  onDeleteArea?: (id: string) => void;
   onEditSiteObject?: (id: string) => void;
   /** Отрезки трассы по способам прокладки — когда красим по способу. */
   routeSegments?: import('@/components/Construction/routeSegments').RouteSegment[];
@@ -460,6 +466,7 @@ export default function LeafletMap(props: Props) {
   const routeEditGroupRef = useRef<any>(null);
   const objectGroupRef = useRef<any>(null);
   const incidentGroupRef = useRef<any>(null);
+  const areaEditGroupRef = useRef<any>(null);
   const flowGroupRef = useRef<any>(null);
   const flowRafRef = useRef<number | null>(null);
   const playbackGroupRef = useRef<any>(null);
@@ -506,6 +513,7 @@ export default function LeafletMap(props: Props) {
       snpGroupRef.current = L.layerGroup().addTo(map);
       objectGroupRef.current = L.layerGroup().addTo(map);
       incidentGroupRef.current = L.layerGroup().addTo(map);
+      areaEditGroupRef.current = L.layerGroup().addTo(map);
       flowGroupRef.current = L.layerGroup().addTo(map);
       playbackGroupRef.current = L.layerGroup().addTo(map);
       routeEditGroupRef.current = L.layerGroup().addTo(map);
@@ -1841,6 +1849,15 @@ export default function LeafletMap(props: Props) {
           : '';
         poly.bindTooltip(`${esc(a.name)} — ${esc(progress)}${esc(via)}`,
           { sticky: true, className: 'text-xs' });
+        // Обводка — такая же нарисованная вещь, как трасса: её правят на
+        // месте, а не «обращаются к тому, кто загрузил файл».
+        const editable = !!propsRef.current.onEditArea;
+        const editing = propsRef.current.editingAreaId === a.id;
+        const btn = (act: string, label: string, bg: string, fg = '#041016') =>
+          `<button onclick="window.__optiqArea__('${act}','${esc(a.id)}')"
+             style="padding:3px 8px;background:${bg};color:${fg};border:none;border-radius:3px;
+                    font-size:10px;cursor:pointer;font-weight:600;margin-right:4px">${label}</button>`;
+
         poly.bindPopup(
           `<b>${esc(a.name)}</b>`
           + `<br/><span style="color:#64748b;font-size:11px">${esc(AREA_KIND_LABEL[a.kind])}`
@@ -1848,7 +1865,19 @@ export default function LeafletMap(props: Props) {
           + `<div style="margin-top:4px;color:${color};font-size:12px">${esc(progress)}</div>`
           + (via ? `<div style="color:#64748b;font-size:11px">${esc(via.replace(/^ · /, ''))}</div>` : '')
           + snpLine
-          + (a.kato ? `<br/><span style="color:#64748b;font-size:10px;font-family:ui-monospace,monospace">${esc(a.kato)}</span>` : ''),
+          + (a.kato ? `<br/><span style="color:#64748b;font-size:10px;font-family:ui-monospace,monospace">${esc(a.kato)}</span>` : '')
+          + `<br/><span style="color:#64748b;font-size:10px">${esc(a.source)}</span>`
+          + (editable
+            ? `<div style="margin-top:6px">`
+              + btn(editing ? 'done' : 'edit', editing ? '✓ Готово' : '✏️ Изменить', '#2dd4bf')
+              + btn('rename', '✎ Имя', '#1e3a5f', '#e2e8f0')
+              + btn('delete', '🗑', '#1e3a5f', '#f87171')
+              + `</div>`
+              + (editing
+                ? `<div style="margin-top:4px;color:#64748b;font-size:10px">
+                     Тяните точки. Правый клик по точке — убрать её.</div>`
+                : '')
+            : ''),
         );
         group.addLayer(poly);
       }
@@ -2035,6 +2064,70 @@ export default function LeafletMap(props: Props) {
           if (coords.length <= 2) return;
           const next = coords.filter((_, j) => j !== i);
           propsRef.current.onUpdateRouteCoords?.(id, next);
+        });
+        group.addLayer(m);
+      });
+    });
+  }
+
+  /**
+   * Ручки вершин обводки.
+   *
+   * То же, что у трассы, с одним отличием: кольцо нельзя разорвать.
+   * Поэтому вершину убираем только пока их больше четырёх, а соседние
+   * тянутся следом — иначе правка одной точки превращает плавный контур
+   * в зубец.
+   */
+  function renderAreaEdit() {
+    const group = areaEditGroupRef.current;
+    if (!mapRef.current || !group) return;
+    import('leaflet').then((L) => {
+      group.clearLayers();
+      const id = propsRef.current.editingAreaId;
+      if (!id) return;
+      const area = (propsRef.current.areas ?? []).find((a) => a.id === id);
+      if (!area || area.coords.length < 3) return;
+
+      const coords = area.coords;
+      group.addLayer(L.polygon(coords, {
+        color: '#2dd4bf', weight: 2, opacity: 0.9, dashArray: '6,6',
+        fill: false, interactive: false,
+      }));
+
+      // Контуры из KML бывают на сотни точек; показываем не больше
+      // тридцати равномерно, иначе ручки сливаются в кашу.
+      const MAX = 30;
+      const step = coords.length > MAX ? (coords.length - 1) / (MAX - 1) : 1;
+      const idx = new Set<number>([0, coords.length - 1]);
+      for (let k = 0; k < MAX; k++) idx.add(Math.round(k * step));
+
+      [...idx].sort((a, b) => a - b).forEach((i, pos, arr) => {
+        const c = coords[i];
+        if (!c) return;
+        const m = L.marker(c, {
+          draggable: true,
+          icon: L.divIcon({
+            className: '',
+            iconSize: [12, 12],
+            iconAnchor: [6, 6],
+            html: `<div style="width:10px;height:10px;border-radius:2px;
+                   background:#0c1018;border:2px solid #2dd4bf;cursor:grab"></div>`,
+          }),
+        });
+        const prevH = pos > 0 ? arr[pos - 1] : null;
+        const nextH = pos < arr.length - 1 ? arr[pos + 1] : null;
+
+        m.on('dragend', (e: any) => {
+          const ll = e.target.getLatLng();
+          propsRef.current.onUpdateAreaCoords?.(
+            id, warpWaypoint(coords, prevH, i, nextH, ll.lat, ll.lng),
+          );
+        });
+        m.on('contextmenu', (e: any) => {
+          e.originalEvent?.preventDefault?.();
+          // Меньше четырёх точек — это уже не контур.
+          if (coords.length <= 4) return;
+          propsRef.current.onUpdateAreaCoords?.(id, coords.filter((_, j) => j !== i));
         });
         group.addLayer(m);
       });
@@ -2266,6 +2359,10 @@ export default function LeafletMap(props: Props) {
     renderPlanRoutes();
   }, [props.planRoutes, props.drillLines, props.routeSegments, props.routeColorMode, mapReady]);
   useEffect(() => { renderRouteEdit(); }, [props.editingRouteId, props.planRoutes, mapReady]);
+  useEffect(() => { renderAreaEdit(); }, [props.editingAreaId, props.areas, mapReady]);
+  // Карточка контура меняется вместе с режимом правки: кнопка должна
+  // превращаться в «Готово», а не оставаться «Изменить».
+  useEffect(() => { renderAreas(); }, [props.editingAreaId]);
 
   // Рисование: Enter заканчивает линию, Esc бросает начатое. Клавиатура
   // здесь важнее кнопок — рисуют мышью, вторая рука на клавишах.
@@ -2424,6 +2521,15 @@ export default function LeafletMap(props: Props) {
     (window as any).__optiqEditObject__ = (id: string) => {
       mapRef.current?.closePopup?.();
       propsRef.current.onEditSiteObject?.(id);
+    };
+    // Одна точка входа на все действия с контуром: кнопок в карточке
+    // три, а обработчик пусть будет один.
+    (window as any).__optiqArea__ = (act: string, id: string) => {
+      mapRef.current?.closePopup?.();
+      if (act === 'edit') propsRef.current.onEditArea?.(id);
+      if (act === 'done') propsRef.current.onEditArea?.(null);
+      if (act === 'rename') propsRef.current.onRenameArea?.(id);
+      if (act === 'delete') propsRef.current.onDeleteArea?.(id);
     };
     (window as any).__optiqDeleteRoute__ = (id: string) => {
       mapRef.current?.closePopup?.();

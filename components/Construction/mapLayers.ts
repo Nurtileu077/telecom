@@ -103,3 +103,44 @@ export function saveConstructionLayers(v: ConstructionLayers): void {
     // Настройка вида — не та вещь, ради которой стоит падать.
   }
 }
+
+// ── Слои по источникам ───────────────────────────────────────────────────────
+
+/**
+ * Какие загруженные файлы сейчас показаны.
+ *
+ * В Google Earth у прораба это слои: один файл — один слой, и его можно
+ * погасить, не удаляя. Здесь так же. Видимость — настройка вида, а не
+ * данные: она живёт на устройстве и не уезжает в общий журнал, иначе
+ * погашенный у одного слой пропал бы у всех.
+ */
+const SOURCES_KEY = 'optiq-hidden-sources-v1';
+
+export function loadHiddenSources(): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(SOURCES_KEY);
+    const v = raw ? JSON.parse(raw) : [];
+    return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveHiddenSources(list: string[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(SOURCES_KEY, JSON.stringify(list));
+  } catch {
+    // Настройка вида — не та вещь, ради которой стоит падать.
+  }
+}
+
+export function toggleHiddenSource(list: string[], source: string): string[] {
+  return list.includes(source) ? list.filter((s) => s !== source) : [...list, source];
+}
+
+/** Виден ли слой: спрятанным считается только тот, что погасили явно. */
+export function sourceVisible(hidden: string[], source: string): boolean {
+  return !hidden.includes(source);
+}

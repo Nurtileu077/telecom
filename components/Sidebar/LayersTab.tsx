@@ -1,9 +1,18 @@
 'use client';
+import { Eye, EyeOff, Trash2 } from 'lucide-react';
 import { District, LayerVisibility } from '@/types/network';
 import {
   ConstructionLayers, CONSTRUCTION_LAYER_LABELS,
   ROUTE_COLOR_LABEL, type RouteColorMode,
 } from '@/components/Construction/mapLayers';
+
+/** Слой карты: один загруженный файл или всё нарисованное руками. */
+export interface MapLayerRow {
+  source: string;
+  routes: number;
+  areas: number;
+  visible: boolean;
+}
 
 interface Props {
   districts: District[];
@@ -18,6 +27,10 @@ interface Props {
   building?: boolean;
   routeColorMode?: RouteColorMode;
   onToggleRouteColor?: () => void;
+  /** Загруженные слои: скрыть или удалить целиком, как в Google Картах. */
+  mapLayers?: MapLayerRow[];
+  onToggleSource?: (source: string) => void;
+  onRemoveSource?: (source: string) => void;
 }
 
 function Toggle({ on, onChange, label }: { on: boolean; onChange: () => void; label: string }) {
@@ -46,6 +59,7 @@ export default function LayersTab({
   districts, layers, toggleLayer,
   constructionLayers, toggleConstructionLayer, constructionCounts, building,
   routeColorMode, onToggleRouteColor,
+  mapLayers, onToggleSource, onRemoveSource,
 }: Props) {
   const hasConstruction = constructionLayers && toggleConstructionLayer
     && Object.values(constructionCounts ?? {}).some((n) => (n ?? 0) > 0);
@@ -97,6 +111,49 @@ export default function LayersTab({
               </p>
             </div>
           )}
+        </section>
+      )}
+
+      {/* Загруженные слои: файл — это слой, его можно погасить или убрать */}
+      {building && mapLayers && mapLayers.length > 0 && (
+        <section>
+          <h3 className="text-[10px] uppercase tracking-widest text-[#64748b] mb-2">
+            Слои ({mapLayers.length})
+          </h3>
+          <div className="space-y-1">
+            {mapLayers.map((l) => (
+              <div key={l.source} className="flex items-center gap-1.5 py-1">
+                <button type="button"
+                        onClick={() => onToggleSource?.(l.source)}
+                        title={l.visible ? 'Скрыть слой' : 'Показать слой'}
+                        className={`shrink-0 ${l.visible ? 'text-[#2dd4bf]' : 'text-[#475569]'} hover:text-[#38bdf8]`}>
+                  {l.visible ? <Eye size={14} /> : <EyeOff size={14} />}
+                </button>
+                <div className="min-w-0 flex-1">
+                  <div className={`text-xs truncate ${l.visible ? 'text-[#94a3b8]' : 'text-[#475569]'}`}
+                       title={l.source}>
+                    {l.source}
+                  </div>
+                  <div className="text-[10px] text-[#64748b]">
+                    {[
+                      l.routes > 0 ? `линий ${l.routes}` : '',
+                      l.areas > 0 ? `контуров ${l.areas}` : '',
+                    ].filter(Boolean).join(' · ') || 'пусто'}
+                  </div>
+                </div>
+                <button type="button"
+                        onClick={() => onRemoveSource?.(l.source)}
+                        title="Удалить слой вместе со всем, что из него пришло"
+                        className="shrink-0 text-[#475569] hover:text-[#f87171]">
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] text-[#64748b] mt-1.5 leading-snug">
+            Глазок гасит слой, не удаляя: он останется в журнале и вернётся
+            одним нажатием. Корзина убирает всё, что пришло из этого файла.
+          </p>
         </section>
       )}
 

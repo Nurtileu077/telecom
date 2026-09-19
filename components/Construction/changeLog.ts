@@ -17,6 +17,16 @@ import type { JournalState } from './journalStore';
  * трассы, потому что её правку раньше действительно негде было увидеть.
  */
 
+/** Что именно сделали — одним словом на каждый вид записи. */
+const CHANGE_TEXT: Record<string, string> = {
+  route_edit: 'трасса изменена',
+  route_add: 'трасса добавлена',
+  route_delete: 'трасса удалена',
+  area_edit: 'обводка изменена',
+  area_rename: 'обводка переименована',
+  area_delete: 'обводка удалена',
+};
+
 export type FeedKind =
   | 'route' | 'correction' | 'deviation' | 'stage' | 'delivery' | 'object';
 
@@ -69,11 +79,7 @@ export function changeFeed(j: JournalState): FeedItem[] {
       at: c.at,
       author: c.author,
       target: c.target,
-      text: c.kind === 'route_delete'
-        ? `трасса удалена${c.detail ? ` — ${c.detail}` : ''}`
-        : c.kind === 'route_add'
-          ? `трасса добавлена${c.detail ? ` — ${c.detail}` : ''}`
-          : `трасса изменена${c.detail ? ` — ${c.detail}` : ''}`,
+      text: `${CHANGE_TEXT[c.kind] ?? 'изменено'}${c.detail ? ` — ${c.detail}` : ''}`,
       oblast: c.oblast,
       rayon: c.rayon,
       kato: c.kato,

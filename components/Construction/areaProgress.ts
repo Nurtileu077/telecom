@@ -21,6 +21,8 @@ export interface AreaMapItem {
   oblast?: string;
   rayon?: string;
   kato?: string;
+  /** Файл, из которого пришёл контур: он же слой на карте. */
+  source: string;
   /** Доля пройденных этапов, 0..1. null — по этой территории данных нет. */
   completion: number | null;
   /** Текущий этап села. Для района и области — null. */
@@ -133,7 +135,7 @@ export function areaMapItems(areas: MapArea[], progress: SnpProgress[]): AreaMap
   return areas.map((a) => {
     const base = {
       id: a.id, kind: a.kind, name: a.name, coords: a.coords,
-      oblast: a.oblast, rayon: a.rayon, kato: a.kato,
+      oblast: a.oblast, rayon: a.rayon, kato: a.kato, source: a.source,
     };
 
     if (a.kind === 'snp') {

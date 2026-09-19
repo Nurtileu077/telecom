@@ -20,7 +20,7 @@ import {
   addPlanRoutes, removePlanSource, planSources, plural, setProgress, setStage,
   addAreas, removeAreaSource, areaSources, setMaterialPrice, upsertDrill,
   upsertObject, removeObject, setSectionProgress, scopeJournal, smuList,
-  restoreRoute, upsertDrumRecord, removeDrumRecord, addPhoto, removePhoto,
+  restoreShape, upsertDrumRecord, removeDrumRecord, addPhoto, removePhoto,
   upsertSplice, removeSplice, upsertIncident, removeIncident,
 } from './journalStore';
 import { crewsFromJournal, type DerivedCrew } from './crewDerive';
@@ -779,7 +779,7 @@ export default function ConstructionPanel({
           <ChangeLogView
             journal={journal}
             oblast={oblast || undefined}
-            onRestore={(id) => persist(restoreRoute(loadJournal(), id, actor))}
+            onRestore={(id) => persist(restoreShape(loadJournal(), id, actor))}
           />
         ) : view === 'crews' ? (
           <CrewsList

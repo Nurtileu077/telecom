@@ -73,6 +73,10 @@ interface Props {
   constructionCounts?: Partial<Record<keyof import('@/components/Construction/mapLayers').ConstructionLayers, number>>;
   building?: boolean;
   routeColorMode?: import('@/components/Construction/mapLayers').RouteColorMode;
+  /** Загруженные слои карты: скрыть или удалить целиком. */
+  mapLayers?: import('./LayersTab').MapLayerRow[];
+  onToggleSource?: (source: string) => void;
+  onRemoveSource?: (source: string) => void;
   onToggleRouteColor?: () => void;
   validationIssues: ValidationIssue[];
   flyTo: ((lat: number, lon: number, zoom?: number) => void) | null;
@@ -291,6 +295,9 @@ export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Prop
               building={props.building}
               routeColorMode={props.routeColorMode}
               onToggleRouteColor={props.onToggleRouteColor}
+              mapLayers={props.mapLayers}
+              onToggleSource={props.onToggleSource}
+              onRemoveSource={props.onRemoveSource}
             />}
           {activeTab === 'create' && props.onSetPlacing && (
             <CreateTab

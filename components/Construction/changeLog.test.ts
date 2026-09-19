@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { changeFeed, filterFeed } from './changeLog';
 import {
-  emptyJournal, updateRouteCoords, deleteRoute, restoreRoute, logChange,
+  emptyJournal, updateRouteCoords, deleteRoute, restoreShape, logChange,
+  updateAreaCoords, renameArea, removeArea,
   type JournalState,
 } from './journalStore';
 import type { PlanRoute } from '@/types/construction';
@@ -45,7 +46,7 @@ describe('правка трассы без одобрения, но с запи�
     const edited = updateRouteCoords(base(), 'r1', [[51.5, 71.5], [51.9, 71.9]], {
       author: 'Ербол', lengthM: 40000,
     });
-    const back = restoreRoute(edited, edited.changes[0].id, 'Асет');
+    const back = restoreShape(edited, edited.changes[0].id, 'Асет');
     expect(back.planRoutes[0].coords).toEqual([[51.5, 71.5], [51.6, 71.6]]);
     // История не переписывается, она продолжается.
     expect(back.changes).toHaveLength(2);
@@ -54,7 +55,7 @@ describe('правка трассы без одобрения, но с запи�
 
   it('удалённая трасса возвращается целиком', () => {
     const gone = deleteRoute(base(), 'r1', 'Ербол');
-    const back = restoreRoute(gone, gone.changes[0].id, 'Асет');
+    const back = restoreShape(gone, gone.changes[0].id, 'Асет');
     expect(back.planRoutes).toHaveLength(1);
     expect(back.planRoutes[0].coords).toHaveLength(2);
   });
@@ -132,5 +133,62 @@ describe('единая лента изменений', () => {
     });
     expect(filterFeed(changeFeed(foreign), { oblast: 'Акмолинская область' })
       .some((i) => i.target === 'чужая')).toBe(false);
+  });
+});
+
+describe('обводка правится и возвращается', () => {
+  const square: [number, number][] = [[51, 71], [51, 72], [52, 72], [52, 71], [51, 71]];
+  const withArea = (): JournalState => ({
+    ...emptyJournal(),
+    areas: [{
+      id: 'ar1', kind: 'snp', name: 'зеренди серафимовка', coords: square,
+      source: 'plan.kml', createdAt: now, updatedAt: now,
+    }],
+  });
+
+  it('правка меняет контур и оставляет след', () => {
+    const moved: [number, number][] = [[51, 71], [51, 72.5], [52, 72], [52, 71], [51, 71]];
+    const next = updateAreaCoords(withArea(), 'ar1', moved, 'Ербол');
+    expect(next.areas[0].coords).toEqual(moved);
+    expect(next.changes[0].kind).toBe('area_edit');
+    expect(next.changes[0].areaId).toBe('ar1');
+    expect(next.changes[0].before).toEqual(square);
+  });
+
+  it('контур из двух точек не принимается — это уже не контур', () => {
+    const base = withArea();
+    expect(updateAreaCoords(base, 'ar1', [[51, 71], [52, 72]], 'Ербол')).toBe(base);
+  });
+
+  it('переименование пишет, как было', () => {
+    const next = renameArea(withArea(), 'ar1', 'Серафимовка', 'Ербол');
+    expect(next.areas[0].name).toBe('Серафимовка');
+    expect(next.changes[0].kind).toBe('area_rename');
+    expect(next.changes[0].detail).toContain('зеренди серафимовка');
+  });
+
+  it('пустое имя ничего не меняет', () => {
+    const base = withArea();
+    expect(renameArea(base, 'ar1', '   ', 'Ербол')).toBe(base);
+  });
+
+  it('удалённый контур возвращается целиком', () => {
+    const gone = removeArea(withArea(), 'ar1', 'Ербол');
+    expect(gone.areas).toHaveLength(0);
+    const back = restoreShape(gone, gone.changes[0].id, 'Асет');
+    expect(back.areas).toHaveLength(1);
+    expect(back.areas[0].coords).toEqual(square);
+  });
+
+  it('правка контура откатывается на прежнюю геометрию', () => {
+    const edited = updateAreaCoords(withArea(), 'ar1', [[51, 71], [51, 73], [52, 72], [51, 71]], 'Ербол');
+    const back = restoreShape(edited, edited.changes[0].id, 'Асет');
+    expect(back.areas[0].coords).toEqual(square);
+  });
+
+  it('в ленте это названо обводкой, а не трассой', () => {
+    const next = removeArea(withArea(), 'ar1', 'Ербол');
+    const item = changeFeed(next).find((i) => i.kind === 'route')!;
+    expect(item.text).toContain('обводка удалена');
   });
 });
