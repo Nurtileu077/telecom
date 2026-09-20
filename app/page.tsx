@@ -57,7 +57,7 @@ import RouteDrawForm from '@/components/Construction/RouteDrawForm';
 import {
   addPlanRoutes, addDeviation, updateRouteCoords, deleteRoute,
   removePlanSource, removeAreaSource, updateAreaCoords, renameArea, removeArea,
-  addDrawnArea,
+  addDrawnArea, upsertObject, splitPlanRoute, joinPlanRoutes,
 } from '@/components/Construction/journalStore';
 import { polylineLengthM } from '@/components/Construction/planImport';
 import {
@@ -65,7 +65,8 @@ import {
   DEFAULT_CONSTRUCTION_LAYERS, type ConstructionLayers,
   loadHiddenSources, saveHiddenSources, toggleHiddenSource, sourceVisible,
 } from '@/components/Construction/mapLayers';
-import type { Crew, SiteObject, Incident } from '@/types/construction';
+import type { Crew, SiteObject, Incident, SiteObjectKind } from '@/types/construction';
+import { SITE_OBJECT_SPECS } from '@/types/construction';
 const ConstructionPanel = dynamic(() => import('@/components/Construction/ConstructionPanel'), { ssr: false });
 import { useSupabaseAuth } from '@/hooks/useSupabaseAuth';
 import { roleFromUser } from '@/lib/authSession';
@@ -88,6 +89,7 @@ import {
   parseLatLon, formatLatLon, COORD_STYLES, COORD_STYLE_LABEL, COORD_STYLE_HINT,
 } from '@/components/Construction/coordFormat';
 import { mapLinkFor } from '@/lib/mapLink';
+import { splitRoute, joinRoutes } from '@/components/Construction/routeEdit';
 import type { MeasureReadout } from '@/components/Map/MapContainer';
 
 const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
@@ -314,6 +316,75 @@ export default function HomePage() {
     saveJournal(deleteRoute(loadJournal(), id, getActorName() || 'Без имени'));
     setEditingRouteId(null);
     refreshJournalLayers();
+  }, [refreshJournalLayers]);
+
+
+  /**
+   * Разрез там, где щёлкнули по линии.
+   *
+   * Спрашиваем подтверждение с цифрами: у разреза нет наглядного
+   * предпросмотра, а две половины по 300 метров вместо одной по 600 —
+   * это то, что человек должен увидеть до, а не после.
+   */
+  const handleSplitRoute = useCallback((id: string, atM: number) => {
+    const j = loadJournal();
+    const r = j.planRoutes.find((x) => x.id === id);
+    if (!r) return;
+    const cut = splitRoute(r.coords, atM);
+    if (!cut) {
+      setToast('Слишком близко к краю — резать нечего');
+      window.setTimeout(() => setToast(null), 2200);
+      return;
+    }
+    const km = (m: number) => `${(m / 1000).toFixed(3)} км`;
+    if (!confirm(
+      `Разрезать «${r.name || 'трассу'}» здесь?\n\n`
+      + `Получится ${km(cut.headM)} и ${km(cut.tailM)}.\n`
+      + 'Вернуть можно в журнале изменений.',
+    )) return;
+    saveJournal(splitPlanRoute(j, id, atM, getActorName() || 'Без имени'));
+    setEditingRouteId(null);
+    refreshJournalLayers();
+    setToast('Трасса разрезана');
+    window.setTimeout(() => setToast(null), 1800);
+  }, [refreshJournalLayers]);
+
+  /**
+   * Склеить с ближайшей.
+   *
+   * Какую именно — не спрашиваем списком: подходящая почти всегда одна,
+   * та, чей конец рядом. Если рядом нет ничего, так и говорим.
+   */
+  const handleJoinRoute = useCallback((id: string) => {
+    const j = loadJournal();
+    const r = j.planRoutes.find((x) => x.id === id);
+    if (!r) return;
+
+    let best: { id: string; name: string; gapM: number } | null = null;
+    for (const other of j.planRoutes) {
+      if (other.id === id) continue;
+      const join = joinRoutes(r.coords, other.coords, 250);
+      if (!join) continue;
+      if (!best || join.gapM < best.gapM) {
+        best = { id: other.id, name: other.name, gapM: join.gapM };
+      }
+    }
+    if (!best) {
+      setToast('Рядом нет линии, с которой её свести');
+      window.setTimeout(() => setToast(null), 2400);
+      return;
+    }
+    if (!confirm(
+      `Склеить «${r.name || 'трассу'}» с «${best.name || 'соседней'}»?\n\n`
+      + (best.gapM < 1
+        ? 'Концы сходятся.'
+        : `Между концами ${Math.round(best.gapM)} м — этот разрыв останется в линии.`),
+    )) return;
+    saveJournal(joinPlanRoutes(j, id, best.id, getActorName() || 'Без имени'));
+    setEditingRouteId(null);
+    refreshJournalLayers();
+    setToast('Трассы склеены');
+    window.setTimeout(() => setToast(null), 1800);
   }, [refreshJournalLayers]);
 
 
@@ -877,6 +948,34 @@ export default function HomePage() {
   }, [coordInput, coordText, dropEntityAt]);
 
   /**
+   * ККС или муфта прямо по клику.
+   *
+   * Название спрашиваем сразу — без него на карте появится безымянная
+   * точка, которую через неделю никто не опознает. Всё остальное —
+   * кабель, волокна, глубина — дописывается потом в карточке.
+   */
+  const dropSiteObject = useCallback((kind: SiteObjectKind, lat: number, lon: number) => {
+    const spec = SITE_OBJECT_SPECS[kind];
+    const name = window.prompt(`${spec.label}: название или номер`, '');
+    if (name === null) return;
+    const now = new Date().toISOString();
+    saveJournal(upsertObject(loadJournal(), {
+      id: `obj-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+      kind,
+      name: name.trim() || spec.label,
+      lat,
+      lon,
+      author: getActorName() || 'Без имени',
+      createdAt: now,
+      updatedAt: now,
+      sync: 'local',
+    }));
+    refreshJournalLayers();
+    setToast(`${spec.label} поставлена`);
+    window.setTimeout(() => setToast(null), 1800);
+  }, [refreshJournalLayers]);
+
+  /**
    * Копирование в буфер: в поле открывают систему по http, а там
    * navigator.clipboard недоступен. Тогда падать нельзя — показываем
    * текст, чтобы человек скопировал сам.
@@ -1396,6 +1495,8 @@ export default function HomePage() {
             onEditRoute={building ? setEditingRouteId : undefined}
             onUpdateRouteCoords={handleUpdateRoute}
             onDeleteRoute={handleDeleteRoute}
+            onSplitRoute={building ? handleSplitRoute : undefined}
+            onJoinRoute={building ? handleJoinRoute : undefined}
             siteObjects={conLayers.objects ? siteObjects : EMPTY_LAYER}
             incidents={conLayers.incidents ? incidents : EMPTY_LAYER}
             showFlow={building && conLayers.flow}
@@ -1712,6 +1813,28 @@ export default function HomePage() {
             >
               <span>🎯</span><span>Перейти к координатам…</span>
             </button>
+
+            {/* ККС и муфту ставят прямо по клику: открывать форму ради
+                двух полей на морозе никто не станет. Подробности
+                дописывают потом, в карточке объекта. */}
+            {building && (
+              <>
+                <div className="my-1 border-t border-[#1e3a5f]/50" />
+                {(['kks', 'mufta', 'endpoint'] as const).map((kind) => (
+                  <button
+                    key={kind}
+                    onClick={() => {
+                      dropSiteObject(kind, contextMenu.lat, contextMenu.lon);
+                      setContextMenu(null);
+                    }}
+                    className="w-full px-3 py-1.5 text-left hover:bg-[#2dd4bf]/10 text-[#e2e8f0] flex items-center gap-2"
+                  >
+                    <span>{SITE_OBJECT_SPECS[kind].icon}</span>
+                    <span>Поставить {SITE_OBJECT_SPECS[kind].label.toLowerCase()}</span>
+                  </button>
+                ))}
+              </>
+            )}
 
             <div className="my-1 border-t border-[#1e3a5f]/50" />
             {/* Координаты отсюда уходят в акт, в навигатор и в переписку —

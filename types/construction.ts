@@ -964,6 +964,7 @@ export interface CorrectionRequest {
  */
 export type ChangeKind =
   | 'route_edit' | 'route_delete' | 'route_add'
+  | 'route_split' | 'route_join'
   | 'area_add' | 'area_edit' | 'area_rename' | 'area_delete';
 
 export interface ChangeLogEntry {

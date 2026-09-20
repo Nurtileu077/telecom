@@ -26,11 +26,11 @@ import {
 } from '@/components/Construction/incidents';
 import { pointAtDistanceM } from '@/components/Construction/routeProgress';
 import {
-  arrowsAlong, lengthLabels, progressSplit, METHOD_DASH, formatMeters,
+  arrowsAlong, lengthLabels, progressSplit, METHOD_DASH, formatMeters, bearingDeg,
 } from '@/components/Construction/mapDecor';
 import {
-  snapToRoutes, measureLine, measureAlongRoute, polygonAreaM2, perimeterM,
-  formatArea, rectCoords, circleCoords, RouteSnap,
+  snapToRoutes, nearestOnRoute, measureLine, measureAlongRoute, polygonAreaM2,
+  perimeterM, formatArea, rectCoords, circleCoords, RouteSnap,
 } from '@/components/Construction/measureTool';
 import { parseMapHash, buildMapHash } from '@/lib/mapLink';
 
@@ -242,6 +242,10 @@ interface Props {
   onEditRoute?: (id: string | null) => void;
   onUpdateRouteCoords?: (id: string, coords: [number, number][]) => void;
   onDeleteRoute?: (id: string) => void;
+  /** Разрезать трассу в стольких-то метрах от её начала. */
+  onSplitRoute?: (id: string, atM: number) => void;
+  /** Свести эту трассу с ближайшей к ней по концам. */
+  onJoinRoute?: (id: string) => void;
   /** Отклонения от проекта — глубина и трасса — как контекст на карте. */
   deviations?: import('@/components/Construction/journalStore').DeviationMapItem[];
   /** Колонны на карте: где стоит бригада, чем занята, каким составом. */
@@ -530,6 +534,8 @@ export default function LeafletMap(props: Props) {
   const openedFromLinkRef = useRef(false);
   /** Черновик прямоугольника или круга: первый клик поставил угол. */
   const shapeDraftRef = useRef<any>(null);
+  /** Где последний раз щёлкнули по трассе — там её и режут. */
+  const lastRouteClickRef = useRef<{ id: string; lat: number; lon: number } | null>(null);
   /** Ручки правки трассы — отдельная группа, чтобы не мешать слоям. */
   const routeEditGroupRef = useRef<any>(null);
   const objectGroupRef = useRef<any>(null);
@@ -1278,6 +1284,28 @@ export default function LeafletMap(props: Props) {
           line.bindPopup(popup);
           line.bindTooltip(`${preset.icon} ${a.name || preset.label}`, { sticky: true });
           group.addLayer(line);
+        } else if (a.shape === 'arrow' && a.coords.length >= 2) {
+          // Стрелка — то, чем на распечатке показывают «вот сюда».
+          // Сплошная, с наконечником на последней вершине.
+          const line = L.polyline(a.coords, { color, weight: 3, opacity: 0.9 });
+          line.bindPopup(popup);
+          line.bindTooltip(`${preset.icon} ${a.name || preset.label}`, { sticky: true });
+          group.addLayer(line);
+
+          const tip = a.coords[a.coords.length - 1];
+          const prev = a.coords[a.coords.length - 2];
+          group.addLayer(L.marker(tip, {
+            interactive: false,
+            zIndexOffset: 300,
+            icon: L.divIcon({
+              className: '',
+              iconSize: [0, 0],
+              iconAnchor: [0, 0],
+              html: `<div style="transform:translate(-7px,-8px) rotate(${bearingDeg(prev, tip).toFixed(0)}deg);
+                font-size:15px;line-height:1;color:${color};
+                text-shadow:0 0 3px #000">▲</div>`,
+            }),
+          }));
         } else if (a.shape === 'circle' && a.coords[0] && a.radius) {
           const [lat, lon] = a.coords[0];
           const c = L.circle([lat, lon], {
@@ -1286,6 +1314,27 @@ export default function LeafletMap(props: Props) {
           c.bindPopup(popup);
           c.bindTooltip(`${preset.icon} ${a.name || preset.label} (R=${Math.round(a.radius)}м)`, { sticky: true });
           group.addLayer(c);
+        }
+
+        // Подпись видна без клика. Пометка, которую надо сначала найти
+        // мышью, чтобы прочитать, — это не пометка, а загадка.
+        if (a.name && a.shape !== 'point') {
+          const at = a.shape === 'circle' ? a.coords[0] : a.coords[a.coords.length - 1];
+          if (at) {
+            group.addLayer(L.marker(at, {
+              interactive: false,
+              zIndexOffset: 280,
+              icon: L.divIcon({
+                className: '',
+                iconSize: [0, 0],
+                iconAnchor: [0, 0],
+                html: `<div style="transform:translate(10px,-6px);white-space:nowrap;
+                  padding:1px 5px;border-radius:4px;background:#0c1018dd;
+                  border:1px solid ${color}88;color:#e2e8f0;font-size:10px;
+                  font-weight:600">${esc(a.name)}</div>`,
+              }),
+            }));
+          }
         }
       }
     });
@@ -1608,16 +1657,26 @@ export default function LeafletMap(props: Props) {
           + `<span style="font-size:11px">${(r.lengthM / 1000).toFixed(3)} км</span>`
           + `<br/><span style="color:#64748b;font-size:10px">${esc(r.source)}</span>`
           + (propsRef.current.onEditRoute
-            ? `<div style="margin-top:6px;display:flex;gap:6px">
+            ? `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
                  <button onclick="window.__optiqEditRoute__('${esc(r.id)}')"
                    style="padding:3px 8px;background:#2dd4bf;color:#041016;border:none;border-radius:3px;font-size:10px;cursor:pointer;font-weight:600">
                    ✏️ Править линию</button>
+                 <button onclick="window.__optiqSplitRoute__('${esc(r.id)}')"
+                   style="padding:3px 8px;background:transparent;color:#38bdf8;border:1px solid #38bdf8;border-radius:3px;font-size:10px;cursor:pointer">
+                   ✂️ Разрезать здесь</button>
+                 <button onclick="window.__optiqJoinRoute__('${esc(r.id)}')"
+                   style="padding:3px 8px;background:transparent;color:#a78bfa;border:1px solid #a78bfa;border-radius:3px;font-size:10px;cursor:pointer">
+                   🔗 Склеить с соседней</button>
                  <button onclick="window.__optiqDeleteRoute__('${esc(r.id)}')"
                    style="padding:3px 8px;background:transparent;color:#f87171;border:1px solid #f87171;border-radius:3px;font-size:10px;cursor:pointer">
                    Удалить</button>
                </div>`
             : ''),
         );
+        // Где именно щёлкнули по линии — это и есть место разреза.
+        line.on('click', (e: any) => {
+          lastRouteClickRef.current = { id: r.id, lat: e.latlng.lat, lon: e.latlng.lng };
+        });
         group.addLayer(line);
 
         // Закрашенная часть — «сделано». Остаток остался синим проектом.
@@ -2460,6 +2519,28 @@ export default function LeafletMap(props: Props) {
       return;
     }
 
+    if (tool === 'arrow') {
+      // Стрелку ставят двумя кликами: откуда показываем и куда.
+      // Собирать её вершинами, как ломаную, никто не станет — это
+      // пометка на бегу, а не построение.
+      const st = drawStateRef.current;
+      if (st.coords.length === 0) {
+        st.coords.push([lat, lon]);
+        drawGroupRef.current.addLayer(
+          L.circleMarker([lat, lon], { radius: 5, color, fillOpacity: 1 }),
+        );
+      } else {
+        propsRef.current.addAnnotation({
+          type, shape: 'arrow', coords: [st.coords[0], [lat, lon]],
+          name: '', description: '', color,
+        });
+        drawStateRef.current = { coords: [] };
+        drawGroupRef.current.clearLayers();
+        propsRef.current.setActiveTool(null);
+      }
+      return;
+    }
+
     if (tool === 'circle') {
       // 1st click = center, 2nd click = radius
       const s = drawStateRef.current;
@@ -2929,11 +3010,25 @@ export default function LeafletMap(props: Props) {
       mapRef.current?.closePopup?.();
       propsRef.current.onDeleteRoute?.(id);
     };
+    (window as any).__optiqSplitRoute__ = (id: string) => {
+      mapRef.current?.closePopup?.();
+      const click = lastRouteClickRef.current;
+      const route = (propsRef.current.planRoutes ?? []).find((r) => r.id === id);
+      if (!route || !click || click.id !== id) return;
+      const hit = nearestOnRoute({ lat: click.lat, lon: click.lon }, route.coords);
+      if (hit) propsRef.current.onSplitRoute?.(id, hit.atM);
+    };
+    (window as any).__optiqJoinRoute__ = (id: string) => {
+      mapRef.current?.closePopup?.();
+      propsRef.current.onJoinRoute?.(id);
+    };
     return () => {
       delete (window as any).__deleteSub__;
       delete (window as any).__showBranchSub__;
       delete (window as any).__optiqEditRoute__;
       delete (window as any).__optiqDeleteRoute__;
+      delete (window as any).__optiqSplitRoute__;
+      delete (window as any).__optiqJoinRoute__;
       delete (window as any).__optiqEditObject__;
     };
   }, []);

@@ -22,6 +22,8 @@ const CHANGE_TEXT: Record<string, string> = {
   route_edit: 'трасса изменена',
   route_add: 'трасса добавлена',
   route_delete: 'трасса удалена',
+  route_split: 'трасса разрезана',
+  route_join: 'трассы склеены',
   area_add: 'обводка нарисована',
   area_edit: 'обводка изменена',
   area_rename: 'обводка переименована',

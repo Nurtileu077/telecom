@@ -262,7 +262,11 @@ export interface ImportRecord {
 }
 
 export type AnnotationType = 'village' | 'note' | 'problem' | 'area' | 'photo' | 'cable-route';
-export type AnnotationShape = 'point' | 'polygon' | 'line' | 'circle';
+/**
+ * Стрелка — то, чем на распечатке показывают «вот сюда». Рисуется как
+ * линия, но с наконечником: без него направление приходится угадывать.
+ */
+export type AnnotationShape = 'point' | 'polygon' | 'line' | 'circle' | 'arrow';
 
 export interface MapAnnotation {
   id: string;

@@ -7,6 +7,7 @@ import {
   CableDrum, FieldPhoto, SpliceRecord, Incident, normalizeRole,
 } from '@/types/construction';
 import { haversineM } from '@/components/Network/KMeans';
+import { splitRoute, joinRoutes, joinedName, splitNames } from './routeEdit';
 
 /** Состояние журнала стройки — Слой 2. */
 export interface JournalState {
@@ -871,6 +872,108 @@ export function updateRouteCoords(
 }
 
 /** Удаление трассы — тоже с записью: вернуть её иначе будет неоткуда. */
+/**
+ * Разрезать трассу в стольких-то метрах от начала.
+ *
+ * Исходная линия исчезает, вместо неё появляются две — с теми же
+ * данными о происхождении. Граница СМУ, стык бригад, конец участка:
+ * до сих пор всё это держали в голове, потому что резать было нечем.
+ */
+export function splitPlanRoute(
+  base: JournalState,
+  id: string,
+  atM: number,
+  author: string,
+): JournalState {
+  const prev = base.planRoutes.find((r) => r.id === id);
+  if (!prev) return base;
+  const cut = splitRoute(prev.coords, atM);
+  if (!cut) return base;
+
+  const now = new Date().toISOString();
+  const [nameA, nameB] = splitNames(prev.name);
+  const make = (
+    suffix: string, name: string, coords: [number, number][], lengthM: number,
+  ): PlanRoute => ({
+    ...prev,
+    id: `${prev.id}-${suffix}`,
+    name,
+    coords,
+    lengthM,
+    createdAt: prev.createdAt,
+    updatedAt: now,
+  });
+
+  const next: JournalState = {
+    ...base,
+    planRoutes: [
+      ...base.planRoutes.filter((r) => r.id !== id),
+      make('a', nameA, cut.head, cut.headM),
+      make('b', nameB, cut.tail, cut.tailM),
+    ],
+    updatedAt: now,
+  };
+  return logChange(next, {
+    at: now,
+    author,
+    kind: 'route_split',
+    target: prev.name || prev.uchastok || 'трасса',
+    detail: `${changeKm(cut.headM)} и ${changeKm(cut.tailM)}`,
+    routeId: id,
+    before: prev.coords,
+  });
+}
+
+/**
+ * Свести две линии в одну.
+ *
+ * Куда какой конец — решает расстояние между ними, а не порядок, в
+ * котором линии нарисованы: человек знает, что эти две — одна трасса, и
+ * не обязан помнить, в какую сторону их вели.
+ */
+export function joinPlanRoutes(
+  base: JournalState,
+  idA: string,
+  idB: string,
+  author: string,
+  maxGapM = 250,
+): JournalState {
+  if (idA === idB) return base;
+  const a = base.planRoutes.find((r) => r.id === idA);
+  const b = base.planRoutes.find((r) => r.id === idB);
+  if (!a || !b) return base;
+
+  const joined = joinRoutes(a.coords, b.coords, maxGapM);
+  if (!joined) return base;
+
+  const now = new Date().toISOString();
+  const merged: PlanRoute = {
+    ...a,
+    name: joinedName(a.name, b.name),
+    coords: joined.coords,
+    lengthM: a.lengthM + b.lengthM,
+    updatedAt: now,
+  };
+  const next: JournalState = {
+    ...base,
+    planRoutes: base.planRoutes
+      .filter((r) => r.id !== idB)
+      .map((r) => (r.id === idA ? merged : r)),
+    updatedAt: now,
+  };
+  return logChange(next, {
+    at: now,
+    author,
+    kind: 'route_join',
+    target: merged.name,
+    detail: joined.gapM < 1
+      ? `${changeKm(merged.lengthM)} одной линией`
+      : `${changeKm(merged.lengthM)}, разрыв в стыке ${Math.round(joined.gapM)} м`,
+    routeId: idA,
+    before: a.coords,
+  });
+}
+
 export function deleteRoute(
   base: JournalState,
   id: string,

@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { MapAnnotation, AnnotationType, ANNOTATION_PRESETS } from '@/types/network';
 
-export type DrawingTool = 'point' | 'polygon' | 'line' | 'circle' | null;
+export type DrawingTool = 'point' | 'polygon' | 'line' | 'circle' | 'arrow' | null;
 
 interface Props {
   annotations: MapAnnotation[];
@@ -64,12 +64,13 @@ export default function NotesTab({
         </div>
 
         <div className="text-[10px] text-[#64748b] uppercase tracking-wider mb-1 mt-2">Инструмент</div>
-        <div className="grid grid-cols-4 gap-1">
+        <div className="grid grid-cols-5 gap-1">
           {([
             { tool: 'point' as const, icon: '📍', label: 'Точка' },
             { tool: 'polygon' as const, icon: '⬛', label: 'Область' },
             { tool: 'line' as const, icon: '〰', label: 'Линия' },
             { tool: 'circle' as const, icon: '◯', label: 'Круг' },
+            { tool: 'arrow' as const, icon: '➜', label: 'Стрелка' },
           ]).map(({ tool, icon, label }) => (
             <button
               key={tool}
