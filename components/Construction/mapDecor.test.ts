@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   bearingDeg, locateOnRoute, arrowsAlong, formatMeters, lengthLabels,
-  progressSplit, mapLegend, scaleBar, METHOD_DASH,
+  progressSplit, mapLegend, scaleBar, METHOD_DASH, clusterPoints,
 } from './mapDecor';
 import { routeLengthM } from './routeProgress';
 import { DEFAULT_CONSTRUCTION_LAYERS } from './mapLayers';
@@ -148,6 +148,53 @@ describe('mapLegend', () => {
   it('трассу выключили — и легенда молчит про трассу', () => {
     const groups = mapLegend({ ...DEFAULT_CONSTRUCTION_LAYERS, plan: false }, 'stage');
     expect(groups.some((g) => g.title.startsWith('Трасса'))).toBe(false);
+  });
+});
+
+describe('clusterPoints', () => {
+  const near = [
+    { lat: 53.0000, lon: 69.0000 },
+    { lat: 53.0001, lon: 69.0001 },
+    { lat: 53.0002, lon: 69.0002 },
+  ];
+  const far = { lat: 53.5, lon: 69.5 };
+
+  it('близкие собирает в одну кучу', () => {
+    // 100 м на пиксель, ячейка 60 пикселей — это 6 км.
+    const c = clusterPoints([...near, far], 60, 100);
+    expect(c).toHaveLength(2);
+    expect(c.find((x) => x.items.length === 3)).toBeTruthy();
+  });
+
+  it('вблизи ничего не скучивает', () => {
+    // Полметра на пиксель: ячейка 30 м, точки в десятках метров друг от друга.
+    const c = clusterPoints(near, 60, 0.5);
+    expect(c.length).toBeGreaterThan(1);
+  });
+
+  it('значок стоит в середине группы, а не в углу ячейки', () => {
+    const c = clusterPoints(near, 60, 100);
+    const big = c.find((x) => x.items.length === 3)!;
+    expect(big.lat).toBeCloseTo(53.0001, 5);
+    expect(big.lon).toBeCloseTo(69.0001, 5);
+  });
+
+  it('ни одна точка не теряется', () => {
+    const many = Array.from({ length: 50 }, (_, i) => ({ lat: 53 + i * 0.01, lon: 69 }));
+    const total = clusterPoints(many, 40, 50).reduce((s, c) => s + c.items.length, 0);
+    expect(total).toBe(50);
+  });
+
+  it('битые координаты выкидываем, а не роняем карту', () => {
+    const c = clusterPoints(
+      [{ lat: NaN, lon: 69 }, { lat: 53, lon: 69 }] as { lat: number; lon: number }[],
+      60, 100,
+    );
+    expect(c).toHaveLength(1);
+  });
+
+  it('пустой список — пустой ответ', () => {
+    expect(clusterPoints([], 60, 100)).toEqual([]);
   });
 });
 

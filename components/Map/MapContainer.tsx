@@ -27,6 +27,7 @@ import {
 import { pointAtDistanceM } from '@/components/Construction/routeProgress';
 import {
   arrowsAlong, lengthLabels, progressSplit, METHOD_DASH, formatMeters, bearingDeg,
+  clusterPoints,
 } from '@/components/Construction/mapDecor';
 import {
   snapToRoutes, nearestOnRoute, measureLine, measureAlongRoute, polygonAreaM2,
@@ -96,6 +97,7 @@ import OfflineTilesButton from '@/components/Map/OfflineTilesButton';
 import { getTile, putTile } from '@/lib/tileCache';
 import PresenceCursors from '@/components/Map/PresenceCursors';
 import MapLegend from '@/components/Map/MapLegend';
+import MapSearch from '@/components/Map/MapSearch';
 import ScaleBar from '@/components/Map/ScaleBar';
 
 /**
@@ -233,6 +235,10 @@ interface Props {
   measureReadout?: MeasureReadout | null;
   /** Переключить, что рисуем: контур, прямоугольник, круг. */
   onSetDrawShape?: (s: 'route' | 'area' | 'rect' | 'circle') => void;
+  /** Сёла с их положением — для поиска по карте. */
+  snpSearchPoints?: import('@/components/Construction/snpMap').SnpMapPoint[];
+  /** Поиск по карте включён: на стройке ищут по названию села. */
+  searchOnMap?: boolean;
   onToggleDrawRoute?: () => void;
   /** Включить рисование замкнутого контура. */
   onToggleDrawArea?: () => void;
@@ -319,7 +325,22 @@ const CABLE_LAYER_KEY: Record<string, keyof LayerVisibility> = {
   'ОК-48': 'cableOK48', 'ОК-96': 'cableOK96',
 };
 
-type BaseMap = 'dark' | 'light' | 'satellite' | 'hybrid';
+type BaseMap = 'dark' | 'light' | 'satellite' | 'hybrid' | 'topo';
+
+/** Как подложка называется по-русски — для подсказки на кнопке. */
+const BASEMAP_LABEL: Record<BaseMap, string> = {
+  dark: 'Тёмная схема',
+  light: 'Светлая схема',
+  satellite: 'Спутник',
+  hybrid: 'Спутник с подписями',
+  topo: 'Рельеф',
+};
+
+const BASEMAP_ICON: Record<BaseMap, string> = {
+  dark: '🌙', light: '☀️', satellite: '🛰', hybrid: '🗺', topo: '⛰',
+};
+
+const BASEMAP_KEY = 'optiq-basemap-v1';
 
 const BASEMAPS: Record<BaseMap, { url: string; attribution: string; subdomains?: string; maxZoom?: number }> = {
   dark: {
@@ -337,6 +358,12 @@ const BASEMAPS: Record<BaseMap, { url: string; attribution: string; subdomains?:
   hybrid: {
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     attribution: '©Esri World Imagery', maxZoom: 19,
+  },
+  // Рельеф нужен там, где трасса идёт по сопкам и оврагам: по спутнику
+  // перепад высот не читается, а кабелеукладчик по нему не пойдёт.
+  topo: {
+    url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+    attribution: '©OpenTopoMap ©OpenStreetMap', subdomains: 'abc', maxZoom: 17,
   },
 };
 
@@ -555,7 +582,19 @@ export default function LeafletMap(props: Props) {
   const waypointGroupRef = useRef<any>(null);
   const entityDragRef = useRef(false);
 
-  const [baseMap, setBaseMap] = useState<BaseMap>('dark');
+  const [baseMap, setBaseMapState] = useState<BaseMap>('dark');
+  // Подложку выбирают один раз под свою работу: прорабу нужен спутник,
+  // в офисе — схема. Спрашивать об этом каждое утро незачем.
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(BASEMAP_KEY) as BaseMap | null;
+      if (saved && saved in BASEMAPS) setBaseMapState(saved);
+    } catch { /* приватный режим */ }
+  }, []);
+  const setBaseMap = (bm: BaseMap) => {
+    setBaseMapState(bm);
+    try { window.localStorage.setItem(BASEMAP_KEY, bm); } catch { /* приватный режим */ }
+  };
   const [mapReady, setMapReady] = useState(false);
 
   // Stable refs for callbacks (so we don't re-init map)
@@ -772,6 +811,9 @@ export default function LeafletMap(props: Props) {
         // План рисуется с толщиной по зуму — иначе на отдалении он снова
         // превращается в волос.
         renderPlanRoutes();
+        // Объекты издали скучиваются, вблизи расходятся — значит зум их
+        // тоже перерисовывает.
+        renderSiteObjects();
         // Контуры раскрываются вглубь по мере приближения: издали область,
         // ближе районы, ещё ближе сёла.
         renderAreas();
@@ -1961,8 +2003,60 @@ export default function LeafletMap(props: Props) {
       if (objects.length === 0) return;
       const zoom = mapRef.current?.getZoom?.() ?? 10;
       const scale = markerScale(zoom);
+      let shown = objects;
 
-      for (const o of objects) {
+      // Издали объекты сливаются в пятно: тысяча значков не читается и
+      // не нажимается, а карта их честно рисует и тормозит. Вблизи, где
+      // они разъезжаются, скучивание только мешает.
+      if (zoom < 14) {
+        const mpp = metersPerPixel(objects[0].lat, zoom);
+        const clusters = clusterPoints(objects, 46, mpp);
+        const clustered = clusters.filter((c) => c.items.length > 1);
+        const single = clusters.filter((c) => c.items.length === 1);
+
+        for (const c of clustered) {
+          const size = Math.round(24 + Math.min(14, Math.log2(c.items.length) * 4));
+          const m = L.marker([c.lat, c.lon], {
+            zIndexOffset: 480,
+            icon: L.divIcon({
+              className: '',
+              iconSize: [size, size],
+              iconAnchor: [size / 2, size / 2],
+              html: `<div style="
+                width:${size}px;height:${size}px;border-radius:50%;
+                background:#0c1018ee;border:2px solid #38bdf8;color:#e2e8f0;
+                display:flex;align-items:center;justify-content:center;
+                font-size:${Math.round(size * 0.42)}px;font-weight:700;
+                box-shadow:0 0 8px #38bdf855;
+              ">${c.items.length}</div>`,
+            }),
+          });
+          const kinds = new Map<string, number>();
+          for (const it of c.items) {
+            const label = SITE_OBJECT_SPECS[it.kind].plural;
+            kinds.set(label, (kinds.get(label) ?? 0) + 1);
+          }
+          m.bindTooltip(
+            [...kinds].map(([k, n]) => `${k}: ${n}`).join(' · '),
+            { sticky: true, className: 'text-xs' },
+          );
+          // Клик по куче раскрывает её: это то, чего от неё и ждут.
+          m.on('click', () => {
+            try {
+              mapRef.current?.fitBounds(
+                L.latLngBounds(c.items.map((it) => [it.lat, it.lon] as [number, number])),
+                { padding: [60, 60], maxZoom: 17 },
+              );
+            } catch { /* вырожденная рамка */ }
+          });
+          group.addLayer(m);
+        }
+
+        // Одиночки рисуем как обычно — прятать их в кучу из одного незачем.
+        shown = single.map((c) => c.items[0]);
+      }
+
+      for (const o of shown) {
         if (!Number.isFinite(o.lat) || !Number.isFinite(o.lon)) continue;
         const spec = SITE_OBJECT_SPECS[o.kind];
         const color = siteObjectColor(o);
@@ -3112,20 +3206,54 @@ export default function LeafletMap(props: Props) {
       {/* Basemap switcher */}
       <div className="absolute bottom-[calc(58px+env(safe-area-inset-bottom))] md:bottom-auto md:top-3 right-2 md:right-3 flex flex-col gap-1 z-[400]">
         <div className="bg-[#0d1b2a] border border-[#1e3a5f] rounded-lg p-1 flex gap-0.5 shadow-xl">
-          {(['dark', 'light', 'satellite', 'hybrid'] as BaseMap[]).map((bm) => (
+          {(['dark', 'light', 'satellite', 'hybrid', 'topo'] as BaseMap[]).map((bm) => (
             <button
               key={bm}
               onClick={() => setBaseMap(bm)}
               className={`px-2 py-1 text-[10px] rounded transition-all ${baseMap === bm ? 'bg-[#38bdf8]/15 text-[#38bdf8]' : 'text-[#94a3b8] hover:text-[#e2e8f0]'}`}
-              title={bm}
+              title={BASEMAP_LABEL[bm]}
+              aria-label={BASEMAP_LABEL[bm]}
+              aria-pressed={baseMap === bm}
             >
-              {bm === 'dark' ? '🌙' : bm === 'light' ? '☀️' : bm === 'satellite' ? '🛰' : '🗺'}
+              {BASEMAP_ICON[bm]}
             </button>
           ))}
         </div>
       </div>
 
       {/* Measure / Edit mode indicator */}
+      {props.searchOnMap && mapReady && (
+        <MapSearch
+          className="absolute top-2 left-1/2 -translate-x-1/2 z-[401]"
+          sources={{
+            routes: props.planRoutes,
+            objects: props.siteObjects,
+            areas: props.areas,
+            crews: props.crews,
+            incidents: props.incidents,
+            snpPoints: props.snpSearchPoints,
+          }}
+          onPick={(hit) => {
+            const map = mapRef.current;
+            if (!map) return;
+            // Трассу и контур показываем целиком: их вопрос — «где она
+            // идёт», а не «где её середина».
+            if (hit.bounds && hit.bounds.length > 1) {
+              import('leaflet').then((L) => {
+                try {
+                  map.fitBounds(L.latLngBounds(hit.bounds as [number, number][]),
+                    { padding: [60, 60], maxZoom: 16 });
+                } catch {
+                  map.flyTo([hit.lat, hit.lon], hit.zoom, { duration: 0.8 });
+                }
+              });
+              return;
+            }
+            map.flyTo([hit.lat, hit.lon], hit.zoom, { duration: 0.8 });
+          }}
+        />
+      )}
+
       <div className="absolute top-2 left-2 md:top-3 md:left-3 z-[400] flex flex-col gap-1 max-md:max-w-[140px]">
         <button
           onClick={() => {

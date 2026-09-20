@@ -1495,6 +1495,8 @@ export default function HomePage() {
             onEditRoute={building ? setEditingRouteId : undefined}
             onUpdateRouteCoords={handleUpdateRoute}
             onDeleteRoute={handleDeleteRoute}
+            searchOnMap={building}
+            snpSearchPoints={snpPoints}
             onSplitRoute={building ? handleSplitRoute : undefined}
             onJoinRoute={building ? handleJoinRoute : undefined}
             siteObjects={conLayers.objects ? siteObjects : EMPTY_LAYER}

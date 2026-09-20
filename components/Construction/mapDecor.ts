@@ -287,6 +287,53 @@ export function mapLegend(
   return out;
 }
 
+export interface PointCluster<T> {
+  lat: number;
+  lon: number;
+  items: T[];
+}
+
+/**
+ * Скучивание точек.
+ *
+ * В рабочем файле объектов больше тысячи. На общем плане области они
+ * превращаются в сплошное пятно, по которому нельзя ни попасть мышью,
+ * ни что-то понять, — а карта при этом честно рисует тысячу значков и
+ * тормозит. Поэтому близкие собираем в один значок с числом.
+ *
+ * Размер ячейки задаётся в пикселях экрана, а не в метрах: слипаются
+ * точки именно на экране, и на разном приближении это разные метры.
+ */
+export function clusterPoints<T extends { lat: number; lon: number }>(
+  items: T[],
+  cellPx: number,
+  metersPerPixel: number,
+): PointCluster<T>[] {
+  const cellM = Math.max(1, cellPx * metersPerPixel);
+  const dLat = (cellM / R) * (180 / Math.PI);
+
+  const cells = new Map<string, T[]>();
+  for (const it of items) {
+    if (!Number.isFinite(it.lat) || !Number.isFinite(it.lon)) continue;
+    const cos = Math.max(0.05, Math.cos(rad(it.lat)));
+    const dLon = dLat / cos;
+    const key = `${Math.floor(it.lat / dLat)}_${Math.floor(it.lon / dLon)}`;
+    const list = cells.get(key);
+    if (list) list.push(it); else cells.set(key, [it]);
+  }
+
+  const out: PointCluster<T>[] = [];
+  for (const list of cells.values()) {
+    // Значок ставим в середину группы, а не в угол ячейки: иначе на
+    // границе сетки он окажется в стороне от самих точек.
+    let lat = 0;
+    let lon = 0;
+    for (const it of list) { lat += it.lat; lon += it.lon; }
+    out.push({ lat: lat / list.length, lon: lon / list.length, items: list });
+  }
+  return out;
+}
+
 export interface ScaleBar {
   /** Круглое число метров, которое показываем. */
   meters: number;
