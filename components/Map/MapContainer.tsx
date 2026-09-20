@@ -17,7 +17,7 @@ import { areaColor, visibleAtZoom } from '@/components/Construction/areaProgress
 import {
   SITE_OBJECT_SPECS, MUFTA_STATES, siteObjectColor,
 } from '@/types/construction';
-import { routeTitle } from '@/components/Construction/routeStyle';
+import { routeTitle, PLAN_LINE_COLOR } from '@/components/Construction/routeStyle';
 import {
   METHOD_COLOR, METHOD_LABEL, kksPoints,
 } from '@/components/Construction/routeSegments';
@@ -25,6 +25,9 @@ import {
   problemSpots, nearbyIncidents, incidentHours, SAME_SPOT_M,
 } from '@/components/Construction/incidents';
 import { pointAtDistanceM } from '@/components/Construction/routeProgress';
+import {
+  arrowsAlong, lengthLabels, progressSplit, METHOD_DASH, formatMeters,
+} from '@/components/Construction/mapDecor';
 
 /**
  * Ссылка «доехать».
@@ -68,6 +71,8 @@ import GpsLocateButton from '@/components/Map/GpsLocateButton';
 import OfflineTilesButton from '@/components/Map/OfflineTilesButton';
 import { getTile, putTile } from '@/lib/tileCache';
 import PresenceCursors from '@/components/Map/PresenceCursors';
+import MapLegend from '@/components/Map/MapLegend';
+import ScaleBar from '@/components/Map/ScaleBar';
 
 /**
  * Подложка, которая сначала смотрит на устройство.
@@ -446,6 +451,17 @@ function lineScale(zoom: number): number {
   return Math.max(0.9, Math.min(1.8, 0.9 + (zoom - 9) * 0.1));
 }
 
+/**
+ * Сколько метров в пикселе на этой широте и этом приближении.
+ *
+ * Нужно там, где шаг задаётся не в метрах, а глазами: стрелки направления
+ * ставят через столько-то пикселей, иначе на области они слипаются в
+ * сплошную полосу, а на селе исчезают вовсе.
+ */
+function metersPerPixel(lat: number, zoom: number): number {
+  return (156543.03392 * Math.cos((lat * Math.PI) / 180)) / 2 ** zoom;
+}
+
 export default function LeafletMap(props: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const gpsMarkerRef = useRef<any>(null);
@@ -469,6 +485,8 @@ export default function LeafletMap(props: Props) {
   const routeDraftRef = useRef<[number, number][]>([]);
   /** Отложенная вершина: двойной клик приходит после двух одиночных. */
   const routeClickTimerRef = useRef<number | null>(null);
+  /** Отложенная перерисовка плана после перемотки карты. */
+  const panTimerRef = useRef<number | null>(null);
   /** Ручки правки трассы — отдельная группа, чтобы не мешать слоям. */
   const routeEditGroupRef = useRef<any>(null);
   const objectGroupRef = useRef<any>(null);
@@ -650,6 +668,18 @@ export default function LeafletMap(props: Props) {
         // Контуры раскрываются вглубь по мере приближения: издали область,
         // ближе районы, ещё ближе сёла.
         renderAreas();
+      });
+
+      // Стрелки направления и подписи длин рисуются только для того, что
+      // сейчас в окне, — значит при перемотке карты их надо досчитать.
+      // С задержкой: перетаскивание карты не должно тянуть за собой
+      // перерисовку сотни трасс на каждом кадре.
+      map.on('moveend', () => {
+        if (panTimerRef.current !== null) window.clearTimeout(panTimerRef.current);
+        panTimerRef.current = window.setTimeout(() => {
+          panTimerRef.current = null;
+          renderPlanRoutes();
+        }, 260);
       });
 
       // After map ready: render existing data and fit bounds if already loaded
@@ -1406,19 +1436,42 @@ export default function LeafletMap(props: Props) {
       const segments = propsRef.current.routeSegments ?? [];
       const segmented = new Set(segments.map((sg) => sg.routeId));
 
+      // Докуда дошли по каждой трассе. Отдельной записи «дошли до такого-то
+      // километра» никто не ведёт и вести не будет, но границы отрезков по
+      // способам — это ровно она и есть.
+      const doneByRoute = new Map<string, number>();
+      for (const sg of segments) {
+        doneByRoute.set(sg.routeId, Math.max(doneByRoute.get(sg.routeId) ?? 0, sg.toM));
+      }
+
+      // Стрелки и подписи — это маркеры, а их на сотне трасс набираются
+      // тысячи. Рисуем только то, что сейчас на экране, и с общим потолком:
+      // карта должна оставаться картой, а не списком значков.
+      const view = mapRef.current?.getBounds?.();
+      let arrowBudget = 140;
+      let labelBudget = 50;
+
       for (const r of routes) {
         if (r.coords.length < 2) continue;
         // В режиме «по способу» трассу рисуют её отрезки, а сама линия
         // остаётся бледной подложкой: два смысла одним цветом не читаются.
         const asBase = byMethod && segmented.has(r.id);
+
+        // Пройденная часть красится этапом, остаток остаётся проектом.
+        // Сплошная цветная во всю длину обещала готовность, которой нет:
+        // «докуда дошли» — вопрос, который задают глазами, а не процентом.
+        const doneM = doneByRoute.get(r.id) ?? 0;
+        const split = doneM > 0 && !asBase ? progressSplit(r.coords, doneM) : null;
+        const partial = !!split && split.share > 0.01 && split.share < 0.99;
+
         const line = L.polyline(r.coords, {
-          color: asBase ? '#475569' : r.color,
+          color: asBase ? '#475569' : partial ? PLAN_LINE_COLOR : r.color,
           // Проект — сплошная синяя, тоньше факта. Пунктир превращал её в
           // такую же штриховку, как у границ района, и трасса терялась
           // среди контуров. Тонкая и сплошная читается как трасса, а
           // толщина и цвет по-прежнему отличают проект от построенного.
-          weight: (asBase ? 2 : r.dashed ? 2.5 : 4.5) * lineScale(zoom),
-          opacity: asBase ? 0.5 : r.dashed ? 0.8 : 0.95,
+          weight: (asBase || r.dashed || partial ? (asBase ? 2 : 2.5) : 4.5) * lineScale(zoom),
+          opacity: asBase ? 0.5 : r.dashed || partial ? 0.8 : 0.95,
           dashArray: undefined,
         });
         const title = routeTitle(r);
@@ -1447,6 +1500,76 @@ export default function LeafletMap(props: Props) {
             : ''),
         );
         group.addLayer(line);
+
+        // Закрашенная часть — «сделано». Остаток остался синим проектом.
+        if (partial && split) {
+          const done = L.polyline(split.done, {
+            color: r.color, weight: 4.5 * lineScale(zoom), opacity: 0.95,
+          });
+          done.bindTooltip(
+            `${esc(title)} · пройдено ${formatMeters(split.doneM)}`
+            + ` из ${formatMeters(split.totalM)} · ${Math.round(split.share * 100)}%`,
+            { sticky: true, className: 'text-xs' },
+          );
+          group.addLayer(done);
+        }
+
+        // Стрелки направления и длины перегонов. Их считают маркерами, а
+        // маркеров на сотне трасс набираются тысячи, поэтому только то,
+        // что сейчас в окне, и в пределах общего потолка.
+        const onScreen = !view || (() => {
+          try { return view.intersects(L.latLngBounds(r.coords as any)); } catch { return true; }
+        })();
+
+        if (zoom >= 10 && onScreen && arrowBudget > 0 && !r.dashed) {
+          const mpp = metersPerPixel(r.coords[0][0], zoom);
+          const arrows = arrowsAlong(r.coords, { everyM: mpp * 130, max: Math.min(12, arrowBudget) });
+          arrowBudget -= arrows.length;
+          for (const a of arrows) {
+            group.addLayer(L.marker([a.lat, a.lon], {
+              interactive: false,
+              zIndexOffset: 260,
+              icon: L.divIcon({
+                className: '',
+                iconSize: [0, 0],
+                iconAnchor: [0, 0],
+                // ▲ смотрит вверх, а азимут считается от севера — значит
+                // поворот на сам азимут и даёт направление движения.
+                html: `<div style="transform:translate(-5px,-6px) rotate(${a.deg.toFixed(0)}deg);
+                  font-size:10px;line-height:1;color:${r.color};
+                  text-shadow:0 0 3px #000,0 0 3px #000">▲</div>`,
+              }),
+            }));
+          }
+        }
+
+        if (zoom >= 12 && onScreen && labelBudget > 0) {
+          const mpp = metersPerPixel(r.coords[0][0], zoom);
+          // Подписываем перегон, если он длиннее полусотни пикселей: короче
+          // — и цифра не поместится над самой линией.
+          const labels = lengthLabels(r.coords, {
+            minMeters: mpp * 60,
+            max: Math.min(4, labelBudget),
+          });
+          labelBudget -= labels.length;
+          for (const lb of labels) {
+            group.addLayer(L.marker([lb.lat, lb.lon], {
+              interactive: false,
+              zIndexOffset: 240,
+              icon: L.divIcon({
+                className: '',
+                iconSize: [0, 0],
+                iconAnchor: [0, 0],
+                html: `<div style="
+                  transform:translate(-50%,-14px);white-space:nowrap;
+                  padding:0 4px;border-radius:3px;
+                  background:#0c1018cc;color:#cbd5e1;
+                  font-size:9px;font-family:ui-monospace,monospace;
+                ">${esc(lb.text)}</div>`,
+              }),
+            }));
+          }
+        }
 
         // «Откуда — куда» прямо на концах линии. Название трассы это и
         // говорит, но читать его в подсказке — значит навести мышь на
@@ -1486,6 +1609,9 @@ export default function LeafletMap(props: Props) {
           const color = METHOD_COLOR[sg.method];
           const seg = L.polyline(sg.coords, {
             color, weight: 5 * lineScale(zoom), opacity: 0.95,
+            // Способ виден и рисунком линии, а не только цветом: на
+            // спутнике цвета спорят с подложкой, а карту ещё и печатают.
+            dashArray: METHOD_DASH[sg.method],
           });
           const when = sg.dates.length
             ? `${new Date(`${sg.dates[0]}T00:00:00Z`).toLocaleDateString('ru')}`
@@ -2629,6 +2755,33 @@ export default function LeafletMap(props: Props) {
 
       {mapReady && (
         <PresenceCursors map={mapRef.current} peers={props.presencePeers ?? []} />
+      )}
+
+      {mapReady && (
+        <ScaleBar
+          map={mapRef.current}
+          className="absolute left-2 md:left-3 bottom-[calc(8px+env(safe-area-inset-bottom))] z-[400]"
+        />
+      )}
+
+      {/* Легенда объясняет только то, что сейчас на карте: слой выключили
+          — ушла и его строка. */}
+      {mapReady && (
+        <MapLegend
+          layers={{
+            plan: (props.planRoutes?.length ?? 0) > 0,
+            objects: (props.siteObjects?.length ?? 0) > 0,
+            drills: (props.drillPoints?.length ?? 0) > 0 || (props.drillLines?.length ?? 0) > 0,
+            crews: (props.crews?.length ?? 0) > 0,
+            deviations: (props.deviations?.length ?? 0) > 0,
+            incidents: (props.incidents?.length ?? 0) > 0,
+            areas: (props.areas?.length ?? 0) > 0,
+            snp: (props.snpPoints?.length ?? 0) > 0,
+            flow: !!props.showFlow,
+          }}
+          colorMode={props.routeColorMode ?? 'stage'}
+          className="absolute left-2 md:left-3 bottom-[calc(30px+env(safe-area-inset-bottom))] z-[400]"
+        />
       )}
 
       {props.offlineTiles && (
