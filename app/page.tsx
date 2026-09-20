@@ -84,6 +84,11 @@ import MobileDock from '@/components/Layout/MobileDock';
 import MobileActionSheet from '@/components/Layout/MobileActionSheet';
 import PwaInstallBanner from '@/components/Layout/PwaInstallBanner';
 import RoutingProgressOverlay from '@/components/Layout/RoutingProgressOverlay';
+import {
+  parseLatLon, formatLatLon, COORD_STYLES, COORD_STYLE_LABEL, COORD_STYLE_HINT,
+} from '@/components/Construction/coordFormat';
+import { mapLinkFor } from '@/lib/mapLink';
+import type { MeasureReadout } from '@/components/Map/MapContainer';
 
 const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
   ssr: false,
@@ -183,7 +188,7 @@ export default function HomePage() {
    * недостающая трасса. Контур решать нечего: спрашиваем название и
    * кладём в слой «нарисовано на карте».
    */
-  const [drawShape, setDrawShape] = useState<'route' | 'area'>('route');
+  const [drawShape, setDrawShape] = useState<'route' | 'area' | 'rect' | 'circle'>('route');
   const [drawnCoords, setDrawnCoords] = useState<[number, number][] | null>(null);
   const refreshJournalLayers = useCallback(() => {
     const j = loadJournal();
@@ -221,7 +226,8 @@ export default function HomePage() {
   const handleRouteDrawn = useCallback((c: [number, number][]) => {
     setDrawingRoute(false);
     // Пустой массив приходит при отмене: рисовать было нечего.
-    if (drawShape === 'area') {
+    // Прямоугольник и круг — те же контуры, только заданы двумя кликами.
+    if (drawShape !== 'route') {
       if (c.length < 3) return;
       const name = prompt('Название контура:', '');
       if (name === null) return;
@@ -410,6 +416,11 @@ export default function HomePage() {
   const [activeTool, setActiveTool] = useState<DrawingTool>(null);
   const [activeAnnotationType, setActiveAnnotationType] = useState<AnnotationType>('village');
   const [measureMode, setMeasureMode] = useState(false);
+  /** Что меряем: длину или площадь. */
+  const [measureShape, setMeasureShape] = useState<'line' | 'area'>('line');
+  const [measureReadout, setMeasureReadout] = useState<MeasureReadout | null>(null);
+  /** Где сейчас карта: нужно ссылке на место и выгрузке видимого куска. */
+  const mapViewRef = useRef<{ lat: number; lon: number; zoom: number } | null>(null);
   const [heatmapEnabled, setHeatmapEnabled] = useState(false);
   const [entitySelection, setEntitySelection] = useState<EntitySelection | null>(null);
   const [moveEntityTarget, setMoveEntityTarget] = useState<{ kind: 'olt' | 'tb' | 'ork'; id: string } | null>(null);
@@ -433,7 +444,11 @@ export default function HomePage() {
   const [budgetColoring, setBudgetColoring] = useState(false);
   const [splicePlanTbId, setSplicePlanTbId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ lat: number; lon: number; x: number; y: number } | null>(null);
-  const [coordInput, setCoordInput] = useState<{ kind: 'sub' | 'olt' | 'tb' | 'ork' } | null>(null);
+  const [coordInput, setCoordInput] = useState<
+    { kind: 'sub' | 'olt' | 'tb' | 'ork' | 'goto' } | null
+  >(null);
+  /** Короткое сообщение внизу экрана: «скопировано», «сохранено». */
+  const [toast, setToast] = useState<string | null>(null);
   const [coordText, setCoordText] = useState('');
   const [showChat, setShowChat] = useState(false);
   const [showAddCameras, setShowAddCameras] = useState(false);
@@ -842,18 +857,39 @@ export default function HomePage() {
 
   const submitCoordInput = useCallback(() => {
     if (!coordInput) return;
-    const m = coordText.trim().match(/^\s*(-?\d+(?:[.,]\d+)?)\s*[,;\s]\s*(-?\d+(?:[.,]\d+)?)\s*$/);
-    if (!m) { alert('Формат: lat, lng (например: 40.78, 68.32)'); return; }
-    const lat = parseFloat(m[1].replace(',', '.'));
-    const lon = parseFloat(m[2].replace(',', '.'));
-    if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
-      alert('Неверные координаты'); return;
+    // Принимаем любую запись: десятичные, с запятой вместо точки,
+    // градусы с минутами и секундами, с буквами полушарий. Координаты
+    // приходят из акта, из навигатора и из переписки, и все три записи
+    // разные.
+    const p = parseLatLon(coordText);
+    if (!p) {
+      alert('Не разобрал координаты.\nМожно так: 52.0914, 69.1234 · 52°05′29″ с.ш. 69°07′24″ в.д. · N 52 34 12 E 69 12 05');
+      return;
     }
     const k = coordInput.kind;
     setCoordInput(null);
     setCoordText('');
-    dropEntityAt(k, lat, lon);
+    if (k === 'goto') {
+      flyToRef.current?.(p.lat, p.lon, 17);
+      return;
+    }
+    dropEntityAt(k, p.lat, p.lon);
   }, [coordInput, coordText, dropEntityAt]);
+
+  /**
+   * Копирование в буфер: в поле открывают систему по http, а там
+   * navigator.clipboard недоступен. Тогда падать нельзя — показываем
+   * текст, чтобы человек скопировал сам.
+   */
+  const copyText = useCallback(async (text: string, what: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setToast(`${what} скопировано`);
+      window.setTimeout(() => setToast(null), 1800);
+    } catch {
+      window.prompt(`${what} — скопируйте вручную:`, text);
+    }
+  }, []);
 
   const submitNewSubscriber = useCallback(async () => {
     if (!showAddSub) return;
@@ -1346,7 +1382,16 @@ export default function HomePage() {
               setDrawShape('area');
               setDrawingRoute((v) => !(v && drawShape === 'area'));
             } : undefined}
+            onSetDrawShape={building ? (s) => {
+              setDrawShape(s);
+              setDrawingRoute((v) => !(v && drawShape === s));
+            } : undefined}
             onRouteDrawn={building ? handleRouteDrawn : undefined}
+            mapViewRef={mapViewRef}
+            measureShape={measureShape}
+            onSetMeasureShape={setMeasureShape}
+            onMeasure={setMeasureReadout}
+            measureReadout={measureReadout}
             editingRouteId={editingRouteId}
             onEditRoute={building ? setEditingRouteId : undefined}
             onUpdateRouteCoords={handleUpdateRoute}
@@ -1661,45 +1706,127 @@ export default function HomePage() {
             >
               <span>⌨</span><span>Ввести координаты вручную…</span>
             </button>
+            <button
+              onClick={() => { setCoordInput({ kind: 'goto' }); setContextMenu(null); }}
+              className="w-full px-3 py-1.5 text-left hover:bg-[#fbbf24]/10 text-[#e2e8f0] flex items-center gap-2"
+            >
+              <span>🎯</span><span>Перейти к координатам…</span>
+            </button>
+
+            <div className="my-1 border-t border-[#1e3a5f]/50" />
+            {/* Координаты отсюда уходят в акт, в навигатор и в переписку —
+                и в каждом месте своя запись. Поэтому не одна кнопка, а
+                выбор формата. */}
+            <div className="px-3 pt-1 pb-0.5 text-[9px] uppercase tracking-wide text-[#64748b]">
+              Скопировать координаты
+            </div>
+            {COORD_STYLES.map((st) => (
+              <button
+                key={st}
+                onClick={() => {
+                  copyText(
+                    formatLatLon({ lat: contextMenu.lat, lon: contextMenu.lon }, st),
+                    COORD_STYLE_LABEL[st],
+                  );
+                  setContextMenu(null);
+                }}
+                className="w-full px-3 py-1 text-left hover:bg-[#2dd4bf]/10 text-[#e2e8f0] flex items-baseline gap-2"
+              >
+                <span className="font-mono text-[10.5px] text-[#94a3b8] truncate">
+                  {formatLatLon({ lat: contextMenu.lat, lon: contextMenu.lon }, st)}
+                </span>
+                <span className="ml-auto text-[9px] text-[#64748b] shrink-0">
+                  {COORD_STYLE_HINT[st]}
+                </span>
+              </button>
+            ))}
+            <button
+              onClick={() => {
+                copyText(
+                  mapLinkFor(window.location.href, {
+                    lat: contextMenu.lat, lon: contextMenu.lon,
+                    zoom: mapViewRef.current?.zoom ?? 15,
+                  }),
+                  'Ссылка на это место',
+                );
+                setContextMenu(null);
+              }}
+              className="w-full px-3 py-1.5 text-left hover:bg-[#a78bfa]/10 text-[#e2e8f0] flex items-center gap-2"
+            >
+              <span>🔗</span><span>Ссылка на это место</span>
+            </button>
           </div>
         </>
+      )}
+
+      {/* Короткое сообщение о том, что действие прошло. */}
+      {toast && (
+        <div className="fixed left-1/2 -translate-x-1/2 bottom-[calc(72px+env(safe-area-inset-bottom))]
+                        z-[9999] px-3 py-1.5 rounded-full bg-[#0d1b2a] border border-[#2dd4bf]/50
+                        text-[12px] text-[#2dd4bf] shadow-xl animate-fade-in">
+          {toast}
+        </div>
       )}
 
       {/* Manual coordinate-entry dialog */}
       {coordInput && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
           <div className="bg-[#0d1b2a] border border-[#1e3a5f] rounded-xl shadow-2xl w-[360px] p-4">
-            <h2 className="text-sm font-semibold text-[#e2e8f0] mb-3">⌨ По координатам</h2>
+            <h2 className="text-sm font-semibold text-[#e2e8f0] mb-3">
+              {coordInput.kind === 'goto' ? '🎯 Перейти к координатам' : '⌨ По координатам'}
+            </h2>
             <div className="space-y-2 mb-4">
-              <div className="grid grid-cols-4 gap-1">
-                {(['sub', 'ork', 'tb', 'olt'] as const).map((k) => (
-                  <button
-                    key={k}
-                    onClick={() => setCoordInput({ kind: k })}
-                    className={`py-1.5 text-[11px] rounded transition-colors ${coordInput.kind === k ? 'bg-[#38bdf8]/20 border border-[#38bdf8] text-[#38bdf8]' : 'border border-[#1e3a5f] text-[#94a3b8]'}`}
-                  >
-                    {k === 'sub' ? '🏠 Аб.' : k === 'ork' ? '📦 ОРК' : k === 'tb' ? '🔷 TB' : '📡 OLT'}
-                  </button>
-                ))}
-              </div>
+              {coordInput.kind !== 'goto' && (
+                <div className="grid grid-cols-4 gap-1">
+                  {(['sub', 'ork', 'tb', 'olt'] as const).map((k) => (
+                    <button
+                      key={k}
+                      onClick={() => setCoordInput({ kind: k })}
+                      className={`py-1.5 text-[11px] rounded transition-colors ${coordInput.kind === k ? 'bg-[#38bdf8]/20 border border-[#38bdf8] text-[#38bdf8]' : 'border border-[#1e3a5f] text-[#94a3b8]'}`}
+                    >
+                      {k === 'sub' ? '🏠 Аб.' : k === 'ork' ? '📦 ОРК' : k === 'tb' ? '🔷 TB' : '📡 OLT'}
+                    </button>
+                  ))}
+                </div>
+              )}
               <input
                 value={coordText}
                 onChange={(e) => setCoordText(e.target.value)}
-                placeholder="40.78, 68.32"
+                placeholder="52.0914, 69.1234"
                 className="w-full bg-[#0a0e1a] border border-[#1e3a5f] rounded px-2 py-1.5 text-xs text-[#e2e8f0] font-mono focus:outline-none focus:border-[#38bdf8]"
                 autoFocus
                 onKeyDown={(e) => { if (e.key === 'Enter') submitCoordInput(); }}
               />
-              <div className="text-[10px] text-[#64748b]">
-                Формат: <code className="text-[#94a3b8]">lat, lng</code> — десятичные градусы.
+              {/* Координаты приходят из акта, из навигатора и из переписки —
+                  и записаны они там по-разному. Принимаем все три. */}
+              <div className="text-[10px] text-[#64748b] leading-relaxed">
+                Годится любая запись:<br />
+                <code className="text-[#94a3b8]">52.0914, 69.1234</code> ·{' '}
+                <code className="text-[#94a3b8]">52,0914 69,1234</code><br />
+                <code className="text-[#94a3b8]">52°05′29″ с.ш. 69°07′24″ в.д.</code><br />
+                <code className="text-[#94a3b8]">N 52°34&apos;12&quot; E 69°12&apos;05&quot;</code>
+                {' '}— порядок широты и долготы поправим сами.
               </div>
+              {/* Показываем разобранное сразу: если система поняла не то,
+                  это видно до нажатия кнопки, а не после. */}
+              {(() => {
+                const p = parseLatLon(coordText);
+                if (!coordText.trim()) return null;
+                return p ? (
+                  <div className="text-[10px] text-[#2dd4bf] font-mono">
+                    → {p.lat.toFixed(6)}, {p.lon.toFixed(6)}
+                  </div>
+                ) : (
+                  <div className="text-[10px] text-[#f87171]">Пока не разобрать</div>
+                );
+              })()}
             </div>
             <div className="flex gap-2">
               <button onClick={() => { setCoordInput(null); setCoordText(''); }} className="flex-1 py-1.5 border border-[#1e3a5f] rounded text-xs text-[#94a3b8]">
                 Отмена
               </button>
               <button onClick={submitCoordInput} className="flex-1 py-1.5 bg-[#38bdf8]/15 hover:bg-[#38bdf8]/25 text-[#38bdf8] rounded text-xs font-semibold">
-                Поставить точку
+                {coordInput.kind === 'goto' ? 'Перейти' : 'Поставить точку'}
               </button>
             </div>
           </div>

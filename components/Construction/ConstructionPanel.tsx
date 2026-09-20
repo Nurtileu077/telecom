@@ -4,6 +4,7 @@ import {
   X, Upload, Loader2, AlertTriangle, MapPin, Wrench, Boxes,
   Plus, Download, Trash2, CloudOff, Pencil, Check, Ban, Building2, Clock,
   Ruler, FileWarning, RefreshCw, CloudCheck, Route, FileDown, HardHat,
+  Share2,
 } from 'lucide-react';
 import { getActorName } from '@/lib/appRole';
 import { importJournal, type JournalImportResult } from './JournalImport';
@@ -28,7 +29,9 @@ import {
   groupPoints, endpointKindOf, POINT_GROUPS, type PointGroup,
 } from './pointKind';
 import { placeCrews } from './crewPlace';
-import { routeViews } from './routeStyle';
+import { routeViews, routeTitle } from './routeStyle';
+import { buildKml, kmlFileName } from './kmlExport';
+import { downloadText } from '@/lib/download';
 import ChangeLogView from './ChangeLogView';
 import PassportView from './PassportView';
 import IncidentsView from './IncidentsView';
@@ -55,7 +58,7 @@ import { pendingTasks, seedProgress, handoffTasks } from './stageTasks';
 import { effectiveProgress } from './stageDerive';
 import {
   LAY_METHOD_LABEL, MATERIAL_UNIT, JOURNAL_ROLES, JOURNAL_ROLE_LIST, DEVIATION_KIND_LABEL,
-  CREW_KINDS, CREW_STATUS,
+  CREW_KINDS, CREW_STATUS, SNP_STAGE_SPECS,
   type LayMethod, type MaterialKind, type DailyWorkEntry,
   type CorrectionRequest, type JournalRole, type Deviation, type Crew,
   type DrillLogEntry,
@@ -359,6 +362,7 @@ export default function ConstructionPanel({
     } finally { setBusy(false); }
   }, [journal]);
 
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
@@ -439,6 +443,63 @@ export default function ConstructionPanel({
     const views = routeViews(scoped.planRoutes, { progress: live.progress });
     return new Set(views.map((v) => v.kato).filter((k): k is string => !!k));
   }, [scoped.planRoutes, live.progress]);
+
+  /**
+   * Выгрузка в KML.
+   *
+   * Файл пришёл от проектировщика, правился на стройке и должен уйти к
+   * нему обратно — иначе поправки живут только у нас, а в проекте
+   * остаётся вчерашняя трасса. Цвет линии сохраняем тот же, что на
+   * карте: по нему в Google Earth сразу видно, докуда дошли.
+   */
+  const handleExportKml = useCallback(() => {
+    const views = routeViews(scoped.planRoutes, {
+      progress: live.progress,
+    });
+    const byId = new Map(views.map((v) => [v.id, v]));
+    const xml = buildKml({
+      name: oblast ? `Optiq — ${oblast}` : 'Optiq — трассы и объекты',
+      description: `Выгружено ${new Date().toLocaleString('ru')}`,
+      folders: [
+        {
+          name: 'Трассы',
+          lines: scoped.planRoutes.map((r) => {
+            const v = byId.get(r.id);
+            return {
+              name: v ? routeTitle(v) : (r.name || 'Трасса'),
+              coords: r.coords,
+              color: v?.color,
+              description: [
+                r.name,
+                `${(r.lengthM / 1000).toFixed(3)} км`,
+                v?.stage ? SNP_STAGE_SPECS[v.stage].label : 'работ не было',
+                r.source,
+              ].filter(Boolean).join(' · '),
+            };
+          }),
+        },
+        {
+          name: 'Контуры',
+          lines: scoped.areas.map((a) => ({
+            name: a.name, coords: a.coords, closed: true, color: '#94a3b8',
+            description: a.source,
+          })),
+        },
+        {
+          name: 'Объекты',
+          points: scoped.objects.map((o) => ({
+            name: o.name || o.kind,
+            lat: o.lat,
+            lon: o.lon,
+            description: [o.kind, o.endpointKind, o.uchastok, o.note]
+              .filter(Boolean).join(' · '),
+          })),
+        },
+      ],
+    });
+    downloadText(kmlFileName(oblast || 'optiq'), xml,
+      'application/vnd.google-earth.kml+xml');
+  }, [scoped, live.progress, oblast]);
 
   const pending = useMemo(() => pendingCorrections(journal), [journal]);
   const openDevs = useMemo(() => openDeviations(journal), [journal]);
@@ -539,6 +600,13 @@ export default function ConstructionPanel({
                   title="Загрузить KML/KMZ: проектные трассы и обводки районов и сёл"
                   onClick={() => planRef.current?.click()} disabled={busy}>
             <Route size={15} /><span className="hidden sm:inline">KML</span>
+          </button>
+          <button type="button" className="btn btn-ghost btn-icon"
+                  title="Выгрузить трассы, контуры и объекты в KML — открыть в Google Earth или отдать проектировщику"
+                  onClick={handleExportKml}
+                  disabled={busy || (scoped.planRoutes.length + scoped.areas.length
+                    + scoped.objects.length === 0)}>
+            <Share2 size={15} />
           </button>
           <button type="button" className="btn btn-primary text-[11px]" onClick={() => setFormOpen(true)}>
             <Plus size={15} /><span className="hidden sm:inline">Закрыть день</span>

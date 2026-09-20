@@ -28,6 +28,30 @@ import { pointAtDistanceM } from '@/components/Construction/routeProgress';
 import {
   arrowsAlong, lengthLabels, progressSplit, METHOD_DASH, formatMeters,
 } from '@/components/Construction/mapDecor';
+import {
+  snapToRoutes, measureLine, measureAlongRoute, polygonAreaM2, perimeterM,
+  formatArea, rectCoords, circleCoords, RouteSnap,
+} from '@/components/Construction/measureTool';
+import { parseMapHash, buildMapHash } from '@/lib/mapLink';
+
+/**
+ * Что показать в панели измерения.
+ *
+ * Карта меряет, а показывает панель снаружи: цифры надо читать, копировать
+ * и класть в акт, а подпись, привязанная к последней точке, для этого не
+ * годится.
+ */
+export interface MeasureReadout {
+  points: number;
+  /** По ломаной, которую щёлкали. */
+  totalM: number;
+  /** Напрямую от первой точки до последней. */
+  straightM: number;
+  /** По трассе, если обе точки прилипли к одной и той же. */
+  alongRouteM?: number;
+  areaM2?: number;
+  perimeterM?: number;
+}
 
 /**
  * Ссылка «доехать».
@@ -190,10 +214,25 @@ interface Props {
    */
   drawingRoute?: boolean;
   /**
-   * Что рисуем: линию или замкнутый контур. Механика одна и та же —
-   * клики ставят вершины, — поэтому и режим один, с двумя исходами.
+   * Что рисуем: линию, замкнутый контур, прямоугольник или круг.
+   * Механика у линии и контура одна — клики ставят вершины; прямоугольник
+   * и круг задаются двумя кликами и превращаются в тот же контур.
    */
-  drawShape?: 'route' | 'area';
+  drawShape?: 'route' | 'area' | 'rect' | 'circle';
+  /**
+   * Куда карта складывает своё текущее положение: центр и приближение.
+   * Нужно тем, кто спрашивает «что сейчас на экране» — ссылка на место,
+   * печать, выгрузка видимого куска.
+   */
+  mapViewRef?: { current: { lat: number; lon: number; zoom: number } | null };
+  /** Померить: по прямой, вдоль трассы или площадь. */
+  measureShape?: 'line' | 'area';
+  onSetMeasureShape?: (s: 'line' | 'area') => void;
+  /** Результат измерения — считает карта, показывает панель. */
+  onMeasure?: (m: MeasureReadout | null) => void;
+  measureReadout?: MeasureReadout | null;
+  /** Переключить, что рисуем: контур, прямоугольник, круг. */
+  onSetDrawShape?: (s: 'route' | 'area' | 'rect' | 'circle') => void;
   onToggleDrawRoute?: () => void;
   /** Включить рисование замкнутого контура. */
   onToggleDrawArea?: () => void;
@@ -487,6 +526,10 @@ export default function LeafletMap(props: Props) {
   const routeClickTimerRef = useRef<number | null>(null);
   /** Отложенная перерисовка плана после перемотки карты. */
   const panTimerRef = useRef<number | null>(null);
+  /** Карту открыли по ссылке на место — своё положение она не выбирает. */
+  const openedFromLinkRef = useRef(false);
+  /** Черновик прямоугольника или круга: первый клик поставил угол. */
+  const shapeDraftRef = useRef<any>(null);
   /** Ручки правки трассы — отдельная группа, чтобы не мешать слоям. */
   const routeEditGroupRef = useRef<any>(null);
   const objectGroupRef = useRef<any>(null);
@@ -496,7 +539,13 @@ export default function LeafletMap(props: Props) {
   const flowRafRef = useRef<number | null>(null);
   const playbackGroupRef = useRef<any>(null);
   const playbackRafRef = useRef<number | null>(null);
-  const measureStateRef = useRef<{ coords: [number, number][]; layer?: any; total: number }>({ coords: [], total: 0 });
+  const measureStateRef = useRef<{
+    coords: [number, number][];
+    /** К какой трассе прилипла каждая точка, если прилипла. */
+    snaps: (RouteSnap | null)[];
+    layer?: any;
+    total: number;
+  }>({ coords: [], snaps: [], total: 0 });
   const waypointGroupRef = useRef<any>(null);
   const entityDragRef = useRef(false);
 
@@ -514,9 +563,18 @@ export default function LeafletMap(props: Props) {
     import('leaflet').then((L) => {
       if (!containerRef.current || mapRef.current) return;
 
+      // Адрес вида #14/52.09/69.12 открывает ровно то место, которое видел
+      // тот, кто дал ссылку. Без него «посмотри вот тут» означает «открой
+      // и ищи сам», и человек на том конце открывает не то.
+      const linked = parseMapHash(window.location.hash);
+
       const map = L.map(containerRef.current, {
-        center: [43.0, 68.0], zoom: 7, preferCanvas: true, zoomControl: false,
+        center: linked ? [linked.lat, linked.lon] : [43.0, 68.0],
+        zoom: linked ? linked.zoom : 7,
+        preferCanvas: true,
+        zoomControl: false,
       });
+      openedFromLinkRef.current = !!linked;
       L.control.zoom({ position: 'bottomright' }).addTo(map);
 
       // Base layer
@@ -594,10 +652,33 @@ export default function LeafletMap(props: Props) {
         // которым заканчивают линию, состоит из двух одиночных, и без
         // задержки он добавлял бы две лишние вершины в конце.
         if (p.drawingRoute) {
+          // Прямоугольник и круг задаются двумя кликами: первый — угол или
+          // центр, второй — противоположный угол или край. Обводить зону
+          // работ двадцатью кликами никто не станет.
+          if (p.drawShape === 'rect' || p.drawShape === 'circle') {
+            const draft = routeDraftRef.current;
+            if (draft.length === 0) {
+              draft.push([lat, lon]);
+              renderRouteDraft(L);
+            } else {
+              const shape = p.drawShape === 'rect'
+                ? rectCoords(draft[0], [lat, lon])
+                : circleCoords(draft[0], [lat, lon]);
+              routeDraftRef.current = [];
+              renderRouteDraft(L);
+              propsRef.current.onRouteDrawn?.(shape);
+            }
+            return;
+          }
+
           if (routeClickTimerRef.current !== null) window.clearTimeout(routeClickTimerRef.current);
           routeClickTimerRef.current = window.setTimeout(() => {
             routeClickTimerRef.current = null;
-            routeDraftRef.current.push([lat, lon]);
+            // Прилипание к существующей трассе: новая линия, начатая рядом
+            // со старой, должна к ней цепляться — иначе в стыке остаётся
+            // разрыв, которого на земле нет.
+            const snap = snapClick(lat, lon, 12);
+            routeDraftRef.current.push(snap ? [snap.lat, snap.lon] : [lat, lon]);
             renderRouteDraft(L);
           }, 220);
           return;
@@ -606,7 +687,9 @@ export default function LeafletMap(props: Props) {
         // Measure mode
         if (p.measureMode) {
           const cs = measureStateRef.current;
-          cs.coords.push([lat, lon]);
+          const snap = p.measureShape === 'area' ? null : snapClick(lat, lon, 14);
+          cs.coords.push(snap ? [snap.lat, snap.lon] : [lat, lon]);
+          cs.snaps.push(snap);
           renderMeasure(L);
           return;
         }
@@ -640,7 +723,7 @@ export default function LeafletMap(props: Props) {
         }
         if (p.measureMode) {
           // reset measure
-          measureStateRef.current = { coords: [], total: 0 };
+          measureStateRef.current = { coords: [], snaps: [], total: 0 };
           measureGroupRef.current?.clearLayers();
           return;
         }
@@ -653,6 +736,24 @@ export default function LeafletMap(props: Props) {
 
       let lastPresenceSend = 0;
       map.on('mousemove', (e: any) => {
+        // Прямоугольник и круг показываем прямо под курсором: без этого
+        // второй клик ставят вслепую и промахиваются.
+        const p = propsRef.current;
+        if (p.drawingRoute && (p.drawShape === 'rect' || p.drawShape === 'circle')
+            && routeDraftRef.current.length === 1) {
+          const from = routeDraftRef.current[0];
+          const to: [number, number] = [e.latlng.lat, e.latlng.lng];
+          const coords = p.drawShape === 'rect' ? rectCoords(from, to) : circleCoords(from, to);
+          if (shapeDraftRef.current) drawGroupRef.current?.removeLayer(shapeDraftRef.current);
+          shapeDraftRef.current = coords.length >= 3
+            ? L.polygon(coords, {
+              color: '#38bdf8', weight: 3, opacity: 0.95, dashArray: '8,6',
+              fillColor: '#38bdf8', fillOpacity: 0.12,
+            })
+            : null;
+          if (shapeDraftRef.current) drawGroupRef.current?.addLayer(shapeDraftRef.current);
+        }
+
         const now = Date.now();
         if (now - lastPresenceSend < 80) return;
         lastPresenceSend = now;
@@ -674,20 +775,38 @@ export default function LeafletMap(props: Props) {
       // сейчас в окне, — значит при перемотке карты их надо досчитать.
       // С задержкой: перетаскивание карты не должно тянуть за собой
       // перерисовку сотни трасс на каждом кадре.
+      const rememberView = () => {
+        try {
+          const c = map.getCenter();
+          const v = { lat: c.lat, lon: c.lng, zoom: map.getZoom() };
+          if (propsRef.current.mapViewRef) propsRef.current.mapViewRef.current = v;
+          // Адрес правим без записи в историю: иначе кнопка «назад»
+          // отматывала бы карту по кадру за раз вместо возврата назад.
+          window.history.replaceState(null, '', buildMapHash(v));
+        } catch {
+          // Карта ещё не готова — положение запомним на следующем движении.
+        }
+      };
+      rememberView();
+
       map.on('moveend', () => {
+        rememberView();
         if (panTimerRef.current !== null) window.clearTimeout(panTimerRef.current);
         panTimerRef.current = window.setTimeout(() => {
           panTimerRef.current = null;
           renderPlanRoutes();
         }, 260);
       });
+      map.on('zoomend', rememberView);
 
       // After map ready: render existing data and fit bounds if already loaded
       setTimeout(() => {
         renderData();
         renderAnnotations();
         const districts = propsRef.current.districts;
-        if (districts.length > 0) {
+        // Ссылку открыли ради конкретного места — уводить с него карту
+        // на общий план значит не открыть ссылку вовсе.
+        if (districts.length > 0 && !openedFromLinkRef.current) {
           const pts: [number, number][] = [];
           for (const d of districts) {
             pts.push([d.olt.lat, d.olt.lon]);
@@ -727,7 +846,7 @@ export default function LeafletMap(props: Props) {
         }
         if (propsRef.current.measureMode) {
           propsRef.current.setMeasureMode(false);
-          measureStateRef.current = { coords: [], total: 0 };
+          measureStateRef.current = { coords: [], snaps: [], total: 0 };
           measureGroupRef.current?.clearLayers();
         }
       }
@@ -2159,12 +2278,13 @@ export default function LeafletMap(props: Props) {
     const group = drawGroupRef.current;
     if (!group) return;
     group.clearLayers();
+    shapeDraftRef.current = null;
     const pts = routeDraftRef.current;
     if (pts.length === 0) return;
 
     // Контур показываем замкнутым с самого начала: иначе до последнего
     // клика непонятно, что рисуешь — линию или площадку.
-    const area = propsRef.current.drawShape === 'area';
+    const area = propsRef.current.drawShape !== 'route';
     const color = area ? '#38bdf8' : '#f472b6';
     if (pts.length >= 2) {
       group.addLayer(area && pts.length >= 3
@@ -2401,33 +2521,102 @@ export default function LeafletMap(props: Props) {
     propsRef.current.setActiveTool(null);
   }
 
+  /**
+   * Измерение.
+   *
+   * По прямой меряют редко: кабель идёт по трассе, и «сколько отсюда
+   * досюда» значит «сколько по линии». Поэтому клик рядом с трассой
+   * прилипает к ней, и тогда рядом с прямой показывается ещё и длина по
+   * трассе — обычно она заметно больше.
+   *
+   * Площадь нужна под пропорку и рекультивацию: там считают гектарами.
+   */
   function renderMeasure(L: any) {
     measureGroupRef.current.clearLayers();
     const s = measureStateRef.current;
-    if (s.coords.length === 0) return;
-    let total = 0;
-    for (let i = 1; i < s.coords.length; i++) {
-      total += haversineMeters(s.coords[i - 1][0], s.coords[i - 1][1], s.coords[i][0], s.coords[i][1]);
+    const area = propsRef.current.measureShape === 'area';
+    if (s.coords.length === 0) {
+      propsRef.current.onMeasure?.(null);
+      return;
     }
-    s.total = total;
-    if (s.coords.length >= 2) {
-      const line = L.polyline(s.coords, { color: '#fbbf24', weight: 3, opacity: 0.9, dashArray: '8,4' });
-      measureGroupRef.current.addLayer(line);
+
+    const m = measureLine(s.coords);
+    s.total = m.totalM;
+
+    // Вдоль трассы — только когда обе крайние точки сели на одну и ту же.
+    let alongRouteM: number | undefined;
+    const first = s.snaps[0];
+    const last = s.snaps[s.snaps.length - 1];
+    if (!area && s.coords.length === 2 && first && last && first.routeId === last.routeId) {
+      const route = (propsRef.current.planRoutes ?? []).find((r) => r.id === first.routeId);
+      if (route) alongRouteM = measureAlongRoute(route.coords, first, last).alongM;
     }
-    for (const [lat, lon] of s.coords) {
-      measureGroupRef.current.addLayer(
-        L.circleMarker([lat, lon], { radius: 5, color: '#fbbf24', fillColor: '#fbbf24', fillOpacity: 1 }),
-      );
+
+    if (area && s.coords.length >= 3) {
+      measureGroupRef.current.addLayer(L.polygon(s.coords, {
+        color: '#fbbf24', weight: 2, opacity: 0.95, fillColor: '#fbbf24', fillOpacity: 0.18,
+      }));
+    } else if (s.coords.length >= 2) {
+      measureGroupRef.current.addLayer(L.polyline(s.coords, {
+        color: '#fbbf24', weight: 3, opacity: 0.9, dashArray: '8,4',
+      }));
     }
-    // tooltip at last point
-    const last = s.coords[s.coords.length - 1];
-    const label = L.marker(last, {
+
+    s.coords.forEach(([lat, lon], i) => {
+      // Прилипшая точка обведена: видно, что мерим по трассе, а не мимо.
+      const snapped = !!s.snaps[i];
+      measureGroupRef.current.addLayer(L.circleMarker([lat, lon], {
+        radius: snapped ? 6 : 5,
+        color: snapped ? '#2dd4bf' : '#fbbf24',
+        weight: snapped ? 3 : 1,
+        fillColor: '#fbbf24',
+        fillOpacity: 1,
+      }));
+    });
+
+    const readout: MeasureReadout = {
+      points: s.coords.length,
+      totalM: m.totalM,
+      straightM: m.straightM,
+      alongRouteM,
+      areaM2: area && s.coords.length >= 3 ? polygonAreaM2(s.coords) : undefined,
+      perimeterM: area && s.coords.length >= 3 ? perimeterM(s.coords) : undefined,
+    };
+    propsRef.current.onMeasure?.(readout);
+
+    const headline = readout.areaM2 !== undefined
+      ? formatArea(readout.areaM2)
+      : formatMeters(alongRouteM ?? m.totalM);
+    const at = s.coords[s.coords.length - 1];
+    measureGroupRef.current.addLayer(L.marker(at, {
+      interactive: false,
       icon: L.divIcon({
-        html: `<div style="background:#0d1b2a;border:1px solid #fbbf24;color:#fbbf24;padding:2px 6px;border-radius:4px;font-family:monospace;font-size:11px;font-weight:bold;white-space:nowrap">📏 ${total < 1000 ? `${Math.round(total)} м` : `${(total / 1000).toFixed(2)} км`}</div>`,
+        html: `<div style="background:#0d1b2a;border:1px solid #fbbf24;color:#fbbf24;
+                 padding:2px 6px;border-radius:4px;font-family:ui-monospace,monospace;
+                 font-size:11px;font-weight:bold;white-space:nowrap">📏 ${esc(headline)}`
+          + (alongRouteM !== undefined
+            ? `<span style="color:#2dd4bf"> по трассе</span>` : '')
+          + '</div>',
         className: '', iconSize: [80, 20], iconAnchor: [-8, 8],
       }),
-    });
-    measureGroupRef.current.addLayer(label);
+    }));
+  }
+
+  /**
+   * Куда на самом деле попал клик.
+   *
+   * Допуск — в пикселях, а не в метрах: на общем плане пиксель это сотни
+   * метров, и прилипать к линии за километр было бы враньём.
+   */
+  function snapClick(lat: number, lon: number, px = 12): RouteSnap | null {
+    const map = mapRef.current;
+    if (!map) return null;
+    const mpp = metersPerPixel(lat, map.getZoom?.() ?? 12);
+    return snapToRoutes(
+      { lat, lon },
+      (propsRef.current.planRoutes ?? []).map((r) => ({ id: r.id, coords: r.coords })),
+      mpp * px,
+    );
   }
 
   // Re-render whenever data changes
@@ -2847,7 +3036,7 @@ export default function LeafletMap(props: Props) {
           onClick={() => {
             const next = !props.measureMode;
             props.setMeasureMode(next);
-            if (!next) { measureStateRef.current = { coords: [], total: 0 }; measureGroupRef.current?.clearLayers(); }
+            if (!next) { measureStateRef.current = { coords: [], snaps: [], total: 0 }; measureGroupRef.current?.clearLayers(); }
             if (next) props.setActiveTool(null);
           }}
           className={`px-3 py-1.5 rounded-lg text-xs font-medium border shadow-lg transition-all ${props.measureMode ? 'bg-[#fbbf24]/15 border-[#fbbf24] text-[#fbbf24]' : 'bg-[#0d1b2a] border-[#1e3a5f] text-[#94a3b8] hover:text-[#e2e8f0]'}`}
@@ -2876,6 +3065,28 @@ export default function LeafletMap(props: Props) {
             ✏️ Контур
           </button>
         )}
+        {/* Прямоугольник и круг — те же контуры, только двумя кликами.
+            Площадку под склад или зону работ обводят именно так. */}
+        {props.onRouteDrawn && props.onSetDrawShape && (
+          <div className="flex gap-1">
+            {([['rect', '▭', 'Прямоугольник'], ['circle', '◯', 'Круг']] as const).map(
+              ([shape, glyph, title]) => (
+                <button
+                  key={shape}
+                  title={title}
+                  aria-label={title}
+                  onClick={() => props.onSetDrawShape?.(shape)}
+                  className={`flex-1 px-2 py-1.5 rounded-lg text-xs font-medium border shadow-lg transition-all ${
+                    props.drawingRoute && props.drawShape === shape
+                      ? 'bg-[#38bdf8]/15 border-[#38bdf8] text-[#38bdf8]'
+                      : 'bg-[#0d1b2a] border-[#1e3a5f] text-[#94a3b8] hover:text-[#e2e8f0]'}`}
+                >
+                  {glyph}
+                </button>
+              ),
+            )}
+          </div>
+        )}
         {props.playbackDate && (
           <div className="bg-[#0d1b2a]/95 border border-[#4ade80]/50 rounded-lg px-3 py-1.5 text-[10px] text-[#e2e8f0] shadow-lg max-w-[220px]">
             {new Date(`${props.playbackDate}T00:00:00Z`).toLocaleDateString('ru')}:{' '}
@@ -2895,14 +3106,86 @@ export default function LeafletMap(props: Props) {
         )}
         {props.drawingRoute && (
           <div className="bg-[#0d1b2a]/95 rounded-lg px-3 py-1.5 text-[10px] text-[#e2e8f0] shadow-lg max-w-[220px] border"
-               style={{ borderColor: props.drawShape === 'area' ? '#38bdf880' : '#f472b680' }}>
-            Кликайте по карте — вершины {props.drawShape === 'area' ? 'контура' : 'трассы'}.
-            Двойной клик, ПКМ или Enter — закончить. Backspace — убрать
-            последнюю. Esc — отмена.
-            {props.drawShape === 'area' && ' Контуру нужно минимум три точки.'}
+               style={{ borderColor: props.drawShape === 'route' ? '#f472b680' : '#38bdf880' }}>
+            {props.drawShape === 'rect' && 'Клик — первый угол, второй клик — противоположный.'}
+            {props.drawShape === 'circle' && 'Клик — центр, второй клик — край круга.'}
+            {(props.drawShape === 'route' || props.drawShape === 'area') && (
+              <>
+                Кликайте по карте — вершины {props.drawShape === 'area' ? 'контура' : 'трассы'}.
+                Двойной клик, ПКМ или Enter — закончить. Backspace — убрать
+                последнюю. Esc — отмена.
+                {props.drawShape === 'area' && ' Контуру нужно минимум три точки.'}
+                {props.drawShape === 'route' && ' Рядом с трассой вершина прилипает к ней.'}
+              </>
+            )}
           </div>
         )}
-        {(props.activeTool || props.editMode || props.measureMode) && (
+        {props.measureMode && props.onSetMeasureShape && (
+          <div className="bg-[#0d1b2a]/95 border border-[#fbbf24]/50 rounded-lg p-2 shadow-lg
+                          max-w-[230px] flex flex-col gap-1.5">
+            <div className="flex gap-1">
+              {([['line', 'Длина'], ['area', 'Площадь']] as const).map(([s, label]) => (
+                <button
+                  key={s}
+                  onClick={() => {
+                    props.onSetMeasureShape?.(s);
+                    measureStateRef.current = { coords: [], snaps: [], total: 0 };
+                    measureGroupRef.current?.clearLayers();
+                    props.onMeasure?.(null);
+                  }}
+                  className={`flex-1 py-1 rounded text-[10.5px] font-medium border transition-colors ${
+                    (props.measureShape ?? 'line') === s
+                      ? 'bg-[#fbbf24]/15 border-[#fbbf24] text-[#fbbf24]'
+                      : 'border-[#1e3a5f] text-[#94a3b8]'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {props.measureReadout ? (
+              <div className="text-[11px] text-[#e2e8f0] font-mono leading-snug">
+                {props.measureReadout.areaM2 !== undefined ? (
+                  <>
+                    <div className="text-[13px] font-bold text-[#fbbf24]">
+                      {formatArea(props.measureReadout.areaM2)}
+                    </div>
+                    <div className="text-[#94a3b8]">
+                      периметр {formatMeters(props.measureReadout.perimeterM ?? 0)}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {props.measureReadout.alongRouteM !== undefined && (
+                      <div className="text-[13px] font-bold text-[#2dd4bf]">
+                        {formatMeters(props.measureReadout.alongRouteM)}
+                        <span className="text-[9px] font-normal"> по трассе</span>
+                      </div>
+                    )}
+                    <div className={props.measureReadout.alongRouteM !== undefined
+                      ? 'text-[#94a3b8]' : 'text-[13px] font-bold text-[#fbbf24]'}>
+                      {formatMeters(props.measureReadout.totalM)}
+                      <span className="text-[9px] font-normal"> по ломаной</span>
+                    </div>
+                    {props.measureReadout.points > 2 && (
+                      <div className="text-[#94a3b8]">
+                        {formatMeters(props.measureReadout.straightM)}
+                        <span className="text-[9px]"> напрямую</span>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            ) : (
+              <div className="text-[10px] text-[#94a3b8]">
+                {(props.measureShape ?? 'line') === 'area'
+                  ? 'Три клика и больше — обведите площадку.'
+                  : 'Два клика. Рядом с трассой точка прилипает, и длина считается по трассе.'}
+              </div>
+            )}
+            <div className="text-[9px] text-[#64748b]">ПКМ — сброс, Esc — выключить</div>
+          </div>
+        )}
+        {(props.activeTool || props.editMode || (props.measureMode && !props.onSetMeasureShape)) && (
           <div className="bg-[#0d1b2a]/95 border border-[#1e3a5f] rounded-lg px-3 py-1.5 text-[10px] text-[#94a3b8] shadow-lg max-w-[200px]">
             {props.measureMode && <>📏 Кликайте по карте — измерение. ПКМ = сброс. ESC = выкл.</>}
             {props.activeTool && !props.measureMode && <>✏️ Рисование: {props.activeTool}. ПКМ = завершить. ESC = отмена.</>}
