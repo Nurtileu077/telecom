@@ -90,6 +90,7 @@ import {
 } from '@/components/Construction/coordFormat';
 import { mapLinkFor } from '@/lib/mapLink';
 import { splitRoute, joinRoutes } from '@/components/Construction/routeEdit';
+import { nearby } from '@/components/Construction/overlaps';
 import type { MeasureReadout } from '@/components/Map/MapContainer';
 
 const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
@@ -520,6 +521,11 @@ export default function HomePage() {
   >(null);
   /** Короткое сообщение внизу экрана: «скопировано», «сохранено». */
   const [toast, setToast] = useState<string | null>(null);
+  /**
+   * «Мы вот здесь — где ближайшая муфта и докуда тянуть».
+   * Искать ответ глазами по карте дольше, чем спросить.
+   */
+  const [nearbyAt, setNearbyAt] = useState<{ lat: number; lon: number } | null>(null);
   const [coordText, setCoordText] = useState('');
   const [showChat, setShowChat] = useState(false);
   const [showAddCameras, setShowAddCameras] = useState(false);
@@ -1496,6 +1502,7 @@ export default function HomePage() {
             onUpdateRouteCoords={handleUpdateRoute}
             onDeleteRoute={handleDeleteRoute}
             searchOnMap={building}
+            printTitle="Optiq — карта стройки"
             snpSearchPoints={snpPoints}
             onSplitRoute={building ? handleSplitRoute : undefined}
             onJoinRoute={building ? handleJoinRoute : undefined}
@@ -1816,6 +1823,18 @@ export default function HomePage() {
               <span>🎯</span><span>Перейти к координатам…</span>
             </button>
 
+            {building && (
+              <button
+                onClick={() => {
+                  setNearbyAt({ lat: contextMenu.lat, lon: contextMenu.lon });
+                  setContextMenu(null);
+                }}
+                className="w-full px-3 py-1.5 text-left hover:bg-[#38bdf8]/10 text-[#e2e8f0] flex items-center gap-2"
+              >
+                <span>📍</span><span>Что рядом…</span>
+              </button>
+            )}
+
             {/* ККС и муфту ставят прямо по клику: открывать форму ради
                 двух полей на морозе никто не станет. Подробности
                 дописывают потом, в карточке объекта. */}
@@ -1883,6 +1902,68 @@ export default function HomePage() {
           </div>
         </>
       )}
+
+      {/* Что рядом с точкой. */}
+      {nearbyAt && (() => {
+        const hits = nearby(nearbyAt, [
+          ...siteObjects.map((o) => ({
+            id: o.id, kind: SITE_OBJECT_SPECS[o.kind].label,
+            label: o.name || SITE_OBJECT_SPECS[o.kind].label, lat: o.lat, lon: o.lon,
+          })),
+          ...crews
+            .filter((c) => c.lat !== undefined && c.lon !== undefined)
+            .map((c) => ({
+              id: c.id, kind: 'Колонна', label: c.name || 'Колонна',
+              lat: c.lat as number, lon: c.lon as number,
+            })),
+          ...incidents.map((i) => ({
+            id: i.id, kind: 'Авария', label: i.damage || 'Авария', lat: i.lat, lon: i.lon,
+          })),
+        ], 3000, 10);
+        return (
+          <>
+            <div className="fixed inset-0 z-[9998]" onClick={() => setNearbyAt(null)} />
+            <div className="fixed z-[9999] left-1/2 -translate-x-1/2 top-16 w-[300px]
+                            bg-[#0d1b2a] border border-[#1e3a5f] rounded-xl shadow-2xl
+                            overflow-hidden animate-fade-in">
+              <div className="px-3 py-2 border-b border-[#1e3a5f]/60 flex items-baseline gap-2">
+                <span className="text-[12px] font-semibold text-[#e2e8f0]">Что рядом</span>
+                <span className="text-[10px] text-[#64748b] font-mono ml-auto">
+                  {nearbyAt.lat.toFixed(5)}, {nearbyAt.lon.toFixed(5)}
+                </span>
+              </div>
+              {hits.length === 0 ? (
+                <div className="px-3 py-3 text-[11.5px] text-[#64748b]">
+                  В трёх километрах ничего нет: ни муфт, ни ККС, ни колонн.
+                </div>
+              ) : (
+                <div className="max-h-[50vh] overflow-y-auto">
+                  {hits.map((h) => (
+                    <button
+                      key={`${h.kind}-${h.id}`}
+                      onClick={() => {
+                        flyToRef.current?.(h.lat, h.lon, 18);
+                        setNearbyAt(null);
+                      }}
+                      className="w-full px-3 py-1.5 text-left hover:bg-white/5 flex items-baseline gap-2"
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[12px] text-[#e2e8f0] truncate">{h.label}</span>
+                        <span className="block text-[10px] text-[#64748b]">{h.kind}</span>
+                      </span>
+                      <span className="text-[11px] text-[#2dd4bf] font-mono shrink-0">
+                        {h.distanceM < 1000
+                          ? `${Math.round(h.distanceM)} м`
+                          : `${(h.distanceM / 1000).toFixed(2)} км`}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        );
+      })()}
 
       {/* Короткое сообщение о том, что действие прошло. */}
       {toast && (
@@ -2017,6 +2098,7 @@ export default function HomePage() {
         <ConstructionPanel
           onPlayDay={(date) => { playDay(date); setShowJournal(false); }}
           onShowRoute={showSnpRoute}
+          onShowCoords={(coords) => fitRef.current?.(coords)}
           editObjectId={editObjectId}
           onDoneEditObject={() => setEditObjectId(null)}
           onClose={() => { setShowJournal(false); setEditObjectId(null); refreshJournalLayers(); }}

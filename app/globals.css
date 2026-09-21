@@ -598,3 +598,65 @@ body {
   white-space: nowrap;
 }
 .leaflet-tooltip.entity-label::before { display: none; }
+
+/* ── Печать карты ────────────────────────────────────────────────────────
+   Карту возят с собой распечатанной: в поле нет ни связи, ни зарядки, а
+   согласовывать трассу с акимом и дорожниками надо на листе, который
+   можно положить на капот. Печатается не «страница как есть», а лист с
+   рамкой, масштабом, легендой и датой — без масштаба распечатка не
+   документ, а картинка. */
+.optiq-print-sheet { display: none; }
+
+@media print {
+  @page { size: A4 landscape; margin: 10mm; }
+
+  body[data-optiq-print="1"] > *:not(.optiq-print-sheet) { display: none !important; }
+
+  body[data-optiq-print="1"] .optiq-print-sheet {
+    display: flex;
+    flex-direction: column;
+    gap: 4mm;
+    position: static;
+    width: 100%;
+    color: #0f172a;
+    background: #fff;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+  }
+
+  .optiq-print-sheet .ps-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 6mm;
+    border-bottom: 0.4mm solid #0f172a;
+    padding-bottom: 2mm;
+  }
+  .optiq-print-sheet .ps-title { font-size: 12pt; font-weight: 700; }
+  .optiq-print-sheet .ps-meta { font-size: 8pt; color: #475569; white-space: nowrap; }
+
+  .optiq-print-sheet .ps-map {
+    width: 100%;
+    max-height: 160mm;
+    object-fit: contain;
+    border: 0.3mm solid #94a3b8;
+  }
+
+  .optiq-print-sheet .ps-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2mm 6mm;
+    font-size: 8pt;
+  }
+  .optiq-print-sheet .ps-legend-group { display: flex; align-items: center; gap: 2mm; }
+  .optiq-print-sheet .ps-legend-group b { font-size: 7.5pt; text-transform: uppercase; color: #475569; }
+  .optiq-print-sheet .ps-legend-item { display: inline-flex; align-items: center; gap: 1mm; }
+  .optiq-print-sheet .ps-legend-item i {
+    width: 3mm; height: 3mm; border-radius: 50%;
+    display: inline-block; border: 0.2mm solid #475569;
+  }
+
+  .optiq-print-sheet .ps-foot {
+    font-size: 7.5pt; color: #64748b;
+    border-top: 0.2mm solid #cbd5e1; padding-top: 1.5mm;
+  }
+}

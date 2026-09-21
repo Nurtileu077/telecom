@@ -20,7 +20,7 @@ import {
   upsertCrew, removeCrew, upsertDelivery, removeDelivery,
   addPlanRoutes, removePlanSource, planSources, plural, setProgress, setStage,
   addAreas, removeAreaSource, areaSources, setMaterialPrice, upsertDrill,
-  upsertObject, removeObject, setSectionProgress, scopeJournal, smuList,
+  upsertObject, removeObject, setSectionProgress, scopeJournal, smuList, deleteRoute,
   restoreShape, upsertDrumRecord, removeDrumRecord, addPhoto, removePhoto,
   upsertSplice, removeSplice, upsertIncident, removeIncident,
 } from './journalStore';
@@ -31,6 +31,7 @@ import {
 import { placeCrews } from './crewPlace';
 import { routeViews, routeTitle } from './routeStyle';
 import { buildKml, kmlFileName } from './kmlExport';
+import ChecksView from './ChecksView';
 import { downloadText } from '@/lib/download';
 import ChangeLogView from './ChangeLogView';
 import PassportView from './PassportView';
@@ -65,7 +66,7 @@ import {
 } from '@/types/construction';
 
 type Period = 'day' | 'week' | 'month' | 'all';
-type View = 'today' | 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages' | 'drills' | 'objects' | 'passport' | 'incidents' | 'log';
+type View = 'today' | 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages' | 'drills' | 'objects' | 'passport' | 'incidents' | 'log' | 'checks';
 
 const PERIOD_LABEL: Record<Period, string> = {
   day: 'Последний день', week: '7 дней', month: '30 дней', all: 'Всё время',
@@ -82,10 +83,13 @@ interface Props {
   onPlayDay?: (date: string) => void;
   /** Показать трассу села на карте — «от и до». */
   onShowRoute?: (kato: string) => void;
+  /** Показать на карте конкретную линию — её рамкой. */
+  onShowCoords?: (coords: [number, number][]) => void;
 }
 
 export default function ConstructionPanel({
   onClose, onRequestPick, editObjectId, onDoneEditObject, onPlayDay, onShowRoute,
+  onShowCoords,
 }: Props) {
   const [journal, setJournal] = useState<JournalState>(emptyJournal);
   const [period, setPeriod] = useState<Period>('month');
@@ -547,6 +551,7 @@ export default function ConstructionPanel({
     ['drills', 'Проколы'], ['objects', 'Объекты'], ['passport', 'Паспорт'],
     ['incidents', 'Аварии'], ['deviations', 'Отклонения'], ['materials', 'Материалы'],
     ['closing', 'Закрытие'], ['corrections', 'Заявки'], ['log', 'Изменения'],
+    ['checks', 'Проверки'],
   ];
   const roleViews = new Set(JOURNAL_ROLES[role].views);
   const shownViews = allTabs
@@ -865,6 +870,15 @@ export default function ConstructionPanel({
             onRemove={(id) => {
               if (!confirm('Удалить запись об аварии?')) return;
               persist(removeIncident(loadJournal(), id));
+            }}
+          />
+        ) : view === 'checks' ? (
+          <ChecksView
+            journal={scoped}
+            onShow={(coords) => { onShowCoords?.(coords); onClose(); }}
+            onDeleteRoute={(id) => {
+              if (!confirm('Удалить эту трассу?\nВернуть её можно будет в журнале изменений.')) return;
+              persist(deleteRoute(loadJournal(), id, actor));
             }}
           />
         ) : view === 'log' ? (

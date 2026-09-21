@@ -27,13 +27,15 @@ import {
 import { pointAtDistanceM } from '@/components/Construction/routeProgress';
 import {
   arrowsAlong, lengthLabels, progressSplit, METHOD_DASH, formatMeters, bearingDeg,
-  clusterPoints,
+  clusterPoints, mapLegend,
 } from '@/components/Construction/mapDecor';
+import type { ConstructionLayers } from '@/components/Construction/mapLayers';
 import {
   snapToRoutes, nearestOnRoute, measureLine, measureAlongRoute, polygonAreaM2,
   perimeterM, formatArea, rectCoords, circleCoords, RouteSnap,
 } from '@/components/Construction/measureTool';
 import { parseMapHash, buildMapHash } from '@/lib/mapLink';
+import { cableNeed, slackSummary } from '@/components/Construction/cableSlack';
 
 /**
  * Что показать в панели измерения.
@@ -99,6 +101,7 @@ import PresenceCursors from '@/components/Map/PresenceCursors';
 import MapLegend from '@/components/Map/MapLegend';
 import MapSearch from '@/components/Map/MapSearch';
 import ScaleBar from '@/components/Map/ScaleBar';
+import MapCapture from '@/components/Map/MapCapture';
 
 /**
  * Подложка, которая сначала смотрит на устройство.
@@ -115,6 +118,10 @@ function cachedTileLayer(L: any, url: string, opts: any): any {
       img.setAttribute('role', 'presentation');
       img.alt = '';
       const src = (this as any).getTileUrl(coords);
+      // Адрес тайла помним и тогда, когда картинка взята из хранилища:
+      // снимок карты перерисовывает её заново, а ссылка на blob к тому
+      // времени уже освобождена.
+      img.dataset.tileSrc = src;
 
       let objectUrl: string | null = null;
       const finish = (err: unknown) => {
@@ -239,6 +246,8 @@ interface Props {
   snpSearchPoints?: import('@/components/Construction/snpMap').SnpMapPoint[];
   /** Поиск по карте включён: на стройке ищут по названию села. */
   searchOnMap?: boolean;
+  /** Заголовок печатного листа: область, участок, что показано. */
+  printTitle?: string;
   onToggleDrawRoute?: () => void;
   /** Включить рисование замкнутого контура. */
   onToggleDrawArea?: () => void;
@@ -563,6 +572,8 @@ export default function LeafletMap(props: Props) {
   const shapeDraftRef = useRef<any>(null);
   /** Где последний раз щёлкнули по трассе — там её и режут. */
   const lastRouteClickRef = useRef<{ id: string; lat: number; lon: number } | null>(null);
+  /** Подпись масштабной линейки — её просит печатный лист. */
+  const scaleLabelRef = useRef<string | null>(null);
   /** Ручки правки трассы — отдельная группа, чтобы не мешать слоям. */
   const routeEditGroupRef = useRef<any>(null);
   const objectGroupRef = useRef<any>(null);
@@ -1697,6 +1708,10 @@ export default function LeafletMap(props: Props) {
           + `<div style="margin-top:4px;color:${r.color};font-size:12px">${esc(stageLabel)}</div>`
           + (r.snp ? `<span style="font-size:11px">${esc(r.snp)}</span><br/>` : '')
           + `<span style="font-size:11px">${(r.lengthM / 1000).toFixed(3)} км</span>`
+          // Длина трассы и длина кабеля — разные числа, и путают их
+          // дорого. Считаем по запросу: обходить все объекты ради каждой
+          // линии на каждой перерисовке слишком дорого.
+          + `<br/><span id="slack-${esc(r.id)}" style="font-size:11px;color:#38bdf8">кабеля с запасом…</span>`
           + `<br/><span style="color:#64748b;font-size:10px">${esc(r.source)}</span>`
           + (propsRef.current.onEditRoute
             ? `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
@@ -1715,6 +1730,21 @@ export default function LeafletMap(props: Props) {
                </div>`
             : ''),
         );
+        line.on('popupopen', () => {
+          const box = document.getElementById(`slack-${r.id}`);
+          if (!box) return;
+          const near = (o: { lat: number; lon: number }) => {
+            const hit = nearestOnRoute({ lat: o.lat, lon: o.lon }, r.coords);
+            return !!hit && hit.deviationM <= 60;
+          };
+          const objects = (propsRef.current.siteObjects ?? []).filter(near);
+          const joints = objects.filter((o) => o.kind === 'mufta').length;
+          const entries = objects.filter((o) => o.kind === 'endpoint').length;
+          const drills = (propsRef.current.drillPoints ?? []).filter(near).length;
+          const need = cableNeed({ routeM: r.lengthM, joints, entries, drills });
+          box.textContent = slackSummary(need);
+        });
+
         // Где именно щёлкнули по линии — это и есть место разреза.
         line.on('click', (e: any) => {
           lastRouteClickRef.current = { id: r.id, lat: e.latlng.lat, lon: e.latlng.lng };
@@ -3127,6 +3157,25 @@ export default function LeafletMap(props: Props) {
     };
   }, []);
 
+  /**
+   * Что сейчас на карте — по тому, что в неё передали.
+   *
+   * Легенда объясняет не список возможных слоёв, а то, что человек
+   * видит: выключил слой — ушла и его строка.
+   */
+  const legendLayers: ConstructionLayers = {
+    plan: (props.planRoutes?.length ?? 0) > 0,
+    objects: (props.siteObjects?.length ?? 0) > 0,
+    drills: (props.drillPoints?.length ?? 0) > 0 || (props.drillLines?.length ?? 0) > 0,
+    crews: (props.crews?.length ?? 0) > 0,
+    deviations: (props.deviations?.length ?? 0) > 0,
+    incidents: (props.incidents?.length ?? 0) > 0,
+    areas: (props.areas?.length ?? 0) > 0,
+    snp: (props.snpPoints?.length ?? 0) > 0,
+    flow: !!props.showFlow,
+  };
+  const legendGroups = mapLegend(legendLayers, props.routeColorMode ?? 'stage');
+
   return (
     <div className="relative w-full h-full" style={{ position: 'absolute', inset: 0 }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'absolute', inset: 0 }} />
@@ -3138,7 +3187,20 @@ export default function LeafletMap(props: Props) {
       {mapReady && (
         <ScaleBar
           map={mapRef.current}
+          onLabel={(l) => { scaleLabelRef.current = l; }}
           className="absolute left-2 md:left-3 bottom-[calc(8px+env(safe-area-inset-bottom))] z-[400]"
+        />
+      )}
+
+      {/* Печать и снимок: тот же кадр, что на экране, только на бумаге
+          или файлом. */}
+      {mapReady && props.searchOnMap && (
+        <MapCapture
+          className="absolute bottom-[calc(58px+env(safe-area-inset-bottom))] md:bottom-auto md:top-[104px] left-2 md:left-auto md:right-3 z-[400]"
+          getMapEl={() => containerRef.current}
+          title={props.printTitle || 'Optiq — карта стройки'}
+          legend={legendGroups}
+          scaleLabel={scaleLabelRef.current ?? undefined}
         />
       )}
 
@@ -3146,17 +3208,7 @@ export default function LeafletMap(props: Props) {
           — ушла и его строка. */}
       {mapReady && (
         <MapLegend
-          layers={{
-            plan: (props.planRoutes?.length ?? 0) > 0,
-            objects: (props.siteObjects?.length ?? 0) > 0,
-            drills: (props.drillPoints?.length ?? 0) > 0 || (props.drillLines?.length ?? 0) > 0,
-            crews: (props.crews?.length ?? 0) > 0,
-            deviations: (props.deviations?.length ?? 0) > 0,
-            incidents: (props.incidents?.length ?? 0) > 0,
-            areas: (props.areas?.length ?? 0) > 0,
-            snp: (props.snpPoints?.length ?? 0) > 0,
-            flow: !!props.showFlow,
-          }}
+          layers={legendLayers}
           colorMode={props.routeColorMode ?? 'stage'}
           className="absolute left-2 md:left-3 bottom-[calc(30px+env(safe-area-inset-bottom))] z-[400]"
         />

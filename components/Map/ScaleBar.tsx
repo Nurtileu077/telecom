@@ -12,6 +12,8 @@ import { scaleBar } from '@/components/Construction/mapDecor';
 
 interface Props {
   map: any;
+  /** Подпись линейки наружу: её просит печатный лист. */
+  onLabel?: (label: string) => void;
   className?: string;
 }
 
@@ -22,7 +24,7 @@ function metersPerPixel(lat: number, zoom: number): number {
 
 const MAX_PX = 92;
 
-export default function ScaleBar({ map, className }: Props) {
+export default function ScaleBar({ map, onLabel, className }: Props) {
   const [mpp, setMpp] = useState<number | null>(null);
 
   useEffect(() => {
@@ -43,8 +45,14 @@ export default function ScaleBar({ map, className }: Props) {
     };
   }, [map]);
 
-  if (!mpp || !Number.isFinite(mpp)) return null;
-  const bar = scaleBar(mpp, MAX_PX);
+  const bar = mpp && Number.isFinite(mpp) ? scaleBar(mpp, MAX_PX) : null;
+
+  // Наружу отдаём из эффекта, а не прямо в разметке: запись во время
+  // отрисовки — это побочное действие там, где его не ждут.
+  const label = bar?.label;
+  useEffect(() => { if (label) onLabel?.(label); }, [label, onLabel]);
+
+  if (!bar) return null;
 
   return (
     <div className={className} aria-label={`Масштаб: ${bar.label}`}>
