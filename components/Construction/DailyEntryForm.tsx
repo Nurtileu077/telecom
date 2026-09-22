@@ -16,6 +16,7 @@ import { photosOf } from './photoStore';
 import { advanceAlong, routeForSection } from './routeProgress';
 import { normName } from './areaImport';
 import { checkEntry } from './entryChecks';
+import { haversineM } from './measureTool';
 import { parseMeters, metersHint } from './units';
 import {
   fetchDayWeather, formatWeather, weatherHindered, type DayWeather,
@@ -124,6 +125,8 @@ export default function DailyEntryForm({
   });
   const [note, setNote] = useState(initial?.note ?? prefill?.note ?? '');
   const [reason, setReason] = useState('');
+  /** Отрезок, снятый с карты: ждёт, в какой способ его вписать. */
+  const [picked, setPicked] = useState<number | null>(null);
   const [touched, setTouched] = useState(false);
 
   /**
@@ -636,6 +639,40 @@ export default function DailyEntryForm({
                           onChange={(v) => setByMethod((p) => ({ ...p, [m]: v }))} />
               ))}
             </div>
+            {/* Метры по карте: на длинных перегонах их всё равно снимают
+                с карты, просто делают это в другом приложении. */}
+            {onRequestPick && (
+              <div className="flex items-center gap-2 flex-wrap px-1 pt-1">
+                <button type="button" className="btn btn-ghost text-[10.5px]"
+                        onClick={async () => {
+                          const a = await onRequestPick('начало отрезка');
+                          if (!a) return;
+                          const b = await onRequestPick('конец отрезка');
+                          if (!b) return;
+                          setPicked(Math.round(haversineM(a, b)));
+                        }}>
+                  <MapPin size={12} />Померить по карте
+                </button>
+                {picked !== null && (
+                  <>
+                    <span className="text-[11px] text-[var(--text)] font-mono tabular-nums">
+                      {picked.toLocaleString('ru')} м
+                    </span>
+                    <span className="text-[11px] text-[var(--text-muted)]">вписать в</span>
+                    {LAY_METHODS.map((m) => (
+                      <button key={m} type="button" className="btn btn-ghost text-[10.5px]"
+                              onClick={() => {
+                                setByMethod((p) => ({ ...p, [m]: String(picked) }));
+                                setPicked(null);
+                              }}>
+                        {LAY_METHOD_LABEL[m]}
+                      </button>
+                    ))}
+                  </>
+                )}
+              </div>
+            )}
+
             {weather && (
               <div className="flex items-baseline gap-2 px-1 pt-1 text-[11px]">
                 <span className="text-[var(--text-muted)]">Погода</span>
@@ -1012,7 +1049,9 @@ function NumField({ id, label, unit, value, onChange }: {
           type="text"
           inputMode="decimal"
           value={value}
-          onChange={(e) => onChange(e.target.value.replace(/[^\d.,]/g, ''))}
+          // Буквы «км» и «м» оставляем: поле принимает и «1,2 км», а
+          // выкусывать их на лету значит не давать их набрать.
+          onChange={(e) => onChange(e.target.value.replace(/[^\d.,\sкмkm]/gi, ''))}
           placeholder="0"
           className="inp pr-7 font-mono tabular-nums"
         />

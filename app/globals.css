@@ -676,3 +676,25 @@ body {
   body:not([data-optiq-print="1"]) .journal-panel tfoot { position: static !important; }
   body:not([data-optiq-print="1"]) .journal-panel tr { break-inside: avoid; }
 }
+
+/* ── Пальцем, а не мышью ─────────────────────────────────────────────────
+   Журнал закрывают с планшета в поле, часто в перчатках. Там, где вместо
+   мыши палец, поля и кнопки должны быть крупнее: промах по кнопке в
+   форме отчёта стоит дороже, чем лишние восемь пикселей на экране. */
+@media (pointer: coarse) {
+  .inp {
+    min-height: 40px;
+    font-size: 15px;
+  }
+  .btn {
+    min-height: 40px;
+  }
+  .btn-icon {
+    min-width: 40px;
+  }
+  input[type="checkbox"],
+  input[type="radio"] {
+    width: 20px;
+    height: 20px;
+  }
+}
