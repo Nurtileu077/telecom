@@ -160,6 +160,9 @@ export function mergeJournalStates(
     contractors: mergeContractors(local.contractors, remote.contractors),
     // Поля актов: своё заполнение в приоритете, чужие участки добираем.
     actFields: { ...(remote.actFields ?? {}), ...(local.actFields ?? {}) },
+    // Корзина не уезжает на сервер: это «что я удалил у себя», а не
+    // общие данные. У каждого она своя, как и настройки вида.
+    trash: local.trash ?? [],
     deleted: pruneTombstones(
       [...tombs.entries()].map(([id, at]) => ({ id, at })),
       now,

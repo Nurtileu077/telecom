@@ -3,6 +3,7 @@ import {
   groundTotals, metersBy, metersByDay, lastWorkDate, matchesFilter,
   mergeJournal, drillMapPoints, drillMapLines, shiftDays, fmtKm, fmtMeters,
   emptyJournal, addGroundEntry, removeEntry, type JournalState,
+  restoreFromTrash, purgeTrash, bulkPatchEntries, setDisputed,
   submitCorrection, approveCorrection, rejectCorrection, pendingCorrections,
   hasPendingCorrection, diffEntries, suggestContractor, DEFAULT_CONTRACTORS,
   addDeviation, removeDeviation, openDeviations, isDeviationClosed, needsProtocol,
@@ -693,5 +694,100 @@ describe('прокол — это переход, а не вся трасса', 
   it('без записанной длины предел один для всех', () => {
     expect(isOneDrill({ lat: 51.5, lon: 71.5 }, { lat: 51.503, lon: 71.5 })).toBe(true);
     expect(isOneDrill({ lat: 51.5, lon: 71.5 }, { lat: 51.51, lon: 71.5 })).toBe(false);
+  });
+});
+
+describe('корзина', () => {
+  function withEntry(): JournalState {
+    return addGroundEntry(emptyJournal(), {
+      id: 'e1', kind: 'ground', date: '2026-07-25', smu: 'СМУ-1',
+      oblast: 'Акмолинская область', uchastok: 'Зеренда — Серафимовка',
+      kato: '116240100', byMethod: { 'кабелеукладчик': 480 }, materials: {},
+      createdAt: '2026-07-25T10:00:00.000Z', updatedAt: '2026-07-25T10:00:00.000Z',
+    });
+  }
+
+  it('удалённая смена не пропадает, а ложится в корзину', () => {
+    const j = removeEntry(withEntry(), 'e1', 'Прораб');
+    expect(j.ground).toHaveLength(0);
+    expect(j.trash).toHaveLength(1);
+    expect(j.trash[0].from).toBe('ground');
+    expect(j.trash[0].author).toBe('Прораб');
+    // Для обмена она по-прежнему удалена.
+    expect(j.deleted.some((d) => d.id === 'e1')).toBe(true);
+  });
+
+  it('возврат из корзины снимает и надгробие', () => {
+    const back = restoreFromTrash(removeEntry(withEntry(), 'e1'), 'e1');
+    expect(back.ground).toHaveLength(1);
+    expect(back.trash).toHaveLength(0);
+    expect(back.deleted.some((d) => d.id === 'e1')).toBe(false);
+  });
+
+  it('возвращать нечего — ничего и не меняется', () => {
+    const j = withEntry();
+    expect(restoreFromTrash(j, 'нет такого')).toBe(j);
+  });
+
+  it('месяц прошёл — корзина пустеет', () => {
+    const j = removeEntry(withEntry(), 'e1');
+    const later = new Date(new Date(j.trash[0].at).getTime() + 31 * 24 * 3600 * 1000);
+    expect(purgeTrash(j, later).trash).toHaveLength(0);
+    // А вчерашнее остаётся.
+    const soon = new Date(new Date(j.trash[0].at).getTime() + 24 * 3600 * 1000);
+    expect(purgeTrash(j, soon).trash).toHaveLength(1);
+  });
+});
+
+describe('правка многих строк разом', () => {
+  function two(): JournalState {
+    const base = addGroundEntry(emptyJournal(), {
+      id: 'a', kind: 'ground', date: '2026-07-25', smu: 'СМУ-1',
+      oblast: 'Акмолинская область', uchastok: 'У1', kato: '1',
+      byMethod: { 'бар': 100 }, materials: {},
+      createdAt: '', updatedAt: '', contractor: 'Дозер',
+    });
+    return addGroundEntry(base, {
+      id: 'b', kind: 'ground', date: '2026-07-26', smu: 'СМУ-1',
+      oblast: 'Акмолинская область', uchastok: 'У1', kato: '1',
+      byMethod: { 'бар': 200 }, materials: {},
+      createdAt: '', updatedAt: '', contractor: 'Дозер',
+    });
+  }
+
+  it('меняет то, что просили, и только у выбранных', () => {
+    const j = bulkPatchEntries(two(), ['a'], { contractor: 'TERRA TECH' }, 'Прораб');
+    expect(j.ground.find((e) => e.id === 'a')?.contractor).toBe('TERRA TECH');
+    expect(j.ground.find((e) => e.id === 'b')?.contractor).toBe('Дозер');
+    expect(j.ground.find((e) => e.id === 'a')?.editedBy).toBe('Прораб');
+  });
+
+  it('пустая правка ничего не портит', () => {
+    const j = two();
+    expect(bulkPatchEntries(j, ['a'], {})).toBe(j);
+    expect(bulkPatchEntries(j, [], { contractor: 'X' })).toBe(j);
+  });
+
+  it('пустая строка — это не «стереть подрядчика»', () => {
+    const j = bulkPatchEntries(two(), ['a', 'b'], { contractor: '', column: 'Колонна-2' });
+    expect(j.ground.every((e) => e.contractor === 'Дозер')).toBe(true);
+    expect(j.ground.every((e) => e.column === 'Колонна-2')).toBe(true);
+  });
+});
+
+describe('спорные строки', () => {
+  it('пометка ставится и снимается вместе с причиной', () => {
+    const base = addGroundEntry(emptyJournal(), {
+      id: 'a', kind: 'ground', date: '2026-07-25', smu: 'СМУ-1',
+      oblast: 'Акмолинская область', uchastok: 'У1', kato: '1',
+      byMethod: { 'бар': 100 }, materials: {}, createdAt: '', updatedAt: '',
+    });
+    const marked = setDisputed(base, 'a', true, 'не приняли 320 м');
+    expect(marked.ground[0].disputed).toBe(true);
+    expect(marked.ground[0].disputeNote).toBe('не приняли 320 м');
+
+    const cleared = setDisputed(marked, 'a', false);
+    expect(cleared.ground[0].disputed).toBe(false);
+    expect(cleared.ground[0].disputeNote).toBeUndefined();
   });
 });

@@ -660,3 +660,19 @@ body {
     border-top: 0.2mm solid #cbd5e1; padding-top: 1.5mm;
   }
 }
+
+/* ── Печать журнала ──────────────────────────────────────────────────────
+   Журнал печатают и подшивают: технадзору, в дело, заказчику. На бумаге
+   не нужны ни вкладки, ни кнопки — только записи и итоги. */
+@media print {
+  body:not([data-optiq-print="1"]) .journal-panel {
+    position: static !important;
+    background: #fff !important;
+    color: #0f172a !important;
+  }
+  body:not([data-optiq-print="1"]) .journal-panel [data-print="hide"] { display: none !important; }
+  body:not([data-optiq-print="1"]) .journal-panel table { font-size: 9pt; }
+  body:not([data-optiq-print="1"]) .journal-panel thead,
+  body:not([data-optiq-print="1"]) .journal-panel tfoot { position: static !important; }
+  body:not([data-optiq-print="1"]) .journal-panel tr { break-inside: avoid; }
+}

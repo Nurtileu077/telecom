@@ -21,6 +21,7 @@ import {
   addPlanRoutes, removePlanSource, planSources, plural, setProgress, setStage,
   addAreas, removeAreaSource, areaSources, setMaterialPrice, upsertDrill,
   upsertObject, removeObject, setSectionProgress, scopeJournal, smuList, deleteRoute,
+  bulkPatchEntries, setDisputed, restoreFromTrash, purgeTrash,
   restoreShape, upsertDrumRecord, removeDrumRecord, addPhoto, removePhoto,
   upsertSplice, removeSplice, upsertIncident, removeIncident,
 } from './journalStore';
@@ -32,6 +33,9 @@ import { placeCrews } from './crewPlace';
 import { routeViews, routeTitle } from './routeStyle';
 import { buildKml, kmlFileName } from './kmlExport';
 import ChecksView from './ChecksView';
+import EntriesTable from './EntriesTable';
+import { planFact } from './entriesTable';
+import { normName } from './areaImport';
 import { downloadText } from '@/lib/download';
 import ChangeLogView from './ChangeLogView';
 import PassportView from './PassportView';
@@ -144,7 +148,24 @@ export default function ConstructionPanel({
   const actor = useMemo(() => getActorName() || 'Без имени', []);
 
   /** Общая точка записи: сохраняем и честно сообщаем о переполнении. */
-  const persist = useCallback((next: JournalState) => {
+  /**
+   * Что было до последних правок.
+   *
+   * Отмена нужна не «на всякий случай»: удалённая не та строка — это
+   * пропавшие метры в акте, а найти и вписать их заново дольше, чем
+   * нажать Ctrl+Z. Держим два десятка шагов в памяти вкладки: это
+   * отмена, а не история — история живёт в журнале изменений.
+   */
+  const historyRef = useRef<JournalState[]>([]);
+  const [canUndo, setCanUndo] = useState(false);
+  /** Короткое сообщение: «скопировано», «отменено». */
+  const [flash, setFlashRaw] = useState<string | null>(null);
+  const setFlash = useCallback((text: string | null) => {
+    setFlashRaw(text);
+    if (text) window.setTimeout(() => setFlashRaw(null), 2200);
+  }, []);
+
+  const write = useCallback((next: JournalState) => {
     setJournal(next);
     if (!saveJournal(next)) {
       setError('Данные показаны, но не сохранены: переполнено хранилище браузера. Выгрузите журнал в Excel и очистите старые проекты.');
@@ -152,6 +173,20 @@ export default function ConstructionPanel({
       setError('');
     }
   }, []);
+
+  const persist = useCallback((next: JournalState) => {
+    historyRef.current = [...historyRef.current, loadJournal()].slice(-20);
+    setCanUndo(true);
+    write(next);
+  }, [write]);
+
+  const undo = useCallback(() => {
+    const prev = historyRef.current.pop();
+    setCanUndo(historyRef.current.length > 0);
+    if (!prev) return;
+    write(prev);
+    setFlash('Отменено');
+  }, [write, setFlash]);
 
   /**
    * Новый день — пишем сразу. Исправление — только заявкой: цифры в сводке
@@ -220,9 +255,12 @@ export default function ConstructionPanel({
   }, [persist]);
 
   const handleDelete = useCallback((id: string) => {
-    if (!confirm('Удалить запись?')) return;
-    persist(removeEntry(loadJournal(), id));
-  }, [persist]);
+    // Не спрашиваем «вы уверены»: строка уходит в корзину, и вернуть её
+    // проще, чем прочитать вопрос. Предупреждение на каждое действие
+    // учит нажимать «да», не читая.
+    persist(removeEntry(loadJournal(), id, actor));
+    setFlash('Запись в корзине — вернуть можно в «Проверках»');
+  }, [persist, actor, setFlash]);
 
   /**
    * Отправка локальных фото. Отдельным шагом перед обменом журналом:
@@ -367,11 +405,53 @@ export default function ConstructionPanel({
   }, [journal]);
 
 
+  /**
+   * Горячие клавиши.
+   *
+   * Те же, что везде: Esc закрывает, Ctrl+Z отменяет, «/» ставит курсор
+   * в поиск, N открывает новую запись. Пока их нет, каждое действие —
+   * это поиск кнопки глазами.
+   */
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      const typing = el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA'
+        || el?.isContentEditable;
+
+      if (e.key === 'Escape') {
+        if (typing) { (el as HTMLElement).blur(); return; }
+        onClose();
+        return;
+      }
+      if ((e.key === 'z' || e.key === 'я') && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+        if (typing) return;
+        e.preventDefault();
+        undo();
+        return;
+      }
+      if (typing) return;
+      if (e.key === '/') {
+        const box = document.getElementById('entries-search') as HTMLInputElement | null;
+        if (box) { e.preventDefault(); box.focus(); box.select(); }
+        return;
+      }
+      if (e.key === 'n' || e.key === 'т') {
+        e.preventDefault();
+        setEditing(null);
+        setFormOpen(true);
+      }
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, undo]);
+
+  // Корзина не должна расти вечно: что пролежало месяц — выбрасываем.
+  useEffect(() => {
+    const cleaned = purgeTrash(journal);
+    if (cleaned !== journal) write(cleaned);
+    // Один раз при открытии журнала: чаще незачем.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleFile = useCallback(async (file: File) => {
     setBusy(true); setError(''); setReport(null);
@@ -505,6 +585,18 @@ export default function ConstructionPanel({
       'application/vnd.google-earth.kml+xml');
   }, [scoped, live.progress, oblast]);
 
+  /**
+   * Где факт разошёлся с проектом.
+   *
+   * Проектная длина известна из KML, фактическая складывается из смен.
+   * Расхождение само по себе не ошибка — трассу переносят, — но узнать
+   * о нём лучше на стройке, а не при сдаче.
+   */
+  const planFactRows = useMemo(
+    () => planFact(scoped.ground, scoped.planRoutes),
+    [scoped.ground, scoped.planRoutes],
+  );
+
   const pending = useMemo(() => pendingCorrections(journal), [journal]);
   const openDevs = useMemo(() => openDeviations(journal), [journal]);
   const tasks = useMemo(
@@ -559,9 +651,25 @@ export default function ConstructionPanel({
     : ALL_VIEWS.filter(([v]) => roleViews.has(v) || v === view);
 
   return (
-    <div className="fixed inset-0 z-[9998] bg-[var(--bg-canvas)] flex flex-col">
+    <div className="fixed inset-0 z-[9998] bg-[var(--bg-canvas)] flex flex-col journal-panel">
+      {/* Короткое сообщение о том, что действие прошло. */}
+      {flash && (
+        <div className="fixed left-1/2 -translate-x-1/2 top-3 z-[9999] px-3 py-1.5 rounded-full
+                        bg-[var(--bg-surface)] border border-[var(--accent)]/50 text-[12px]
+                        text-[var(--accent)] shadow-xl"
+             data-print="hide" role="status">
+          {flash}
+          {canUndo && (
+            <button type="button" onClick={undo}
+                    className="ml-2 underline underline-offset-2 hover:text-[var(--text)]">
+              отменить
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Шапка */}
-      <div className="flex items-center gap-2 px-3 md:px-4 py-2.5 border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0"
+      <div data-print="hide" className="flex items-center gap-2 px-3 md:px-4 py-2.5 border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0"
            style={{ paddingTop: 'calc(0.625rem + env(safe-area-inset-top, 0px))' }}>
         <Wrench size={17} className="text-[var(--accent)] shrink-0" />
         <h2 className="text-sm font-semibold text-[var(--text)] shrink-0">Журнал стройки</h2>
@@ -875,6 +983,8 @@ export default function ConstructionPanel({
         ) : view === 'checks' ? (
           <ChecksView
             journal={scoped}
+            planFactRows={planFactRows}
+            onRestore={(id) => persist(restoreFromTrash(loadJournal(), id))}
             onShow={(coords) => { onShowCoords?.(coords); onClose(); }}
             onDeleteRoute={(id) => {
               if (!confirm('Удалить эту трассу?\nВернуть её можно будет в журнале изменений.')) return;
@@ -915,11 +1025,35 @@ export default function ConstructionPanel({
             onReject={handleReject}
           />
         ) : view === 'entries' ? (
-          <EntriesList
+          <EntriesTable
             rows={ground}
             journal={journal}
             onDelete={handleDelete}
             onEdit={(e) => { setEditing(e); setFormOpen(true); }}
+            onShowOnMap={(e) => {
+              // Карту показываем по участку: у записи своих координат нет,
+              // а трасса участка — есть.
+              const hit = scoped.planRoutes.find(
+                (r) => normName(r.uchastok ?? r.name) === normName(e.uchastok),
+              );
+              if (!hit) return;
+              onShowCoords?.(hit.coords);
+              onClose();
+            }}
+            onBulkPatch={(ids, patch) => persist(bulkPatchEntries(loadJournal(), ids, patch, actor))}
+            onDispute={(e) => {
+              if (e.disputed) {
+                persist(setDisputed(loadJournal(), e.id, false));
+                return;
+              }
+              const why = window.prompt(
+                'В чём спор? Например: «не приняли 320 м», «нет подписи технадзора»',
+                '',
+              );
+              if (why === null) return;
+              persist(setDisputed(loadJournal(), e.id, true, why.trim()));
+            }}
+            onCopied={(n) => setFlash(`Скопировано строк: ${n}`)}
           />
         ) : (
           <div className="flex flex-col gap-4">
@@ -1345,74 +1479,6 @@ function CorrectionsList({ rows, canDecide, onApprove, onReject }: {
           </div>
         );
       })}
-    </div>
-  );
-}
-
-function EntriesList({ rows, journal, onDelete, onEdit }: {
-  rows: DailyWorkEntry[];
-  journal: JournalState;
-  onDelete: (id: string) => void;
-  onEdit: (e: DailyWorkEntry) => void;
-}) {
-  const sorted = useMemo(
-    () => [...rows].sort((a, b) => (b.date || '').localeCompare(a.date || '')),
-    [rows],
-  );
-  if (sorted.length === 0) {
-    return <p className="text-[12px] text-[var(--text-muted)] text-center py-10">За выбранный период записей нет</p>;
-  }
-  return (
-    <div className="flex flex-col gap-1.5">
-      {sorted.slice(0, 300).map((e) => {
-        const meters = Object.values(e.byMethod).reduce((s, v) => s + (v ?? 0), 0);
-        return (
-          <div key={e.id} className="flex items-start gap-3 rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] px-3 py-2">
-            <div className="min-w-0 flex-1">
-              <div className="flex items-baseline gap-2 flex-wrap">
-                <span className="font-mono text-[11px] text-[var(--text-muted)] tabular-nums">
-                  {e.date ? new Date(`${e.date}T00:00:00Z`).toLocaleDateString('ru') : '—'}
-                </span>
-                <span className="text-[12.5px] text-[var(--text)] font-medium truncate">{e.uchastok || '—'}</span>
-                {e.tech && <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent-dim)] text-[var(--accent)]">{e.tech}</span>}
-                {e.sync === 'local' && (
-                  <span className="text-[10px] text-[var(--text-muted)] inline-flex items-center gap-1" title="Сохранено локально">
-                    <CloudOff size={11} />локально
-                  </span>
-                )}
-              </div>
-              <div className="mt-0.5 text-[11px] text-[var(--text-muted)] truncate">
-                {[e.contractor, e.column, e.smu, e.oblast].filter(Boolean).join(' · ')}
-                {e.note ? ` — ${e.note}` : ''}
-              </div>
-            </div>
-            <div className="text-right shrink-0">
-              <div className="font-mono tabular-nums text-[13px] text-[var(--text)]">{meters.toLocaleString('ru')} м</div>
-              {!!e.drillM && <div className="text-[10px] text-[var(--text-muted)]">ГНБ {e.drillM} м</div>}
-            </div>
-            {hasPendingCorrection(journal, e.id) ? (
-              <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-[var(--warn)] text-[var(--warn)] self-center"
-                    title="По записи уже есть заявка на исправление">
-                на согласовании
-              </span>
-            ) : (
-              <button type="button" onClick={() => onEdit(e)} title="Исправить отчёт"
-                      className="btn btn-ghost btn-icon shrink-0 text-[var(--text-muted)] hover:text-[var(--accent)]">
-                <Pencil size={14} />
-              </button>
-            )}
-            <button type="button" onClick={() => onDelete(e.id)} title="Удалить"
-                    className="btn btn-ghost btn-icon shrink-0 text-[var(--text-muted)] hover:text-[var(--danger)]">
-              <Trash2 size={14} />
-            </button>
-          </div>
-        );
-      })}
-      {sorted.length > 300 && (
-        <p className="text-[11px] text-[var(--text-muted)] text-center py-2">
-          Показаны последние 300 из {sorted.length}. Сузьте период или фильтры.
-        </p>
-      )}
     </div>
   );
 }

@@ -63,6 +63,14 @@ export interface JournalState {
    * удаления, чтобы отличить «удалили после правки» от «правили после удаления».
    */
   deleted: DeletedMark[];
+  /**
+   * Корзина.
+   *
+   * Удалённая по ошибке смена — это не «упс», а пропавшие метры в акте.
+   * Строка лежит месяц и возвращается одним нажатием; для обмена она
+   * по-прежнему удалена — надгробие никуда не делось.
+   */
+  trash: TrashedEntry[];
   updatedAt: string;
 }
 
@@ -79,7 +87,7 @@ export function emptyJournal(): JournalState {
     photos: [], splices: [], incidents: [], planRoutes: [],
     areas: [], prices: {}, objects: [], sectionProgress: {}, progress: [],
     contractors: DEFAULT_CONTRACTORS, changes: [], actFields: {},
-    deleted: [], updatedAt: '',
+    deleted: [], trash: [], updatedAt: '',
   };
 }
 
@@ -335,6 +343,7 @@ export function loadJournal(): JournalState {
       progress: p.progress ?? [],
       actFields: p.actFields ?? {},
       deleted: p.deleted ?? [],
+      trash: p.trash ?? [],
       // Пустой справочник заменяем стартовым — иначе подрядчика не из чего выбрать.
       contractors: p.contractors?.length ? p.contractors : DEFAULT_CONTRACTORS,
       updatedAt: p.updatedAt ?? '',
@@ -390,6 +399,7 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     contractors: base.contractors.length ? base.contractors : DEFAULT_CONTRACTORS,
     actFields: base.actFields,
     deleted: base.deleted,
+    trash: base.trash,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -1508,14 +1518,129 @@ export function upsertDrill(base: JournalState, d: DrillLogEntry): JournalState 
   };
 }
 
-export function removeEntry(base: JournalState, id: string): JournalState {
+/** Сколько корзина держит удалённое. */
+export const TRASH_DAYS = 30;
+
+export interface TrashedEntry {
+  id: string;
+  /** Когда удалили — ISO. */
+  at: string;
+  author?: string;
+  /** Откуда строка: земля, подвес, прокол. */
+  from: 'ground' | 'aerial' | 'drills';
+  /** Сама запись — целиком, как была. */
+  entry: DailyWorkEntry | AerialWorkEntry | DrillLogEntry;
+}
+
+export function removeEntry(base: JournalState, id: string, author?: string): JournalState {
   const now = new Date().toISOString();
+  const ground = base.ground.find((e) => e.id === id);
+  const aerial = base.aerial.find((e) => e.id === id);
+  const drill = base.drills.find((e) => e.id === id);
+  const found = ground
+    ? { from: 'ground' as const, entry: ground as DailyWorkEntry }
+    : aerial
+      ? { from: 'aerial' as const, entry: aerial as AerialWorkEntry }
+      : drill
+        ? { from: 'drills' as const, entry: drill as DrillLogEntry }
+        : null;
+
   return {
     ...base,
     ground: base.ground.filter((e) => e.id !== id),
     aerial: base.aerial.filter((e) => e.id !== id),
     drills: base.drills.filter((e) => e.id !== id),
     deleted: withTombstone(base, id, now),
+    trash: found
+      ? [...base.trash.filter((t) => t.id !== id), { id, at: now, author, ...found }]
+      : base.trash,
+    updatedAt: now,
+  };
+}
+
+/**
+ * Вернуть из корзины.
+ *
+ * Надгробие снимаем: запись снова живая, и обмен должен увидеть её, а
+ * не считать удалённой.
+ */
+export function restoreFromTrash(base: JournalState, id: string): JournalState {
+  const item = base.trash.find((t) => t.id === id);
+  if (!item) return base;
+  const now = new Date().toISOString();
+  const back = { ...item.entry, updatedAt: now, sync: 'local' as const };
+  return {
+    ...base,
+    ground: item.from === 'ground'
+      ? [...base.ground, back as DailyWorkEntry] : base.ground,
+    aerial: item.from === 'aerial'
+      ? [...base.aerial, back as AerialWorkEntry] : base.aerial,
+    drills: item.from === 'drills'
+      ? [...base.drills, back as DrillLogEntry] : base.drills,
+    deleted: base.deleted.filter((d) => d.id !== id),
+    trash: base.trash.filter((t) => t.id !== id),
+    updatedAt: now,
+  };
+}
+
+/** Что пролежало в корзине дольше срока — выбрасываем насовсем. */
+export function purgeTrash(base: JournalState, now = new Date(), days = TRASH_DAYS): JournalState {
+  const edge = now.getTime() - days * 24 * 3600 * 1000;
+  const keep = base.trash.filter((t) => new Date(t.at).getTime() >= edge);
+  if (keep.length === base.trash.length) return base;
+  return { ...base, trash: keep };
+}
+
+/**
+ * Правка сразу у многих строк.
+ *
+ * Бригаду переименовали, подрядчика переписали, участок назвали иначе —
+ * и двадцать строк надо привести к одному виду. По одной это двадцать
+ * открытых форм.
+ */
+export function bulkPatchEntries(
+  base: JournalState,
+  ids: string[],
+  patch: Partial<Pick<DailyWorkEntry, 'contractor' | 'column' | 'smu' | 'uchastok' | 'disputed' | 'disputeNote'>>,
+  author?: string,
+): JournalState {
+  const set = new Set(ids);
+  if (set.size === 0) return base;
+  const now = new Date().toISOString();
+  const clean = Object.fromEntries(
+    Object.entries(patch).filter(([, v]) => v !== undefined && v !== ''),
+  );
+  if (Object.keys(clean).length === 0) return base;
+
+  const apply = <T extends { id: string }>(rows: T[]): T[] => rows.map((r) => (
+    set.has(r.id) ? { ...r, ...clean, editedBy: author, updatedAt: now, sync: 'local' as const } : r
+  ));
+
+  return {
+    ...base,
+    ground: apply(base.ground),
+    aerial: apply(base.aerial),
+    updatedAt: now,
+  };
+}
+
+/** Пометить строку спорной или снять пометку. */
+export function setDisputed(
+  base: JournalState,
+  id: string,
+  disputed: boolean,
+  note?: string,
+): JournalState {
+  const now = new Date().toISOString();
+  const apply = <T extends { id: string }>(rows: T[]): T[] => rows.map((r) => (
+    r.id === id
+      ? { ...r, disputed, disputeNote: disputed ? note : undefined, updatedAt: now }
+      : r
+  ));
+  return {
+    ...base,
+    ground: apply(base.ground),
+    aerial: apply(base.aerial),
     updatedAt: now,
   };
 }
