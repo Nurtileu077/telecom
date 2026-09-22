@@ -34,6 +34,7 @@ import { routeViews, routeTitle } from './routeStyle';
 import { buildKml, kmlFileName } from './kmlExport';
 import ChecksView from './ChecksView';
 import TimesheetView from './TimesheetView';
+import DocsView from './DocsView';
 import EntriesTable from './EntriesTable';
 import QuickEntryBar from './QuickEntryBar';
 import SheetImport from './SheetImport';
@@ -74,7 +75,7 @@ import {
 } from '@/types/construction';
 
 type Period = 'day' | 'week' | 'month' | 'all';
-type View = 'today' | 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages' | 'drills' | 'objects' | 'passport' | 'incidents' | 'log' | 'checks' | 'timesheet';
+type View = 'today' | 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages' | 'drills' | 'objects' | 'passport' | 'incidents' | 'log' | 'checks' | 'timesheet' | 'docs';
 
 const PERIOD_LABEL: Record<Period, string> = {
   day: 'Последний день', week: '7 дней', month: '30 дней', all: 'Всё время',
@@ -670,7 +671,7 @@ export default function ConstructionPanel({
     ['drills', 'Проколы'], ['objects', 'Объекты'], ['passport', 'Паспорт'],
     ['incidents', 'Аварии'], ['deviations', 'Отклонения'], ['materials', 'Материалы'],
     ['closing', 'Закрытие'], ['corrections', 'Заявки'], ['log', 'Изменения'],
-    ['checks', 'Проверки'], ['timesheet', 'Табель'],
+    ['docs', 'Документы'], ['checks', 'Проверки'], ['timesheet', 'Табель'],
   ];
   const roleViews = new Set(JOURNAL_ROLES[role].views);
   const shownViews = allTabs
@@ -1005,6 +1006,26 @@ export default function ConstructionPanel({
             onRemove={(id) => {
               if (!confirm('Удалить запись об аварии?')) return;
               persist(removeIncident(loadJournal(), id));
+            }}
+          />
+        ) : view === 'docs' ? (
+          <DocsView
+            journal={scoped}
+            from={filter.from ?? ''}
+            to={filter.to ?? anchor ?? ''}
+            author={actor}
+            onFlash={setFlash}
+            onOpenSection={() => setView('closing')}
+            onSetActNumber={(uchastok, number) => {
+              const base = loadJournal();
+              persist({
+                ...base,
+                actFields: {
+                  ...base.actFields,
+                  [uchastok]: { ...(base.actFields?.[uchastok] ?? {}), actNumber: number },
+                },
+                updatedAt: new Date().toISOString(),
+              });
             }}
           />
         ) : view === 'timesheet' ? (

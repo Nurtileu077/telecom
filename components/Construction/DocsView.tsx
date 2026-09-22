@@ -1,0 +1,326 @@
+'use client';
+import { useMemo, useState } from 'react';
+import {
+  FileDown, Package, AlertTriangle, Check, Hash, Loader2,
+} from 'lucide-react';
+import type { JournalState } from './journalStore';
+import { actRegistry, nextActNumber, formatActNumber } from './docRegistry';
+import {
+  volumeSheet, costSheet, volumeDocPage, volumeDocFile, type WorkPrices,
+} from './volumeDocs';
+import {
+  periodReport, paceChange, periodDocPage, periodDocFile,
+  snpReadiness, readinessDocHtml, weekRange,
+} from './periodReports';
+import { actDocHtml, actFileName, ACT_DOC_CSS, esc, type ActKind } from './actDocument';
+import { computeSectionAct } from './sectionAct';
+import { effectiveProgress } from './stageDerive';
+import { downloadText, downloadBlob } from '@/lib/download';
+
+/**
+ * Документы.
+ *
+ * До сих пор каждый документ рождался отдельно и по месту: акт — в
+ * закрытии участка, отчёт — в сводке, ведомость — в голове у инженера.
+ * А спрашивают их пачкой: «пришлите за неделю» — и человек собирает
+ * четыре файла из трёх разных экранов.
+ *
+ * Здесь они лежат вместе, и видно, что готово, а что нет.
+ */
+
+interface Props {
+  journal: JournalState;
+  from: string;
+  to: string;
+  /** Кого писать подрядчиком по умолчанию. */
+  contractor?: string;
+  author?: string;
+  onFlash?: (text: string) => void;
+  onOpenSection?: (uchastok: string) => void;
+  onSetActNumber?: (uchastok: string, number: string) => void;
+}
+
+const DOC_MIME = 'application/msword;charset=utf-8';
+
+function wordPage(title: string, body: string): string {
+  return `<html xmlns:o="urn:schemas-microsoft-com:office:office"
+      xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8"/><title>${esc(title)}</title>
+<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml><![endif]-->
+<style>@page { size: A4; margin: 1.5cm; } body { margin: 0; }
+${ACT_DOC_CSS}</style></head><body class="act-doc">${body}</body></html>`;
+}
+
+export default function DocsView({
+  journal, from, to, contractor, author, onFlash, onOpenSection, onSetActNumber,
+}: Props) {
+  const [busy, setBusy] = useState(false);
+  const [prices, setPrices] = useState<WorkPrices>({});
+
+  const registry = useMemo(() => actRegistry(journal.actFields ?? {}), [journal.actFields]);
+  const sheet = useMemo(
+    () => volumeSheet(journal.ground, { from, to, contractor }),
+    [journal.ground, from, to, contractor],
+  );
+  const report = useMemo(
+    () => periodReport(journal.ground, { from, to, contractor }),
+    [journal.ground, from, to, contractor],
+  );
+  const pace = useMemo(
+    () => paceChange(journal.ground, { from, to, contractor }),
+    [journal.ground, from, to, contractor],
+  );
+  const readiness = useMemo(
+    () => snpReadiness(effectiveProgress(journal.progress, journal)),
+    [journal],
+  );
+
+  const contractors = useMemo(
+    () => [...new Set(journal.ground.map((e) => e.contractor).filter((v): v is string => !!v))]
+      .sort((a, b) => a.localeCompare(b, 'ru')),
+    [journal.ground],
+  );
+
+  function save(name: string, html: string) {
+    downloadText(name, html, DOC_MIME);
+    onFlash?.(`Файл собран: ${name}`);
+  }
+
+  /**
+   * Пакет за период.
+   *
+   * «Пришлите за неделю» — это не один файл, а четыре, и собирают их
+   * из трёх разных экранов. Складываем в один архив.
+   */
+  async function pack() {
+    setBusy(true);
+    try {
+      const JSZip = (await import('jszip')).default;
+      const zip = new JSZip();
+      zip.file(volumeDocFile({ sheet }), volumeDocPage({ sheet, contractor }));
+      zip.file(
+        periodDocFile({ report, contractor }),
+        periodDocPage({ report, pace, contractor, author }),
+      );
+      zip.file('Справка о готовности.doc',
+        wordPage('Справка о готовности', readinessDocHtml(readiness)));
+
+      // Акты по участкам, у которых за период была работа. Участок без
+      // заполненных полей в пакет не кладём: пустой бланк в архиве
+      // выглядит готовым документом, а он не готов.
+      for (const uchastok of report.sections.map((s) => s.uchastok)) {
+        const fields = journal.actFields?.[uchastok];
+        if (!fields?.actNumber) continue;
+        const rows = journal.ground.filter(
+          (x) => x.uchastok.trim().toLowerCase() === uchastok.trim().toLowerCase(),
+        );
+        if (rows.length === 0) continue;
+        const totals = computeSectionAct(rows, journal.deviations);
+        const sample = rows[0];
+        for (const kind of ['ASR', 'OSR'] as ActKind[]) {
+          zip.file(
+            actFileName(kind, uchastok, fields.actDate),
+            actDocHtml({
+              kind,
+              uchastok,
+              fields,
+              totals,
+              variants: totals.variants,
+              oblast: sample.oblast,
+              rayon: sample.rayon,
+              contractor,
+              dateFrom: totals.dateFrom,
+              dateTo: totals.dateTo,
+            }),
+          );
+        }
+      }
+
+      const blob = await zip.generateAsync({ type: 'blob' });
+      downloadBlob(`Пакет документов ${from}—${to}.zip`, blob);
+      onFlash?.('Пакет собран');
+    } catch (err) {
+      onFlash?.(err instanceof Error ? `Не собралось: ${err.message}` : 'Не собралось');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const cost = costSheet(sheet, prices);
+
+  return (
+    <div className="p-3 space-y-3">
+      {/* Пакет */}
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-3 space-y-2">
+        <div className="text-[13px] font-semibold text-[var(--text)]">За период</div>
+        <div className="text-[11.5px] text-[var(--text-muted)]">
+          {from} — {to}
+          {contractor ? ` · ${contractor}` : ''}
+          {' · '}
+          {Math.round(report.meters).toLocaleString('ru')} м за {report.shifts} смен
+        </div>
+        <div className="flex gap-1.5 flex-wrap">
+          <button type="button" className="btn btn-primary text-[11.5px]"
+                  onClick={pack} disabled={busy || report.shifts === 0}>
+            {busy ? <Loader2 size={14} className="animate-spin" /> : <Package size={14} />}
+            Пакет одним архивом
+          </button>
+          <button type="button" className="btn btn-ghost text-[11.5px]"
+                  disabled={sheet.rows.length === 0}
+                  onClick={() => save(volumeDocFile({ sheet }), volumeDocPage({ sheet, contractor }))}>
+            <FileDown size={14} />Ведомость объёмов
+          </button>
+          <button type="button" className="btn btn-ghost text-[11.5px]"
+                  disabled={report.shifts === 0}
+                  onClick={() => save(
+                    periodDocFile({ report, contractor }),
+                    periodDocPage({ report, pace, contractor, author }),
+                  )}>
+            <FileDown size={14} />Отчёт за период
+          </button>
+          <button type="button" className="btn btn-ghost text-[11.5px]"
+                  onClick={() => {
+                    const w = weekRange(to || new Date().toISOString().slice(0, 10));
+                    const weekly = periodReport(journal.ground, { ...w, contractor });
+                    save(
+                      periodDocFile({ report: weekly, contractor }),
+                      periodDocPage({
+                        report: weekly,
+                        pace: paceChange(journal.ground, { ...w, contractor }),
+                        contractor,
+                        author,
+                        title: 'НЕДЕЛЬНЫЙ ОТЧЁТ О ВЫПОЛНЕННЫХ РАБОТАХ',
+                      }),
+                    );
+                  }}>
+            <FileDown size={14} />Недельный
+          </button>
+          <button type="button" className="btn btn-ghost text-[11.5px]"
+                  disabled={readiness.length === 0}
+                  onClick={() => save('Справка о готовности.doc',
+                    wordPage('Справка о готовности', readinessDocHtml(readiness)))}>
+            <FileDown size={14} />Справка по сёлам
+          </button>
+        </div>
+        {contractors.length > 0 && (
+          <div className="text-[11px] text-[var(--text-muted)]">
+            Отчёт по одному подрядчику: выберите его в фильтре сверху —
+            в документ попадут только его смены.
+          </div>
+        )}
+      </div>
+
+      {/* Стоимость по факту */}
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-3 space-y-2">
+        <div className="text-[13px] font-semibold text-[var(--text)]">Стоимость по факту</div>
+        <div className="text-[11.5px] text-[var(--text-muted)]">
+          Впишите расценку за единицу — сумма посчитается. Позиция без расценки
+          стоит не ноль, а неизвестно сколько, и в итог не войдёт.
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+          {sheet.rows.map((r) => (
+            <div key={r.key} className="flex items-center gap-2">
+              <label htmlFor={`price-${r.key}`}
+                     className="text-[11.5px] text-[var(--text-muted)] min-w-0 flex-1 truncate">
+                {r.label}
+                <span className="text-[10px]"> · {r.quantity.toLocaleString('ru')} {r.unit}</span>
+              </label>
+              <input
+                id={`price-${r.key}`}
+                type="text"
+                inputMode="decimal"
+                value={prices[r.key] === undefined ? '' : String(prices[r.key])}
+                onChange={(ev) => {
+                  const v = Number(ev.target.value.replace(',', '.'));
+                  setPrices((p) => ({
+                    ...p,
+                    [r.key]: Number.isFinite(v) && v > 0 ? v : undefined,
+                  }));
+                }}
+                placeholder="₸"
+                className="w-20 bg-[var(--bg-canvas)] border border-[var(--border)] rounded
+                           px-1.5 py-1 text-[11.5px] text-[var(--text)] font-mono tabular-nums"
+              />
+            </div>
+          ))}
+        </div>
+        <div className="flex items-baseline gap-2">
+          <span className="text-[12px] text-[var(--text-muted)]">Итого</span>
+          <span className="font-mono tabular-nums text-[14px] text-[var(--accent)]">
+            {cost.total.toLocaleString('ru', { maximumFractionDigits: 2 })} ₸
+          </span>
+          <button type="button" className="btn btn-ghost text-[11.5px] ml-auto"
+                  disabled={cost.total === 0}
+                  onClick={() => save(
+                    volumeDocFile({ sheet, cost }),
+                    volumeDocPage({ sheet, cost, contractor, customer: 'АО «Транстелеком»' }),
+                  )}>
+            <FileDown size={14} />КС-2
+          </button>
+        </div>
+        {cost.unpriced.length > 0 && (
+          <div className="text-[11px] text-[var(--warn)]">
+            Без расценки: {cost.unpriced.join(', ')}.
+          </div>
+        )}
+      </div>
+
+      {/* Реестр актов */}
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-3 space-y-2">
+        <div className="text-[13px] font-semibold text-[var(--text)]">
+          Реестр актов: {registry.length}
+        </div>
+        {registry.length === 0 ? (
+          <div className="text-[11.5px] text-[var(--text-muted)]">
+            Актов пока нет. Они появляются, когда закрывают участок.
+          </div>
+        ) : registry.map((r) => (
+          <div key={r.uchastok} className="flex items-center gap-2">
+            <span className="min-w-0 flex-1">
+              <button type="button"
+                      onClick={() => onOpenSection?.(r.uchastok)}
+                      className="block text-[12.5px] text-[var(--text)] truncate text-left
+                                 hover:text-[var(--accent)]">
+                {r.uchastok}
+              </button>
+              <span className="block text-[10.5px] text-[var(--text-muted)]">
+                {r.number || 'без номера'}
+                {r.date ? ` · ${new Date(`${r.date}T00:00:00Z`).toLocaleDateString('ru')}` : ''}
+              </span>
+            </span>
+            {r.duplicate && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--danger)]
+                               text-[var(--danger)]" title="Такой номер уже есть у другого акта">
+                номер задвоен
+              </span>
+            )}
+            {r.missing.length > 0 ? (
+              <span className="text-[10.5px] text-[var(--warn)] inline-flex items-center gap-1"
+                    title={`Не хватает: ${r.missing.join(', ')}`}>
+                <AlertTriangle size={12} />
+                {r.missing.length}
+              </span>
+            ) : (
+              <Check size={13} className="text-[var(--accent)]" />
+            )}
+            {!r.number && onSetActNumber && (
+              <button type="button" className="btn btn-ghost btn-icon"
+                      title="Выдать следующий свободный номер"
+                      onClick={() => {
+                        const n = nextActNumber(journal.actFields ?? {}, 'ASR');
+                        onSetActNumber(r.uchastok, n);
+                        onFlash?.(`Номер выдан: ${n}`);
+                      }}>
+                <Hash size={13} />
+              </button>
+            )}
+          </div>
+        ))}
+        <div className="text-[10.5px] text-[var(--text-muted)]">
+          Следующий свободный: {formatActNumber('ASR', new Date().getFullYear(), 0).slice(0, 9)}…
+          {' '}{nextActNumber(journal.actFields ?? {}, 'ASR')}
+        </div>
+      </div>
+    </div>
+  );
+}
