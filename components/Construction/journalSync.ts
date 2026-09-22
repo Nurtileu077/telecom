@@ -161,6 +161,9 @@ export function mergeJournalStates(
     plans: mergeCollection<import('./weekPlan').PlanRow>(
       local.plans ?? [], remote.plans ?? [], tombs, stats,
     ),
+    records: mergeCollection<import('./siteRecords').SiteRecord>(
+      local.records ?? [], remote.records ?? [], tombs, stats,
+    ),
     progress: mergeProgress(local.progress, remote.progress, stats),
     corrections: mergeCorrections(local.corrections, remote.corrections, stats),
     // Журнал изменений только растёт: записи в нём не правят, их дописывают.

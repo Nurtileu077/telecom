@@ -24,6 +24,7 @@ import {
   bulkPatchEntries, setDisputed, restoreFromTrash, purgeTrash, markPresented,
   upsertRate, removeRate, upsertPayment, removePayment,
   upsertRequest, setRequestStatus, removeRequest, upsertPlan, removePlan,
+  upsertSiteRecord, removeSiteRecord,
   restoreShape, upsertDrumRecord, removeDrumRecord, addPhoto, removePhoto,
   upsertSplice, removeSplice, upsertIncident, removeIncident,
 } from './journalStore';
@@ -41,6 +42,7 @@ import ViewPrefs from '@/components/Layout/ViewPrefs';
 import PayrollView from './PayrollView';
 import ResourcesView from './ResourcesView';
 import PlanView from './PlanView';
+import SiteRecordsView from './SiteRecordsView';
 import EntriesTable from './EntriesTable';
 import QuickEntryBar from './QuickEntryBar';
 import SheetImport from './SheetImport';
@@ -81,7 +83,7 @@ import {
 } from '@/types/construction';
 
 type Period = 'day' | 'week' | 'month' | 'all';
-type View = 'today' | 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages' | 'drills' | 'objects' | 'passport' | 'incidents' | 'log' | 'checks' | 'timesheet' | 'docs' | 'payroll' | 'resources' | 'plan';
+type View = 'today' | 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages' | 'drills' | 'objects' | 'passport' | 'incidents' | 'log' | 'checks' | 'timesheet' | 'docs' | 'payroll' | 'resources' | 'plan' | 'records';
 
 const PERIOD_LABEL: Record<Period, string> = {
   day: 'Последний день', week: '7 дней', month: '30 дней', all: 'Всё время',
@@ -678,6 +680,7 @@ export default function ConstructionPanel({
     ['incidents', 'Аварии'], ['deviations', 'Отклонения'], ['materials', 'Материалы'],
     ['closing', 'Закрытие'], ['corrections', 'Заявки'], ['log', 'Изменения'],
     ['plan', 'План'], ['docs', 'Документы'], ['payroll', 'Расчёты'], ['resources', 'Ресурсы'],
+    ['records', 'Допуски'],
     ['checks', 'Проверки'], ['timesheet', 'Табель'],
   ];
   const roleViews = new Set(JOURNAL_ROLES[role].views);
@@ -1017,6 +1020,14 @@ export default function ConstructionPanel({
               if (!confirm('Удалить запись об аварии?')) return;
               persist(removeIncident(loadJournal(), id));
             }}
+          />
+        ) : view === 'records' ? (
+          <SiteRecordsView
+            records={scoped.records}
+            author={actor}
+            onFlash={setFlash}
+            onUpsert={(r) => persist(upsertSiteRecord(loadJournal(), r))}
+            onRemove={(id) => persist(removeSiteRecord(loadJournal(), id))}
           />
         ) : view === 'plan' ? (
           <PlanView

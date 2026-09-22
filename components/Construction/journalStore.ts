@@ -45,6 +45,8 @@ export interface JournalState {
   requests: import('./supply').MaterialRequest[];
   /** План на неделю: кто где и сколько должен дать. */
   plans: import('./weekPlan').PlanRow[];
+  /** Разрешения, допуски, контакты, претензии, задачи — всё со сроками. */
+  records: import('./siteRecords').SiteRecord[];
   /** Муфты, столбы, конечные точки, ККС — то, что стоит вдоль трассы. */
   objects: SiteObject[];
   /**
@@ -93,7 +95,9 @@ export function emptyJournal(): JournalState {
     orders: [], ground: [], aerial: [], drills: [],
     corrections: [], deviations: [], crews: [], deliveries: [], drums: [],
     photos: [], splices: [], incidents: [], planRoutes: [],
-    areas: [], prices: {}, rates: [], payments: [], requests: [], plans: [], objects: [], sectionProgress: {}, progress: [],
+    areas: [], prices: {}, rates: [], payments: [],
+    requests: [], plans: [], records: [],
+    objects: [], sectionProgress: {}, progress: [],
     contractors: DEFAULT_CONTRACTORS, changes: [], actFields: {},
     deleted: [], trash: [], updatedAt: '',
   };
@@ -348,6 +352,7 @@ export function loadJournal(): JournalState {
       rates: p.rates ?? [],
       requests: p.requests ?? [],
       plans: p.plans ?? [],
+      records: p.records ?? [],
       payments: p.payments ?? [],
       objects: p.objects ?? [],
       sectionProgress: p.sectionProgress ?? {},
@@ -398,6 +403,7 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     rates: base.rates,
     requests: base.requests,
     plans: base.plans,
+    records: base.records,
     payments: base.payments.filter((p) => true),
     objects: base.objects,
     sectionProgress: base.sectionProgress,
@@ -1803,6 +1809,33 @@ export function removePlan(base: JournalState, id: string): JournalState {
   return {
     ...base,
     plans: base.plans.filter((p) => p.id !== id),
+    deleted: [...base.deleted, { id, at: now }],
+    updatedAt: now,
+  };
+}
+
+/** Разрешение, допуск, контакт, претензия или задача. */
+export function upsertSiteRecord(
+  base: JournalState,
+  r: import('./siteRecords').SiteRecord,
+): JournalState {
+  const now = new Date().toISOString();
+  const next = { ...r, updatedAt: now };
+  const exists = base.records.some((x) => x.id === r.id);
+  return {
+    ...base,
+    records: exists
+      ? base.records.map((x) => (x.id === r.id ? next : x))
+      : [...base.records, next],
+    updatedAt: now,
+  };
+}
+
+export function removeSiteRecord(base: JournalState, id: string): JournalState {
+  const now = new Date().toISOString();
+  return {
+    ...base,
+    records: base.records.filter((r) => r.id !== id),
     deleted: [...base.deleted, { id, at: now }],
     updatedAt: now,
   };
