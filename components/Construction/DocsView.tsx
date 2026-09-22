@@ -17,7 +17,7 @@ import { computeSectionAct } from './sectionAct';
 import { effectiveProgress } from './stageDerive';
 import {
   hiddenWorksPage, hiddenWorksFile, remarksFromDeviations, remarksPage,
-  photoReportPage, letterPage,
+  photoReportPage, letterPage, measureProtocolPage, measureProtocolFile,
 } from './fieldDocs';
 import { getPhotoBlob } from './photoStore';
 import { downloadText, downloadBlob } from '@/lib/download';
@@ -46,6 +46,35 @@ interface Props {
 }
 
 const DOC_MIME = 'application/msword;charset=utf-8';
+
+/**
+ * Сводный реестр за период.
+ *
+ * Его просят при сдаче этапа: одной таблицей, что по какому участку
+ * оформлено и чего не хватает. Собирать её руками — полдня.
+ */
+function registryDocHtml(
+  rows: ReturnType<typeof actRegistry>,
+  from: string,
+  to: string,
+): string {
+  const body = rows.map((r, i) => '<tr>'
+    + `<td class="val">${i + 1}</td>`
+    + `<td class="lbl">${esc(r.uchastok)}</td>`
+    + `<td class="val">${esc(r.number ?? '—')}</td>`
+    + `<td class="val">${r.date ? new Date(`${r.date}T00:00:00Z`).toLocaleDateString('ru') : '—'}</td>`
+    + `<td class="lbl">${r.missing.length ? esc(`не хватает: ${r.missing.join(', ')}`) : 'оформлен'}</td>`
+    + '</tr>').join('');
+  const ready = rows.filter((r) => r.missing.length === 0).length;
+  return '<h1>СВОДНЫЙ РЕЕСТР ДОКУМЕНТОВ</h1>'
+    + `<p class="center">за период ${esc(from)} — ${esc(to)}</p>`
+    + `<p>Всего участков: <span class="b">${rows.length}</span>, оформлено полностью: `
+    + `<span class="b">${ready}</span>.</p>`
+    + '<table class="act"><tr>'
+    + '<td class="val b">№</td><td class="lbl b">Участок</td><td class="val b">Номер акта</td>'
+    + '<td class="val b">Дата</td><td class="lbl b">Состояние</td></tr>'
+    + body + '</table>';
+}
 
 function wordPage(title: string, body: string): string {
   return `<html xmlns:o="urn:schemas-microsoft-com:office:office"
@@ -102,12 +131,15 @@ export default function DocsView({
     try {
       const JSZip = (await import('jszip')).default;
       const zip = new JSZip();
-      zip.file(volumeDocFile({ sheet }), volumeDocPage({ sheet, contractor }));
-      zip.file(
+      // Раскладываем по папкам: в почте архив из двадцати файлов вперемешку
+      // открывают один раз, а потом просят «пришлите нормально».
+      const svod = zip.folder('Сводные') ?? zip;
+      svod.file(volumeDocFile({ sheet }), volumeDocPage({ sheet, contractor }));
+      svod.file(
         periodDocFile({ report, contractor }),
         periodDocPage({ report, pace, contractor, author }),
       );
-      zip.file('Справка о готовности.doc',
+      svod.file('Справка о готовности.doc',
         wordPage('Справка о готовности', readinessDocHtml(readiness)));
 
       // Акты по участкам, у которых за период была работа. Участок без
@@ -122,8 +154,14 @@ export default function DocsView({
         if (rows.length === 0) continue;
         const totals = computeSectionAct(rows, journal.deviations);
         const sample = rows[0];
+        // Область / район / участок — так их и ищут потом в почте.
+        const where = [sample.oblast, sample.rayon, uchastok]
+          .filter(Boolean)
+          .map((x) => String(x).replace(/[\\/:*?"<>|]+/g, ' ').trim())
+          .join('/');
+        const folder = zip.folder(where || 'Участки') ?? zip;
         for (const kind of ['ASR', 'OSR'] as ActKind[]) {
-          zip.file(
+          folder.file(
             actFileName(kind, uchastok, fields.actDate),
             actDocHtml({
               kind,
@@ -334,6 +372,35 @@ export default function DocsView({
                     } finally { setBusy(false); }
                   }}>
             <FileDown size={14} />Фотоотчёт ({photosInPeriod.length})
+          </button>
+          <button type="button" className="btn btn-ghost text-[11.5px]"
+                  disabled={journal.splices.length === 0}
+                  onClick={() => {
+                    // Рефлектограмму снимают на объекте, цифры переписывают
+                    // в тетрадь, потом в Word — и на каждом переписывании
+                    // теряется волокно. Все они уже в журнале сварки.
+                    const first = journal.splices[0];
+                    const obj = journal.objects.find((o) => o.id === first.objectId);
+                    const records = journal.splices.filter(
+                      (sp) => sp.objectId === first.objectId,
+                    );
+                    const input = {
+                      objectName: obj?.name || 'Муфта',
+                      uchastok: obj?.uchastok,
+                      records,
+                      contractor,
+                      customer: 'АО «Транстелеком»',
+                      date: to,
+                    };
+                    save(measureProtocolFile(input), measureProtocolPage(input));
+                  }}>
+            <FileDown size={14} />Протокол измерений
+          </button>
+          <button type="button" className="btn btn-ghost text-[11.5px]"
+                  disabled={registry.length === 0}
+                  onClick={() => save('Сводный реестр.doc',
+                    wordPage('Сводный реестр документов', registryDocHtml(registry, from, to)))}>
+            <FileDown size={14} />Сводный реестр
           </button>
           <button type="button" className="btn btn-ghost text-[11.5px]"
                   onClick={() => {

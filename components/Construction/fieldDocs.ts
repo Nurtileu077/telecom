@@ -1,5 +1,6 @@
 import {
   DailyWorkEntry, Deviation, FieldPhoto, DESIGN_DEPTH_M,
+  SpliceRecord, SPLICE_LOSS_LIMIT_DB,
 } from '@/types/construction';
 import { esc, ACT_DOC_CSS, fmtDate, ruDateWords } from './actDocument';
 import { entryMeters } from './entriesTable';
@@ -261,4 +262,95 @@ export function letterHtml(i: LetterInput): string {
 
 export function letterPage(i: LetterInput): string {
   return page(i.subject, letterHtml(i));
+}
+
+// ── Протокол измерений ───────────────────────────────────────────────────────
+
+export interface MeasureProtocolInput {
+  /** Муфта или бокс, где варили. */
+  objectName: string;
+  uchastok?: string;
+  records: SpliceRecord[];
+  /** Предел, выше которого стык не принимают. */
+  limitDb?: number;
+  contractor?: string;
+  customer?: string;
+  number?: string;
+  date?: string;
+  city?: string;
+}
+
+/**
+ * Протокол измерений затухания.
+ *
+ * Рефлектограмму снимают на объекте, цифры переписывают в тетрадь, а
+ * потом в Word — и на каждом переписывании теряется волокно или
+ * съезжает запятая. Все эти цифры уже записаны в журнале сварки.
+ *
+ * Стыки выше предела не прячем и не красим в зелёный: протокол нужен
+ * ровно затем, чтобы их было видно.
+ */
+export function measureProtocolHtml(i: MeasureProtocolInput): string {
+  const limit = i.limitDb ?? SPLICE_LOSS_LIMIT_DB;
+  const rows: string[] = [];
+  let total = 0;
+  let bad = 0;
+
+  for (const r of i.records) {
+    for (const f of r.fibers) {
+      total += 1;
+      const over = f.lossDb !== undefined && f.lossDb > limit;
+      if (over) bad += 1;
+      rows.push('<tr>'
+        + `<td class="val">${f.fiber}</td>`
+        + `<td class="lbl">${esc(f.to ?? '')}</td>`
+        + `<td class="val"${over ? ' class="b"' : ''}>`
+        + `${f.lossDb !== undefined ? f.lossDb.toFixed(2).replace('.', ',') : '—'}</td>`
+        + `<td class="val">${over ? 'выше нормы' : f.lossDb === undefined ? 'не измерено' : 'норма'}</td>`
+        + `<td class="val">${esc(fmtDate(r.date))}</td>`
+        + '</tr>');
+    }
+  }
+
+  const devices = [...new Set(i.records.map((r) => r.device).filter(Boolean))];
+  const waves = [...new Set(i.records.map((r) => r.waveNm).filter(Boolean))];
+
+  return '<h1>ПРОТОКОЛ<br/>измерений затухания на сварных соединениях</h1>'
+    + (i.number ? `<p class="center">№ ${esc(i.number)}</p>` : '')
+    + `<table class="sign"><tr><td class="s" style="text-align:left">${esc(i.city || '')}</td>`
+    + `<td class="s" style="text-align:right">${esc(ruDateWords(i.date))}</td></tr></table>`
+    + `<p class="obj">${esc(i.objectName)}</p>`
+    + (i.uchastok ? `<p class="cap">${esc(i.uchastok)}</p>` : '')
+    + '<table class="act">'
+    + `<tr><td class="lbl">Предельное затухание на стыке</td>`
+    + `<td class="val">${limit.toFixed(2).replace('.', ',')}</td><td class="unit">дБ</td></tr>`
+    + (devices.length
+      ? `<tr><td class="lbl">Аппарат</td><td class="val" colspan="2">${esc(devices.join(', '))}</td></tr>`
+      : '')
+    + (waves.length
+      ? `<tr><td class="lbl">Длина волны</td><td class="val">${waves.join(', ')}</td><td class="unit">нм</td></tr>`
+      : '')
+    + `<tr><td class="lbl">Измерено волокон</td><td class="val">${total}</td><td class="unit">шт</td></tr>`
+    + `<tr><td class="lbl">Выше нормы</td><td class="val">${bad}</td><td class="unit">шт</td></tr>`
+    + '</table>'
+    + '<table class="act"><tr>'
+    + '<td class="val b">Волокно</td><td class="lbl b">Направление</td>'
+    + '<td class="val b">Затухание, дБ</td><td class="val b">Оценка</td><td class="val b">Дата</td>'
+    + '</tr>' + rows.join('') + '</table>'
+    + (bad > 0
+      ? `<p class="warn">Стыков выше нормы: ${bad}. Подлежат переварке.</p>`
+      : '<p class="ind b">Все измеренные соединения в пределах нормы.</p>')
+    + '<table class="sign"><tr>'
+    + `<td class="s">Измерения выполнил<br/>_______________ / ${esc(i.contractor || '')}</td>`
+    + `<td class="s">Принял<br/>_______________ / ${esc(i.customer || '')}</td>`
+    + '</tr></table>';
+}
+
+export function measureProtocolPage(i: MeasureProtocolInput): string {
+  return page(`Протокол измерений — ${i.objectName}`, measureProtocolHtml(i));
+}
+
+export function measureProtocolFile(i: MeasureProtocolInput): string {
+  const safe = i.objectName.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 50) || 'муфта';
+  return `Протокол измерений ${safe} ${i.date || new Date().toISOString().slice(0, 10)}.doc`;
 }

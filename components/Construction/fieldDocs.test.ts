@@ -2,8 +2,11 @@ import { describe, it, expect } from 'vitest';
 import {
   hiddenWorksHtml, hiddenWorksPage, hiddenWorksFile, HIDDEN_BEDDING_DEFAULT,
   photoCaption, photoReportHtml, remarksFromDeviations, remarksHtml, letterHtml,
+  measureProtocolHtml, measureProtocolFile,
 } from './fieldDocs';
-import type { DailyWorkEntry, Deviation, FieldPhoto } from '@/types/construction';
+import type {
+  DailyWorkEntry, Deviation, FieldPhoto, SpliceRecord,
+} from '@/types/construction';
 
 function e(patch: Partial<DailyWorkEntry> = {}): DailyWorkEntry {
   return {
@@ -147,5 +150,52 @@ describe('letterHtml', () => {
   it('пустые строки письма не превращаются в пустые абзацы', () => {
     const html = letterHtml({ to: 'А', subject: 'Б', body: 'один\n\n\nдва' });
     expect((html.match(/<p class="ind">/g) ?? [])).toHaveLength(2);
+  });
+});
+
+describe('measureProtocolHtml', () => {
+  const records: SpliceRecord[] = [{
+    id: 's1', objectId: 'o1', date: '2026-07-25', device: 'Fujikura 70S',
+    waveNm: 1550,
+    fibers: [
+      { fiber: 1, lossDb: 0.04, to: 'на Еленовку' },
+      { fiber: 2, lossDb: 0.18, to: 'школа' },
+      { fiber: 3, to: 'резерв' },
+    ],
+    createdAt: '', updatedAt: '',
+  }];
+
+  it('показывает все волокна и считает выходящие за норму', () => {
+    const html = measureProtocolHtml({ objectName: 'Муфта №3', records });
+    expect(html).toContain('ПРОТОКОЛ');
+    expect(html).toContain('на Еленовку');
+    expect(html).toContain('0,18');
+    expect(html).toContain('Стыков выше нормы: 1');
+  });
+
+  it('неизмеренное волокно так и называется', () => {
+    expect(measureProtocolHtml({ objectName: 'М', records })).toContain('не измерено');
+  });
+
+  it('когда всё в норме — так и написано', () => {
+    const ok = [{ ...records[0], fibers: [{ fiber: 1, lossDb: 0.03 }] }];
+    expect(measureProtocolHtml({ objectName: 'М', records: ok }))
+      .toContain('в пределах нормы');
+  });
+
+  it('свой предел важнее умолчания', () => {
+    const html = measureProtocolHtml({ objectName: 'М', records, limitDb: 0.3 });
+    expect(html).toContain('в пределах нормы');
+  });
+
+  it('аппарат и длина волны попадают в шапку', () => {
+    const html = measureProtocolHtml({ objectName: 'М', records });
+    expect(html).toContain('Fujikura 70S');
+    expect(html).toContain('1550');
+  });
+
+  it('имя файла говорит о муфте', () => {
+    expect(measureProtocolFile({ objectName: 'Муфта №3', records, date: '2026-07-25' }))
+      .toBe('Протокол измерений Муфта №3 2026-07-25.doc');
   });
 });
