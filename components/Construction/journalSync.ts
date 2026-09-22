@@ -3,7 +3,7 @@ import {
   DailyWorkEntry, AerialWorkEntry, DrillLogEntry, Deviation, Crew,
   CorrectionRequest, SettlementOrder, Contractor, MaterialDelivery, PlanRoute,
   SnpProgress, MapArea, SiteObject, ChangeLogEntry, CableDrum, FieldPhoto,
-  SpliceRecord, Incident,
+  SpliceRecord, Incident, WorkRate, Payment,
 } from '@/types/construction';
 
 /**
@@ -152,6 +152,9 @@ export function mergeJournalStates(
     sectionProgress: mergeSectionProgress(local.sectionProgress, remote.sectionProgress),
     // Цены — справочник: чужие позиции добираем, свои не отдаём.
     prices: { ...remote.prices, ...local.prices },
+    // Расценки и деньги — общие данные, у них есть id и время правки.
+    rates: mergeCollection<WorkRate>(local.rates ?? [], remote.rates ?? [], tombs, stats),
+    payments: mergeCollection<Payment>(local.payments ?? [], remote.payments ?? [], tombs, stats),
     progress: mergeProgress(local.progress, remote.progress, stats),
     corrections: mergeCorrections(local.corrections, remote.corrections, stats),
     // Журнал изменений только растёт: записи в нём не правят, их дописывают.

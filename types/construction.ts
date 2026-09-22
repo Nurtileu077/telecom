@@ -910,6 +910,59 @@ export const DEVIATION_REASONS: string[] = [
 ];
 
 /** Отклонение от проекта на конкретном участке трассы. */
+/**
+ * Расценка за единицу работы.
+ *
+ * У каждого подрядчика она своя, и меняется она не задним числом, а с
+ * какого-то числа: работы до него считаются по старой цене. Поэтому у
+ * расценки есть дата начала, а не просто значение.
+ */
+export interface WorkRate {
+  id: string;
+  /** Подрядчик; пусто — расценка общая. */
+  contractor?: string;
+  /** Способ прокладки или отдельный вид работ: 'бар', 'drillM', 'blowingM'. */
+  work: string;
+  /** Цена за единицу, тенге. */
+  price: number;
+  unit: 'м' | 'шт';
+  /** С какой даты действует. */
+  from: string;
+  note?: string;
+  updatedAt: string;
+}
+
+/** Что за деньги: выдали аванс, удержали, заплатили по акту. */
+export type PaymentKind = 'advance' | 'deduction' | 'payment';
+
+export const PAYMENT_KIND_LABEL: Record<PaymentKind, string> = {
+  advance: 'Аванс',
+  deduction: 'Удержание',
+  payment: 'Оплата по акту',
+};
+
+/**
+ * Движение денег с подрядчиком.
+ *
+ * Аванс, удержание за материал, оплата по акту — всё это ведут в
+ * тетради или в переписке, и к концу месяца «сколько мы ему должны»
+ * знает только один человек.
+ */
+export interface Payment {
+  id: string;
+  contractor: string;
+  kind: PaymentKind;
+  /** Сумма в тенге; всегда положительная — знак задаёт вид. */
+  amount: number;
+  date: string;
+  /** За что: «за июль», «за перерасход МКТ 400 м». */
+  note?: string;
+  author?: string;
+  createdAt: string;
+  updatedAt: string;
+  sync?: 'local' | 'synced';
+}
+
 export interface Deviation {
   id: string;
   kind: DeviationKind;

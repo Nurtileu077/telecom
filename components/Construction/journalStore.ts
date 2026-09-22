@@ -4,7 +4,7 @@ import {
   LAY_METHOD_LABEL, Deviation, isDeviationClosed, needsProtocol,
   Crew, crewOnDuty, crewEquipmentCount, MaterialDelivery, PlanRoute,
   SnpProgress, SnpStage, StageState, MapArea, SiteObject, ChangeLogEntry,
-  CableDrum, FieldPhoto, SpliceRecord, Incident, normalizeRole,
+  CableDrum, FieldPhoto, SpliceRecord, Incident, normalizeRole, WorkRate, Payment,
 } from '@/types/construction';
 import { haversineM } from '@/components/Network/KMeans';
 import { splitRoute, joinRoutes, joinedName, splitNames } from './routeEdit';
@@ -37,6 +37,10 @@ export interface JournalState {
   areas: MapArea[];
   /** Цены материалов — у каждого подрядчика свои, система их не выдумывает. */
   prices: import('./materialCost').MaterialPrices;
+  /** Расценки по видам работ — у каждого подрядчика свои и с какого числа. */
+  rates: WorkRate[];
+  /** Движение денег с подрядчиками: аванс, удержание, оплата. */
+  payments: Payment[];
   /** Муфты, столбы, конечные точки, ККС — то, что стоит вдоль трассы. */
   objects: SiteObject[];
   /**
@@ -85,7 +89,7 @@ export function emptyJournal(): JournalState {
     orders: [], ground: [], aerial: [], drills: [],
     corrections: [], deviations: [], crews: [], deliveries: [], drums: [],
     photos: [], splices: [], incidents: [], planRoutes: [],
-    areas: [], prices: {}, objects: [], sectionProgress: {}, progress: [],
+    areas: [], prices: {}, rates: [], payments: [], objects: [], sectionProgress: {}, progress: [],
     contractors: DEFAULT_CONTRACTORS, changes: [], actFields: {},
     deleted: [], trash: [], updatedAt: '',
   };
@@ -337,6 +341,8 @@ export function loadJournal(): JournalState {
       incidents: p.incidents ?? [],
       areas: p.areas ?? [],
       prices: p.prices ?? {},
+      rates: p.rates ?? [],
+      payments: p.payments ?? [],
       objects: p.objects ?? [],
       sectionProgress: p.sectionProgress ?? {},
       planRoutes: p.planRoutes ?? [],
@@ -383,6 +389,8 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     // Импорт файла не трогает заявки, отклонения, колонны, контуры и справочник.
     areas: base.areas,
     prices: base.prices,
+    rates: base.rates,
+    payments: base.payments.filter((p) => true),
     objects: base.objects,
     sectionProgress: base.sectionProgress,
     corrections: base.corrections,
@@ -1668,6 +1676,55 @@ export function markPresented(
     ground: apply(base.ground),
     aerial: apply(base.aerial),
     updatedAt: at,
+  };
+}
+
+/**
+ * Расценка.
+ *
+ * Цену меняют не задним числом, а с какого-то числа: работы до него
+ * считаются по старой. Поэтому новая расценка не правит старую, а
+ * встаёт рядом со своей датой начала.
+ */
+export function upsertRate(base: JournalState, rate: WorkRate): JournalState {
+  const now = new Date().toISOString();
+  const next = { ...rate, updatedAt: now };
+  const exists = base.rates.some((r) => r.id === rate.id);
+  return {
+    ...base,
+    rates: exists
+      ? base.rates.map((r) => (r.id === rate.id ? next : r))
+      : [...base.rates, next],
+    updatedAt: now,
+  };
+}
+
+export function removeRate(base: JournalState, id: string): JournalState {
+  const now = new Date().toISOString();
+  return { ...base, rates: base.rates.filter((r) => r.id !== id), updatedAt: now };
+}
+
+/** Аванс, удержание или оплата по акту. */
+export function upsertPayment(base: JournalState, payment: Payment): JournalState {
+  const now = new Date().toISOString();
+  const next = { ...payment, updatedAt: now };
+  const exists = base.payments.some((p) => p.id === payment.id);
+  return {
+    ...base,
+    payments: exists
+      ? base.payments.map((p) => (p.id === payment.id ? next : p))
+      : [...base.payments, next],
+    updatedAt: now,
+  };
+}
+
+export function removePayment(base: JournalState, id: string): JournalState {
+  const now = new Date().toISOString();
+  return {
+    ...base,
+    payments: base.payments.filter((p) => p.id !== id),
+    deleted: [...base.deleted, { id, at: now }],
+    updatedAt: now,
   };
 }
 
