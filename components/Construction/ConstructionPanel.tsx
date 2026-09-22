@@ -1043,7 +1043,7 @@ export default function ConstructionPanel({
             onBulkPatch={(ids, patch) => persist(bulkPatchEntries(loadJournal(), ids, patch, actor))}
             onDispute={(e) => {
               if (e.disputed) {
-                persist(setDisputed(loadJournal(), e.id, false));
+                persist(setDisputed(loadJournal(), e.id, false, undefined, actor));
                 return;
               }
               const why = window.prompt(
@@ -1051,7 +1051,7 @@ export default function ConstructionPanel({
                 '',
               );
               if (why === null) return;
-              persist(setDisputed(loadJournal(), e.id, true, why.trim()));
+              persist(setDisputed(loadJournal(), e.id, true, why.trim(), actor));
             }}
             onCopied={(n) => setFlash(`Скопировано строк: ${n}`)}
           />

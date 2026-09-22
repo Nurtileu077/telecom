@@ -1545,7 +1545,7 @@ export function removeEntry(base: JournalState, id: string, author?: string): Jo
         ? { from: 'drills' as const, entry: drill as DrillLogEntry }
         : null;
 
-  return {
+  const next: JournalState = {
     ...base,
     ground: base.ground.filter((e) => e.id !== id),
     aerial: base.aerial.filter((e) => e.id !== id),
@@ -1556,6 +1556,14 @@ export function removeEntry(base: JournalState, id: string, author?: string): Jo
       : base.trash,
     updatedAt: now,
   };
+  if (!found) return next;
+  return logChange(next, {
+    at: now,
+    author: author ?? 'без имени',
+    kind: 'entry_delete',
+    target: ('uchastok' in found.entry ? found.entry.uchastok : '') || 'смена',
+    detail: `${found.entry.date || 'без даты'} — в корзине`,
+  });
 }
 
 /**
@@ -1569,7 +1577,7 @@ export function restoreFromTrash(base: JournalState, id: string): JournalState {
   if (!item) return base;
   const now = new Date().toISOString();
   const back = { ...item.entry, updatedAt: now, sync: 'local' as const };
-  return {
+  const next: JournalState = {
     ...base,
     ground: item.from === 'ground'
       ? [...base.ground, back as DailyWorkEntry] : base.ground,
@@ -1581,6 +1589,13 @@ export function restoreFromTrash(base: JournalState, id: string): JournalState {
     trash: base.trash.filter((t) => t.id !== id),
     updatedAt: now,
   };
+  return logChange(next, {
+    at: now,
+    author: item.author ?? 'без имени',
+    kind: 'entry_restore',
+    target: ('uchastok' in item.entry ? item.entry.uchastok : '') || 'смена',
+    detail: `${item.entry.date || 'без даты'} — возвращена из корзины`,
+  });
 }
 
 /** Что пролежало в корзине дольше срока — выбрасываем насовсем. */
@@ -1616,12 +1631,19 @@ export function bulkPatchEntries(
     set.has(r.id) ? { ...r, ...clean, editedBy: author, updatedAt: now, sync: 'local' as const } : r
   ));
 
-  return {
+  const next: JournalState = {
     ...base,
     ground: apply(base.ground),
     aerial: apply(base.aerial),
     updatedAt: now,
   };
+  return logChange(next, {
+    at: now,
+    author: author ?? 'без имени',
+    kind: 'entry_bulk',
+    target: `${set.size} смен`,
+    detail: Object.entries(clean).map(([k, v]) => `${k}: ${v}`).join(', '),
+  });
 }
 
 /** Пометить строку спорной или снять пометку. */
@@ -1630,6 +1652,7 @@ export function setDisputed(
   id: string,
   disputed: boolean,
   note?: string,
+  author?: string,
 ): JournalState {
   const now = new Date().toISOString();
   const apply = <T extends { id: string }>(rows: T[]): T[] => rows.map((r) => (
@@ -1637,12 +1660,21 @@ export function setDisputed(
       ? { ...r, disputed, disputeNote: disputed ? note : undefined, updatedAt: now }
       : r
   ));
-  return {
+  const row = base.ground.find((e) => e.id === id) ?? base.aerial.find((e) => e.id === id);
+  const next: JournalState = {
     ...base,
     ground: apply(base.ground),
     aerial: apply(base.aerial),
     updatedAt: now,
   };
+  if (!row) return next;
+  return logChange(next, {
+    at: now,
+    author: author ?? 'без имени',
+    kind: 'entry_dispute',
+    target: row.uchastok || 'смена',
+    detail: disputed ? (note || 'заказчик не согласен') : 'пометка снята',
+  });
 }
 
 // ── Форматирование ───────────────────────────────────────────────────────────

@@ -975,7 +975,8 @@ export interface CorrectionRequest {
 export type ChangeKind =
   | 'route_edit' | 'route_delete' | 'route_add'
   | 'route_split' | 'route_join'
-  | 'area_add' | 'area_edit' | 'area_rename' | 'area_delete';
+  | 'area_add' | 'area_edit' | 'area_rename' | 'area_delete'
+  | 'entry_delete' | 'entry_restore' | 'entry_bulk' | 'entry_dispute';
 
 export interface ChangeLogEntry {
   id: string;

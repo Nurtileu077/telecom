@@ -15,6 +15,32 @@ import PhotoAttach from './PhotoAttach';
 import { photosOf } from './photoStore';
 import { advanceAlong, routeForSection } from './routeProgress';
 import { normName } from './areaImport';
+import {
+  saveDraft, loadDraft, clearDraft, draftAge, draftWorthKeeping, type Draft,
+} from './drafts';
+
+/** Черновик дня — один на устройство: две смены разом никто не пишет. */
+const DRAFT_KEY = 'day-entry';
+
+/** Что запоминаем в черновике: то, что человек набрал руками. */
+interface DraftShape {
+  date: string;
+  smu: string;
+  contractor: string;
+  column: string;
+  oblast: string;
+  rayon: string;
+  uchastok: string;
+  kato: string;
+  tech: WorkTech;
+  byMethod: Partial<Record<LayMethod, string>>;
+  drillM: string;
+  drillCount: string;
+  openCrossings: string;
+  blowingM: string;
+  materials: Partial<Record<MaterialKind, string>>;
+  note: string;
+}
 
 /**
  * Закрытие рабочего дня.
@@ -84,6 +110,25 @@ export default function DailyEntryForm({
   const [note, setNote] = useState(initial?.note ?? '');
   const [reason, setReason] = useState('');
   const [touched, setTouched] = useState(false);
+
+  /**
+   * Незаконченная запись.
+   *
+   * День закрывают в поле, с телефона, между делом: позвонили, приехала
+   * машина, села батарея. Форма закрывается, и всё набранное пропадает —
+   * а это полчаса работы и цифры, которые второй раз точно не вспомнят.
+   *
+   * Черновик предлагаем вернуть, а не подставляем молча: человек должен
+   * видеть, что перед ним вчерашнее, а не сегодняшнее.
+   */
+  const [draft, setDraft] = useState<Draft<DraftShape> | null>(null);
+  useEffect(() => {
+    if (correcting) return;
+    const found = loadDraft<DraftShape>(DRAFT_KEY);
+    if (found && draftWorthKeeping(found.data as unknown as Record<string, unknown>)) {
+      setDraft(found);
+    }
+  }, [correcting]);
 
   // Подробная часть — отчёт инженера. По умолчанию свёрнута, чтобы быстрый
   // путь бригадира оставался коротким.
@@ -235,9 +280,40 @@ export default function DailyEntryForm({
   // Исправление без причины не уходит: проверяющему нужно понимать, что чинят.
   const canSave = !!date && !!uchastok.trim() && hasWork && (!correcting || !!reason.trim());
 
+  /** Снимок того, что человек набрал руками. */
+  const draftNow = useMemo<DraftShape>(() => ({
+    date, smu, contractor, column, oblast, rayon, uchastok, kato, tech,
+    byMethod, drillM, drillCount, openCrossings, blowingM, materials, note,
+  }), [date, smu, contractor, column, oblast, rayon, uchastok, kato, tech,
+    byMethod, drillM, drillCount, openCrossings, blowingM, materials, note]);
+
+  useEffect(() => {
+    // Исправление чужой записи в черновик не пишем: там своя судьба —
+    // заявка на согласование, а не «продолжить потом».
+    if (correcting) return undefined;
+    if (!draftWorthKeeping(draftNow as unknown as Record<string, unknown>)) return undefined;
+    // С задержкой: сохранять на каждое нажатие клавиши незачем.
+    const t = window.setTimeout(() => saveDraft(DRAFT_KEY, draftNow), 600);
+    return () => window.clearTimeout(t);
+  }, [draftNow, correcting]);
+
+  function restoreDraft() {
+    if (!draft) return;
+    const d = draft.data;
+    setDate(d.date); setSmu(d.smu); setContractor(d.contractor); setColumn(d.column);
+    setOblast(d.oblast); setRayon(d.rayon); setUchastok(d.uchastok); setKato(d.kato);
+    setTech(d.tech); setByMethod(d.byMethod ?? {});
+    setDrillM(d.drillM ?? ''); setDrillCount(d.drillCount ?? '');
+    setOpenCrossings(d.openCrossings ?? ''); setBlowingM(d.blowingM ?? '');
+    setMaterials(d.materials ?? {}); setNote(d.note ?? '');
+    setDraft(null);
+  }
+
   const submit = () => {
     setTouched(true);
     if (!canSave) return;
+    // Запись состоялась — черновику конец.
+    clearDraft(DRAFT_KEY);
     const now = new Date().toISOString();
 
     const methods: Partial<Record<LayMethod, number>> = {};
@@ -352,6 +428,29 @@ export default function DailyEntryForm({
             <X size={16} />
           </button>
         </div>
+
+        {/* Незаконченная запись: предлагаем вернуть, а не подставляем
+            молча — человек должен видеть, что перед ним вчерашнее. */}
+        {draft && (
+          <div className="mx-4 mt-3 rounded-lg border border-[var(--warn)]/50 bg-[var(--warn)]/10
+                          px-3 py-2 flex items-center gap-2 flex-wrap">
+            <span className="text-[12px] text-[var(--text)]">
+              Есть незаконченная запись
+              {draft.data.uchastok ? ` по участку «${draft.data.uchastok}»` : ''}
+              {' — '}
+              {draftAge(draft.at)}.
+            </span>
+            <button type="button" onClick={restoreDraft}
+                    className="btn btn-ghost text-[11px] text-[var(--accent)] ml-auto">
+              Продолжить
+            </button>
+            <button type="button"
+                    onClick={() => { clearDraft(DRAFT_KEY); setDraft(null); }}
+                    className="btn btn-ghost text-[11px] text-[var(--text-muted)]">
+              Не нужна
+            </button>
+          </div>
+        )}
 
         <div className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-4">
           {/* Продолжаем вчерашнее или начали новое.
