@@ -41,6 +41,8 @@ export interface JournalState {
   rates: WorkRate[];
   /** Движение денег с подрядчиками: аванс, удержание, оплата. */
   payments: Payment[];
+  /** Заявки на материал: их передавали голосом и забывали. */
+  requests: import('./supply').MaterialRequest[];
   /** Муфты, столбы, конечные точки, ККС — то, что стоит вдоль трассы. */
   objects: SiteObject[];
   /**
@@ -89,7 +91,7 @@ export function emptyJournal(): JournalState {
     orders: [], ground: [], aerial: [], drills: [],
     corrections: [], deviations: [], crews: [], deliveries: [], drums: [],
     photos: [], splices: [], incidents: [], planRoutes: [],
-    areas: [], prices: {}, rates: [], payments: [], objects: [], sectionProgress: {}, progress: [],
+    areas: [], prices: {}, rates: [], payments: [], requests: [], objects: [], sectionProgress: {}, progress: [],
     contractors: DEFAULT_CONTRACTORS, changes: [], actFields: {},
     deleted: [], trash: [], updatedAt: '',
   };
@@ -342,6 +344,7 @@ export function loadJournal(): JournalState {
       areas: p.areas ?? [],
       prices: p.prices ?? {},
       rates: p.rates ?? [],
+      requests: p.requests ?? [],
       payments: p.payments ?? [],
       objects: p.objects ?? [],
       sectionProgress: p.sectionProgress ?? {},
@@ -390,6 +393,7 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     areas: base.areas,
     prices: base.prices,
     rates: base.rates,
+    requests: base.requests,
     payments: base.payments.filter((p) => true),
     objects: base.objects,
     sectionProgress: base.sectionProgress,
@@ -1723,6 +1727,46 @@ export function removePayment(base: JournalState, id: string): JournalState {
   return {
     ...base,
     payments: base.payments.filter((p) => p.id !== id),
+    deleted: [...base.deleted, { id, at: now }],
+    updatedAt: now,
+  };
+}
+
+/** Заявка на материал. */
+export function upsertRequest(
+  base: JournalState,
+  r: import('./supply').MaterialRequest,
+): JournalState {
+  const now = new Date().toISOString();
+  const next = { ...r, updatedAt: now };
+  const exists = base.requests.some((x) => x.id === r.id);
+  return {
+    ...base,
+    requests: exists
+      ? base.requests.map((x) => (x.id === r.id ? next : x))
+      : [...base.requests, next],
+    updatedAt: now,
+  };
+}
+
+export function setRequestStatus(
+  base: JournalState,
+  id: string,
+  status: import('./supply').RequestStatus,
+): JournalState {
+  const now = new Date().toISOString();
+  return {
+    ...base,
+    requests: base.requests.map((r) => (r.id === id ? { ...r, status, updatedAt: now } : r)),
+    updatedAt: now,
+  };
+}
+
+export function removeRequest(base: JournalState, id: string): JournalState {
+  const now = new Date().toISOString();
+  return {
+    ...base,
+    requests: base.requests.filter((r) => r.id !== id),
     deleted: [...base.deleted, { id, at: now }],
     updatedAt: now,
   };

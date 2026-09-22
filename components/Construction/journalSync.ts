@@ -155,6 +155,9 @@ export function mergeJournalStates(
     // Расценки и деньги — общие данные, у них есть id и время правки.
     rates: mergeCollection<WorkRate>(local.rates ?? [], remote.rates ?? [], tombs, stats),
     payments: mergeCollection<Payment>(local.payments ?? [], remote.payments ?? [], tombs, stats),
+    requests: mergeCollection<import('./supply').MaterialRequest>(
+      local.requests ?? [], remote.requests ?? [], tombs, stats,
+    ),
     progress: mergeProgress(local.progress, remote.progress, stats),
     corrections: mergeCorrections(local.corrections, remote.corrections, stats),
     // Журнал изменений только растёт: записи в нём не правят, их дописывают.
