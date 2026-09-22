@@ -1,5 +1,6 @@
 'use client';
 import { Eye, EyeOff, Trash2, ChevronUp, ChevronDown } from 'lucide-react';
+import ViewPrefs from '@/components/Layout/ViewPrefs';
 import { District, LayerVisibility } from '@/types/network';
 import {
   ConstructionLayers, CONSTRUCTION_LAYER_LABELS,
@@ -75,6 +76,13 @@ export default function LayersTab({
 
   return (
     <div className="p-3 space-y-4 overflow-y-auto h-full">
+      {/* Вид: тема, плотность, размер. Журнал открывают и в офисе, и в
+          поле, и на солнце тёмная тема не читается вовсе. */}
+      <section>
+        <h3 className="text-[10px] uppercase tracking-widest text-[#64748b] mb-2">Вид</h3>
+        <ViewPrefs />
+      </section>
+
       {/* Стройка: слои журнала. Показываем только когда журнал не пуст —
           пустой раздел учит игнорировать раздел. */}
       {hasConstruction && (

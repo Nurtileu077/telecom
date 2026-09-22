@@ -36,6 +36,7 @@ import { buildKml, kmlFileName } from './kmlExport';
 import ChecksView from './ChecksView';
 import TimesheetView from './TimesheetView';
 import DocsView from './DocsView';
+import ViewPrefs from '@/components/Layout/ViewPrefs';
 import PayrollView from './PayrollView';
 import EntriesTable from './EntriesTable';
 import QuickEntryBar from './QuickEntryBar';
@@ -710,6 +711,9 @@ export default function ConstructionPanel({
           </span>
         )}
         <div className="ml-auto flex items-center gap-1.5">
+          {/* На солнце тёмная тема не читается — это не вкус, а
+              невозможность работать. */}
+          <ViewPrefs compact />
           {cloud ? (
             <button type="button" className="btn btn-ghost text-[11px]" onClick={handleSync} disabled={syncing}
                     title={syncedAt ? `Синхронизировано ${new Date(syncedAt).toLocaleString('ru')}` : 'Обмен с облаком'}>
