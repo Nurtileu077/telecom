@@ -33,6 +33,7 @@ import { placeCrews } from './crewPlace';
 import { routeViews, routeTitle } from './routeStyle';
 import { buildKml, kmlFileName } from './kmlExport';
 import ChecksView from './ChecksView';
+import TimesheetView from './TimesheetView';
 import EntriesTable from './EntriesTable';
 import QuickEntryBar from './QuickEntryBar';
 import type { QuickParse } from './quickEntry';
@@ -72,7 +73,7 @@ import {
 } from '@/types/construction';
 
 type Period = 'day' | 'week' | 'month' | 'all';
-type View = 'today' | 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages' | 'drills' | 'objects' | 'passport' | 'incidents' | 'log' | 'checks';
+type View = 'today' | 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages' | 'drills' | 'objects' | 'passport' | 'incidents' | 'log' | 'checks' | 'timesheet';
 
 const PERIOD_LABEL: Record<Period, string> = {
   day: 'Последний день', week: '7 дней', month: '30 дней', all: 'Всё время',
@@ -651,7 +652,7 @@ export default function ConstructionPanel({
     ['drills', 'Проколы'], ['objects', 'Объекты'], ['passport', 'Паспорт'],
     ['incidents', 'Аварии'], ['deviations', 'Отклонения'], ['materials', 'Материалы'],
     ['closing', 'Закрытие'], ['corrections', 'Заявки'], ['log', 'Изменения'],
-    ['checks', 'Проверки'],
+    ['checks', 'Проверки'], ['timesheet', 'Табель'],
   ];
   const roleViews = new Set(JOURNAL_ROLES[role].views);
   const shownViews = allTabs
@@ -987,6 +988,12 @@ export default function ConstructionPanel({
               if (!confirm('Удалить запись об аварии?')) return;
               persist(removeIncident(loadJournal(), id));
             }}
+          />
+        ) : view === 'timesheet' ? (
+          <TimesheetView
+            rows={ground}
+            crews={placed}
+            onCopied={(n) => setFlash(`Табель скопирован: ${n} строк`)}
           />
         ) : view === 'checks' ? (
           <ChecksView
