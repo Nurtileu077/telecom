@@ -34,6 +34,8 @@ import { routeViews, routeTitle } from './routeStyle';
 import { buildKml, kmlFileName } from './kmlExport';
 import ChecksView from './ChecksView';
 import EntriesTable from './EntriesTable';
+import QuickEntryBar from './QuickEntryBar';
+import type { QuickParse } from './quickEntry';
 import { planFact } from './entriesTable';
 import { normName } from './areaImport';
 import { downloadText } from '@/lib/download';
@@ -106,6 +108,12 @@ export default function ConstructionPanel({
   // месяц: график — это вечерний вопрос.
   const [view, setView] = useState<View>('today');
   const [formOpen, setFormOpen] = useState(false);
+  /**
+   * Что уже разобрано из строки — чтобы форма открылась заполненной.
+   * Переписывать в неё то, что человек только что написал словами, —
+   * ровно та работа, от которой быстрый ввод и избавляет.
+   */
+  const [prefill, setPrefill] = useState<QuickParse | null>(null);
   /** Запись, которую сейчас исправляют. */
   const [editing, setEditing] = useState<DailyWorkEntry | null>(null);
   const [devFormOpen, setDevFormOpen] = useState(false);
@@ -1025,6 +1033,22 @@ export default function ConstructionPanel({
             onReject={handleReject}
           />
         ) : view === 'entries' ? (
+          <div className="flex flex-col gap-2">
+          {/* Смена одной строкой: отчёт с объекта приходит текстом, и
+              переписывать его в форму руками незачем. */}
+          <QuickEntryBar
+            journal={journal}
+            author={actor}
+            onSubmit={(entry) => {
+              persist(addGroundEntry(loadJournal(), entry));
+              setFlash('Смена записана');
+            }}
+            onOpenForm={(parsed) => {
+              setEditing(null);
+              setPrefill(parsed);
+              setFormOpen(true);
+            }}
+          />
           <EntriesTable
             rows={ground}
             journal={journal}
@@ -1055,6 +1079,7 @@ export default function ConstructionPanel({
             }}
             onCopied={(n) => setFlash(`Скопировано строк: ${n}`)}
           />
+          </div>
         ) : (
           <div className="flex flex-col gap-4">
             {/* Ключевые цифры */}
@@ -1124,12 +1149,13 @@ export default function ConstructionPanel({
         <DailyEntryForm
           journal={journal}
           initial={editing}
+          prefill={prefill}
           author={actor}
           onAddPhoto={(p) => persist(addPhoto(loadJournal(), p))}
           onRemovePhoto={(id) => persist(removePhoto(loadJournal(), id))}
           onRequestPick={onRequestPick}
           onSave={handleFormSave}
-          onClose={() => { setFormOpen(false); setEditing(null); }}
+          onClose={() => { setFormOpen(false); setEditing(null); setPrefill(null); }}
         />
       )}
 

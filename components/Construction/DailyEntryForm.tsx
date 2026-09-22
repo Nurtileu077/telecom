@@ -15,6 +15,7 @@ import PhotoAttach from './PhotoAttach';
 import { photosOf } from './photoStore';
 import { advanceAlong, routeForSection } from './routeProgress';
 import { normName } from './areaImport';
+import { checkEntry } from './entryChecks';
 import {
   saveDraft, loadDraft, clearDraft, draftAge, draftWorthKeeping, type Draft,
 } from './drafts';
@@ -56,6 +57,11 @@ interface Props {
   journal: JournalState;
   /** Запись, которую исправляют. Пусто — вносим новый день. */
   initial?: DailyWorkEntry | null;
+  /**
+   * Разобранное из быстрой строки. Не запись и не правка: человек уже
+   * написал это словами, и переписывать в поля заново незачем.
+   */
+  prefill?: import('./quickEntry').QuickParse | null;
   /** В режиме исправления причина обязательна и уходит на согласование. */
   onSave: (
     entry: DailyWorkEntry,
@@ -78,36 +84,41 @@ const todayIso = () => new Date().toISOString().slice(0, 10);
 const numToStr = (v?: number): string => (v ? String(v) : '');
 
 export default function DailyEntryForm({
-  journal, initial, onSave, onClose, onRequestPick,
+  journal, initial, prefill, onSave, onClose, onRequestPick,
   author = '', onAddPhoto, onRemovePhoto,
 }: Props) {
   const correcting = !!initial;
   const last = useMemo(() => (correcting ? null : loadLastContext()), [correcting]);
 
-  const [date, setDate] = useState(initial?.date ?? todayIso);
-  const [smu, setSmu] = useState(initial?.smu ?? last?.smu ?? '');
-  const [contractor, setContractor] = useState(initial?.contractor ?? last?.contractor ?? '');
-  const [column, setColumn] = useState(initial?.column ?? last?.column ?? '');
+  const [date, setDate] = useState(initial?.date ?? prefill?.date ?? todayIso);
+  const [smu, setSmu] = useState(initial?.smu ?? prefill?.smu ?? last?.smu ?? '');
+  const [contractor, setContractor] = useState(
+    initial?.contractor ?? prefill?.contractor ?? last?.contractor ?? '',
+  );
+  const [column, setColumn] = useState(initial?.column ?? prefill?.column ?? last?.column ?? '');
   const [oblast, setOblast] = useState(initial?.oblast ?? last?.oblast ?? '');
   const [rayon, setRayon] = useState(initial?.rayon ?? last?.rayon ?? '');
-  const [uchastok, setUchastok] = useState(initial?.uchastok ?? last?.uchastok ?? '');
+  const [uchastok, setUchastok] = useState(
+    initial?.uchastok ?? prefill?.uchastok ?? last?.uchastok ?? '',
+  );
   const [kato, setKato] = useState(initial?.kato ?? last?.kato ?? '');
-  const [tech, setTech] = useState<WorkTech>(initial?.tech ?? last?.tech ?? 'МКТ');
+  const [tech, setTech] = useState<WorkTech>(initial?.tech ?? prefill?.tech ?? last?.tech ?? 'МКТ');
   const [byMethod, setByMethod] = useState<Partial<Record<LayMethod, string>>>(() => {
     const init: Partial<Record<LayMethod, string>> = {};
     if (initial) for (const m of LAY_METHODS) init[m] = numToStr(initial.byMethod[m]);
+    else if (prefill) for (const m of LAY_METHODS) init[m] = numToStr(prefill.byMethod[m]);
     return init;
   });
-  const [drillM, setDrillM] = useState(numToStr(initial?.drillM));
-  const [drillCount, setDrillCount] = useState(numToStr(initial?.drillCount));
+  const [drillM, setDrillM] = useState(numToStr(initial?.drillM ?? prefill?.drillM));
+  const [drillCount, setDrillCount] = useState(numToStr(initial?.drillCount ?? prefill?.drillCount));
   const [openCrossings, setOpenCrossings] = useState(numToStr(initial?.openCrossings));
-  const [blowingM, setBlowingM] = useState(numToStr(initial?.blowingM));
+  const [blowingM, setBlowingM] = useState(numToStr(initial?.blowingM ?? prefill?.blowingM));
   const [materials, setMaterials] = useState<Partial<Record<MaterialKind, string>>>(() => {
     const init: Partial<Record<MaterialKind, string>> = {};
     if (initial) for (const m of MATERIAL_KINDS) init[m] = numToStr(initial.materials[m]);
     return init;
   });
-  const [note, setNote] = useState(initial?.note ?? '');
+  const [note, setNote] = useState(initial?.note ?? prefill?.note ?? '');
   const [reason, setReason] = useState('');
   const [touched, setTouched] = useState(false);
 
@@ -279,6 +290,36 @@ export default function DailyEntryForm({
     || numOf(totalMkt) > 0 || anyOperation;
   // Исправление без причины не уходит: проверяющему нужно понимать, что чинят.
   const canSave = !!date && !!uchastok.trim() && hasWork && (!correcting || !!reason.trim());
+
+  /**
+   * Что стоит проверить до сохранения.
+   *
+   * Считаем по той же записи, которая уйдёт в журнал, а не по
+   * отдельному набору правил: иначе проверка и запись рано или поздно
+   * начнут расходиться.
+   */
+  const warnings = useMemo(() => {
+    if (!date || !uchastok.trim()) return [];
+    const methods: Partial<Record<LayMethod, number>> = {};
+    for (const m of LAY_METHODS) {
+      const v = Math.round(numOf(byMethod[m]));
+      if (v > 0) methods[m] = v;
+    }
+    return checkEntry({
+      kind: 'ground', id: entryId, date,
+      smu: smu.trim(), contractor: contractor.trim() || undefined,
+      column: column.trim() || undefined,
+      oblast: oblast.trim(), uchastok: uchastok.trim(), kato: kato.trim(),
+      byMethod: methods,
+      drillM: Math.round(numOf(drillM)) || undefined,
+      drillCount: numOf(drillCount) || undefined,
+      blowingM: Math.round(numOf(blowingM)) || undefined,
+      materials: {},
+      downtime: downtime.trim() || undefined,
+      createdAt: '', updatedAt: '',
+    }, journal.ground);
+  }, [date, uchastok, smu, contractor, column, oblast, kato, byMethod,
+    drillM, drillCount, blowingM, downtime, entryId, journal.ground]);
 
   /** Снимок того, что человек набрал руками. */
   const draftNow = useMemo<DraftShape>(() => ({
@@ -824,6 +865,23 @@ export default function DailyEntryForm({
                         placeholder="Ошиблись в метраже, перепутали участок…" className="inp resize-none" />
             </Field>
           )}
+
+          {/* Две ошибки повторяются чаще всех: одну смену вносят дважды и
+              в метры попадает лишний ноль. Обе всплывают через месяц, при
+              сверке актов, когда вспомнить уже нечего. */}
+          {warnings.map((w) => (
+            <div key={w.text}
+                 className={`flex items-start gap-2 p-2.5 rounded-lg text-[11.5px] ${
+                   w.level === 'stop'
+                     ? 'border border-[var(--danger)]/40 bg-[var(--danger)]/10 text-[var(--danger)]'
+                     : 'border border-[var(--warn)]/40 bg-[var(--warn)]/10 text-[var(--warn)]'}`}>
+              <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+              <span>
+                {w.text}
+                {w.hint && <span className="block text-[var(--text-muted)]">{w.hint}</span>}
+              </span>
+            </div>
+          ))}
 
           {touched && !canSave && (
             <div className="flex items-start gap-2 p-2.5 rounded-lg border border-[var(--warn)]/40 bg-[var(--warn)]/10 text-[11.5px] text-[var(--warn)]">
