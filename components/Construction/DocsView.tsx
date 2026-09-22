@@ -15,6 +15,11 @@ import {
 import { actDocHtml, actFileName, ACT_DOC_CSS, esc, type ActKind } from './actDocument';
 import { computeSectionAct } from './sectionAct';
 import { effectiveProgress } from './stageDerive';
+import {
+  hiddenWorksPage, hiddenWorksFile, remarksFromDeviations, remarksPage,
+  photoReportPage, letterPage,
+} from './fieldDocs';
+import { getPhotoBlob } from './photoStore';
 import { downloadText, downloadBlob } from '@/lib/download';
 
 /**
@@ -146,6 +151,16 @@ export default function DocsView({
     }
   }
 
+  const photosInPeriod = useMemo(
+    () => journal.photos.filter((p) => {
+      const day = (p.exifAt || p.takenAt || p.createdAt || '').slice(0, 10);
+      if (from && day < from) return false;
+      if (to && day > to) return false;
+      return true;
+    }),
+    [journal.photos, from, to],
+  );
+
   const cost = costSheet(sheet, prices);
 
   return (
@@ -263,6 +278,87 @@ export default function DocsView({
             Без расценки: {cost.unpriced.join(', ')}.
           </div>
         )}
+      </div>
+
+      {/* Документы объекта */}
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-3 space-y-2">
+        <div className="text-[13px] font-semibold text-[var(--text)]">Документы объекта</div>
+        <div className="flex gap-1.5 flex-wrap">
+          <button type="button" className="btn btn-ghost text-[11.5px]"
+                  disabled={report.sections.length === 0}
+                  onClick={() => {
+                    // Акт скрытых работ подписывают до засыпки — по тому
+                    // участку, который сейчас закрывают.
+                    const uchastok = report.sections[0].uchastok;
+                    const rows = journal.ground.filter((x) => x.uchastok === uchastok);
+                    const input = {
+                      uchastok, rows, contractor,
+                      customer: 'АО «Транстелеком»',
+                      oblast: rows[0]?.oblast, rayon: rows[0]?.rayon,
+                      date: to,
+                    };
+                    save(hiddenWorksFile(input), hiddenWorksPage(input));
+                  }}>
+            <FileDown size={14} />Акт скрытых работ
+          </button>
+          <button type="button" className="btn btn-ghost text-[11.5px]"
+                  disabled={journal.deviations.length === 0}
+                  onClick={() => save('Реестр замечаний.doc',
+                    remarksPage(remarksFromDeviations(journal.deviations)))}>
+            <FileDown size={14} />Реестр замечаний
+          </button>
+          <button type="button" className="btn btn-ghost text-[11.5px]"
+                  disabled={busy || photosInPeriod.length === 0}
+                  onClick={async () => {
+                    setBusy(true);
+                    try {
+                      // Снимки лежат на устройстве: вкладываем их в
+                      // документ целиком, иначе отчёт придёт без картинок.
+                      const items = await Promise.all(photosInPeriod.slice(0, 60).map(
+                        async (photo) => {
+                          const blob = await getPhotoBlob(photo.id);
+                          if (!blob) return { photo };
+                          const dataUrl = await new Promise<string | undefined>((res) => {
+                            const fr = new FileReader();
+                            fr.onload = () => res(String(fr.result));
+                            fr.onerror = () => res(undefined);
+                            fr.readAsDataURL(blob);
+                          });
+                          return { photo, dataUrl };
+                        },
+                      ));
+                      save('Фотоотчёт.doc', photoReportPage({
+                        title: 'ФОТООТЧЁТ О ВЫПОЛНЕННЫХ РАБОТАХ',
+                        from, to, items,
+                      }));
+                    } finally { setBusy(false); }
+                  }}>
+            <FileDown size={14} />Фотоотчёт ({photosInPeriod.length})
+          </button>
+          <button type="button" className="btn btn-ghost text-[11.5px]"
+                  onClick={() => {
+                    const subject = window.prompt('Тема письма:', 'О выполненных объёмах');
+                    if (subject === null) return;
+                    save('Письмо.doc', letterPage({
+                      to: 'АО «Транстелеком»',
+                      subject,
+                      date: to,
+                      from: author,
+                      body: `За период с ${from} по ${to} выполнено `
+                        + `${Math.round(report.meters).toLocaleString('ru')} м `
+                        + `(${(report.meters / 1000).toFixed(2).replace('.', ',')} км) `
+                        + `за ${report.shifts} смен.\n`
+                        + `Участки: ${report.sections.map((x) => x.uchastok).join('; ')}.\n`
+                        + 'Просим рассмотреть и принять выполненные работы.',
+                    }));
+                  }}>
+            <FileDown size={14} />Письмо заказчику
+          </button>
+        </div>
+        <div className="text-[10.5px] text-[var(--text-muted)]">
+          Цифры в письмо подставляются из журнала: перенесённые руками, они
+          через неделю перестают сходиться с актом.
+        </div>
       </div>
 
       {/* Реестр актов */}
