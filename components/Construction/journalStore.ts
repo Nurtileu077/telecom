@@ -1646,6 +1646,31 @@ export function bulkPatchEntries(
   });
 }
 
+/**
+ * Отметить, что смену предъявили технадзору.
+ *
+ * Между записью и предъявлением проходят дни, а спрашивают потом
+ * именно про предъявление. Отдельной тетради для этого вести не надо.
+ */
+export function markPresented(
+  base: JournalState,
+  ids: string[],
+  to: string,
+  at = new Date().toISOString(),
+): JournalState {
+  const set = new Set(ids);
+  if (set.size === 0) return base;
+  const apply = <T extends { id: string }>(rows: T[]): T[] => rows.map((r) => (
+    set.has(r.id) ? { ...r, presentedAt: at, presentedTo: to || undefined, updatedAt: at } : r
+  ));
+  return {
+    ...base,
+    ground: apply(base.ground),
+    aerial: apply(base.aerial),
+    updatedAt: at,
+  };
+}
+
 /** Пометить строку спорной или снять пометку. */
 export function setDisputed(
   base: JournalState,

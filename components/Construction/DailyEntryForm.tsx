@@ -16,6 +16,10 @@ import { photosOf } from './photoStore';
 import { advanceAlong, routeForSection } from './routeProgress';
 import { normName } from './areaImport';
 import { checkEntry } from './entryChecks';
+import { parseMeters, metersHint } from './units';
+import {
+  fetchDayWeather, formatWeather, weatherHindered, type DayWeather,
+} from './weather';
 import {
   saveDraft, loadDraft, clearDraft, draftAge, draftWorthKeeping, type Draft,
 } from './drafts';
@@ -239,10 +243,17 @@ export default function DailyEntryForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uchastok]);
 
+  /**
+   * Число из поля.
+   *
+   * Принимаем и «1,2 км», и «1 200», и «480 м»: в поле считают метрами,
+   * в отчётности километрами, а пишут как придётся. Пока поле принимало
+   * только голое число, «1,2» превращалось в полтора метра вместо
+   * полутора километров — и всплывало это уже в акте.
+   */
   const numOf = (v?: string): number => {
-    if (!v) return 0;
-    const n = parseFloat(v.replace(',', '.'));
-    return Number.isFinite(n) && n > 0 ? n : 0;
+    const parsed = parseMeters(v);
+    return parsed.ok && parsed.meters > 0 ? parsed.meters : 0;
   };
 
   const totalMeters = useMemo(
@@ -265,6 +276,27 @@ export default function DailyEntryForm({
       return fields.some((f) => normName(f) === key || normName(f).includes(key));
     });
   }, [journal.planRoutes, uchastok]);
+
+  /**
+   * Погода дня.
+   *
+   * В АСР есть такая графа, и её заполняют по памяти — а помнят обычно
+   * «было холодно». Тянем из открытого архива по координатам участка.
+   * Связи в поле нет — значит, смена сохраняется и без погоды.
+   */
+  const [weather, setWeather] = useState<DayWeather | null>(initial?.weather
+    ? { date: initial.date, ...initial.weather } : null);
+  useEffect(() => {
+    if (!date || !sectionRoute?.coords?.length) return undefined;
+    if (weather?.date === date && weather.source === 'manual') return undefined;
+    const at = sectionRoute.coords[0];
+    let alive = true;
+    void fetchDayWeather(at[0], at[1], date).then((w) => { if (alive && w) setWeather(w); });
+    return () => { alive = false; };
+    // Погоду тянем по дате и участку; ручную правку не перетираем.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date, sectionRoute]);
+
 
   const doneBefore = kato ? (journal.sectionProgress?.[kato]?.doneM ?? 0) : 0;
 
@@ -384,6 +416,12 @@ export default function DailyEntryForm({
       blowingM: Math.round(numOf(blowingM)) || undefined,
       materials: mats,
       note: note.trim() || undefined,
+      weather: weather
+        ? {
+          tMinC: weather.tMinC, tMaxC: weather.tMaxC,
+          precipMm: weather.precipMm, code: weather.code, source: weather.source,
+        }
+        : undefined,
       operations: (() => {
         const o: Partial<Record<OperationKind, number>> = {};
         for (const k of OPERATION_KINDS) {
@@ -598,12 +636,27 @@ export default function DailyEntryForm({
                           onChange={(v) => setByMethod((p) => ({ ...p, [m]: v }))} />
               ))}
             </div>
+            {weather && (
+              <div className="flex items-baseline gap-2 px-1 pt-1 text-[11px]">
+                <span className="text-[var(--text-muted)]">Погода</span>
+                <span className={weatherHindered(weather)
+                  ? 'text-[var(--warn)]' : 'text-[var(--text)]'}>
+                  {formatWeather(weather)}
+                </span>
+                {weatherHindered(weather) && (
+                  <span className="text-[var(--text-muted)]">— это объясняет простой</span>
+                )}
+              </div>
+            )}
             <div className="flex items-baseline justify-between px-1 pt-1 border-t border-[var(--border)]">
               <span className="text-[11px] text-[var(--text-muted)]">Итого за день</span>
               <span className="font-mono tabular-nums text-sm text-[var(--accent)]">
-                {totalMeters.toLocaleString('ru')} м
-                {totalMeters >= 1000 && <span className="text-[var(--text-muted)] text-[11px] ml-1.5">
-                  ≈ {(totalMeters / 1000).toFixed(2)} км</span>}
+                {Math.round(totalMeters).toLocaleString('ru')} м
+                {metersHint(totalMeters) && (
+                  <span className="text-[var(--text-muted)] text-[11px] ml-1.5">
+                    ≈ {metersHint(totalMeters)}
+                  </span>
+                )}
               </span>
             </div>
 

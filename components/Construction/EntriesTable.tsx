@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Pencil, Trash2, CloudOff, MapPin, Copy, Printer, Flag, ChevronUp, ChevronDown,
+  Stamp, CopyPlus,
 } from 'lucide-react';
 import type { DailyWorkEntry } from '@/types/construction';
 import type { JournalState } from './journalStore';
@@ -33,6 +34,10 @@ interface Props {
   /** Правка сразу у многих: подрядчик, колонна, СМУ. */
   onBulkPatch?: (ids: string[], patch: Partial<DailyWorkEntry>) => void;
   onDispute?: (e: DailyWorkEntry) => void;
+  /** Отметить, что смены предъявлены технадзору. */
+  onPresent?: (ids: string[]) => void;
+  /** Повторить смену: те же цифры на другой день. */
+  onRepeat?: (e: DailyWorkEntry) => void;
   onCopied?: (n: number) => void;
 }
 
@@ -47,7 +52,8 @@ const COLUMNS: { key: SortKey; className: string }[] = [
 const fmtM = (v: number) => `${Math.round(v).toLocaleString('ru')} м`;
 
 export default function EntriesTable({
-  rows, journal, onDelete, onEdit, onShowOnMap, onBulkPatch, onDispute, onCopied,
+  rows, journal, onDelete, onEdit, onShowOnMap, onBulkPatch, onDispute, onPresent,
+  onRepeat, onCopied,
 }: Props) {
   const [q, setQ] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('date');
@@ -154,6 +160,15 @@ export default function EntriesTable({
                 {e.tech}
               </span>
             )}
+            {e.presentedAt && (
+              <span
+                className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent-dim)] text-[var(--accent)]"
+                title={`Предъявлено ${new Date(e.presentedAt).toLocaleDateString('ru')}`
+                  + (e.presentedTo ? `, ${e.presentedTo}` : '')}
+              >
+                предъявлено
+              </span>
+            )}
             {e.disputed && (
               <span
                 className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--warn)] text-[var(--warn)]"
@@ -195,6 +210,13 @@ export default function EntriesTable({
               <button type="button" onClick={() => onShowOnMap(e)} title="Показать участок на карте"
                       className="btn btn-ghost btn-icon text-[var(--text-muted)] hover:text-[var(--accent)]">
                 <MapPin size={14} />
+              </button>
+            )}
+            {onRepeat && (
+              <button type="button" onClick={() => onRepeat(e)}
+                      title="Повторить смену: те же цифры на другой день"
+                      className="btn btn-ghost btn-icon text-[var(--text-muted)] hover:text-[var(--accent)]">
+                <CopyPlus size={14} />
               </button>
             )}
             {onDispute && (
@@ -272,6 +294,12 @@ export default function EntriesTable({
           <button type="button" className="btn btn-ghost text-[11px]" onClick={() => bulkAsk('smu')}>
             СМУ…
           </button>
+          {onPresent && (
+            <button type="button" className="btn btn-ghost text-[11px]"
+                    onClick={() => { onPresent(pickedRows.map((r) => r.id)); setPicked(new Set()); }}>
+              <Stamp size={13} />Предъявлено технадзору
+            </button>
+          )}
           <button type="button" className="btn btn-ghost text-[11px] ml-auto"
                   onClick={() => setPicked(new Set())}>
             Снять выбор

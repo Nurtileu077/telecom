@@ -21,7 +21,7 @@ import {
   addPlanRoutes, removePlanSource, planSources, plural, setProgress, setStage,
   addAreas, removeAreaSource, areaSources, setMaterialPrice, upsertDrill,
   upsertObject, removeObject, setSectionProgress, scopeJournal, smuList, deleteRoute,
-  bulkPatchEntries, setDisputed, restoreFromTrash, purgeTrash,
+  bulkPatchEntries, setDisputed, restoreFromTrash, purgeTrash, markPresented,
   restoreShape, upsertDrumRecord, removeDrumRecord, addPhoto, removePhoto,
   upsertSplice, removeSplice, upsertIncident, removeIncident,
 } from './journalStore';
@@ -1076,6 +1076,32 @@ export default function ConstructionPanel({
               );
               if (why === null) return;
               persist(setDisputed(loadJournal(), e.id, true, why.trim(), actor));
+            }}
+            onRepeat={(e) => {
+              // Повторяем цифры, но не дату и не отметки: назавтра это
+              // другая смена, а не копия вчерашней.
+              const { id, createdAt, updatedAt, presentedAt, presentedTo,
+                disputed, disputeNote, ...rest } = e;
+              setEditing(null);
+              setPrefill({
+                byMethod: rest.byMethod,
+                uchastok: rest.uchastok,
+                contractor: rest.contractor,
+                column: rest.column,
+                smu: rest.smu,
+                tech: rest.tech,
+                drillM: rest.drillM,
+                drillCount: rest.drillCount,
+                blowingM: rest.blowingM,
+                matched: [], leftover: [],
+              });
+              setFormOpen(true);
+            }}
+            onPresent={(ids) => {
+              const to = window.prompt('Кому предъявили? Фамилия технадзора:', '');
+              if (to === null) return;
+              persist(markPresented(loadJournal(), ids, to.trim()));
+              setFlash(`Отмечено как предъявленное: ${ids.length}`);
             }}
             onCopied={(n) => setFlash(`Скопировано строк: ${n}`)}
           />
