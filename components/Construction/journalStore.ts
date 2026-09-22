@@ -43,6 +43,8 @@ export interface JournalState {
   payments: Payment[];
   /** Заявки на материал: их передавали голосом и забывали. */
   requests: import('./supply').MaterialRequest[];
+  /** План на неделю: кто где и сколько должен дать. */
+  plans: import('./weekPlan').PlanRow[];
   /** Муфты, столбы, конечные точки, ККС — то, что стоит вдоль трассы. */
   objects: SiteObject[];
   /**
@@ -91,7 +93,7 @@ export function emptyJournal(): JournalState {
     orders: [], ground: [], aerial: [], drills: [],
     corrections: [], deviations: [], crews: [], deliveries: [], drums: [],
     photos: [], splices: [], incidents: [], planRoutes: [],
-    areas: [], prices: {}, rates: [], payments: [], requests: [], objects: [], sectionProgress: {}, progress: [],
+    areas: [], prices: {}, rates: [], payments: [], requests: [], plans: [], objects: [], sectionProgress: {}, progress: [],
     contractors: DEFAULT_CONTRACTORS, changes: [], actFields: {},
     deleted: [], trash: [], updatedAt: '',
   };
@@ -345,6 +347,7 @@ export function loadJournal(): JournalState {
       prices: p.prices ?? {},
       rates: p.rates ?? [],
       requests: p.requests ?? [],
+      plans: p.plans ?? [],
       payments: p.payments ?? [],
       objects: p.objects ?? [],
       sectionProgress: p.sectionProgress ?? {},
@@ -394,6 +397,7 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     prices: base.prices,
     rates: base.rates,
     requests: base.requests,
+    plans: base.plans,
     payments: base.payments.filter((p) => true),
     objects: base.objects,
     sectionProgress: base.sectionProgress,
@@ -1767,6 +1771,38 @@ export function removeRequest(base: JournalState, id: string): JournalState {
   return {
     ...base,
     requests: base.requests.filter((r) => r.id !== id),
+    deleted: [...base.deleted, { id, at: now }],
+    updatedAt: now,
+  };
+}
+
+/**
+ * Строка плана.
+ *
+ * План — это обещание, а не прогноз: цифру ставит человек. Система
+ * только показывает, чем она подкреплена и что из неё вышло.
+ */
+export function upsertPlan(
+  base: JournalState,
+  row: import('./weekPlan').PlanRow,
+): JournalState {
+  const now = new Date().toISOString();
+  const next = { ...row, updatedAt: now };
+  const exists = base.plans.some((p) => p.id === row.id);
+  return {
+    ...base,
+    plans: exists
+      ? base.plans.map((p) => (p.id === row.id ? next : p))
+      : [...base.plans, next],
+    updatedAt: now,
+  };
+}
+
+export function removePlan(base: JournalState, id: string): JournalState {
+  const now = new Date().toISOString();
+  return {
+    ...base,
+    plans: base.plans.filter((p) => p.id !== id),
     deleted: [...base.deleted, { id, at: now }],
     updatedAt: now,
   };
