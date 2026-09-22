@@ -248,6 +248,23 @@ interface Props {
   searchOnMap?: boolean;
   /** Заголовок печатного листа: область, участок, что показано. */
   printTitle?: string;
+  /**
+   * Насколько приглушить всё нарисованное поверх подложки.
+   *
+   * На спутнике линии и контуры закрывают саму местность, а смотреть
+   * надо именно на неё: где поле, где посадка, где дорога.
+   */
+  overlayOpacity?: number;
+  /**
+   * Снимки с координатами.
+   *
+   * Фотография объекта живёт в карточке записи, и найти её там можно,
+   * только зная, к какой записи она приложена. А спрашивают иначе: «что
+   * тут было в июле» — показывая пальцем в место на карте.
+   */
+  photos?: import('@/types/construction').FieldPhoto[];
+  /** Открыть снимок целиком — блоб лежит на устройстве. */
+  onOpenPhoto?: (id: string) => void;
   onToggleDrawRoute?: () => void;
   /** Включить рисование замкнутого контура. */
   onToggleDrawArea?: () => void;
@@ -582,6 +599,7 @@ export default function LeafletMap(props: Props) {
   const flowGroupRef = useRef<any>(null);
   const flowRafRef = useRef<number | null>(null);
   const playbackGroupRef = useRef<any>(null);
+  const photoGroupRef = useRef<any>(null);
   const playbackRafRef = useRef<number | null>(null);
   const measureStateRef = useRef<{
     coords: [number, number][];
@@ -655,6 +673,7 @@ export default function LeafletMap(props: Props) {
       areaEditGroupRef.current = L.layerGroup().addTo(map);
       flowGroupRef.current = L.layerGroup().addTo(map);
       playbackGroupRef.current = L.layerGroup().addTo(map);
+      photoGroupRef.current = L.layerGroup().addTo(map);
       routeEditGroupRef.current = L.layerGroup().addTo(map);
       drawGroupRef.current = L.layerGroup().addTo(map);
       measureGroupRef.current = L.layerGroup().addTo(map);
@@ -1631,6 +1650,59 @@ export default function LeafletMap(props: Props) {
         });
         const m = L.marker([p0.lat, p0.lon], { icon, zIndexOffset: 700 });
         m.bindPopup(popup);
+        group.addLayer(m);
+      }
+    });
+  }
+
+  /**
+   * Снимки на карте.
+   *
+   * Метка ставится там, где нажали затвор, а не там, где потом завели
+   * запись: координаты снимка — это EXIF, и именно поэтому им верят.
+   */
+  function renderPhotos() {
+    const group = photoGroupRef.current;
+    if (!mapRef.current || !group) return;
+    import('leaflet').then((L) => {
+      group.clearLayers();
+      const photos = (propsRef.current.photos ?? [])
+        .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon));
+      if (photos.length === 0) return;
+
+      for (const p of photos) {
+        const when = new Date(p.exifAt || p.takenAt || p.createdAt);
+        const m = L.marker([p.lat as number, p.lon as number], {
+          zIndexOffset: 420,
+          icon: L.divIcon({
+            className: '',
+            iconSize: [22, 22],
+            iconAnchor: [11, 11],
+            html: `<div style="
+              width:20px;height:20px;border-radius:4px;
+              background:#0c1018ee;border:2px solid #fbbf24;
+              display:flex;align-items:center;justify-content:center;
+              font-size:10px;line-height:1;box-shadow:0 0 6px #fbbf2455;
+            ">📷</div>`,
+          }),
+        });
+        m.bindTooltip(
+          `📷 ${esc(p.note || 'Снимок')} · ${when.toLocaleDateString('ru')}`,
+          { sticky: true, className: 'text-xs' },
+        );
+        m.bindPopup(
+          `<b>📷 ${esc(p.note || 'Снимок')}</b>`
+          + `<br/><span style="font-size:11px">${when.toLocaleString('ru')}</span>`
+          + (p.author ? `<br/><span style="font-size:11px">${esc(p.author)}</span>` : '')
+          + `<br/><span style="color:#64748b;font-size:10px">${esc(p.uchastok || '')}</span>`
+          + (propsRef.current.onOpenPhoto
+            ? `<div style="margin-top:6px">
+                 <button onclick="window.__optiqOpenPhoto__('${esc(p.id)}')"
+                   style="padding:3px 8px;background:#fbbf24;color:#1a1200;border:none;border-radius:3px;font-size:10px;cursor:pointer;font-weight:600">
+                   Открыть снимок</button>
+               </div>`
+            : ''),
+        );
         group.addLayer(m);
       }
     });
@@ -2981,6 +3053,25 @@ export default function LeafletMap(props: Props) {
   useEffect(() => { renderSnpPoints(); }, [props.snpPoints, mapReady]);
   useEffect(() => { renderAreas(); }, [props.areas, mapReady]);
   useEffect(() => { renderSiteObjects(); }, [props.siteObjects, mapReady]);
+  useEffect(() => { renderPhotos(); }, [props.photos, mapReady]);
+
+  /**
+   * Приглушение слоёв стройки.
+   *
+   * Применяем прозрачностью к самим группам, а не к каждой линии: иначе
+   * пришлось бы протаскивать коэффициент в десяток мест отрисовки и
+   * помнить про него в каждом новом.
+   */
+  useEffect(() => {
+    const v = Math.min(1, Math.max(0.1, props.overlayOpacity ?? 1));
+    // У группы слоёв Leaflet прозрачности нет, а у панелей, в которых
+    // они лежат, есть. Так коэффициент не приходится протаскивать в
+    // десяток мест отрисовки и помнить про него в каждом новом.
+    for (const name of ['overlayPane', 'markerPane', 'shadowPane']) {
+      const pane = mapRef.current?.getPane?.(name);
+      if (pane) pane.style.opacity = String(v);
+    }
+  }, [props.overlayOpacity, mapReady]);
   useEffect(() => { renderIncidents(); }, [props.incidents, mapReady]);
   useEffect(() => {
     runFlow();
@@ -3142,6 +3233,10 @@ export default function LeafletMap(props: Props) {
       const hit = nearestOnRoute({ lat: click.lat, lon: click.lon }, route.coords);
       if (hit) propsRef.current.onSplitRoute?.(id, hit.atM);
     };
+    (window as any).__optiqOpenPhoto__ = (id: string) => {
+      mapRef.current?.closePopup?.();
+      propsRef.current.onOpenPhoto?.(id);
+    };
     (window as any).__optiqJoinRoute__ = (id: string) => {
       mapRef.current?.closePopup?.();
       propsRef.current.onJoinRoute?.(id);
@@ -3153,6 +3248,7 @@ export default function LeafletMap(props: Props) {
       delete (window as any).__optiqDeleteRoute__;
       delete (window as any).__optiqSplitRoute__;
       delete (window as any).__optiqJoinRoute__;
+      delete (window as any).__optiqOpenPhoto__;
       delete (window as any).__optiqEditObject__;
     };
   }, []);
@@ -3173,6 +3269,7 @@ export default function LeafletMap(props: Props) {
     areas: (props.areas?.length ?? 0) > 0,
     snp: (props.snpPoints?.length ?? 0) > 0,
     flow: !!props.showFlow,
+    photos: (props.photos?.length ?? 0) > 0,
   };
   const legendGroups = mapLegend(legendLayers, props.routeColorMode ?? 'stage');
 
@@ -3307,6 +3404,30 @@ export default function LeafletMap(props: Props) {
       )}
 
       <div className="absolute top-2 left-2 md:top-3 md:left-3 z-[400] flex flex-col gap-1 max-md:max-w-[140px]">
+        {/* «Вся стройка»: рамка по всему, что загружено. Вопрос «как мы
+            идём в целом» задают чаще, чем кажется, а отвечать на него
+            прокруткой карты долго. */}
+        {props.searchOnMap && (
+          <button
+            onClick={() => {
+              const pts: [number, number][] = [];
+              for (const r of props.planRoutes ?? []) pts.push(...r.coords);
+              for (const a of props.areas ?? []) pts.push(...a.coords);
+              for (const o of props.siteObjects ?? []) pts.push([o.lat, o.lon]);
+              if (pts.length === 0) return;
+              import('leaflet').then((L) => {
+                try {
+                  mapRef.current?.fitBounds(L.latLngBounds(pts), { padding: [50, 50] });
+                } catch { /* вырожденная рамка — пусть остаётся как было */ }
+              });
+            }}
+            title="Показать всю стройку целиком"
+            className="px-3 py-1.5 rounded-lg text-xs font-medium border shadow-lg
+                       bg-[#0d1b2a] border-[#1e3a5f] text-[#94a3b8] hover:text-[#e2e8f0]"
+          >
+            🇰🇿 Вся стройка
+          </button>
+        )}
         <button
           onClick={() => {
             const next = !props.measureMode;

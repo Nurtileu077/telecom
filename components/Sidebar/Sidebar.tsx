@@ -77,6 +77,9 @@ interface Props {
   mapLayers?: import('./LayersTab').MapLayerRow[];
   onToggleSource?: (source: string) => void;
   onRemoveSource?: (source: string) => void;
+  onMoveSource?: (source: string, by: -1 | 1) => void;
+  layerOpacity?: number;
+  onLayerOpacity?: (v: number) => void;
   onToggleRouteColor?: () => void;
   validationIssues: ValidationIssue[];
   flyTo: ((lat: number, lon: number, zoom?: number) => void) | null;
@@ -296,6 +299,9 @@ export default function Sidebar({ onMobileClose, mobilePersist, ...props }: Prop
               routeColorMode={props.routeColorMode}
               onToggleRouteColor={props.onToggleRouteColor}
               mapLayers={props.mapLayers}
+              onMoveSource={props.onMoveSource}
+              layerOpacity={props.layerOpacity}
+              onLayerOpacity={props.onLayerOpacity}
               onToggleSource={props.onToggleSource}
               onRemoveSource={props.onRemoveSource}
             />}

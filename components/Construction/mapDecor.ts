@@ -270,6 +270,7 @@ export function mapLegend(
   if (layers.crews) marks.push({ kind: 'dot', color: '#2dd4bf', label: 'Колонна' });
   if (layers.deviations) marks.push({ kind: 'dot', color: '#f97316', label: 'Отклонение' });
   if (layers.incidents) marks.push({ kind: 'dot', color: '#f87171', label: 'Авария' });
+  if (layers.photos) marks.push({ kind: 'square', color: '#fbbf24', label: 'Снимок', note: 'координаты из EXIF' });
   if (marks.length) out.push({ title: 'Отметки', items: marks });
 
   if (layers.areas || layers.snp) {

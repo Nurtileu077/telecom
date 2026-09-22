@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   loadHiddenSources, saveHiddenSources, toggleHiddenSource, sourceVisible,
+  loadLayerOpacity, saveLayerOpacity, MIN_LAYER_OPACITY,
+  orderedSources, moveSource, bySourceOrder,
 } from './mapLayers';
 
 /**
@@ -49,5 +51,51 @@ describe('слои по источникам', () => {
   it('чужой формат в хранилище тоже не роняет', () => {
     store.set('optiq-hidden-sources-v1', '{"a":1}');
     expect(loadHiddenSources()).toEqual([]);
+  });
+});
+
+describe('прозрачность слоёв', () => {
+  it('за пределы допустимого не выходит', () => {
+    saveLayerOpacity(5);
+    expect(loadLayerOpacity()).toBe(1);
+    saveLayerOpacity(0);
+    expect(loadLayerOpacity()).toBe(MIN_LAYER_OPACITY);
+  });
+
+  it('мусор в хранилище — значит непрозрачно', () => {
+    window.localStorage.setItem('optiq-layer-opacity-v1', 'ерунда');
+    expect(loadLayerOpacity()).toBe(1);
+  });
+});
+
+describe('порядок слоёв', () => {
+  const all = ['проект.kml', 'правки.kml', 'нарисовано на карте'];
+
+  it('неизвестные слои дописываются в конец, а не всплывают наверх', () => {
+    expect(orderedSources(['правки.kml'], all))
+      .toEqual(['правки.kml', 'проект.kml', 'нарисовано на карте']);
+  });
+
+  it('сдвиг меняет соседей местами', () => {
+    expect(moveSource(all, all, 'правки.kml', -1))
+      .toEqual(['правки.kml', 'проект.kml', 'нарисовано на карте']);
+  });
+
+  it('с краю двигать некуда', () => {
+    expect(moveSource(all, all, 'проект.kml', -1)).toEqual(all);
+    expect(moveSource(all, all, 'нарисовано на карте', 1)).toEqual(all);
+  });
+
+  it('исчезнувшие файлы из порядка выпадают', () => {
+    expect(orderedSources(['удалённый.kml', 'правки.kml'], all))
+      .toEqual(['правки.kml', 'проект.kml', 'нарисовано на карте']);
+  });
+
+  it('раскладывает по порядку что угодно с источником', () => {
+    const rows = [
+      { id: 1, source: 'проект.kml' },
+      { id: 2, source: 'правки.kml' },
+    ];
+    expect(bySourceOrder(rows, ['правки.kml']).map((r) => r.id)).toEqual([2, 1]);
   });
 });

@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useNetwork } from '@/hooks/useNetwork';
 import Sidebar from '@/components/Sidebar/Sidebar';
 import ImportModal, { ImportMode, NetworkImportMode, OltLocations } from '@/components/Import/ImportModal';
-import { Subscriber, ProjectSettings, AnnotationType, Project, ProjectStatus, PROJECT_STATUS_LABELS, CABLE_SIZES, CableType } from '@/types/network';
+import { Subscriber, ProjectSettings, AnnotationType, Project, ProjectStatus, PROJECT_STATUS_LABELS, CABLE_SIZES, CableType, ANNOTATION_PRESETS } from '@/types/network';
 import type { DrawingTool } from '@/components/Sidebar/NotesTab';
 import AppHeader from '@/components/Layout/AppHeader';
 import EmptyState from '@/components/Layout/EmptyState';
@@ -52,6 +52,8 @@ import { dayMoves, playableDates, type DayMove } from '@/components/Construction
 import { allRouteSegments, type RouteSegment } from '@/components/Construction/routeSegments';
 import {
   loadRouteColorMode, saveRouteColorMode, type RouteColorMode,
+  loadSourceOrder, saveSourceOrder, moveSource, orderedSources, bySourceOrder,
+  loadLayerOpacity, saveLayerOpacity,
 } from '@/components/Construction/mapLayers';
 import RouteDrawForm from '@/components/Construction/RouteDrawForm';
 import {
@@ -65,7 +67,7 @@ import {
   DEFAULT_CONSTRUCTION_LAYERS, type ConstructionLayers,
   loadHiddenSources, saveHiddenSources, toggleHiddenSource, sourceVisible,
 } from '@/components/Construction/mapLayers';
-import type { Crew, SiteObject, Incident, SiteObjectKind } from '@/types/construction';
+import type { Crew, SiteObject, Incident, SiteObjectKind, FieldPhoto } from '@/types/construction';
 import { SITE_OBJECT_SPECS } from '@/types/construction';
 const ConstructionPanel = dynamic(() => import('@/components/Construction/ConstructionPanel'), { ssr: false });
 import { useSupabaseAuth } from '@/hooks/useSupabaseAuth';
@@ -91,6 +93,7 @@ import {
 import { mapLinkFor } from '@/lib/mapLink';
 import { splitRoute, joinRoutes } from '@/components/Construction/routeEdit';
 import { nearby } from '@/components/Construction/overlaps';
+import { getPhotoBlob } from '@/components/Construction/photoStore';
 import type { MeasureReadout } from '@/components/Map/MapContainer';
 
 const LeafletMap = dynamic(() => import('@/components/Map/MapContainer'), {
@@ -218,6 +221,10 @@ export default function HomePage() {
       j.ground,
     ));
     setSiteObjects(j.objects);
+    // Снимки с координатами — отдельный слой: спрашивают «что тут было»,
+    // показывая пальцем в место, а не называя запись, к которой они
+    // приложены.
+    setFieldPhotos(j.photos.filter((p) => p.lat !== undefined && p.lon !== undefined));
   }, []);
   useEffect(() => { refreshJournalLayers(); }, [refreshJournalLayers]);
 
@@ -268,6 +275,7 @@ export default function HomePage() {
   const [siteObjects, setSiteObjects] = useState<SiteObject[]>([]);
   // Аварии на карте: открытая горит, место с повтором обведено кольцом.
   const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [fieldPhotos, setFieldPhotos] = useState<FieldPhoto[]>([]);
 
   /**
    * Правка трассы: пишем сразу — линия на карте и есть форма.
@@ -401,6 +409,13 @@ export default function HomePage() {
    */
   const [hiddenSources, setHiddenSources] = useState<string[]>([]);
   useEffect(() => { setHiddenSources(loadHiddenSources()); }, []);
+  /** Кто рисуется поверх кого и насколько приглушить всё нарисованное. */
+  const [sourceOrder, setSourceOrder] = useState<string[]>([]);
+  const [layerOpacity, setLayerOpacity] = useState(1);
+  useEffect(() => {
+    setSourceOrder(loadSourceOrder());
+    setLayerOpacity(loadLayerOpacity());
+  }, []);
   /** Слои для панели: файл, сколько в нём линий и контуров, виден ли. */
   const mapLayerRows = useMemo(() => {
     const acc = new Map<string, { routes: number; areas: number }>();
@@ -414,18 +429,26 @@ export default function HomePage() {
       cur.areas += 1;
       acc.set(a.source, cur);
     }
-    return [...acc.entries()]
-      .map(([source, v]) => ({ source, ...v, visible: sourceVisible(hiddenSources, source) }))
-      .sort((a, b) => a.source.localeCompare(b.source, 'ru'));
-  }, [planRoutes, areas, hiddenSources]);
+    const rows = [...acc.entries()]
+      .map(([source, v]) => ({ source, ...v, visible: sourceVisible(hiddenSources, source) }));
+    // В списке сверху тот, кто рисуется поверх: как в любом редакторе.
+    const order = orderedSources(sourceOrder, rows.map((r) => r.source));
+    return rows.sort((a, b) => order.indexOf(b.source) - order.indexOf(a.source));
+  }, [planRoutes, areas, hiddenSources, sourceOrder]);
 
   const visibleRoutes = useMemo(
-    () => planRoutes.filter((r) => sourceVisible(hiddenSources, r.source)),
-    [planRoutes, hiddenSources],
+    () => bySourceOrder(
+      planRoutes.filter((r) => sourceVisible(hiddenSources, r.source)),
+      sourceOrder,
+    ),
+    [planRoutes, hiddenSources, sourceOrder],
   );
   const visibleAreas = useMemo(
-    () => areas.filter((a) => sourceVisible(hiddenSources, a.source)),
-    [areas, hiddenSources],
+    () => bySourceOrder(
+      areas.filter((a) => sourceVisible(hiddenSources, a.source)),
+      sourceOrder,
+    ),
+    [areas, hiddenSources, sourceOrder],
   );
 
   const toggleSource = useCallback((source: string) => {
@@ -1286,6 +1309,15 @@ export default function HomePage() {
           }}
           mapLayers={mapLayerRows}
           onToggleSource={toggleSource}
+          layerOpacity={layerOpacity}
+          onLayerOpacity={(v) => { setLayerOpacity(v); saveLayerOpacity(v); }}
+          onMoveSource={(source, by) => {
+            setSourceOrder((prev) => {
+              const next = moveSource(prev, mapLayerRows.map((r) => r.source), source, by);
+              saveSourceOrder(next);
+              return next;
+            });
+          }}
           onRemoveSource={(source) => {
             if (!confirm(`Удалить слой «${source}»? Уйдёт всё, что из него пришло.`)) return;
             const base = loadJournal();
@@ -1502,8 +1534,25 @@ export default function HomePage() {
             onUpdateRouteCoords={handleUpdateRoute}
             onDeleteRoute={handleDeleteRoute}
             searchOnMap={building}
+            overlayOpacity={layerOpacity}
             printTitle="Optiq — карта стройки"
             snpSearchPoints={snpPoints}
+            photos={conLayers.photos ? fieldPhotos : EMPTY_LAYER}
+            onOpenPhoto={async (id) => {
+              // Снимок лежит на устройстве: открываем его прямо оттуда,
+              // не дожидаясь, пока он уедет в облако.
+              const blob = await getPhotoBlob(id);
+              const url = blob
+                ? URL.createObjectURL(blob)
+                : fieldPhotos.find((p) => p.id === id)?.url;
+              if (!url) {
+                setToast('Снимок не найден на этом устройстве');
+                window.setTimeout(() => setToast(null), 2400);
+                return;
+              }
+              window.open(url, '_blank', 'noopener');
+              if (blob) window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+            }}
             onSplitRoute={building ? handleSplitRoute : undefined}
             onJoinRoute={building ? handleJoinRoute : undefined}
             siteObjects={conLayers.objects ? siteObjects : EMPTY_LAYER}
@@ -1822,6 +1871,35 @@ export default function HomePage() {
             >
               <span>🎯</span><span>Перейти к координатам…</span>
             </button>
+
+            {building && (
+              <button
+                onClick={() => {
+                  // Препятствие — это не авария и не отклонение: это
+                  // «здесь встали и вот почему». Хранится как пометка на
+                  // карте, чтобы её видели все и сразу.
+                  const why = window.prompt(
+                    'Почему встали? Например: «частник не пускает», «скальный грунт», «ждём согласование дорожников»',
+                    '',
+                  );
+                  setContextMenu(null);
+                  if (why === null) return;
+                  net.addAnnotation({
+                    type: 'problem',
+                    shape: 'point',
+                    coords: [[contextMenu.lat, contextMenu.lon]],
+                    name: why.trim() || 'Стоп',
+                    description: `${getActorName() || 'Без имени'}, ${new Date().toLocaleDateString('ru')}`,
+                    color: ANNOTATION_PRESETS.problem.color,
+                  });
+                  setToast('Препятствие отмечено');
+                  window.setTimeout(() => setToast(null), 1800);
+                }}
+                className="w-full px-3 py-1.5 text-left hover:bg-[#f87171]/10 text-[#e2e8f0] flex items-center gap-2"
+              >
+                <span>⛔</span><span>Отметить препятствие…</span>
+              </button>
+            )}
 
             {building && (
               <button

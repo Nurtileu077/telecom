@@ -1,5 +1,5 @@
 'use client';
-import { Eye, EyeOff, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, Trash2, ChevronUp, ChevronDown } from 'lucide-react';
 import { District, LayerVisibility } from '@/types/network';
 import {
   ConstructionLayers, CONSTRUCTION_LAYER_LABELS,
@@ -31,6 +31,14 @@ interface Props {
   mapLayers?: MapLayerRow[];
   onToggleSource?: (source: string) => void;
   onRemoveSource?: (source: string) => void;
+  /** Кто рисуется поверх кого: сверху тот, которому сейчас верят. */
+  onMoveSource?: (source: string, by: -1 | 1) => void;
+  /**
+   * Насколько приглушить то, что нарисовано поверх подложки. На спутнике
+   * линии закрывают саму местность, а смотреть надо именно на неё.
+   */
+  layerOpacity?: number;
+  onLayerOpacity?: (v: number) => void;
 }
 
 function Toggle({ on, onChange, label }: { on: boolean; onChange: () => void; label: string }) {
@@ -59,7 +67,8 @@ export default function LayersTab({
   districts, layers, toggleLayer,
   constructionLayers, toggleConstructionLayer, constructionCounts, building,
   routeColorMode, onToggleRouteColor,
-  mapLayers, onToggleSource, onRemoveSource,
+  mapLayers, onToggleSource, onRemoveSource, onMoveSource,
+  layerOpacity, onLayerOpacity,
 }: Props) {
   const hasConstruction = constructionLayers && toggleConstructionLayer
     && Object.values(constructionCounts ?? {}).some((n) => (n ?? 0) > 0);
@@ -91,6 +100,34 @@ export default function LayersTab({
               );
             })}
           </div>
+          {onLayerOpacity !== undefined && (
+            <div className="mt-2 pt-2 border-t border-[#1e3a5f]">
+              <label
+                htmlFor="layer-opacity"
+                className="text-[10px] uppercase tracking-widest text-[#64748b] mb-1.5 flex items-baseline gap-2"
+              >
+                Плотность слоёв
+                <span className="ml-auto font-mono text-[#94a3b8]">
+                  {Math.round((layerOpacity ?? 1) * 100)}%
+                </span>
+              </label>
+              <input
+                id="layer-opacity"
+                type="range"
+                min={25}
+                max={100}
+                step={5}
+                value={Math.round((layerOpacity ?? 1) * 100)}
+                onChange={(e) => onLayerOpacity(Number(e.target.value) / 100)}
+                className="w-full accent-[#2dd4bf]"
+              />
+              <p className="text-[10px] text-[#64748b] mt-1 leading-snug">
+                Приглушить — чтобы увидеть, по чему идёт линия: где поле,
+                где посадка, где дорога.
+              </p>
+            </div>
+          )}
+
           {routeColorMode && onToggleRouteColor && (
             <div className="mt-2 pt-2 border-t border-[#1e3a5f]">
               <p className="text-[10px] uppercase tracking-widest text-[#64748b] mb-1.5">Цвет трассы</p>
@@ -142,6 +179,22 @@ export default function LayersTab({
                     ].filter(Boolean).join(' · ') || 'пусто'}
                   </div>
                 </div>
+                {onMoveSource && (
+                  <span className="shrink-0 flex flex-col -my-1">
+                    <button type="button" aria-label="Поднять слой"
+                            title="Рисовать поверх остальных"
+                            onClick={() => onMoveSource(l.source, 1)}
+                            className="text-[#475569] hover:text-[#38bdf8] leading-none">
+                      <ChevronUp size={12} />
+                    </button>
+                    <button type="button" aria-label="Опустить слой"
+                            title="Убрать под остальные"
+                            onClick={() => onMoveSource(l.source, -1)}
+                            className="text-[#475569] hover:text-[#38bdf8] leading-none">
+                      <ChevronDown size={12} />
+                    </button>
+                  </span>
+                )}
                 <button type="button"
                         onClick={() => onRemoveSource?.(l.source)}
                         title="Удалить слой вместе со всем, что из него пришло"
@@ -153,7 +206,8 @@ export default function LayersTab({
           </div>
           <p className="text-[10px] text-[#64748b] mt-1.5 leading-snug">
             Глазок гасит слой, не удаляя: он останется в журнале и вернётся
-            одним нажатием. Корзина убирает всё, что пришло из этого файла.
+            одним нажатием. Стрелки решают, кто рисуется поверх кого.
+            Корзина убирает всё, что пришло из этого файла.
           </p>
         </section>
       )}
