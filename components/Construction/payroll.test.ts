@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   rateFor, workQuantity, payroll, costPerMeter, compareContractors,
-  payrollSummary, paymentLines, PAYABLE_WORKS,
+  payrollSummary, paymentLines, PAYABLE_WORKS, moneyBehind,
 } from './payroll';
 import type { DailyWorkEntry, WorkRate, Payment } from '@/types/construction';
 
@@ -147,6 +147,34 @@ describe('compareContractors', () => {
 
   it('пустой журнал — пустое сравнение', () => {
     expect(compareContractors([], RATES, [], new Map())).toEqual([]);
+  });
+});
+
+describe('moneyBehind', () => {
+  const plans = [
+    { crew: '1-колонна', uchastok: 'Зеренда', leftM: 1000, week: '2026-07-20' },
+    { crew: '2-колонна', uchastok: 'Щучинск', leftM: 500, week: '2026-07-20' },
+    { crew: '3-колонна', uchastok: 'Аккол', leftM: 0, week: '2026-07-20' },
+  ];
+  const rates: WorkRate[] = [
+    { id: 'k', work: 'кабелеукладчик', price: 200, unit: 'м', from: '2026-01-01', updatedAt: '' },
+  ];
+
+  it('переводит недобор метров в тенге', () => {
+    const r = moneyBehind(plans, rates);
+    expect(r.totalM).toBe(1500);
+    expect(r.totalMoney).toBe(300_000);
+    expect(r.rows[0].crew).toBe('1-колонна');
+  });
+
+  it('закрытые задания в отставание не идут', () => {
+    expect(moneyBehind(plans, rates).rows).toHaveLength(2);
+  });
+
+  it('без расценки отставание считается только в метрах', () => {
+    const r = moneyBehind(plans, []);
+    expect(r.totalM).toBe(1500);
+    expect(r.totalMoney).toBe(0);
   });
 });
 

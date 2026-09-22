@@ -227,6 +227,48 @@ export function compareContractors(
   }).sort((a, b) => b.meters - a.meters);
 }
 
+export interface MoneyGap {
+  crew: string;
+  uchastok: string;
+  /** Сколько метров недодали к обещанному. */
+  shortM: number;
+  /** Во сколько это обошлось по расценке. */
+  shortMoney: number;
+}
+
+/**
+ * Отставание в деньгах.
+ *
+ * Метры недобора понятны прорабу, а руководству нужен тот же недобор в
+ * тенге: по нему считают, чем это кончится для сроков и для выручки.
+ * Считаем по расценке того же участка — иначе цифра получится средней
+ * по больнице.
+ */
+export function moneyBehind(
+  plans: { crew: string; uchastok: string; leftM: number; contractor?: string; week: string }[],
+  rates: WorkRate[],
+  work = 'кабелеукладчик',
+): { rows: MoneyGap[]; totalM: number; totalMoney: number } {
+  const rows: MoneyGap[] = [];
+  for (const p of plans) {
+    if (p.leftM <= 0) continue;
+    const rate = rateFor(rates, work, p.week, p.contractor);
+    rows.push({
+      crew: p.crew,
+      uchastok: p.uchastok,
+      shortM: p.leftM,
+      // Без расценки денег не считаем: ноль означал бы «отставание
+      // ничего не стоит», а это не так.
+      shortMoney: rate ? p.leftM * rate.price : 0,
+    });
+  }
+  return {
+    rows: rows.sort((a, b) => b.shortMoney - a.shortMoney || b.shortM - a.shortM),
+    totalM: rows.reduce((s, r) => s + r.shortM, 0),
+    totalMoney: rows.reduce((s, r) => s + r.shortMoney, 0),
+  };
+}
+
 /** Строка расчёта словами — её вставляют в акт и в переписку. */
 export function payrollSummary(r: PayrollResult): string {
   const money = (v: number) => `${Math.round(v).toLocaleString('ru')} ₸`;

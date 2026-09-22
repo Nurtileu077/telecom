@@ -6,6 +6,7 @@ import {
   planProgress, planSummary, suggestTarget, orderText, type PlanRow,
 } from './weekPlan';
 import { weekStart } from './entriesTable';
+import { moneyBehind } from './payroll';
 
 /**
  * План на неделю.
@@ -54,6 +55,7 @@ export default function PlanView({ journal, author, onAddPlan, onRemovePlan, onF
 
   const shown = rows.filter((r) => r.week === week);
   const summary = planSummary(shown);
+  const gap = useMemo(() => moneyBehind(shown, journal.rates), [shown, journal.rates]);
 
   const crews = useMemo(
     () => [...new Set([
@@ -169,6 +171,16 @@ export default function PlanView({ journal, author, onAddPlan, onRemovePlan, onF
             {summary.behind.length > 0 && (
               <div className="mt-1.5 text-[11px] text-[var(--warn)]">
                 Отстают: {summary.behind.map((b) => `${b.crew} (${Math.round(b.share * 100)}%)`).join(', ')}
+              </div>
+            )}
+            {/* Метры недобора понятны прорабу, а руководству нужен тот же
+                недобор в тенге: по нему считают, чем это кончится. */}
+            {gap.totalM > 0 && (
+              <div className="mt-1 text-[11px] text-[var(--text-muted)]">
+                Недобор {m(gap.totalM)}
+                {gap.totalMoney > 0
+                  ? ` — это ${Math.round(gap.totalMoney).toLocaleString('ru')} ₸ по расценке`
+                  : ' · в деньгах не считаем: расценки нет'}
               </div>
             )}
           </div>
