@@ -40,6 +40,7 @@ import TimesheetView from './TimesheetView';
 import DocsView from './DocsView';
 import ViewPrefs from '@/components/Layout/ViewPrefs';
 import HelpSheet from './HelpSheet';
+import MaintenanceView from './MaintenanceView';
 import {
   loadFilters, saveFilters, upsertFilter, removeFilter, describeFilter,
   type SavedFilter,
@@ -88,7 +89,7 @@ import {
 } from '@/types/construction';
 
 type Period = 'day' | 'week' | 'month' | 'all';
-type View = 'today' | 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages' | 'drills' | 'objects' | 'passport' | 'incidents' | 'log' | 'checks' | 'timesheet' | 'docs' | 'payroll' | 'resources' | 'plan' | 'records';
+type View = 'today' | 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages' | 'drills' | 'objects' | 'passport' | 'incidents' | 'log' | 'checks' | 'timesheet' | 'docs' | 'payroll' | 'resources' | 'plan' | 'records' | 'maintenance';
 
 const PERIOD_LABEL: Record<Period, string> = {
   day: 'Последний день', week: '7 дней', month: '30 дней', all: 'Всё время',
@@ -700,7 +701,7 @@ export default function ConstructionPanel({
     ['incidents', 'Аварии'], ['deviations', 'Отклонения'], ['materials', 'Материалы'],
     ['closing', 'Закрытие'], ['corrections', 'Заявки'], ['log', 'Изменения'],
     ['plan', 'План'], ['docs', 'Документы'], ['payroll', 'Расчёты'], ['resources', 'Ресурсы'],
-    ['records', 'Допуски'],
+    ['records', 'Допуски'], ['maintenance', 'Обслуживание'],
     ['checks', 'Проверки'], ['timesheet', 'Табель'],
   ];
   const roleViews = new Set(JOURNAL_ROLES[role].views);
@@ -1098,6 +1099,14 @@ export default function ConstructionPanel({
               if (!confirm('Удалить запись об аварии?')) return;
               persist(removeIncident(loadJournal(), id));
             }}
+          />
+        ) : view === 'maintenance' ? (
+          <MaintenanceView
+            journal={journal}
+            author={actor}
+            lastSyncAt={syncedAt ?? undefined}
+            onFlash={setFlash}
+            onRestore={(j) => { persist(j); setFlash('Журнал заменён копией'); }}
           />
         ) : view === 'records' ? (
           <SiteRecordsView
