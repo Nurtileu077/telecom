@@ -4,7 +4,7 @@ import {
   X, Upload, Loader2, AlertTriangle, MapPin, Wrench, Boxes,
   Plus, Download, Trash2, CloudOff, Pencil, Check, Ban, Building2, Clock,
   Ruler, FileWarning, RefreshCw, CloudCheck, Route, FileDown, HardHat,
-  Share2,
+  Share2, HelpCircle,
 } from 'lucide-react';
 import { getActorName } from '@/lib/appRole';
 import { importJournal, type JournalImportResult } from './JournalImport';
@@ -39,6 +39,7 @@ import ChecksView from './ChecksView';
 import TimesheetView from './TimesheetView';
 import DocsView from './DocsView';
 import ViewPrefs from '@/components/Layout/ViewPrefs';
+import HelpSheet from './HelpSheet';
 import PayrollView from './PayrollView';
 import ResourcesView from './ResourcesView';
 import PlanView from './PlanView';
@@ -125,6 +126,8 @@ export default function ConstructionPanel({
    * ровно та работа, от которой быстрый ввод и избавляет.
    */
   const [prefill, setPrefill] = useState<QuickParse | null>(null);
+  /** Справка: клавиши и словарь. Открывается по «?». */
+  const [helpOpen, setHelpOpen] = useState(false);
   /** Запись, которую сейчас исправляют. */
   const [editing, setEditing] = useState<DailyWorkEntry | null>(null);
   const [devFormOpen, setDevFormOpen] = useState(false);
@@ -456,6 +459,11 @@ export default function ConstructionPanel({
         if (box) { e.preventDefault(); box.focus(); box.select(); }
         return;
       }
+      if (e.key === '?') {
+        e.preventDefault();
+        setHelpOpen(true);
+        return;
+      }
       if (e.key === 'n' || e.key === 'т') {
         e.preventDefault();
         setEditing(null);
@@ -720,6 +728,12 @@ export default function ConstructionPanel({
           {/* На солнце тёмная тема не читается — это не вкус, а
               невозможность работать. */}
           <ViewPrefs compact />
+          <button type="button" className="btn btn-ghost btn-icon"
+                  title="Справка: горячие клавиши и словарь (?)"
+                  aria-label="Справка"
+                  onClick={() => setHelpOpen(true)}>
+            <HelpCircle size={15} />
+          </button>
           {cloud ? (
             <button type="button" className="btn btn-ghost text-[11px]" onClick={handleSync} disabled={syncing}
                     title={syncedAt ? `Синхронизировано ${new Date(syncedAt).toLocaleString('ru')}` : 'Обмен с облаком'}>
@@ -1269,6 +1283,8 @@ export default function ConstructionPanel({
                    onClose={() => setDayOpen(null)}
                    onPlay={onPlayDay ? () => { onPlayDay(dayOpen); setDayOpen(null); } : undefined} />
       )}
+
+      <HelpSheet open={helpOpen} onClose={() => setHelpOpen(false)} />
 
       {sheetFile && (
         <SheetImport
