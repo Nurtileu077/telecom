@@ -40,6 +40,10 @@ import TimesheetView from './TimesheetView';
 import DocsView from './DocsView';
 import ViewPrefs from '@/components/Layout/ViewPrefs';
 import HelpSheet from './HelpSheet';
+import {
+  loadFilters, saveFilters, upsertFilter, removeFilter, describeFilter,
+  type SavedFilter,
+} from '@/lib/shortcuts';
 import PayrollView from './PayrollView';
 import ResourcesView from './ResourcesView';
 import PlanView from './PlanView';
@@ -128,6 +132,14 @@ export default function ConstructionPanel({
   const [prefill, setPrefill] = useState<QuickParse | null>(null);
   /** Справка: клавиши и словарь. Открывается по «?». */
   const [helpOpen, setHelpOpen] = useState(false);
+  /**
+   * Сохранённые разрезы.
+   *
+   * «Акмолинская, Дозер, июль» набирают каждое утро заново, хотя разрез
+   * один и тот же. Живут на устройстве: у каждого он свой.
+   */
+  const [savedFilters, setSavedFilters] = useState<SavedFilter[]>([]);
+  useEffect(() => { setSavedFilters(loadFilters()); }, []);
   /** Запись, которую сейчас исправляют. */
   const [editing, setEditing] = useState<DailyWorkEntry | null>(null);
   const [devFormOpen, setDevFormOpen] = useState(false);
@@ -853,6 +865,58 @@ export default function ConstructionPanel({
           )}
           {(usesOblast || usesSmu) && (oblast || smu) && (
             <button type="button" className="btn btn-ghost text-[11px]" onClick={() => { setOblast(''); setSmu(''); }}>Сбросить</button>
+          )}
+
+          {/* Сохранённые фильтры: «Акмолинская, Дозер, июль» набирают
+              каждое утро заново, хотя разрез один и тот же. */}
+          {savedFilters.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              className="btn btn-ghost text-[11px]"
+              title="Применить этот разрез"
+              onClick={() => {
+                setOblast(f.value.oblast ?? '');
+                setSmu(f.value.smu ?? '');
+                if (f.value.period) setPeriod(f.value.period as Period);
+              }}
+              onContextMenu={(ev) => {
+                ev.preventDefault();
+                if (!confirm(`Убрать фильтр «${f.name}»?`)) return;
+                setSavedFilters((prev) => {
+                  const next = removeFilter(prev, f.id);
+                  saveFilters(next);
+                  return next;
+                });
+              }}
+            >
+              ★ {f.name}
+            </button>
+          ))}
+          {(usesOblast || usesSmu) && (oblast || smu) && (
+            <button
+              type="button"
+              className="btn btn-ghost text-[11px]"
+              title="Запомнить этот разрез"
+              onClick={() => {
+                const value = { oblast: oblast || undefined, smu: smu || undefined, period };
+                const name = window.prompt('Название фильтра:', describeFilter(value));
+                if (name === null || !name.trim()) return;
+                setSavedFilters((prev) => {
+                  const next = upsertFilter(prev, {
+                    id: `f-${Date.now().toString(36)}`,
+                    name: name.trim(),
+                    value,
+                    at: new Date().toISOString(),
+                  });
+                  saveFilters(next);
+                  return next;
+                });
+                setFlash('Фильтр запомнен');
+              }}
+            >
+              Запомнить
+            </button>
           )}
         </div>
       )}
