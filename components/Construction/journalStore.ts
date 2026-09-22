@@ -243,6 +243,37 @@ export function scopeJournal(base: JournalState, oblast?: string): JournalState 
   };
 }
 
+/**
+ * Журнал глазами субподрядчика.
+ *
+ * Сейчас ему либо показывают всё, либо ничего — и обычно ничего, потому
+ * что в общем журнале чужие объёмы и чужие деньги. А свои смены, свой
+ * план и свой расчёт ему нужны каждый день.
+ *
+ * Прячем чужое целиком, а не помечаем: «видно, но нельзя» — это всё
+ * равно видно.
+ */
+export function scopeToContractor(base: JournalState, contractor?: string): JournalState {
+  const c = contractor?.trim();
+  if (!c) return base;
+  const mine = (v?: string) => v === c;
+  return {
+    ...base,
+    ground: base.ground.filter((e) => mine(e.contractor)),
+    aerial: base.aerial.filter((e) => mine(e.contractor)),
+    drills: base.drills.filter((e) => mine(e.contractor)),
+    deviations: base.deviations.filter((d) => mine(d.contractor)),
+    crews: base.crews.filter((cr) => mine(cr.contractor)),
+    incidents: base.incidents.filter((i) => mine(i.contractor)),
+    payments: base.payments.filter((p) => mine(p.contractor)),
+    // Расценки: свои и общие. Чужую цену подрядчику видеть незачем.
+    rates: base.rates.filter((r) => !r.contractor || r.contractor === c),
+    plans: base.plans.filter((p) => mine(p.contractor)),
+    // Заявки и допуски привязаны к бригадам, а не к подрядчику — их
+    // оставляем как есть: скрыть их значило бы спрятать работу.
+  };
+}
+
 // ── Сводки ───────────────────────────────────────────────────────────────────
 
 export interface GroundTotals {

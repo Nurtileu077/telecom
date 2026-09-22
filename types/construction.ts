@@ -1092,9 +1092,11 @@ export interface ChangeLogEntry {
  */
 export type JournalRole =
   | 'mkt' | 'gnb' | 'zaduvka' | 'podves' | 'svarka'
-  | 'office' | 'boss';
+  | 'office' | 'boss' | 'sub';
 
 export interface JournalRoleSpec {
+  /** Этой роли показываем только её подрядчика — и ничего больше. */
+  ownContractorOnly?: boolean;
   label: string;
   icon: string;
   /** С чего открывается журнал у этой роли. */
@@ -1133,7 +1135,20 @@ export const JOURNAL_ROLES: Record<JournalRole, JournalRoleSpec> = {
   },
   boss: {
     label: 'Руководство', icon: '📈', home: 'management',
-    views: ['management', 'summary', 'today', 'stages', 'incidents', 'materials', 'log'],
+    views: ['management', 'summary', 'today', 'stages', 'incidents', 'materials', 'log',
+      'plan', 'payroll', 'docs', 'resources', 'timesheet', 'records', 'maintenance'],
+  },
+  /**
+   * Субподрядчик видит только своё.
+   *
+   * Сейчас ему либо показывают всё, либо ничего — и обычно ничего,
+   * потому что в общем журнале чужие объёмы и чужие деньги. А свои
+   * смены и свой расчёт ему нужны каждый день.
+   */
+  sub: {
+    label: 'Субподрядчик', icon: '🤝', home: 'today',
+    views: ['today', 'entries', 'plan', 'payroll', 'objects', 'stages'],
+    ownContractorOnly: true,
   },
 };
 

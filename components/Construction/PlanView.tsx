@@ -7,6 +7,7 @@ import {
 } from './weekPlan';
 import { weekStart } from './entriesTable';
 import { moneyBehind } from './payroll';
+import { openShare, systemShare, type Messenger } from '@/lib/share';
 
 /**
  * План на неделю.
@@ -98,6 +99,32 @@ export default function PlanView({ journal, author, onAddPlan, onRemovePlan, onF
       updatedAt: now,
     });
     onFlash?.('Задание записано');
+  }
+
+  function orderTextOf(id: string): string | null {
+    const plan = shown.find((p) => p.id === id);
+    if (!plan) return null;
+    return orderText({
+      plan,
+      crew: journal.crews.find((c) => c.name === plan.crew),
+      date: new Date().toISOString().slice(0, 10),
+      issuedBy: author,
+    });
+  }
+
+  /**
+   * Наряд туда, где бригада и так сидит.
+   *
+   * Сначала пробуем системное «Поделиться» — на телефоне оно показывает
+   * все приложения сразу. Нет его — открываем мессенджер напрямую.
+   */
+  async function sendOrder(id: string, to: Messenger) {
+    const text = orderTextOf(id);
+    if (!text) return;
+    if (await systemShare('Наряд', text)) return;
+    if (!openShare(to, text)) {
+      window.prompt('Скопируйте наряд вручную:', text);
+    }
   }
 
   async function copyOrder(id: string) {
@@ -209,9 +236,14 @@ export default function PlanView({ journal, author, onAddPlan, onRemovePlan, onF
                 {p.leftM > 0 && <span>· осталось {m(p.leftM)}</span>}
                 <span>· смен {p.shifts}</span>
                 <button type="button" className="btn btn-ghost btn-icon ml-auto"
-                        title="Скопировать наряд для чата бригады"
-                        onClick={() => copyOrder(p.id)}>
+                        title="Отправить наряд в WhatsApp"
+                        onClick={() => sendOrder(p.id, 'whatsapp')}>
                   <Send size={13} />
+                </button>
+                <button type="button" className="btn btn-ghost btn-icon"
+                        title="Скопировать наряд"
+                        onClick={() => copyOrder(p.id)}>
+                  <Copy size={13} />
                 </button>
                 <button type="button" className="btn btn-ghost btn-icon text-[var(--danger)]"
                         title="Убрать задание" onClick={() => onRemovePlan(p.id)}>

@@ -20,7 +20,8 @@ import {
   upsertCrew, removeCrew, upsertDelivery, removeDelivery,
   addPlanRoutes, removePlanSource, planSources, plural, setProgress, setStage,
   addAreas, removeAreaSource, areaSources, setMaterialPrice, upsertDrill,
-  upsertObject, removeObject, setSectionProgress, scopeJournal, smuList, deleteRoute,
+  upsertObject, removeObject, setSectionProgress, scopeJournal, scopeToContractor,
+  smuList, deleteRoute,
   bulkPatchEntries, setDisputed, restoreFromTrash, purgeTrash, markPresented,
   upsertRate, removeRate, upsertPayment, removePayment,
   upsertRequest, setRequestStatus, removeRequest, upsertPlan, removePlan,
@@ -41,6 +42,7 @@ import DocsView from './DocsView';
 import ViewPrefs from '@/components/Layout/ViewPrefs';
 import HelpSheet from './HelpSheet';
 import MaintenanceView from './MaintenanceView';
+import { loadImports, saveImports, noteImport } from './backup';
 import {
   loadFilters, saveFilters, upsertFilter, removeFilter, describeFilter,
   type SavedFilter,
@@ -139,6 +141,17 @@ export default function ConstructionPanel({
    * «Акмолинская, Дозер, июль» набирают каждое утро заново, хотя разрез
    * один и тот же. Живут на устройстве: у каждого он свой.
    */
+  /**
+   * Чей это подрядчик, когда роль — субподрядчик.
+   *
+   * Держим на устройстве: это не право доступа, а настройка вида.
+   * Настоящее ограничение появится вместе со входом по паролю.
+   */
+  const [ownContractor, setOwnContractor] = useState('');
+  useEffect(() => {
+    try { setOwnContractor(window.localStorage.getItem('optiq-own-contractor') ?? ''); } catch { /* приватный режим */ }
+  }, []);
+
   const [savedFilters, setSavedFilters] = useState<SavedFilter[]>([]);
   useEffect(() => { setSavedFilters(loadFilters()); }, []);
   /** Запись, которую сейчас исправляют. */
@@ -515,6 +528,12 @@ export default function ConstructionPanel({
       }
       persist(mergeJournal(loadJournal(), res));
       setReport(res.stats);
+      rememberImport(file.name, {
+        смены: res.ground.length,
+        подвес: res.aerial.length,
+        проколы: res.drills.length,
+        заказ: res.orders.length,
+      });
     } catch {
       // Не разобрали своим разбором — попробуем разобрать по колонкам.
       setSheetFile(file);
@@ -556,7 +575,14 @@ export default function ConstructionPanel({
    * значит один раз поверить чужой цифре. Поэтому сужаем журнал целиком,
    * а не каждый список по отдельности.
    */
-  const scoped = useMemo(() => scopeJournal(journal, oblast), [journal, oblast]);
+  const scoped = useMemo(() => {
+    const byRegion = scopeJournal(journal, oblast);
+    // Субподрядчику показываем только его: в общем журнале чужие объёмы
+    // и чужие деньги, и именно поэтому ему обычно не показывают ничего.
+    return JOURNAL_ROLES[role].ownContractorOnly
+      ? scopeToContractor(byRegion, ownContractor)
+      : byRegion;
+  }, [journal, oblast, role, ownContractor]);
 
   // Доска и сводки смотрят на журнал с выведенными этапами: руками
   // отмечать шесть этапов на шестистах сёлах никто не станет, а журнал
@@ -593,6 +619,22 @@ export default function ConstructionPanel({
    * остаётся вчерашняя трасса. Цвет линии сохраняем тот же, что на
    * карте: по нему в Google Earth сразу видно, докуда дошли.
    */
+  /**
+   * Записать, что загрузили.
+   *
+   * «Откуда это взялось» спрашивают через месяц, когда файла уже нет, а
+   * цифры в журнале есть.
+   */
+  const rememberImport = useCallback((file: string, counts: Record<string, number>) => {
+    saveImports(noteImport(loadImports(), {
+      id: `imp-${Date.now().toString(36)}`,
+      at: new Date().toISOString(),
+      file,
+      counts,
+      author: actor,
+    }));
+  }, [actor]);
+
   const handleExportKml = useCallback(() => {
     const views = routeViews(scoped.planRoutes, {
       progress: live.progress,
@@ -839,6 +881,23 @@ export default function ConstructionPanel({
               <option key={r} value={r}>{JOURNAL_ROLES[r].icon} {JOURNAL_ROLES[r].label}</option>
             ))}
           </select>
+          {/* Субподрядчику показываем только его — значит надо знать, чей он. */}
+          {JOURNAL_ROLES[role].ownContractorOnly && (
+            <select
+              value={ownContractor}
+              onChange={(e) => {
+                setOwnContractor(e.target.value);
+                try { window.localStorage.setItem('optiq-own-contractor', e.target.value); } catch { /* приватный режим */ }
+              }}
+              title="Чей журнал показывать"
+              className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded-md px-2 py-1 text-[11px] text-[var(--text)] max-w-[170px]"
+            >
+              <option value="">Выберите подрядчика</option>
+              {[...new Set(journal.ground.map((e) => e.contractor).filter(Boolean))]
+                .sort((a, b) => (a as string).localeCompare(b as string, 'ru'))
+                .map((c) => <option key={c} value={c as string}>{c}</option>)}
+            </select>
+          )}
           {usesPeriod && (
             <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md">
               {(Object.keys(PERIOD_LABEL) as Period[]).map((p) => (
@@ -1369,6 +1428,7 @@ export default function ConstructionPanel({
             let next = loadJournal();
             for (const e of entries) next = addGroundEntry(next, e);
             persist(next);
+            rememberImport(sheetFile.name, { смены: entries.length });
             setSheetFile(null);
             setFlash(`Загружено строк: ${entries.length}`);
           }}
