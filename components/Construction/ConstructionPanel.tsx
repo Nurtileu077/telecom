@@ -36,6 +36,7 @@ import ChecksView from './ChecksView';
 import TimesheetView from './TimesheetView';
 import EntriesTable from './EntriesTable';
 import QuickEntryBar from './QuickEntryBar';
+import SheetImport from './SheetImport';
 import type { QuickParse } from './quickEntry';
 import { planFact } from './entriesTable';
 import { normName } from './areaImport';
@@ -136,6 +137,8 @@ export default function ConstructionPanel({
   /** Показать вкладки, которых у этой роли нет в списке по умолчанию. */
   const [allTabs, setAllTabs] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  /** Чужая книга, которую разбираем по колонкам вместе с человеком. */
+  const [sheetFile, setSheetFile] = useState<File | null>(null);
   const planRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -462,14 +465,29 @@ export default function ConstructionPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /**
+   * Загрузка книги.
+   *
+   * Сначала пробуем как нашу выгрузку — там известны и листы, и колонки.
+   * Не узнали ни одной записи — значит, это чужая таблица прораба, и её
+   * надо разбирать по колонкам вместе с человеком: заставлять его
+   * переделывать книгу под нашу форму бессмысленно.
+   */
   const handleFile = useCallback(async (file: File) => {
     setBusy(true); setError(''); setReport(null);
     try {
       const res = await importJournal(file);
+      const known = res.ground.length + res.aerial.length
+        + res.drills.length + res.orders.length;
+      if (known === 0) {
+        setSheetFile(file);
+        return;
+      }
       persist(mergeJournal(loadJournal(), res));
       setReport(res.stats);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Не удалось прочитать файл');
+    } catch {
+      // Не разобрали своим разбором — попробуем разобрать по колонкам.
+      setSheetFile(file);
     } finally { setBusy(false); }
   }, [persist]);
 
@@ -1176,6 +1194,22 @@ export default function ConstructionPanel({
         <DayReport journal={scoped} date={dayOpen} oblast={oblast || undefined}
                    onClose={() => setDayOpen(null)}
                    onPlay={onPlayDay ? () => { onPlayDay(dayOpen); setDayOpen(null); } : undefined} />
+      )}
+
+      {sheetFile && (
+        <SheetImport
+          file={sheetFile}
+          oblast={oblast || undefined}
+          author={actor}
+          onClose={() => setSheetFile(null)}
+          onDone={(entries) => {
+            let next = loadJournal();
+            for (const e of entries) next = addGroundEntry(next, e);
+            persist(next);
+            setSheetFile(null);
+            setFlash(`Загружено строк: ${entries.length}`);
+          }}
+        />
       )}
 
       {formOpen && (
