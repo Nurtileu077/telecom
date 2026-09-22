@@ -21,6 +21,8 @@ import {
 } from './fieldDocs';
 import { getPhotoBlob } from './photoStore';
 import { downloadText, downloadBlob } from '@/lib/download';
+import { toCsv, csvBlob } from '@/lib/csv';
+import { LAY_METHODS, LAY_METHOD_LABEL } from '@/types/construction';
 
 /**
  * Документы.
@@ -254,6 +256,46 @@ export default function DocsView({
                     wordPage('Справка о готовности', readinessDocHtml(readiness)))}>
             <FileDown size={14} />Справка по сёлам
           </button>
+          {/* Бухгалтерия в 1С, руководитель в Google Таблицах. Писать
+              интеграцию с каждым — годы; отдать таблицу, которую они и
+              так читают, — один файл. */}
+          {(['excel-ru', 'plain'] as const).map((dialect) => (
+            <button
+              key={dialect}
+              type="button"
+              className="btn btn-ghost text-[11.5px]"
+              disabled={report.shifts === 0}
+              title={dialect === 'excel-ru'
+                ? 'CSV для 1С и русского Excel: точка с запятой, запятая в дробях'
+                : 'CSV для Google Таблиц: запятая, точка в дробях'}
+              onClick={() => {
+                const rows = journal.ground
+                  .filter((e) => (!from || e.date >= from) && (!to || e.date <= to)
+                    && (!contractor || e.contractor === contractor))
+                  .map((e) => [
+                    e.date, e.oblast, e.rayon ?? '', e.uchastok, e.kato,
+                    e.contractor ?? '', e.column ?? '', e.smu,
+                    ...LAY_METHODS.map((m) => e.byMethod[m] ?? 0),
+                    e.drillM ?? 0, e.drillCount ?? 0, e.blowingM ?? 0,
+                    e.note ?? '', e.downtime ?? '', e.author ?? '',
+                  ]);
+                const headers = [
+                  'Дата', 'Область', 'Район', 'Участок', 'КАТО',
+                  'Подрядчик', 'Колонна', 'СМУ',
+                  ...LAY_METHODS.map((m) => LAY_METHOD_LABEL[m]),
+                  'ГНБ, м', 'Проколов', 'Задувка, м',
+                  'Примечание', 'Простой', 'Автор',
+                ];
+                downloadBlob(
+                  `Журнал ${from || 'всё'}—${to || 'всё'}.csv`,
+                  csvBlob(toCsv(headers, rows, { dialect }), dialect),
+                );
+                onFlash?.('Таблица выгружена');
+              }}
+            >
+              <FileDown size={14} />CSV {dialect === 'excel-ru' ? 'для 1С' : 'для Google'}
+            </button>
+          ))}
         </div>
         {contractors.length > 0 && (
           <div className="text-[11px] text-[var(--text-muted)]">
