@@ -43,6 +43,7 @@ import ViewPrefs from '@/components/Layout/ViewPrefs';
 import HelpSheet from './HelpSheet';
 import MaintenanceView from './MaintenanceView';
 import { loadImports, saveImports, noteImport } from './backup';
+import { demoJournal } from './demoData';
 import {
   loadFilters, saveFilters, upsertFilter, removeFilter, describeFilter,
   type SavedFilter,
@@ -136,6 +137,15 @@ export default function ConstructionPanel({
   /** Справка: клавиши и словарь. Открывается по «?». */
   const [helpOpen, setHelpOpen] = useState(false);
   /**
+   * Показательный режим.
+   *
+   * Данные живут только в памяти вкладки: настоящий журнал не трогаем ни
+   * на секунду, а выйти можно в любой момент и ничего не потерять.
+   */
+  const [demoOn, setDemoOn] = useState(false);
+  const demoOnRef = useRef(false);
+  useEffect(() => { demoOnRef.current = demoOn; }, [demoOn]);
+  /**
    * Сохранённые разрезы.
    *
    * «Акмолинская, Дозер, июль» набирают каждое утро заново, хотя разрез
@@ -217,6 +227,9 @@ export default function ConstructionPanel({
 
   const write = useCallback((next: JournalState) => {
     setJournal(next);
+    // В показе не сохраняем: выдуманные смены не должны попасть в
+    // настоящий журнал ни при каких обстоятельствах.
+    if (demoOnRef.current) return;
     if (!saveJournal(next)) {
       setError('Данные показаны, но не сохранены: переполнено хранилище браузера. Выгрузите журнал в Excel и очистите старые проекты.');
     } else {
@@ -981,6 +994,20 @@ export default function ConstructionPanel({
         </div>
       )}
 
+      {/* Показательные данные: видно всегда, выйти можно в любой момент. */}
+      {demoOn && (
+        <div className="flex items-center gap-2 px-3 md:px-4 py-1.5 text-[11.5px]
+                        bg-[var(--warn)]/15 text-[var(--warn)] shrink-0" data-print="hide">
+          <span>
+            Показательные данные — выдуманный объект. Настоящий журнал не тронут.
+          </span>
+          <button type="button" className="btn btn-ghost text-[11px] ml-auto"
+                  onClick={() => { setDemoOn(false); setJournal(loadJournal()); }}>
+            Выйти из показа
+          </button>
+        </div>
+      )}
+
       {/* Содержимое */}
       <div className="flex-1 overflow-y-auto px-3 md:px-4 py-3 md:py-4">
         {error && (
@@ -1055,7 +1082,18 @@ export default function ConstructionPanel({
         )}
 
         {empty ? (
-          <EmptyJournal onPick={() => fileRef.current?.click()} onAdd={() => setFormOpen(true)} busy={busy} />
+          <EmptyJournal
+            onPick={() => fileRef.current?.click()}
+            onAdd={() => setFormOpen(true)}
+            busy={busy}
+            onDemo={() => {
+              // Показательный журнал не сохраняем в хранилище: настоящий
+              // остаётся нетронутым, а выход из показа ничего не теряет.
+              setDemoOn(true);
+              setJournal(demoJournal());
+              setFlash('Показательные данные — настоящий журнал не тронут');
+            }}
+          />
         ) : view === 'today' ? (
           <TodayView
             journal={live}
@@ -1992,7 +2030,9 @@ function MaterialBlock({ byMaterial }: { byMaterial: Record<string, number> }) {
   );
 }
 
-function EmptyJournal({ onPick, onAdd, busy }: { onPick: () => void; onAdd: () => void; busy: boolean }) {
+function EmptyJournal({ onPick, onAdd, onDemo, busy }: {
+  onPick: () => void; onAdd: () => void; onDemo: () => void; busy: boolean;
+}) {
   return (
     <div className="h-full flex items-center justify-center py-12">
       <div className="max-w-md text-center flex flex-col items-center gap-3">
@@ -2013,6 +2053,15 @@ function EmptyJournal({ onPick, onAdd, busy }: { onPick: () => void; onAdd: () =
             <Plus size={15} />Внести день вручную
           </button>
         </div>
+        {/* Пустая система ничего о себе не рассказывает: человек видит
+            «записей нет» и закрывает её. */}
+        <button type="button" className="btn btn-ghost text-[11.5px]" onClick={onDemo}>
+          Посмотреть на показательных данных
+        </button>
+        <p className="text-[10.5px] text-[var(--text-muted)]">
+          Это выдуманный объект: Зерендинский район, три села, месяц смен.
+          Настоящий журнал при этом не трогается, выйти можно в любой момент.
+        </p>
       </div>
     </div>
   );
