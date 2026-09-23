@@ -19,6 +19,7 @@ import {
   hiddenWorksPage, hiddenWorksFile, remarksFromDeviations, remarksPage,
   photoReportPage, letterPage, measureProtocolPage, measureProtocolFile,
 } from './fieldDocs';
+import { buildScheme, schemeDocPage, schemeFileName } from './asBuilt';
 import { getPhotoBlob } from './photoStore';
 import { downloadText, downloadBlob } from '@/lib/download';
 import { toCsv, csvBlob } from '@/lib/csv';
@@ -92,6 +93,7 @@ export default function DocsView({
 }: Props) {
   const [busy, setBusy] = useState(false);
   const [prices, setPrices] = useState<WorkPrices>({});
+  const [schemeRouteId, setSchemeRouteId] = useState('');
 
   const registry = useMemo(() => actRegistry(journal.actFields ?? {}), [journal.actFields]);
   const sheet = useMemo(
@@ -115,6 +117,33 @@ export default function DocsView({
     () => [...new Set(journal.ground.map((e) => e.contractor).filter((v): v is string => !!v))]
       .sort((a, b) => a.localeCompare(b, 'ru')),
     [journal.ground],
+  );
+
+  /**
+   * Трасса под схему.
+   *
+   * По умолчанию — та, что относится к участку, который сейчас закрывают:
+   * схему просят именно под сдачу. Если такой нет, берём первую: пустой
+   * выбор в списке хуже, чем не тот, который можно переключить.
+   */
+  const schemeRoute = useMemo(() => {
+    const byId = journal.planRoutes.find((r) => r.id === schemeRouteId);
+    if (byId) return byId;
+    const uchastok = report.sections[0]?.uchastok;
+    return journal.planRoutes.find((r) => r.uchastok === uchastok) ?? journal.planRoutes[0];
+  }, [journal.planRoutes, schemeRouteId, report.sections]);
+
+  // Объекты берём только своего участка: на соседнем стоят свои муфты, и
+  // на схеме они окажутся чужими отметками с правдоподобным метражом.
+  const schemeObjects = useMemo(() => {
+    if (!schemeRoute) return [];
+    const own = journal.objects.filter((o) => o.uchastok === schemeRoute.uchastok);
+    return own.length > 0 ? own : journal.objects;
+  }, [journal.objects, schemeRoute]);
+
+  const scheme = useMemo(
+    () => (schemeRoute ? buildScheme(schemeRoute, schemeObjects) : null),
+    [schemeRoute, schemeObjects],
   );
 
   function save(name: string, html: string) {
@@ -468,6 +497,65 @@ export default function DocsView({
           Цифры в письмо подставляются из журнала: перенесённые руками, они
           через неделю перестают сходиться с актом.
         </div>
+      </div>
+
+      {/* Исполнительная схема */}
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-3 space-y-2">
+        <div className="text-[13px] font-semibold text-[var(--text)]">Исполнительная схема</div>
+        {journal.planRoutes.length === 0 ? (
+          <div className="text-[11.5px] text-[var(--text-muted)]">
+            Схему рисуем по трассе. Загрузите KML — и она соберётся сама.
+          </div>
+        ) : (
+          <>
+            <div className="flex gap-1.5 items-center flex-wrap">
+              <select
+                value={schemeRoute?.id ?? ''}
+                onChange={(e) => setSchemeRouteId(e.target.value)}
+                aria-label="Трасса для схемы"
+                className="min-w-0 flex-1 bg-[var(--bg-canvas)] border border-[var(--border)]
+                           rounded px-2 py-1 text-[11.5px] text-[var(--text)]"
+              >
+                {journal.planRoutes.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name} · {(r.lengthM / 1000).toFixed(1).replace('.', ',')} км
+                  </option>
+                ))}
+              </select>
+              <button type="button" className="btn btn-ghost text-[11.5px]"
+                      disabled={!scheme}
+                      onClick={() => scheme && save(
+                        schemeFileName(scheme.route, to),
+                        schemeDocPage({
+                          scheme,
+                          number: registry.find((r) => r.uchastok === schemeRoute?.uchastok)?.number,
+                          date: to,
+                          contractor,
+                          customer: 'АО «Транстелеком»',
+                          oblast: schemeObjects[0]?.oblast,
+                          rayon: schemeObjects[0]?.rayon,
+                        }),
+                      )}>
+                <FileDown size={14} />Схема
+              </button>
+            </div>
+            {scheme && (
+              <div className="text-[11px] text-[var(--text-muted)]">
+                Отметок: {scheme.marks.length}, пролётов: {scheme.spans.length},
+                {' '}протяжённость {(scheme.totalM / 1000).toFixed(2).replace('.', ',')} км.
+              </div>
+            )}
+            {scheme && scheme.skipped.length > 0 && (
+              <div className="text-[11px] text-[var(--warn)]">
+                Не отнесены к трассе: {scheme.skipped.join('; ')}. Проверьте координаты.
+              </div>
+            )}
+            <div className="text-[10.5px] text-[var(--text-muted)]">
+              Линейка, а не карта: важен порядок отметок и расстояния между ними —
+              так схему и читают на объекте.
+            </div>
+          </>
+        )}
       </div>
 
       {/* Реестр актов */}
