@@ -1,6 +1,9 @@
 'use client';
-import { useMemo, useState } from 'react';
-import { Plus, Trash2, Copy, AlertTriangle, Phone } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Plus, Trash2, Copy, AlertTriangle, Phone, Bell } from 'lucide-react';
+import {
+  notifyState, askNotify, notifyOnce, type NotifyPermission,
+} from '@/lib/notify';
 import {
   RECORD_KINDS, RECORD_KIND_LIST, ofKind, countByKind, reminders,
   effectiveStatus, daysLeft, contactsText,
@@ -31,11 +34,32 @@ const STATUSES: RecordStatus[] = ['открыто', 'в работе', 'закр
 
 export default function SiteRecordsView({ records, author, onUpsert, onRemove, onFlash }: Props) {
   const [kind, setKind] = useState<RecordKind>('permit');
+  const [notifyPerm, setNotifyPerm] = useState<NotifyPermission>('unsupported');
+  useEffect(() => { setNotifyPerm(notifyState()); }, []);
 
   const counts = useMemo(() => countByKind(records), [records]);
   const soon = useMemo(() => reminders(records), [records]);
   const list = useMemo(() => ofKind(records, kind), [records, kind]);
   const spec = RECORD_KINDS[kind];
+
+  /**
+   * Напоминание в браузере.
+   *
+   * Журнал держат открытым во вкладке весь день, а срок подходит молча:
+   * чтобы его заметить, надо зайти в раздел, куда как раз и не заходят.
+   * Работает только пока страница открыта — без своего сервера
+   * разбудить закрытое приложение нельзя.
+   */
+  useEffect(() => {
+    if (notifyPerm !== 'granted' || soon.length === 0) return;
+    const today = new Date().toISOString().slice(0, 10);
+    notifyOnce(soon.map((r) => ({
+      id: r.record.id,
+      title: r.days < 0 ? 'Просрочено' : 'Скоро истекает',
+      body: `${r.record.title}${r.record.who ? ` · ${r.record.who}` : ''}`
+        + (r.days < 0 ? ` — ${-r.days} дн назад` : ` — через ${r.days} дн`),
+    })), today);
+  }, [notifyPerm, soon]);
 
   function add() {
     const title = window.prompt(`${spec.label}: что это? (${spec.hint})`, '');
@@ -80,6 +104,20 @@ export default function SiteRecordsView({ records, author, onUpsert, onRemove, o
         <div className="rounded-lg border border-[var(--warn)]/40 bg-[var(--warn)]/10 p-3 space-y-1">
           <div className="flex items-center gap-1.5 text-[12.5px] font-semibold text-[var(--warn)]">
             <AlertTriangle size={14} />Требует внимания: {soon.length}
+            {notifyPerm === 'default' && (
+              <button
+                type="button"
+                className="btn btn-ghost text-[11px] ml-auto"
+                title="Показывать напоминание, пока журнал открыт во вкладке"
+                onClick={async () => {
+                  const next = await askNotify();
+                  setNotifyPerm(next);
+                  if (next === 'granted') onFlash?.('Буду напоминать, пока журнал открыт');
+                }}
+              >
+                <Bell size={12} />Напоминать
+              </button>
+            )}
           </div>
           {soon.slice(0, 8).map((rem) => (
             <div key={rem.record.id} className="flex items-baseline gap-2 text-[11.5px]">
