@@ -44,6 +44,8 @@ import HelpSheet from './HelpSheet';
 import MaintenanceView from './MaintenanceView';
 import { loadImports, saveImports, noteImport } from './backup';
 import { demoJournal } from './demoData';
+import { reminders } from './siteRecords';
+import { hasNews, lastSeenVersion, markVersionSeen } from '@/lib/version';
 import {
   loadFilters, saveFilters, upsertFilter, removeFilter, describeFilter,
   type SavedFilter,
@@ -142,6 +144,16 @@ export default function ConstructionPanel({
    * Данные живут только в памяти вкладки: настоящий журнал не трогаем ни
    * на секунду, а выйти можно в любой момент и ничего не потерять.
    */
+  /**
+   * Версия сменилась с прошлого захода.
+   *
+   * «У меня не так, как у тебя» кончается, когда обоим видно, что
+   * версия другая. Отметка гаснет, как только человек открыл «что
+   * нового»: значок, который горит всегда, перестаёт значить что-либо.
+   */
+  const [news, setNews] = useState(false);
+  useEffect(() => { setNews(hasNews(lastSeenVersion())); }, []);
+
   const [demoOn, setDemoOn] = useState(false);
   const demoOnRef = useRef(false);
   useEffect(() => { demoOnRef.current = demoOn; }, [demoOn]);
@@ -184,6 +196,27 @@ export default function ConstructionPanel({
   const [role, setRole] = useState<JournalRole>('mkt');
   /** Показать вкладки, которых у этой роли нет в списке по умолчанию. */
   const [allTabs, setAllTabs] = useState(false);
+  /**
+   * Разделы, спрятанные руками.
+   *
+   * У каждого есть два-три, в которые он не заходит никогда. Живут на
+   * устройстве: это настройка вида, а не право доступа.
+   */
+  const [hiddenViews, setHiddenViews] = useState<string[]>([]);
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem('optiq-hidden-views');
+      const v = raw ? JSON.parse(raw) : [];
+      if (Array.isArray(v)) setHiddenViews(v.filter((x) => typeof x === 'string'));
+    } catch { /* приватный режим */ }
+  }, []);
+  const toggleHiddenView = useCallback((v: string) => {
+    setHiddenViews((prev) => {
+      const next = prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v];
+      try { window.localStorage.setItem('optiq-hidden-views', JSON.stringify(next)); } catch { /* приватный режим */ }
+      return next;
+    });
+  }, []);
   const fileRef = useRef<HTMLInputElement>(null);
   /** Чужая книга, которую разбираем по колонкам вместе с человеком. */
   const [sheetFile, setSheetFile] = useState<File | null>(null);
@@ -709,6 +742,9 @@ export default function ConstructionPanel({
     [scoped.ground, scoped.planRoutes],
   );
 
+  /** О чём пора напомнить: сроки разрешений и допусков. */
+  const recordReminders = useMemo(() => reminders(scoped.records), [scoped.records]);
+
   const pending = useMemo(() => pendingCorrections(journal), [journal]);
   const openDevs = useMemo(() => openDeviations(journal), [journal]);
   const tasks = useMemo(
@@ -760,9 +796,20 @@ export default function ConstructionPanel({
     ['checks', 'Проверки'], ['timesheet', 'Табель'],
   ];
   const roleViews = new Set(JOURNAL_ROLES[role].views);
-  const shownViews = allTabs
+  /**
+   * Что показывать вкладками.
+   *
+   * Роль убирает чужое, а спрятанное руками убирает и своё: у каждого
+   * есть два-три раздела, в которые он не заходит никогда, и они всё
+   * равно занимают место.
+   *
+   * Текущая вкладка видна всегда — иначе, спрятав её, человек потеряет
+   * то, что сейчас открыто.
+   */
+  const shownViews = (allTabs
     ? ALL_VIEWS
-    : ALL_VIEWS.filter(([v]) => roleViews.has(v) || v === view);
+    : ALL_VIEWS.filter(([v]) => roleViews.has(v) || v === view)
+  ).filter(([v]) => !hiddenViews.includes(v) || v === view);
 
   return (
     <div className="fixed inset-0 z-[9998] bg-[var(--bg-canvas)] flex flex-col journal-panel">
@@ -859,10 +906,29 @@ export default function ConstructionPanel({
               const badge = v === 'corrections' ? pending.length
                 : v === 'deviations' ? openDevs.length
                 : v === 'materials' ? lowMaterials.length
+                : v === 'records' ? recordReminders.length
+                : v === 'maintenance' ? (news ? 1 : 0)
                 : v === 'stages' ? handoffs.length : 0;
               return (
-                <button key={v} type="button" onClick={() => setView(v)}
+                <button key={v} type="button" onClick={() => {
+                    setView(v);
+                    if (v === 'maintenance' && news) { markVersionSeen(); setNews(false); }
+                  }}
+                  // Правой кнопкой — спрятать: у каждого есть разделы,
+                  // в которые он не заходит никогда.
+                  onContextMenu={(ev) => {
+                    ev.preventDefault();
+                    if (v === view) return;
+                    toggleHiddenView(v);
+                    setFlash(hiddenViews.includes(v)
+                      ? `«${label}» снова виден`
+                      : `«${label}» спрятан — вернуть через «Ещё»`);
+                  }}
+                  title={hiddenViews.includes(v)
+                    ? 'Правой кнопкой — вернуть в список'
+                    : 'Правой кнопкой — спрятать раздел'}
                   className={`px-2.5 py-1 text-[11px] rounded transition-colors inline-flex items-center gap-1 ${
+                    hiddenViews.includes(v) ? 'opacity-50 ' : ''}${
                     view === v ? 'bg-[var(--accent-dim)] text-[var(--accent)] font-medium' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}>
                   {label}
                   {badge > 0 && (
@@ -878,6 +944,13 @@ export default function ConstructionPanel({
                       title="Показать все разделы журнала"
                       className="px-2.5 py-1 text-[11px] rounded text-[var(--text-muted)] hover:text-[var(--text)]">
                 Ещё
+              </button>
+            )}
+            {allTabs && (
+              <button type="button" onClick={() => setAllTabs(false)}
+                      title="Оставить только свои разделы"
+                      className="px-2.5 py-1 text-[11px] rounded text-[var(--text-muted)] hover:text-[var(--text)]">
+                Свернуть
               </button>
             )}
           </div>

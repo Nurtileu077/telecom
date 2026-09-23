@@ -23,3 +23,28 @@ export const WHATS_NEW: string[] = [
   'План на неделю и наряд, который копируется в чат бригады',
   'Светлая тема — на солнце тёмная не читается',
 ];
+
+/**
+ * Что человек видел в прошлый раз.
+ *
+ * «У меня не так, как у тебя» кончается, когда обоим видно, что версия
+ * сменилась. Показываем отметку один раз на версию — не на каждый
+ * заход: значок, который горит всегда, перестаёт значить что-либо.
+ */
+const SEEN_KEY = 'optiq-seen-version';
+
+export function lastSeenVersion(): string | null {
+  if (typeof window === 'undefined') return null;
+  try { return window.localStorage.getItem(SEEN_KEY); } catch { return null; }
+}
+
+export function markVersionSeen(version = APP_VERSION): void {
+  if (typeof window === 'undefined') return;
+  try { window.localStorage.setItem(SEEN_KEY, version); } catch { /* приватный режим */ }
+}
+
+/** Стоит ли показать «что нового». Первый заход — не новость, а начало. */
+export function hasNews(seen: string | null, current = APP_VERSION): boolean {
+  if (seen === null) return false;
+  return seen !== current;
+}
