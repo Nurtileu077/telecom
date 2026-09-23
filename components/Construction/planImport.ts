@@ -52,12 +52,13 @@ export interface RawPoint {
 export async function importPlanFile(
   file: File,
   orders: SettlementOrder[] = [],
+  onProgress?: (done: number, total: number) => void,
 ): Promise<PlanImportResult & {
   areas: AreaImportResult;
   stats: KmlParseStats;
   points: RawPoint[];
 }> {
-  const { lines, polygons, structuredPoints, stats } = await importKmzRaw(file);
+  const { lines, polygons, structuredPoints, stats } = await importKmzRaw(file, onProgress);
   const routes = buildRoutes(lines, file.name);
   return {
     ...routes,

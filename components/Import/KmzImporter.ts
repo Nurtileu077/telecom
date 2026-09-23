@@ -144,14 +144,25 @@ function parseCoordList(text: string): [number, number][] {
   return out;
 }
 
-function parseKmlText(
-  kmlText: string,
-  opts: ParseOpts = {},
-): {
+interface KmlParsed {
   subscribers: Subscriber[]; lines: KmlRawLine[];
   structuredPoints: KmlPoint[]; structuredLines: KmlLine[];
   polygons: KmlRawPolygon[];
   stats: KmlParseStats;
+}
+
+/**
+ * Разбор в два шага: сначала готовим обработчик метки, потом его гоняют.
+ *
+ * Метки можно перебрать разом — так быстрее, — а можно порциями, отдавая
+ * браузеру управление между ними. Второе нужно на больших файлах: в
+ * рабочем KML тысяча с лишним меток, и разбор всех подряд подвешивает
+ * вкладку на секунды, а на слабом планшете — на десятки секунд.
+ */
+function makeKmlParser(kmlText: string, opts: ParseOpts = {}): {
+  count: number;
+  step: (i: number) => void;
+  done: () => KmlParsed;
 } {
   const parser = new DOMParser();
   const doc = parser.parseFromString(kmlText, 'text/xml');
@@ -166,7 +177,7 @@ function parseKmlText(
   const fallback = opts.defaultDistrict ?? 'Imported';
   const placemarks = doc.querySelectorAll('Placemark');
 
-  for (const pm of placemarks) {
+  const handle = (pm: Element) => {
     const folder = folderNameOf(pm, fallback);
     const folderPath = folderPathOf(pm);
     const name = pm.querySelector('name')?.textContent?.trim() || '';
@@ -213,18 +224,57 @@ function parseKmlText(
         });
       }
     });
-  }
+  };
 
   return {
-    subscribers, lines, structuredPoints, structuredLines, polygons,
-    stats: {
-      placemarks: placemarks.length,
-      points: structuredPoints.length,
-      lines: lines.length,
-      polygons: polygons.length,
-      droppedCoords: lastDropped,
-    },
+    count: placemarks.length,
+    step: (i: number) => { handle(placemarks[i]); },
+    done: () => ({
+      subscribers, lines, structuredPoints, structuredLines, polygons,
+      stats: {
+        placemarks: placemarks.length,
+        points: structuredPoints.length,
+        lines: lines.length,
+        polygons: polygons.length,
+        droppedCoords: lastDropped,
+      },
+    }),
   };
+}
+
+/** Разбор разом — для файлов, которые и так читаются мгновенно. */
+function parseKmlText(kmlText: string, opts: ParseOpts = {}): KmlParsed {
+  const p = makeKmlParser(kmlText, opts);
+  for (let i = 0; i < p.count; i += 1) p.step(i);
+  return p.done();
+}
+
+/** Сколько меток разбираем, не отдавая управление браузеру. */
+const CHUNK = 400;
+
+/**
+ * Разбор порциями.
+ *
+ * Между порциями отдаём управление браузеру: страница продолжает
+ * отвечать, а человек видит, что файл читается, а не завис.
+ */
+export async function parseKmlTextChunked(
+  kmlText: string,
+  opts: ParseOpts = {},
+  onProgress?: (done: number, total: number) => void,
+): Promise<KmlParsed> {
+  const p = makeKmlParser(kmlText, opts);
+  for (let i = 0; i < p.count; i += 1) {
+    p.step(i);
+    if ((i + 1) % CHUNK === 0) {
+      onProgress?.(i + 1, p.count);
+      // Один кадр браузеру: без этого «порции» ничего не дают.
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => { setTimeout(resolve, 0); });
+    }
+  }
+  onProgress?.(p.count, p.count);
+  return p.done();
 }
 
 export async function importKmz(file: File): Promise<Subscriber[]> {
@@ -234,7 +284,10 @@ export async function importKmz(file: File): Promise<Subscriber[]> {
   return parseKmlText(text, { defaultDistrict: fallback }).subscribers;
 }
 
-export async function importKmzRaw(file: File): Promise<{
+export async function importKmzRaw(
+  file: File,
+  onProgress?: (done: number, total: number) => void,
+): Promise<{
   subscribers: Subscriber[];
   lines: KmlRawLine[];
   structuredPoints: KmlPoint[];
@@ -245,7 +298,9 @@ export async function importKmzRaw(file: File): Promise<{
   idCounter = 0;
   const text = await readKmlText(file);
   const fallback = file.name.replace(/\.(kml|kmz)$/i, '').trim() || 'Imported';
-  return parseKmlText(text, { defaultDistrict: fallback });
+  // Порциями: в рабочем файле тысяча с лишним меток, и разбор всех подряд
+  // подвешивает вкладку, а на планшете — надолго.
+  return parseKmlTextChunked(text, { defaultDistrict: fallback }, onProgress);
 }
 
 export async function importKmzBatchRaw(files: File[]): Promise<{

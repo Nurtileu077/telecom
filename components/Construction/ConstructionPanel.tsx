@@ -430,7 +430,11 @@ export default function ConstructionPanel({
     setBusy(true); setError(''); setReport(null);
     try {
       const base = loadJournal();
-      const res = await importPlanFile(file, base.orders);
+      const res = await importPlanFile(file, base.orders, (done, total) => {
+        // Большой файл читается заметно долго: молчащая кнопка читается
+        // как «зависло», и человек жмёт её второй раз.
+        if (total > 800) setFlash(`Читаю ${file.name}: ${done} из ${total}`);
+      });
       if (res.routes.length === 0 && res.areas.areas.length === 0) {
         // Объясняем, что именно было в файле: «ничего не загрузилось» без
         // причины заставляет грузить тот же файл снова и снова.
