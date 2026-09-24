@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { findOverlaps, sampleRoute, nearby } from './overlaps';
+import { findOverlaps, sampleRoute, nearby, type OverlapRoute } from './overlaps';
 import { routeLengthM } from './routeProgress';
 
 /** Прямая на восток длиной примерно 3,3 км. */
@@ -99,5 +99,73 @@ describe('nearby', () => {
 
   it('вокруг пусто — пустой ответ', () => {
     expect(nearby({ lat: 40, lon: 60 }, items)).toEqual([]);
+  });
+});
+
+/**
+ * Границы сетки не должны влиять на ответ. Раньше точка сравнивалась
+ * только со своей клеткой, и две линии, идущие вдоль границы, теряли до
+ * половины совпадений: дубль либо недосчитывался, либо не находился.
+ */
+describe('дубль находится независимо от того, куда легли клетки', () => {
+  /** Прямая на восток от заданной точки. */
+  function line(id: string, lat: number, lon0: number, lon1: number): OverlapRoute {
+    return { id, name: id, coords: [[lat, lon0], [lat, lon1]] };
+  }
+
+  it('совпадающие линии дают почти всю свою длину', () => {
+    const a = line('a', 52, 71, 71.05);
+    const b = line('b', 52, 71, 71.05);
+    const [pair] = findOverlaps([a, b], { stepM: 40, toleranceM: 25 });
+    expect(pair).toBeTruthy();
+    expect(pair.share).toBeGreaterThan(0.9);
+  });
+
+  it('ответ не зависит от сдвига линий по карте', () => {
+    const shares: number[] = [];
+    // Сдвигаем пару по долготе мелким шагом: на каждом сдвиге линии
+    // ложатся на сетку клеток иначе.
+    for (let k = 0; k < 12; k += 1) {
+      const lon = 71 + k * 0.00037;
+      const [pair] = findOverlaps(
+        [line('a', 52, lon, lon + 0.05), line('b', 52, lon, lon + 0.05)],
+        { stepM: 40, toleranceM: 25 },
+      );
+      shares.push(pair?.share ?? 0);
+    }
+    expect(Math.min(...shares)).toBeGreaterThan(0.9);
+  });
+
+  it('то же при сдвиге по широте', () => {
+    const shares: number[] = [];
+    for (let k = 0; k < 12; k += 1) {
+      const lat = 52 + k * 0.00023;
+      const [pair] = findOverlaps(
+        [line('a', lat, 71, 71.05), line('b', lat, 71, 71.05)],
+        { stepM: 40, toleranceM: 25 },
+      );
+      shares.push(pair?.share ?? 0);
+    }
+    expect(Math.min(...shares)).toBeGreaterThan(0.9);
+  });
+
+  it('линии в стороне друг от друга дублем не считаются', () => {
+    // 0,01° широты ≈ 1,1 км — это разные трассы.
+    const pairs = findOverlaps(
+      [line('a', 52, 71, 71.05), line('b', 52.01, 71, 71.05)],
+      { stepM: 40, toleranceM: 25 },
+    );
+    expect(pairs).toHaveLength(0);
+  });
+
+  it('общий кусок не длиннее того, что видит каждая линия', () => {
+    // Вторая линия короче: общий кусок мерится по ней, а не по первой.
+    const [pair] = findOverlaps(
+      [line('a', 52, 71, 71.05), line('b', 52, 71, 71.015)],
+      { stepM: 40, toleranceM: 25, minSharedM: 100 },
+    );
+    expect(pair).toBeTruthy();
+    expect(pair.sharedM).toBeLessThanOrEqual(1100);
+    expect(pair.sharedM).toBeGreaterThan(900);
   });
 });

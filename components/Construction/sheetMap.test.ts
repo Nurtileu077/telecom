@@ -131,3 +131,42 @@ describe('missingRequired', () => {
     expect(required).toEqual(['date', 'uchastok']);
   });
 });
+
+/**
+ * Excel отдаёт дату полночью по местному времени. Взять от неё
+ * toISOString значит в Казахстане отмотать день назад: смена за 25 июля
+ * ложится в журнал двадцать четвёртым, а по этим датам потом собирают
+ * акт за период.
+ */
+describe('дата из ячейки', () => {
+  const header = ['Дата', 'Участок', 'Проложено, м'];
+  const map = guessMapping(header);
+
+  function dateOf(cell: unknown): string {
+    const r = rowsToEntries([header, [cell, 'Исаковка', 400]], 0, map,
+      { oblast: 'Акмолинская область' });
+    return r.entries[0]?.date ?? '';
+  }
+
+  it('дата-ячейка не съезжает на день назад', () => {
+    // Такую Date отдаёт xlsx при cellDates: полночь по местному времени.
+    expect(dateOf(new Date(2026, 6, 25))).toBe('2026-07-25');
+    expect(dateOf(new Date(2026, 0, 1))).toBe('2026-01-01');
+  });
+
+  it('текстом дату тоже читает', () => {
+    expect(dateOf('25.07.2026')).toBe('2026-07-25');
+    expect(dateOf('2026-07-25')).toBe('2026-07-25');
+  });
+
+  it('дня, которого не было, в журнал не кладёт', () => {
+    expect(dateOf('31.04.2026')).toBe('');
+    expect(dateOf('30.02.2026')).toBe('');
+    expect(dateOf('32.13.2026')).toBe('');
+  });
+
+  it('числом Excel дату тоже понимает', () => {
+    // 45 858 — 25 июля 2025 года по счёту дней от 1899-12-30.
+    expect(dateOf(String(45_863))).toBe('2025-07-25');
+  });
+});

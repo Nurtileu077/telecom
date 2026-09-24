@@ -126,3 +126,42 @@ describe('quickEntryReady', () => {
     expect(quickEntryReady(parseQuickEntry('Зеренда — Серафимовка ГНБ 72', CTX))).toBe(true);
   });
 });
+
+/**
+ * «25.07» — это дата, а «1.5» в «1.5 км баром» — длина. Раньше вторую
+ * читали датой, а первую — метрами: смена уходила на 1 мая и в 25 метров.
+ */
+describe('дата против длины', () => {
+  const today = new Date('2026-07-28T00:00:00.000Z');
+
+  it('число с единицей измерения датой не считается', () => {
+    expect(parseDate('бар 1.5 км', today)).toBeUndefined();
+    expect(parseDate('прошли 2.5 м вручную', today)).toBeUndefined();
+  });
+
+  it('с годом это всё-таки дата', () => {
+    expect(parseDate('1.5.2026 бар 400', today)).toBe('2026-05-01');
+  });
+
+  it('обычная дата по-прежнему разбирается', () => {
+    expect(parseDate('25.07 бар 400', today)).toBe('2026-07-25');
+    expect(parseDate('25.07.2025 бар 400', today)).toBe('2025-07-25');
+  });
+
+  it('дня, которого не было, не принимает', () => {
+    expect(parseDate('31.04 бар 400', today)).toBeUndefined();
+    expect(parseDate('30.02.2026 бар 400', today)).toBeUndefined();
+    expect(parseDate('32.01 бар 400', today)).toBeUndefined();
+  });
+
+  it('дату не принимает за метры', () => {
+    const r = parseQuickEntry('25.07 бар 480', { today });
+    expect(r.date).toBe('2026-07-25');
+    expect(r.byMethod?.['бар']).toBe(480);
+  });
+
+  it('и когда дата стоит прямо перед видом работ', () => {
+    const r = parseQuickEntry('25.07 кабелеукладчик 1200 м', { today });
+    expect(r.byMethod?.['кабелеукладчик']).toBe(1200);
+  });
+});

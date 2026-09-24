@@ -159,16 +159,31 @@ export interface SheetImportResult {
   skipped: { row: number; why: string }[];
 }
 
+/** День календаря — существует ли он вообще. */
+function realDate(year: number, month: number, day: number): string {
+  if (month < 1 || month > 12 || day < 1 || day > 31) return '';
+  // 31 апреля и 30 февраля в таблицах встречаются: их набирают руками.
+  // Принимать их молча значит положить в журнал день, которого не было.
+  const d = new Date(Date.UTC(year, month - 1, day));
+  if (d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) return '';
+  return d.toISOString().slice(0, 10);
+}
+
 function cellDate(v: unknown): string {
-  if (v instanceof Date && !Number.isNaN(v.getTime())) return v.toISOString().slice(0, 10);
+  if (v instanceof Date && !Number.isNaN(v.getTime())) {
+    // Excel отдаёт дату полночью по местному времени. Взять от неё
+    // toISOString значит в Казахстане отмотать день назад: смена за
+    // 25 июля ляжет в журнал двадцать четвёртым.
+    return realDate(v.getFullYear(), v.getMonth() + 1, v.getDate());
+  }
   const s = String(v ?? '').trim();
   if (!s) return '';
-  const iso = s.match(/^(20\d{2})-(\d{2})-(\d{2})/);
-  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const iso = s.match(/^(20\d{2})-(\d{1,2})-(\d{1,2})/);
+  if (iso) return realDate(Number(iso[1]), Number(iso[2]), Number(iso[3]));
   const dotted = s.match(/^(\d{1,2})[./](\d{1,2})[./](\d{2,4})/);
   if (dotted) {
     const year = Number(dotted[3]) < 100 ? 2000 + Number(dotted[3]) : Number(dotted[3]);
-    return `${year}-${dotted[2].padStart(2, '0')}-${dotted[1].padStart(2, '0')}`;
+    return realDate(year, Number(dotted[2]), Number(dotted[1]));
   }
   // Excel хранит даты числом дней от 1899-12-30.
   const serial = Number(s);

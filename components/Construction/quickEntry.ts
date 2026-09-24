@@ -101,19 +101,39 @@ export function parseDate(text: string, today = new Date()): string | undefined 
   const iso = t.match(/\b(20\d{2})-(\d{2})-(\d{2})\b/);
   if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
 
-  const dotted = t.match(/\b(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?\b/);
-  if (dotted) {
-    const day = Number(dotted[1]);
-    const month = Number(dotted[2]);
-    if (day < 1 || day > 31 || month < 1 || month > 12) return undefined;
-    let year = today.getUTCFullYear();
-    if (dotted[3]) {
-      const raw = Number(dotted[3]);
-      year = raw < 100 ? 2000 + raw : raw;
-    }
-    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  /**
+   * «25.07» — это дата, а «1.5» в «1.5 км баром» — это длина. Отличить
+   * их можно по соседям: за числом с точкой, если это длина, почти
+   * всегда стоит единица измерения. Даты единицами не меряют.
+   */
+  for (let i = 0; i < ws.length; i += 1) {
+    const d = dottedDate(ws[i], ws[i + 1], today);
+    if (d) return d;
   }
   return undefined;
+}
+
+const LENGTH_UNITS = new Set(['м', 'метр', 'метра', 'метров', 'км', 'километр', 'километра', 'километров']);
+
+function dottedDate(token: string, next: string | undefined, today: Date): string | undefined {
+  const m = token.match(/^(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?$/);
+  if (!m) return undefined;
+  // Год написан — значит это точно дата, и единица после неё ничего не
+  // меняет. Без года «1.5 км» надёжнее прочесть как полтора километра.
+  if (!m[3] && next && LENGTH_UNITS.has(next)) return undefined;
+
+  const day = Number(m[1]);
+  const month = Number(m[2]);
+  let year = today.getUTCFullYear();
+  if (m[3]) {
+    const raw = Number(m[3]);
+    year = raw < 100 ? 2000 + raw : raw;
+  }
+  if (month < 1 || month > 12 || day < 1 || day > 31) return undefined;
+  // 31 апреля не бывает: это опечатка, а не дата.
+  const d = new Date(Date.UTC(year, month - 1, day));
+  if (d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) return undefined;
+  return d.toISOString().slice(0, 10);
 }
 
 function findKnown(text: string, list: string[] | undefined): string | undefined {
@@ -132,6 +152,10 @@ function findKnown(text: string, list: string[] | undefined): string | undefined
 function numberNear(tokens: string[], at: number): number | undefined {
   const asNum = (s: string | undefined): number | undefined => {
     if (!s) return undefined;
+    // «25.07 бар 480»: дата стоит перед словом и выглядит числом. Взять
+    // её за метры значит записать смену в 25 метров и потерять
+    // настоящие 480.
+    if (/^\d{1,2}[./]\d{1,2}([./]\d{2,4})?$/.test(s)) return undefined;
     const v = Number(s.replace(',', '.').replace(/м$/, ''));
     return Number.isFinite(v) && v > 0 ? v : undefined;
   };

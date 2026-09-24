@@ -49,10 +49,43 @@ export function sampleRoute(
   return out;
 }
 
+/**
+ * Сетка клеток.
+ *
+ * Косинус берём по строке клеток, а не по самой точке: иначе две точки
+ * из одной строки считают ширину клетки по-разному, и сетка перестаёт
+ * сходиться сама с собой.
+ */
+function rowLonStep(row: number, dLat: number): number {
+  const cos = Math.max(0.05, Math.cos(((row + 0.5) * dLat * Math.PI) / 180));
+  return dLat / cos;
+}
+
 function cellKey(lat: number, lon: number, cellM: number): string {
   const dLat = (cellM / 6371000) * (180 / Math.PI);
-  const cos = Math.max(0.05, Math.cos((lat * Math.PI) / 180));
-  return `${Math.floor(lat / dLat)}_${Math.floor(lon / (dLat / cos))}`;
+  const row = Math.floor(lat / dLat);
+  return `${row}_${Math.floor(lon / rowLonStep(row, dLat))}`;
+}
+
+/**
+ * Своя клетка и восемь соседних.
+ *
+ * Смотреть только свою нельзя: две точки в двадцати метрах друг от друга
+ * запросто оказываются по разные стороны границы клетки и пары не
+ * находят. На двух линиях, идущих вдоль такой границы, так теряется не
+ * одна точка, а половина — и дубль либо недосчитывается, либо не
+ * находится вовсе.
+ */
+function cellKeysAround(lat: number, lon: number, cellM: number): string[] {
+  const dLat = (cellM / 6371000) * (180 / Math.PI);
+  const row0 = Math.floor(lat / dLat);
+  const keys: string[] = [];
+  for (let dr = -1; dr <= 1; dr += 1) {
+    const row = row0 + dr;
+    const col = Math.floor(lon / rowLonStep(row, dLat));
+    for (let dc = -1; dc <= 1; dc += 1) keys.push(`${row}_${col + dc}`);
+  }
+  return keys;
 }
 
 export interface OverlapOptions {
@@ -72,8 +105,8 @@ export function findOverlaps(
   const toleranceM = opts.toleranceM ?? 25;
   const minSharedM = opts.minSharedM ?? 150;
 
-  // Клетка чуть крупнее допуска: соседние клетки тогда можно не
-  // просматривать, а промах на границе стоит одну точку из многих.
+  // Клетка крупнее допуска, а просматриваем всё равно девять клеток:
+  // так попадание в допуск не зависит от того, куда легли границы сетки.
   const cellM = Math.max(toleranceM * 2, stepM);
 
   const byCell = new Map<string, { id: string; lat: number; lon: number }[]>();
@@ -90,21 +123,31 @@ export function findOverlaps(
     }
   }
 
-  // Сколько точек одной линии нашли себе пару на другой.
-  const hits = new Map<string, number>();
+  /**
+   * Сколько точек одной линии нашли себе пару на другой.
+   *
+   * Считаем для каждой стороны отдельно. Линии оцифрованы по-разному, и
+   * складывать их попадания в одно число значит мерить общий кусок
+   * по более подробной из двух — а он не длиннее, чем видит каждая.
+   */
+  const hits = new Map<string, { a: number; b: number }>();
   for (const r of routes) {
     for (const p of samples.get(r.id) ?? []) {
-      const near = byCell.get(cellKey(p.lat, p.lon, cellM)) ?? [];
       const matched = new Set<string>();
-      for (const q of near) {
-        if (q.id === r.id || matched.has(q.id)) continue;
-        if (haversineM(p, q) <= toleranceM) matched.add(q.id);
+      for (const key of cellKeysAround(p.lat, p.lon, cellM)) {
+        for (const q of byCell.get(key) ?? []) {
+          if (q.id === r.id || matched.has(q.id)) continue;
+          if (haversineM(p, q) <= toleranceM) matched.add(q.id);
+        }
       }
       for (const other of matched) {
         // Пара всегда в одном порядке: иначе один и тот же дубль
         // посчитается дважды с разных сторон.
-        const key = r.id < other ? `${r.id}|${other}` : `${other}|${r.id}`;
-        hits.set(key, (hits.get(key) ?? 0) + 1);
+        const first = r.id < other;
+        const key = first ? `${r.id}|${other}` : `${other}|${r.id}`;
+        const acc = hits.get(key) ?? { a: 0, b: 0 };
+        if (first) acc.a += 1; else acc.b += 1;
+        hits.set(key, acc);
       }
     }
   }
@@ -116,8 +159,8 @@ export function findOverlaps(
     const a = byId.get(aId);
     const b = byId.get(bId);
     if (!a || !b) continue;
-    // Каждая точка встречена дважды — с одной стороны и с другой.
-    const sharedM = (count / 2) * stepM;
+    // Общий кусок не длиннее того, что видит каждая из двух линий.
+    const sharedM = Math.min(count.a, count.b) * stepM;
     if (sharedM < minSharedM) continue;
     const shorter = Math.min(routeLengthM(a.coords), routeLengthM(b.coords));
     out.push({

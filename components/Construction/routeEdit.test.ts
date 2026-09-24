@@ -98,3 +98,52 @@ describe('имена', () => {
     expect(joinedName('', '')).toBe('Трасса');
   });
 });
+
+/**
+ * Файлов с трассами несколько, и в них попадаются одни и те же куски.
+ * Свести такую пару «встык» получалось: конец первой совпадает с концом
+ * второй, примерка находила нулевой разрыв — и выходила линия «туда и
+ * обратно» вдвое длиннее настоящей.
+ */
+describe('дубль не склеивается сам с собой', () => {
+  const line: [number, number][] = [[52, 71], [52, 71.01], [52, 71.02]];
+
+  it('точный дубль свести нельзя', () => {
+    expect(joinRoutes(line, [...line])).toBeNull();
+  });
+
+  it('и дубль, нарисованный в обратную сторону, тоже', () => {
+    expect(joinRoutes(line, [...line].reverse() as [number, number][])).toBeNull();
+  });
+
+  it('дубль с лишними вершинами — всё равно дубль', () => {
+    const dense: [number, number][] = [
+      [52, 71], [52, 71.005], [52, 71.01], [52, 71.015], [52, 71.02],
+    ];
+    expect(joinRoutes(line, dense)).toBeNull();
+  });
+
+  it('настоящее продолжение по-прежнему сводится', () => {
+    const next: [number, number][] = [[52, 71.02], [52, 71.03], [52, 71.04]];
+    const r = joinRoutes(line, next);
+    expect(r).toBeTruthy();
+    expect(r!.gapM).toBeLessThan(1);
+    expect(routeLengthM(r!.coords)).toBeCloseTo(
+      routeLengthM(line) + routeLengthM(next), 0,
+    );
+  });
+
+  it('продолжение, нарисованное в другую сторону, тоже сводится', () => {
+    const next: [number, number][] = [[52, 71.04], [52, 71.03], [52, 71.02]];
+    const r = joinRoutes(line, next);
+    expect(r).toBeTruthy();
+    expect(r!.reversedB).toBe(true);
+    expect(routeLengthM(r!.coords)).toBeCloseTo(routeLengthM(line) * 2, 0);
+  });
+
+  it('короткие куски встык не принимает за дубль', () => {
+    const one: [number, number][] = [[52, 71], [52, 71.001]];
+    const two: [number, number][] = [[52, 71.001], [52, 71.002]];
+    expect(joinRoutes(one, two)).toBeTruthy();
+  });
+});

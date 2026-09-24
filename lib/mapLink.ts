@@ -52,7 +52,14 @@ export function parseMapHash(hash: string): MapView | null {
   if (!Number.isFinite(zoom) || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
   if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
 
-  const focus = parts[3] ? decodeURIComponent(parts.slice(3).join('/')) : undefined;
+  // Ссылку присылают в чате, и по дороге её ломают: обрезают, вставляют
+  // кусками, добавляют своё. Битое экранирование — не повод не открыть
+  // карту: место в ссылке уже разобрано, и оно важнее подсветки.
+  const tail = parts.slice(3).join('/');
+  let focus: string | undefined;
+  if (tail) {
+    try { focus = decodeURIComponent(tail); } catch { focus = tail; }
+  }
   return { lat, lon, zoom: clampZoom(zoom), focus: focus || undefined };
 }
 

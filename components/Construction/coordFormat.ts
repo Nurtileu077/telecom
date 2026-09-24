@@ -143,34 +143,91 @@ export function parseLatLon(text: string, hint?: LatLon): LatLon | null {
   const parts = /[°º]/.test(raw) ? dmsParts(raw) : decimalParts(raw);
   if (parts.length < 2) return null;
 
-  const [a, b] = parts;
-  const signed = (p: RawPart) => (p.hemi === 'lat-' || p.hemi === 'lon-' ? -p.value : p.value);
+  /**
+   * Координаты присылают не голыми: «Муфта 3: 52.12, 71.65», «ККС 339 —
+   * 52.09 69.12». Брать просто первые два числа значит взять номер за
+   * широту и уехать в Гвинейский залив.
+   *
+   * Поэтому перебираем соседние пары и берём первую, которую удаётся
+   * разобрать уверенно — по букве полушария или по границам Казахстана.
+   * Только если ни одна не подошла, возвращаемся к первым двум числам:
+   * координаты за пределами страны тоже бывают, и молча отказывать в них
+   * нельзя.
+   */
+  for (let i = 0; i + 1 < parts.length; i += 1) {
+    const sure = pairPoint(parts[i], parts[i + 1], hint, true);
+    if (sure) return sure;
+  }
+  return pairPoint(parts[0], parts[1], hint, false);
+}
 
+const signed = (p: RawPart) => (p.hemi === 'lat-' || p.hemi === 'lon-' ? -p.value : p.value);
+
+/**
+ * Пара чисел в точку.
+ *
+ * `sure` — брать только то, в чём разбор уверен: полушарие названо или
+ * числа ложатся в границы Казахстана. Без него пара принимается, если
+ * числа вообще годятся в координаты.
+ */
+function pairPoint(a: RawPart, b: RawPart, hint: LatLon | undefined, sure: boolean): LatLon | null {
   const aIsLat = a.hemi === 'lat+' || a.hemi === 'lat-';
   const bIsLat = b.hemi === 'lat+' || b.hemi === 'lat-';
   const aIsLon = a.hemi === 'lon+' || a.hemi === 'lon-';
   const bIsLon = b.hemi === 'lon+' || b.hemi === 'lon-';
 
-  if (aIsLat || bIsLon) return { lat: signed(a), lon: signed(b) };
-  if (bIsLat || aIsLon) return { lat: signed(b), lon: signed(a) };
+  // Буква у обоих чисел — разбор однозначен, и границы тут не нужны:
+  // координаты бывают и вне Казахстана.
+  if (aIsLat && bIsLon) return valid(signed(a), signed(b));
+  if (bIsLat && aIsLon) return valid(signed(b), signed(a));
 
   const ordered = orderPair(signed(a), signed(b), hint);
   if (ordered) return ordered.point;
+  // Буква только у одного числа — этого мало, чтобы считать пару своей:
+  // в «точка 7: 69.12 E» буква E стоит у долготы, а семёрка — это номер,
+  // и широтой она быть не должна.
+  if (sure) return null;
+
+  if (aIsLat || bIsLon) return valid(signed(a), signed(b));
+  if (bIsLat || aIsLon) return valid(signed(b), signed(a));
 
   // За границами Казахстана порядок не восстановить — принимаем как есть,
   // если числа вообще годятся в координаты.
-  const lat = signed(a);
-  const lon = signed(b);
+  return valid(signed(a), signed(b));
+}
+
+function valid(lat: number, lon: number): LatLon | null {
   if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
   return { lat, lon };
 }
 
-function dmsPieces(v: number): { deg: number; min: number; sec: number } {
+/**
+ * Градусы, минуты, секунды — уже округлённые.
+ *
+ * Округлять разряды порознь нельзя: при 52,99999° секунды дают «60,0», и
+ * в акт уходит «52°00′60,0″» — запись, которой не бывает. Поэтому
+ * округляем младший разряд сразу и переносим переполнение вверх.
+ */
+function dmsPieces(v: number, secDigits: number): { deg: number; min: number; sec: number } {
   const abs = Math.abs(v);
-  const deg = Math.floor(abs);
+  let deg = Math.floor(abs);
   const minFull = (abs - deg) * 60;
-  const min = Math.floor(minFull);
-  return { deg, min, sec: (minFull - min) * 60 };
+  let min = Math.floor(minFull);
+  const k = 10 ** secDigits;
+  let sec = Math.round((minFull - min) * 60 * k) / k;
+  if (sec >= 60) { sec -= 60; min += 1; }
+  if (min >= 60) { min -= 60; deg += 1; }
+  return { deg, min, sec };
+}
+
+/** То же для записи «градусы и минуты»: минуты дробные, разряд один. */
+function dmPieces(v: number, minDigits: number): { deg: number; min: number } {
+  const abs = Math.abs(v);
+  let deg = Math.floor(abs);
+  const k = 10 ** minDigits;
+  let min = Math.round((abs - deg) * 60 * k) / k;
+  if (min >= 60) { min -= 60; deg += 1; }
+  return { deg, min };
 }
 
 const pad = (n: number, w = 2) => String(n).padStart(w, '0');
@@ -184,10 +241,11 @@ export function formatOne(value: number, axis: 'lat' | 'lon', style: CoordStyle)
 
   if (style === 'decimal' || style === 'nav') return value.toFixed(6);
 
-  const { deg, min, sec } = dmsPieces(value);
   if (style === 'dm') {
-    return `${pad(deg, width)}°${ru(min + sec / 60, 3).padStart(6, '0')}′ ${letter}`;
+    const dm = dmPieces(value, 3);
+    return `${pad(dm.deg, width)}°${ru(dm.min, 3).padStart(6, '0')}′ ${letter}`;
   }
+  const { deg, min, sec } = dmsPieces(value, 1);
   return `${pad(deg, width)}°${pad(min)}′${ru(sec, 1).padStart(4, '0')}″ ${letter}`;
 }
 

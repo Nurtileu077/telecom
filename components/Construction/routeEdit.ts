@@ -1,4 +1,4 @@
-import { routeLengthM } from './routeProgress';
+import { routeLengthM, pointAtDistanceM } from './routeProgress';
 import { sliceByDistance } from './routeSegments';
 import { haversineM } from './measureTool';
 
@@ -58,6 +58,30 @@ function endsGap(a: [number, number][], b: [number, number][]): number {
 }
 
 /**
+ * Не одна ли это линия дважды.
+ *
+ * Файлов с трассами несколько — проект, правки, чья-то выгрузка, — и в
+ * них попадаются одни и те же куски. Свести такую пару «встык» всё равно
+ * получится: конец первой совпадает с концом второй, и примерка находит
+ * нулевой разрыв. Выходит линия «туда и обратно» вдвое длиннее
+ * настоящей, и эта длина уходит в журнал.
+ *
+ * Отличаем по серединам: у одной и той же линии они в одном месте, а у
+ * двух линий, идущих встык, разнесены на половину длины.
+ */
+function sameLine(a: [number, number][], b: [number, number][], maxGapM: number): boolean {
+  const la = routeLengthM(a);
+  const lb = routeLengthM(b);
+  const shorter = Math.min(la, lb);
+  if (shorter <= 0) return false;
+  const ma = pointAtDistanceM(a, la / 2);
+  const mb = pointAtDistanceM(b, lb / 2);
+  if (!ma || !mb) return false;
+  const between = haversineM(ma, mb);
+  return between < Math.min(maxGapM, shorter / 4);
+}
+
+/**
  * Свести две линии в одну.
  *
  * Какой конец к какому — не спрашиваем: примеряем все четыре сочетания и
@@ -70,6 +94,7 @@ export function joinRoutes(
   maxGapM = 250,
 ): JoinResult | null {
   if (a.length < 2 || b.length < 2) return null;
+  if (sameLine(a, b, maxGapM)) return null;
 
   const ra = [...a].reverse();
   const rb = [...b].reverse();
