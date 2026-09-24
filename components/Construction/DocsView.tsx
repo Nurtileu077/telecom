@@ -20,6 +20,10 @@ import {
   photoReportPage, letterPage, measureProtocolPage, measureProtocolFile,
 } from './fieldDocs';
 import { buildScheme, schemeDocPage, schemeFileName } from './asBuilt';
+import {
+  buildDocx, docxFileName, loadDocFormat, saveDocFormat,
+  DOC_FORMAT_LABEL, type DocFormat,
+} from './docxExport';
 import { getPhotoBlob } from './photoStore';
 import { downloadText, downloadBlob } from '@/lib/download';
 import { toCsv, csvBlob } from '@/lib/csv';
@@ -94,6 +98,7 @@ export default function DocsView({
   const [busy, setBusy] = useState(false);
   const [prices, setPrices] = useState<WorkPrices>({});
   const [schemeRouteId, setSchemeRouteId] = useState('');
+  const [format, setFormat] = useState<DocFormat>(() => loadDocFormat());
 
   const registry = useMemo(() => actRegistry(journal.actFields ?? {}), [journal.actFields]);
   const sheet = useMemo(
@@ -146,9 +151,23 @@ export default function DocsView({
     [schemeRoute, schemeObjects],
   );
 
-  function save(name: string, html: string) {
-    downloadText(name, html, DOC_MIME);
-    onFlash?.(`Файл собран: ${name}`);
+  /**
+   * Сохранить документ.
+   *
+   * HTML с расширением .doc открывается только настольным Вордом, да и
+   * тот ругается. Тот же документ, собранный настоящим пакетом,
+   * открывается Вордом на телефоне и Гугл-Документами — а куратор
+   * читает его из машины.
+   */
+  async function save(name: string, html: string, landscape = false) {
+    if (format === 'doc') {
+      downloadText(name, html, DOC_MIME);
+      onFlash?.(`Файл собран: ${name}`);
+      return;
+    }
+    const file = docxFileName(name);
+    downloadBlob(file, await buildDocx(html, { landscape }));
+    onFlash?.(`Файл собран: ${file}`);
   }
 
   /**
@@ -162,15 +181,23 @@ export default function DocsView({
     try {
       const JSZip = (await import('jszip')).default;
       const zip = new JSZip();
+      // В пакет кладём то же, что и по одному: переключатель формата
+      // общий, иначе в архиве окажется не то, что человек выбрал.
+      const put = async (folder: InstanceType<typeof JSZip>, name: string, html: string) => {
+        if (format === 'doc') folder.file(name, html);
+        else folder.file(docxFileName(name), await buildDocx(html));
+      };
+
       // Раскладываем по папкам: в почте архив из двадцати файлов вперемешку
       // открывают один раз, а потом просят «пришлите нормально».
       const svod = zip.folder('Сводные') ?? zip;
-      svod.file(volumeDocFile({ sheet }), volumeDocPage({ sheet, contractor }));
-      svod.file(
+      await put(svod, volumeDocFile({ sheet }), volumeDocPage({ sheet, contractor }));
+      await put(
+        svod,
         periodDocFile({ report, contractor }),
         periodDocPage({ report, pace, contractor, author }),
       );
-      svod.file('Справка о готовности.doc',
+      await put(svod, 'Справка о готовности.doc',
         wordPage('Справка о готовности', readinessDocHtml(readiness)));
 
       // Акты по участкам, у которых за период была работа. Участок без
@@ -192,7 +219,8 @@ export default function DocsView({
           .join('/');
         const folder = zip.folder(where || 'Участки') ?? zip;
         for (const kind of ['ASR', 'OSR'] as ActKind[]) {
-          folder.file(
+          await put(
+            folder,
             actFileName(kind, uchastok, fields.actDate),
             actDocHtml({
               kind,
@@ -234,6 +262,27 @@ export default function DocsView({
 
   return (
     <div className="p-3 space-y-3">
+      {/* Формат — общий для всех документов на этом экране. */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="text-[11px] text-[var(--text-muted)]">Сохранять как</span>
+        {(['docx', 'doc'] as DocFormat[]).map((f) => (
+          <button
+            key={f}
+            type="button"
+            onClick={() => { setFormat(f); saveDocFormat(f); }}
+            title={f === 'docx'
+              ? 'Настоящий Word: открывается и на телефоне, и в Гугл-Документах'
+              : 'HTML с расширением .doc: открывает только настольный Word'}
+            className={`px-2 py-0.5 rounded text-[11px] border ${
+              f === format
+                ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent-dim)]'
+                : 'border-[var(--border)] text-[var(--text-muted)]'}`}
+          >
+            {DOC_FORMAT_LABEL[f]}
+          </button>
+        ))}
+      </div>
+
       {/* Пакет */}
       <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-3 space-y-2">
         <div className="text-[13px] font-semibold text-[var(--text)]">За период</div>
@@ -535,6 +584,7 @@ export default function DocsView({
                           oblast: schemeObjects[0]?.oblast,
                           rayon: schemeObjects[0]?.rayon,
                         }),
+                        true,
                       )}>
                 <FileDown size={14} />Схема
               </button>
