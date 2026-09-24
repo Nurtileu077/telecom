@@ -171,3 +171,43 @@ describe('planFact', () => {
     expect(rows[0].diffM).toBe(-400);
   });
 });
+
+/**
+ * Один участок, записанный по-разному, — это по-прежнему один участок.
+ * Раньше «Исаковка» и «исаковка » давали две строки, и каждая
+ * сравнивалась с полной проектной длиной: один недобор превращался в два.
+ */
+describe('planFact и разное написание участка', () => {
+  const routes: PlanRoute[] = [{
+    id: 'r1', name: 'Исаковка', uchastok: 'Исаковка',
+    coords: [[52, 71], [52, 71.1]], lengthM: 6000,
+    source: 'plan.kml', createdAt: '', updatedAt: '',
+  }];
+
+  it('складывает факт по всем написаниям в одну строку', () => {
+    const rows = planFact([
+      e({ id: 'a', uchastok: 'Исаковка', byMethod: { 'бар': 2000 } }),
+      e({ id: 'b', uchastok: 'исаковка ', byMethod: { 'бар': 1500 } }),
+    ], routes);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].factM).toBe(3500);
+    expect(rows[0].planM).toBe(6000);
+    expect(rows[0].diffM).toBe(-2500);
+  });
+
+  it('когда факт сошёлся с проектом, строки нет вовсе', () => {
+    const rows = planFact([
+      e({ id: 'a', uchastok: 'Исаковка', byMethod: { 'бар': 3000 } }),
+      e({ id: 'b', uchastok: 'ИСАКОВКА', byMethod: { 'бар': 3000 } }),
+    ], routes);
+    expect(rows).toHaveLength(0);
+  });
+
+  it('в строке показывает то написание, что встретилось первым', () => {
+    const rows = planFact([
+      e({ id: 'a', uchastok: 'Исаковка', byMethod: { 'бар': 1000 } }),
+      e({ id: 'b', uchastok: 'исаковка', byMethod: { 'бар': 1000 } }),
+    ], routes);
+    expect(rows[0].uchastok).toBe('Исаковка');
+  });
+});

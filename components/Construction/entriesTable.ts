@@ -201,11 +201,19 @@ export function planFact(
   routes: PlanRoute[],
   minDiffM = 100,
 ): PlanFactRow[] {
-  const fact = new Map<string, number>();
+  // Факт складываем по нормализованному имени — так же, как проект.
+  // Иначе «Исаковка» и «исаковка » дают два участка, и каждый из них
+  // сравнивается с полной проектной длиной: один недобор превращается
+  // в два.
+  const fact = new Map<string, { shown: string; meters: number }>();
   for (const e of rows) {
-    const key = e.uchastok?.trim();
+    const shown = e.uchastok?.trim();
+    if (!shown) continue;
+    const key = normName(shown);
     if (!key) continue;
-    fact.set(key, (fact.get(key) ?? 0) + entryMeters(e));
+    const acc = fact.get(key) ?? { shown, meters: 0 };
+    acc.meters += entryMeters(e);
+    fact.set(key, acc);
   }
 
   // Проект ищем по названию: в KML участок подписан так же, как в журнале.
@@ -220,12 +228,12 @@ export function planFact(
   }
 
   const out: PlanFactRow[] = [];
-  for (const [uchastok, factM] of fact) {
-    const planM = plan.get(normName(uchastok)) ?? 0;
+  for (const [key, { shown, meters: factM }] of fact) {
+    const planM = plan.get(key) ?? 0;
     if (planM <= 0) continue;
     const diffM = factM - planM;
     if (Math.abs(diffM) < minDiffM) continue;
-    out.push({ uchastok, factM, planM, diffM, share: diffM / planM });
+    out.push({ uchastok: shown, factM, planM, diffM, share: diffM / planM });
   }
   return out.sort((a, b) => Math.abs(b.diffM) - Math.abs(a.diffM));
 }

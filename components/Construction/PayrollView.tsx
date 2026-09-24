@@ -117,8 +117,17 @@ export default function PayrollView({
       `${current}, период ${result.from} — ${result.to}`,
       payrollSummary(result),
       '',
-      ...result.lines.map((l) => `${l.label}: ${l.quantity.toLocaleString('ru')} ${l.unit}`
-        + (l.price ? ` × ${money(l.price)} = ${money(l.sum ?? 0)}` : ' — без расценки')),
+      ...result.lines.map((l) => {
+        const head = `${l.label}: ${l.quantity.toLocaleString('ru')} ${l.unit}`;
+        if (l.pricedQuantity === 0) return `${head} — без расценки`;
+        // Когда оценён не весь объём или цена за период менялась, писать
+        // «× цену» нельзя: у подрядчика не сойдётся, и начнётся спор.
+        if (l.pricedQuantity < l.quantity || l.price === undefined) {
+          return `${head}, из них по расценке `
+            + `${l.pricedQuantity.toLocaleString('ru')} ${l.unit} = ${money(l.sum ?? 0)}`;
+        }
+        return `${head} × ${money(l.price)} = ${money(l.sum ?? 0)}`;
+      }),
     ].join('\n');
     try {
       await navigator.clipboard.writeText(text);
@@ -174,9 +183,16 @@ export default function PayrollView({
                 <td className="py-1 text-[var(--text)]">{l.label}</td>
                 <td className="py-1 text-right font-mono tabular-nums text-[var(--text-muted)]">
                   {l.quantity.toLocaleString('ru')} {l.unit}
+                  {l.pricedQuantity < l.quantity && (
+                    <span className="block text-[10px] text-[var(--warn)]"
+                          title="Расценки на этот объём нет — договор начинается позже">
+                      по расценке {l.pricedQuantity.toLocaleString('ru')}
+                    </span>
+                  )}
                 </td>
                 <td className="py-1 text-right font-mono tabular-nums text-[var(--text-muted)]">
-                  {l.price ? money(l.price) : '—'}
+                  {l.price !== undefined ? money(l.price)
+                    : l.pricedQuantity > 0 ? 'разная' : '—'}
                 </td>
                 <td className="py-1 text-right font-mono tabular-nums text-[var(--text)]">
                   {l.sum !== undefined ? money(l.sum) : '—'}

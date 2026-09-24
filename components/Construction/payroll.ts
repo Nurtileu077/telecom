@@ -64,8 +64,18 @@ export interface PayLine {
   work: string;
   label: string;
   unit: 'м' | 'шт';
+  /** Сделано всего за период. */
   quantity: number;
-  /** Расценка; пусто — её нет, и сумма неизвестна. */
+  /**
+   * Объём, на который расценка нашлась.
+   *
+   * Отдельно от общего, потому что договор подписывают с какого-то
+   * числа: смены до него сделаны, но не оценены. Показать их в объёме и
+   * промолчать — значит отдать подрядчику строку, где цена × количество
+   * не сходится с суммой, и получить спор на ровном месте.
+   */
+  pricedQuantity: number;
+  /** Расценка; пусто — её нет или за период она менялась. */
   price?: number;
   sum?: number;
 }
@@ -116,8 +126,11 @@ export function payroll(
     && inPeriod(e.date, filter));
 
   const qty = new Map<string, number>();
+  const pricedQty = new Map<string, number>();
   const sums = new Map<string, number>();
-  const priced = new Map<string, number>();
+  // Какие цены встретились за период: одна — её и показываем, несколько —
+  // показывать любую из них нельзя, иначе строка не сойдётся.
+  const seenPrices = new Map<string, Set<number>>();
 
   for (const e of mine) {
     for (const w of PAYABLE_WORKS) {
@@ -128,22 +141,29 @@ export function payroll(
       // пересчитывать по нему старые смены нельзя.
       const rate = rateFor(rates, w.key, e.date, contractor);
       if (rate) {
+        pricedQty.set(w.key, (pricedQty.get(w.key) ?? 0) + q);
         sums.set(w.key, (sums.get(w.key) ?? 0) + q * rate.price);
-        priced.set(w.key, rate.price);
+        const set = seenPrices.get(w.key) ?? new Set<number>();
+        set.add(rate.price);
+        seenPrices.set(w.key, set);
       }
     }
   }
 
   const lines: PayLine[] = PAYABLE_WORKS
     .filter((w) => (qty.get(w.key) ?? 0) > 0)
-    .map((w) => ({
-      work: w.key,
-      label: w.label,
-      unit: w.unit,
-      quantity: qty.get(w.key) ?? 0,
-      price: priced.get(w.key),
-      sum: sums.get(w.key),
-    }));
+    .map((w) => {
+      const prices = seenPrices.get(w.key);
+      return {
+        work: w.key,
+        label: w.label,
+        unit: w.unit,
+        quantity: qty.get(w.key) ?? 0,
+        pricedQuantity: pricedQty.get(w.key) ?? 0,
+        price: prices?.size === 1 ? [...prices][0] : undefined,
+        sum: sums.get(w.key),
+      };
+    });
 
   const money = payments.filter((p) => p.contractor === contractor && inPeriod(p.date, filter));
   const sumOf = (kind: Payment['kind']) => money
@@ -162,7 +182,13 @@ export function payroll(
     to: filter.to || dates[dates.length - 1] || '',
     lines,
     accrued,
-    unpriced: lines.filter((l) => l.sum === undefined).map((l) => l.label),
+    // Не только «расценки нет вовсе», но и «на часть объёма её нет»:
+    // молчать о второй половине — значит занижать начисление молча.
+    unpriced: lines
+      .filter((l) => l.pricedQuantity < l.quantity)
+      .map((l) => (l.pricedQuantity === 0
+        ? l.label
+        : `${l.label} (${Math.round(l.quantity - l.pricedQuantity).toLocaleString('ru')} ${l.unit} вне расценки)`)),
     advances,
     deductions,
     paid,

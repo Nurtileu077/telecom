@@ -146,3 +146,53 @@ describe('weekRange', () => {
     expect(weekRange('')).toEqual({ from: '', to: '' });
   });
 });
+
+/**
+ * Простой пишут в смену, а смена — это работа. Значит день с простоем
+ * никогда не бывает днём без работ, и сшивать их в одну фразу
+ * («Дней без работ: 2 — дождь (5)») значит писать в отчёт неправду.
+ */
+describe('простои и пустые дни — разные вещи', () => {
+  const rows = [
+    e({ id: 'a', date: '2026-07-20', byMethod: { 'бар': 400 }, downtime: 'дождь' }),
+    e({ id: 'b', date: '2026-07-21', byMethod: { 'бар': 600 }, downtime: 'дождь' }),
+    e({ id: 'c', date: '2026-07-24', byMethod: { 'бар': 300 } }),
+  ];
+  const report = () => periodReport(rows, { from: '2026-07-20', to: '2026-07-24' });
+
+  it('считает то и другое отдельно', () => {
+    const r = report();
+    expect(r.idleDays).toEqual(['2026-07-22', '2026-07-23']);
+    expect(r.downtime).toEqual([{ reason: 'дождь', days: 2 }]);
+  });
+
+  it('в отчёте это две строки, а не одна', () => {
+    const html = periodDocHtml({ report: report() });
+    expect(html).toContain('Дней без единой смены: <span class="b">2</span>');
+    expect(html).toContain('Простои в рабочие дни: дождь — 2 дн');
+    expect(html).not.toMatch(/Дней без[^<]*—/);
+  });
+
+  it('когда простоев не было, про них не пишет', () => {
+    const clean = periodReport(
+      [e({ id: 'c', date: '2026-07-24', byMethod: { 'бар': 300 } })],
+      { from: '2026-07-24', to: '2026-07-24' },
+    );
+    const html = periodDocHtml({ report: clean });
+    expect(html).not.toContain('Простои в рабочие дни');
+    expect(html).not.toContain('Дней без единой смены');
+  });
+});
+
+describe('участок с разным написанием в отчёте', () => {
+  it('сводится в одну строку, а не в две', () => {
+    const r = periodReport([
+      e({ id: 'a', uchastok: 'Исаковка', byMethod: { 'бар': 400 } }),
+      e({ id: 'b', uchastok: 'исаковка ', byMethod: { 'бар': 600 } }),
+    ], { from: '2026-07-20', to: '2026-07-24' });
+    expect(r.sections).toHaveLength(1);
+    expect(r.sections[0].uchastok).toBe('Исаковка');
+    expect(r.sections[0].meters).toBe(1000);
+    expect(r.sections[0].shifts).toBe(2);
+  });
+});

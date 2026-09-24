@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  timesheet, crewsWithoutMembers, timesheetTotals, timesheetToText,
+  timesheet, crewsWithoutMembers, shiftsWithoutCrew, timesheetTotals, timesheetToText,
 } from './timesheet';
 import type { DailyWorkEntry, Crew } from '@/types/construction';
 
@@ -105,5 +105,80 @@ describe('timesheetToText', () => {
     const text = timesheetToText(timesheet(ROWS, CREWS));
     expect(text.split('\n')[0].split('\t')).toHaveLength(7);
     expect(text).toContain('Ахметов А.');
+  });
+});
+
+/**
+ * «Колонна 1» есть и у TERRA TECH, и у Дозера — это разные бригады с
+ * одинаковым номером. Сводить их по названию значит приписать чужой
+ * бригаде чужие смены, а по табелю считают деньги.
+ */
+describe('одинаковые названия у разных подрядчиков', () => {
+  const TWO: Crew[] = [
+    {
+      id: 'd1', kind: 'mkt', name: 'Колонна 1', contractor: 'Дозер',
+      status: 'working', members: [{ name: 'Ахметов А.', role: 'Мастер' }],
+      equipment: {}, updatedAt: '',
+    } as Crew,
+    {
+      id: 't1', kind: 'mkt', name: 'Колонна 1', contractor: 'TERRA TECH',
+      status: 'working', members: [{ name: 'Жумабеков С.', role: 'Мастер' }],
+      equipment: {}, updatedAt: '',
+    } as Crew,
+  ];
+  const rows = [
+    e({ id: 'a', column: 'Колонна 1', contractor: 'Дозер', byMethod: { 'бар': 400 } }),
+    e({ id: 'b', column: 'Колонна 1', contractor: 'Дозер', byMethod: { 'бар': 600 } }),
+    e({
+      id: 'c', column: 'Колонна 1', contractor: 'TERRA TECH', date: '2026-07-26',
+      byMethod: { 'бар': 1000 },
+    }),
+  ];
+
+  it('каждой бригаде — свои смены, а не общие', () => {
+    const t = timesheet(rows, TWO);
+    const dozer = t.find((r) => r.name === 'Ахметов А.')!;
+    const terra = t.find((r) => r.name === 'Жумабеков С.')!;
+    expect(dozer.shifts).toBe(2);
+    expect(dozer.crewMeters).toBe(1000);
+    expect(terra.shifts).toBe(1);
+    expect(terra.crewMeters).toBe(1000);
+  });
+
+  it('когда название уникально, подрядчика в смене можно и не писать', () => {
+    const one: Crew[] = [TWO[0]];
+    const t = timesheet([e({ id: 'a', column: 'Колонна 1', contractor: undefined })], one);
+    expect(t).toHaveLength(1);
+    expect(t[0].shifts).toBe(1);
+  });
+});
+
+/**
+ * Смена, в которой колонну не записали, не попадает в табель ни к кому.
+ * Раньше об этом никто не говорил, и человек решал, что потерялись
+ * данные, хотя потерялось поле в паре строк.
+ */
+describe('shiftsWithoutCrew', () => {
+  it('считает смены без колонны и их метры', () => {
+    const r = shiftsWithoutCrew([
+      e({ id: 'a', column: '1-колонна' }),
+      e({ id: 'b', column: '', byMethod: { 'бар': 700 } }),
+      e({ id: 'c', column: '   ', date: '2026-07-26', byMethod: { 'бар': 300 } }),
+    ]);
+    expect(r.shifts).toBe(2);
+    expect(r.meters).toBe(1000);
+    expect(r.dates).toEqual(['2026-07-25', '2026-07-26']);
+  });
+
+  it('когда колонна есть везде — сообщать не о чем', () => {
+    expect(shiftsWithoutCrew([e({ id: 'a' })]).shifts).toBe(0);
+  });
+
+  it('считает только внутри периода', () => {
+    const rows = [
+      e({ id: 'a', column: '', date: '2026-07-01' }),
+      e({ id: 'b', column: '', date: '2026-07-25' }),
+    ];
+    expect(shiftsWithoutCrew(rows, { from: '2026-07-20', to: '2026-07-31' }).shifts).toBe(1);
   });
 });

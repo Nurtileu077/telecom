@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { Copy, AlertTriangle } from 'lucide-react';
 import type { DailyWorkEntry, Crew } from '@/types/construction';
 import {
-  timesheet, crewsWithoutMembers, timesheetTotals, timesheetToText,
+  timesheet, crewsWithoutMembers, shiftsWithoutCrew, timesheetTotals, timesheetToText,
 } from './timesheet';
 
 /**
@@ -35,6 +35,7 @@ export default function TimesheetView({ rows, crews, from, to, onCopied }: Props
     [rows, crews, from, to],
   );
   const totals = useMemo(() => timesheetTotals(table), [table]);
+  const noCrew = useMemo(() => shiftsWithoutCrew(rows, { from, to }), [rows, from, to]);
 
   async function copy() {
     const text = timesheetToText(table);
@@ -48,7 +49,7 @@ export default function TimesheetView({ rows, crews, from, to, onCopied }: Props
     }
   }
 
-  if (table.length === 0 && missing.length === 0) {
+  if (table.length === 0 && missing.length === 0 && noCrew.shifts === 0) {
     return (
       <div className="p-6 text-center text-[13px] text-[var(--text-muted)]">
         За выбранный период смен по колоннам нет.
@@ -69,6 +70,27 @@ export default function TimesheetView({ rows, crews, from, to, onCopied }: Props
           <Copy size={13} />{copied ? 'Скопировано' : 'Скопировать табель'}
         </button>
       </div>
+
+      {noCrew.shifts > 0 && (
+        <div className="flex items-start gap-2 rounded-lg border border-[var(--warn)]/40
+                        bg-[var(--warn)]/10 px-3 py-2 text-[11.5px] text-[var(--warn)]">
+          <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+          <span>
+            Смен без колонны: {noCrew.shifts} ·{' '}
+            <span className="font-mono tabular-nums">
+              {Math.round(noCrew.meters).toLocaleString('ru')} м
+            </span>
+            <span className="block text-[var(--text-muted)]">
+              Они не попали ни к кому в табель. Укажите колонну в этих сменах
+              {noCrew.dates.length > 0
+                ? ` (${noCrew.dates.slice(0, 5).map((d) => new Date(`${d}T00:00:00Z`)
+                    .toLocaleDateString('ru')).join(', ')}`
+                  + `${noCrew.dates.length > 5 ? ' и другие' : ''})`
+                : ''}.
+            </span>
+          </span>
+        </div>
+      )}
 
       {missing.length > 0 && (
         <div className="flex items-start gap-2 rounded-lg border border-[var(--warn)]/40

@@ -201,3 +201,58 @@ describe('paymentLines', () => {
     expect(lines[0]).toContain('перерасход МКТ');
   });
 });
+
+/**
+ * Договор начинается с какого-то числа, а работы до него уже сделаны.
+ * Такой объём в сумму не попадает — и об этом надо говорить вслух, иначе
+ * в строке расчёта цена × количество не сойдётся с суммой, а сходятся
+ * там на встрече с подрядчиком.
+ */
+describe('объём вне расценки', () => {
+  const LATE: WorkRate[] = [
+    { id: 'l1', work: 'бар', price: 300, unit: 'м', from: '2026-07-27', updatedAt: '' },
+  ];
+  const rows = [
+    e({ id: 'a', date: '2026-07-25', byMethod: { 'бар': 400 } }),
+    e({ id: 'b', date: '2026-07-28', byMethod: { 'бар': 600 } }),
+  ];
+
+  it('в объём попадает всё, в сумму — только оценённое', () => {
+    const l = payroll('Дозер', rows, LATE, []).lines.find((x) => x.work === 'бар')!;
+    expect(l.quantity).toBe(1000);
+    expect(l.pricedQuantity).toBe(600);
+    expect(l.sum).toBe(180_000);
+  });
+
+  it('о неоценённой части говорит, а не молчит', () => {
+    const r = payroll('Дозер', rows, LATE, []);
+    expect(r.unpriced).toHaveLength(1);
+    expect(r.unpriced[0]).toContain('400');
+    expect(r.unpriced[0]).toContain('вне расценки');
+  });
+
+  it('цена × количество сходится с суммой, когда оценено всё', () => {
+    const only = [e({ id: 'b', date: '2026-07-28', byMethod: { 'бар': 600 } })];
+    const l = payroll('Дозер', only, LATE, []).lines.find((x) => x.work === 'бар')!;
+    expect(l.price).toBe(300);
+    expect(l.price! * l.pricedQuantity).toBe(l.sum);
+    expect(l.pricedQuantity).toBe(l.quantity);
+  });
+
+  it('когда цена за период менялась, одну не показывает', () => {
+    const rows2 = [
+      e({ id: 'a', date: '2026-07-25', byMethod: { 'бар': 400 } }),
+      e({ id: 'b', date: '2026-08-05', byMethod: { 'бар': 600 } }),
+    ];
+    const l = payroll('Дозер', rows2, RATES, []).lines.find((x) => x.work === 'бар')!;
+    expect(l.sum).toBe(400 * 300 + 600 * 350);
+    expect(l.price).toBeUndefined();
+    expect(l.pricedQuantity).toBe(1000);
+  });
+
+  it('работа, на которую расценки нет вовсе, названа без оговорок', () => {
+    const manual = [e({ id: 'a', date: '2026-07-28', byMethod: { 'вручную': 100 } })];
+    const r = payroll('Дозер', manual, LATE, []);
+    expect(r.unpriced).toEqual(['Ручным способом']);
+  });
+});

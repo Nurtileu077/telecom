@@ -868,10 +868,14 @@ export function addPlanRoutes(base: JournalState, routes: PlanRoute[]): JournalS
 
 /** Убрать все трассы, пришедшие из одного файла. */
 export function removePlanSource(base: JournalState, source: string): JournalState {
+  const now = new Date().toISOString();
+  const gone = base.planRoutes.filter((r) => r.source === source);
+  if (gone.length === 0) return base;
   return {
     ...base,
     planRoutes: base.planRoutes.filter((r) => r.source !== source),
-    updatedAt: new Date().toISOString(),
+    deleted: withTombstones(base, gone.map((r) => r.id), now),
+    updatedAt: now,
   };
 }
 
@@ -974,6 +978,9 @@ export function splitPlanRoute(
       make('a', nameA, cut.head, cut.headM),
       make('b', nameB, cut.tail, cut.tailM),
     ],
+    // Исходная трасса больше не существует: без надгробия она вернётся с
+    // сервера и ляжет поверх обеих половин.
+    deleted: withTombstone(base, id, now),
     updatedAt: now,
   };
   return logChange(next, {
@@ -1022,6 +1029,8 @@ export function joinPlanRoutes(
     planRoutes: base.planRoutes
       .filter((r) => r.id !== idB)
       .map((r) => (r.id === idA ? merged : r)),
+    // Вторая линия вошла в первую и больше не существует отдельно.
+    deleted: withTombstone(base, idB, now),
     updatedAt: now,
   };
   return logChange(next, {
@@ -1048,6 +1057,7 @@ export function deleteRoute(
   const next: JournalState = {
     ...base,
     planRoutes: base.planRoutes.filter((r) => r.id !== id),
+    deleted: withTombstone(base, id, now),
     updatedAt: now,
   };
   return logChange(next, {
@@ -1210,10 +1220,14 @@ export function addAreas(base: JournalState, areas: MapArea[]): JournalState {
 
 /** Убрать все контуры, пришедшие из одного файла. */
 export function removeAreaSource(base: JournalState, source: string): JournalState {
+  const now = new Date().toISOString();
+  const gone = base.areas.filter((a) => a.source === source);
+  if (gone.length === 0) return base;
   return {
     ...base,
     areas: base.areas.filter((a) => a.source !== source),
-    updatedAt: new Date().toISOString(),
+    deleted: withTombstones(base, gone.map((a) => a.id), now),
+    updatedAt: now,
   };
 }
 
@@ -1337,16 +1351,35 @@ export function areaSources(base: JournalState): { source: string; areas: number
   return [...acc.entries()].map(([source, areas]) => ({ source, areas }));
 }
 
+/**
+ * Надгробие на сброшенную цену.
+ *
+ * У цен нет своих id и времени правки — это справочник, а не записи. Но
+ * сброс цены надо как-то отличить от «у меня её просто нет», иначе при
+ * обмене старая вернётся с сервера и ляжет обратно в расчёт.
+ */
+export const PRICE_TOMB_PREFIX = 'price:';
+
 /** Цены материалов: задаются руками и живут вместе с журналом. */
 export function setMaterialPrice(
   base: JournalState,
   material: MaterialKind,
   price: number | undefined,
 ): JournalState {
+  const now = new Date().toISOString();
   const prices = { ...base.prices };
-  if (price === undefined || !Number.isFinite(price) || price <= 0) delete prices[material];
+  const tombId = `${PRICE_TOMB_PREFIX}${material}`;
+  const cleared = price === undefined || !Number.isFinite(price) || price <= 0;
+  if (cleared) delete prices[material];
   else prices[material] = price;
-  return { ...base, prices, updatedAt: new Date().toISOString() };
+  return {
+    ...base,
+    prices,
+    deleted: cleared
+      ? withTombstone(base, tombId, now)
+      : base.deleted.filter((d) => d.id !== tombId),
+    updatedAt: now,
+  };
 }
 
 /** Файлы плана со сводкой — для списка в интерфейсе. */
@@ -1553,6 +1586,19 @@ function withTombstone(base: JournalState, id: string, at: string): DeletedMark[
 }
 
 /**
+ * То же на несколько записей сразу.
+ *
+ * Трассу режут пополам, склеивают надвое, выбрасывают весь KML-файл —
+ * каждый раз со схемы уходит не одна линия. Без надгробий все они
+ * возвращаются с сервера при первом же обмене и ложатся поверх новых.
+ */
+function withTombstones(base: JournalState, ids: string[], at: string): DeletedMark[] {
+  if (ids.length === 0) return base.deleted;
+  const gone = new Set(ids);
+  return [...base.deleted.filter((d) => !gone.has(d.id)), ...ids.map((id) => ({ id, at }))];
+}
+
+/**
  * Прокол: добавляем новый или заменяем правленый.
  *
  * Метки на карте рождаются отсюда — из руки того, кто колет, а не из
@@ -1630,14 +1676,21 @@ export function restoreFromTrash(base: JournalState, id: string): JournalState {
   if (!item) return base;
   const now = new Date().toISOString();
   const back = { ...item.entry, updatedAt: now, sync: 'local' as const };
+  /**
+   * Пока запись лежала в корзине, она могла вернуться обменом с другого
+   * устройства. Дописать её второй раз — значит задвоить метры смены в
+   * журнале, а по ним считают и акт, и деньги.
+   */
+  const put = <T extends { id: string }>(list: T[], from: string): T[] => (
+    item.from === from
+      ? [...list.filter((x) => x.id !== item.id), back as unknown as T]
+      : list
+  );
   const next: JournalState = {
     ...base,
-    ground: item.from === 'ground'
-      ? [...base.ground, back as DailyWorkEntry] : base.ground,
-    aerial: item.from === 'aerial'
-      ? [...base.aerial, back as AerialWorkEntry] : base.aerial,
-    drills: item.from === 'drills'
-      ? [...base.drills, back as DrillLogEntry] : base.drills,
+    ground: put(base.ground, 'ground'),
+    aerial: put(base.aerial, 'aerial'),
+    drills: put(base.drills, 'drills'),
     deleted: base.deleted.filter((d) => d.id !== id),
     trash: base.trash.filter((t) => t.id !== id),
     updatedAt: now,
@@ -1746,7 +1799,14 @@ export function upsertRate(base: JournalState, rate: WorkRate): JournalState {
 
 export function removeRate(base: JournalState, id: string): JournalState {
   const now = new Date().toISOString();
-  return { ...base, rates: base.rates.filter((r) => r.id !== id), updatedAt: now };
+  return {
+    ...base,
+    rates: base.rates.filter((r) => r.id !== id),
+    // Без надгробия убранная расценка возвращается с сервера и перебивает
+    // исправленную цену — а по ней считают деньги подрядчику.
+    deleted: withTombstone(base, id, now),
+    updatedAt: now,
+  };
 }
 
 /** Аванс, удержание или оплата по акту. */

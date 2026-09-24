@@ -1,4 +1,7 @@
-import { JournalState, DeletedMark, emptyJournal } from './journalStore';
+import {
+  JournalState, DeletedMark, emptyJournal, PRICE_TOMB_PREFIX,
+} from './journalStore';
+import type { MaterialPrices } from './materialCost';
 import {
   DailyWorkEntry, AerialWorkEntry, DrillLogEntry, Deviation, Crew,
   CorrectionRequest, SettlementOrder, Contractor, MaterialDelivery, PlanRoute,
@@ -64,6 +67,25 @@ function mergeChanges(a: ChangeLogEntry[] = [], b: ChangeLogEntry[] = []): Chang
   return [...byId.values()]
     .sort((x, y) => y.at.localeCompare(x.at))
     .slice(0, CHANGES_KEPT);
+}
+
+/**
+ * Цены материалов.
+ *
+ * Своя позиция важнее чужой: цену ставит тот, кто покупает. А
+ * сброшенную позицию чужая не возвращает — на неё стоит надгробие.
+ */
+function mergePrices(
+  local: MaterialPrices,
+  remote: MaterialPrices,
+  tombs: Map<string, string>,
+): MaterialPrices {
+  const out: MaterialPrices = { ...remote, ...local };
+  for (const key of Object.keys(out) as (keyof MaterialPrices)[]) {
+    if (key in local) continue;
+    if (tombs.has(`${PRICE_TOMB_PREFIX}${String(key)}`)) delete out[key];
+  }
+  return out;
 }
 
 function mergeCollection<T extends Identified>(
@@ -150,8 +172,10 @@ export function mergeJournalStates(
     // Продвижение по участку — позже записанное вернее: это накопленный
     // метраж, и свежая запись включает в себя прежнюю.
     sectionProgress: mergeSectionProgress(local.sectionProgress, remote.sectionProgress),
-    // Цены — справочник: чужие позиции добираем, свои не отдаём.
-    prices: { ...remote.prices, ...local.prices },
+    // Цены — справочник: чужие позиции добираем, свои не отдаём. Но
+    // сброшенную у себя цену чужая не восстанавливает: у неё есть
+    // надгробие, и без этого сброс не пережил бы первый же обмен.
+    prices: mergePrices(local.prices, remote.prices, tombs),
     // Расценки и деньги — общие данные, у них есть id и время правки.
     rates: mergeCollection<WorkRate>(local.rates ?? [], remote.rates ?? [], tombs, stats),
     payments: mergeCollection<Payment>(local.payments ?? [], remote.payments ?? [], tombs, stats),

@@ -43,6 +43,33 @@ function crewKey(name: string | undefined): string {
 }
 
 /**
+ * Ключ колонны в журнале.
+ *
+ * «Колонна 1» есть и у TERRA TECH, и у Дозера — это разные бригады с
+ * одинаковым номером. Сводить их по названию значит приписать чужой
+ * бригаде чужие смены, а по табелю считают деньги.
+ *
+ * Но подрядчика в смене указывают не всегда, а имена колонн чаще всё же
+ * уникальны. Поэтому подрядчика спрашиваем только там, где название
+ * действительно делят несколько колонн.
+ */
+function sharedNames(crews: Crew[]): Set<string> {
+  const seen = new Map<string, number>();
+  for (const c of crews) {
+    const k = crewKey(c.name);
+    if (!k) continue;
+    seen.set(k, (seen.get(k) ?? 0) + 1);
+  }
+  return new Set([...seen.entries()].filter(([, n]) => n > 1).map(([k]) => k));
+}
+
+function bucketKey(name: string | undefined, contractor: string | undefined, shared: Set<string>) {
+  const k = crewKey(name);
+  if (!shared.has(k)) return k;
+  return `${normName(contractor ?? '')}\u0000${k}`;
+}
+
+/**
  * Табель за период.
  *
  * Метры не делим на людей: колонна даёт метры вместе, и «по 120 м на
@@ -60,10 +87,11 @@ export function timesheet(
     return true;
   });
 
+  const shared = sharedNames(crews);
   const byCrew = new Map<string, { shifts: number; meters: number; dates: Set<string> }>();
   for (const e of inPeriod) {
-    const key = crewKey(e.column);
-    if (!key) continue;
+    if (!crewKey(e.column)) continue;
+    const key = bucketKey(e.column, e.contractor, shared);
     const acc = byCrew.get(key) ?? { shifts: 0, meters: 0, dates: new Set<string>() };
     acc.shifts += 1;
     acc.meters += entryMeters(e);
@@ -73,7 +101,7 @@ export function timesheet(
 
   const out: TimesheetRow[] = [];
   for (const crew of crews) {
-    const acc = byCrew.get(crewKey(crew.name));
+    const acc = byCrew.get(bucketKey(crew.name, crew.contractor, shared));
     if (!acc || acc.shifts === 0) continue;
     // Выходные в табель не пишем: это состав на сегодня, а не график.
     for (const m of crew.members) {
@@ -122,6 +150,31 @@ export function crewsWithoutMembers(
     if (!crew || crew.members.filter((m) => m.name?.trim()).length === 0) out.push(name);
   }
   return out.sort((a, b) => a.localeCompare(b, 'ru'));
+}
+
+/**
+ * Смены, в которых колонна вообще не записана.
+ *
+ * Они не попадают в табель ни к кому — и это единственный вид пропажи,
+ * о котором табель раньше молчал. Человек видел неполную сводку и решал,
+ * что потерялись данные, хотя потерялось поле в паре строк.
+ */
+export function shiftsWithoutCrew(
+  rows: DailyWorkEntry[],
+  opts: { from?: string; to?: string } = {},
+): { shifts: number; meters: number; dates: string[] } {
+  const dates = new Set<string>();
+  let shifts = 0;
+  let meters = 0;
+  for (const e of rows) {
+    if (opts.from && (e.date || '') < opts.from) continue;
+    if (opts.to && (e.date || '') > opts.to) continue;
+    if (crewKey(e.column)) continue;
+    shifts += 1;
+    meters += entryMeters(e);
+    if (e.date) dates.add(e.date);
+  }
+  return { shifts, meters, dates: [...dates].sort() };
 }
 
 export function timesheetTotals(rows: TimesheetRow[]): TimesheetTotals {

@@ -1,7 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { mergeJournalStates } from './journalSync';
-import { emptyJournal, type JournalState } from './journalStore';
-import type { DailyWorkEntry, Crew, CorrectionRequest } from '@/types/construction';
+import {
+  emptyJournal, splitPlanRoute, joinPlanRoutes, deleteRoute, removePlanSource,
+  removeRate, setMaterialPrice, removeEntry, restoreFromTrash,
+  type JournalState,
+} from './journalStore';
+import type {
+  DailyWorkEntry, Crew, CorrectionRequest, PlanRoute, WorkRate,
+} from '@/types/construction';
 
 const T = (iso: string) => `2026-09-${iso}T00:00:00.000Z`;
 
@@ -205,5 +211,114 @@ describe('первая синхронизация', () => {
     );
     expect(merged.ground).toHaveLength(1);
     expect(stats.pulled).toBe(1);
+  });
+});
+
+/**
+ * Удаление должно пережить обмен.
+ *
+ * Иначе разрезанная трасса возвращается целой и ложится поверх обеих
+ * половин, выброшенный KML-файл всплывает весь, а сброшенная цена
+ * материала снова считает деньги по старой.
+ */
+describe('удалённое не воскресает', () => {
+  function route(id: string, updatedAt: string, source = 'plan.kml'): PlanRoute {
+    return {
+      id, name: id, coords: [[52, 71], [52, 71.01]], lengthM: 685,
+      source, createdAt: T('01'), updatedAt,
+    };
+  }
+
+  it('разрезанная трасса не возвращается с сервера', () => {
+    const local = splitPlanRoute(
+      state({ planRoutes: [route('r1', T('10'))] }), 'r1', 300, 'Иванов',
+    );
+    const { merged } = mergeJournalStates(local, state({ planRoutes: [route('r1', T('10'))] }));
+    expect(merged.planRoutes.map((r) => r.id).sort()).toEqual(['r1-a', 'r1-b']);
+  });
+
+  it('склеенная половина не возвращается отдельной линией', () => {
+    const base = state({
+      planRoutes: [
+        { ...route('a', T('10')), coords: [[52, 71], [52, 71.01]] },
+        { ...route('b', T('10')), coords: [[52, 71.01], [52, 71.02]] },
+      ],
+    });
+    const local = joinPlanRoutes(base, 'a', 'b', 'Иванов');
+    expect(local.planRoutes).toHaveLength(1);
+    const { merged } = mergeJournalStates(local, base);
+    expect(merged.planRoutes).toHaveLength(1);
+  });
+
+  it('удалённая трасса не возвращается', () => {
+    const base = state({ planRoutes: [route('r1', T('10'))] });
+    const { merged } = mergeJournalStates(deleteRoute(base, 'r1', 'Иванов'), base);
+    expect(merged.planRoutes).toHaveLength(0);
+  });
+
+  it('выброшенный файл плана не всплывает целиком', () => {
+    const base = state({
+      planRoutes: [route('r1', T('10')), route('r2', T('10')), route('r3', T('10'), 'другой.kml')],
+    });
+    const { merged } = mergeJournalStates(removePlanSource(base, 'plan.kml'), base);
+    expect(merged.planRoutes.map((r) => r.id)).toEqual(['r3']);
+  });
+
+  it('удалённая расценка не перебивает исправленную цену', () => {
+    const rate: WorkRate = {
+      id: 'rt1', work: 'бар', price: 300, unit: 'м', from: '2026-01-01', updatedAt: T('10'),
+    };
+    const base = state({ rates: [rate] });
+    const { merged } = mergeJournalStates(removeRate(base, 'rt1'), base);
+    expect(merged.rates).toHaveLength(0);
+  });
+
+  it('сброшенная цена материала не возвращается с сервера', () => {
+    const base = state({ prices: { 'МКТ': 420, 'ПЭТ': 310 } });
+    const local = setMaterialPrice(base, 'МКТ', undefined);
+    const { merged } = mergeJournalStates(local, base);
+    expect(merged.prices['МКТ']).toBeUndefined();
+    expect(merged.prices['ПЭТ']).toBe(310);
+  });
+
+  it('заново назначенная цена надгробие снимает', () => {
+    const base = state({ prices: { 'МКТ': 420 } });
+    const cleared = setMaterialPrice(base, 'МКТ', undefined);
+    const again = setMaterialPrice(cleared, 'МКТ', 500);
+    const { merged } = mergeJournalStates(again, base);
+    expect(merged.prices['МКТ']).toBe(500);
+  });
+
+  it('чужую цену, которой нет у меня, по-прежнему добираю', () => {
+    const { merged } = mergeJournalStates(
+      state({ prices: {} }),
+      state({ prices: { 'ПЭТ': 310 } }),
+    );
+    expect(merged.prices['ПЭТ']).toBe(310);
+  });
+});
+
+/**
+ * Пока смена лежала в корзине, она могла вернуться обменом с другого
+ * устройства. Второй раз дописывать её нельзя: метры задвоятся, а по
+ * ним считают и акт, и деньги.
+ */
+describe('возврат из корзины', () => {
+  it('не задваивает смену, которая уже вернулась обменом', () => {
+    const base = state({ ground: [g('a', T('10'))] });
+    const trashed = removeEntry(base, 'a', 'Иванов');
+    expect(trashed.ground).toHaveLength(0);
+    // Обмен вернул ту же запись — так бывает, если её удалили у себя, а
+    // на сервере она ещё живая.
+    const withBack = { ...trashed, ground: [g('a', T('11'))] };
+    const restored = restoreFromTrash(withBack, 'a');
+    expect(restored.ground).toHaveLength(1);
+  });
+
+  it('возврат снимает надгробие', () => {
+    const base = state({ ground: [g('a', T('10'))] });
+    const restored = restoreFromTrash(removeEntry(base, 'a', 'Иванов'), 'a');
+    expect(restored.deleted.some((d) => d.id === 'a')).toBe(false);
+    expect(restored.ground).toHaveLength(1);
   });
 });
