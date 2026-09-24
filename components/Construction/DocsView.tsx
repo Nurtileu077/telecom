@@ -25,6 +25,9 @@ import {
 import { withDefaults, missingForPayment, binLooksWrong } from './requisites';
 import { normName } from './areaImport';
 import {
+  loadBilingual, saveBilingual, loadTerms, BILINGUAL_LABEL, type Bilingual,
+} from './bilingual';
+import {
   buildDocx, docxFileName, loadDocFormat, saveDocFormat,
   DOC_FORMATS, DOC_FORMAT_LABEL, DOC_FORMAT_HINT, type DocFormat,
 } from './docxExport';
@@ -108,6 +111,8 @@ export default function DocsView({
   const [prices, setPrices] = useState<WorkPrices>({});
   const [schemeRouteId, setSchemeRouteId] = useState('');
   const [format, setFormat] = useState<DocFormat>(() => loadDocFormat());
+  const [lang, setLang] = useState<Bilingual>(() => loadBilingual());
+  const docTerms = useMemo(() => loadTerms(), []);
 
   /**
    * Реквизиты берём из журнала, а не из кода.
@@ -289,7 +294,9 @@ export default function DocsView({
             folder,
             actFileName(kind, uchastok, fields.actDate),
             attachment
-              ? withSchemeAttached(body, { scheme: attachment }, fields.actNumber)
+              ? withSchemeAttached(
+                body, { scheme: attachment, lang, terms: docTerms }, fields.actNumber,
+              )
               : body,
           );
         }
@@ -339,6 +346,38 @@ export default function DocsView({
       {(binLooksWrong(req.contractor.bin) || binLooksWrong(req.customer.bin)) && (
         <div className="text-[11px] text-[var(--warn)]">
           БИН похож на опечатку: в нём двенадцать цифр.
+        </div>
+      )}
+
+      {/* Язык бланка. */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="text-[11px] text-[var(--text-muted)]">Бланк</span>
+        {(['off', 'kk-ru', 'ru-kk'] as Bilingual[]).map((m) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => { setLang(m); saveBilingual(m); }}
+            className={`px-2 py-0.5 rounded text-[11px] border ${
+              m === lang
+                ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent-dim)]'
+                : 'border-[var(--border)] text-[var(--text-muted)]'}`}
+          >
+            {BILINGUAL_LABEL[m]}
+          </button>
+        ))}
+      </div>
+      {lang !== 'off' && (
+        <div className="flex items-start gap-2 rounded-lg border border-[var(--warn)]/40
+                        bg-[var(--warn)]/10 px-3 py-2 text-[11.5px] text-[var(--warn)]">
+          <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+          <span>
+            Сверьте термины перед первым документом.
+            <span className="block text-[var(--text-muted)]">
+              Перевод шапок взят из типовых бланков, но подписью его никто не
+              заверял. Ошибка в шапке документа, который подписывают, обходится
+              дороже, чем его отсутствие — посмотрите глазами один раз.
+            </span>
+          </span>
         </div>
       )}
 
@@ -658,6 +697,8 @@ export default function DocsView({
                         schemeFileName(scheme.route, to),
                         schemeDocPage({
                           scheme,
+                          lang,
+                          terms: docTerms,
                           number: registry.find((r) => r.uchastok === schemeRoute?.uchastok)?.number,
                           date: to,
                           contractor,

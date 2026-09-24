@@ -288,3 +288,43 @@ describe('схема приложением к акту', () => {
     expect(html).toMatch(/viewBox="0 0 640 /);
   });
 });
+
+/**
+ * Документы в Казахстане оформляют на государственном языке и на
+ * русском. Сейчас наши только русские, и в акимате их разворачивают.
+ */
+describe('двуязычный бланк схемы', () => {
+  const scheme = () => buildScheme(route(), [obj({ lat: 0, lon: 0.005, name: 'Муфта №1' })]);
+
+  it('по умолчанию бланк остаётся русским', () => {
+    const html = schemeDocHtml({ scheme: scheme() });
+    expect(html).toContain('ИСПОЛНИТЕЛЬНАЯ СХЕМА');
+    expect(html).not.toContain('СҰЛБА');
+  });
+
+  it('включённый режим ставит оба языка в заголовок и в шапку таблицы', () => {
+    const html = schemeDocHtml({ scheme: scheme(), lang: 'kk-ru' });
+    expect(html).toContain('ОРЫНДАУШЫ СҰЛБА / ИСПОЛНИТЕЛЬНАЯ СХЕМА');
+    expect(html).toContain('Ұзындығы, м / Длина, м');
+    expect(html).toContain('Жасаған / Составил');
+  });
+
+  it('цифры и названия от языка не зависят', () => {
+    const html = schemeDocHtml({ scheme: scheme(), lang: 'kk-ru' });
+    expect(html).toContain('Муфта №1');
+    expect(html).toContain('1,11 км');
+  });
+
+  it('свой перевод термина встаёт в документ', () => {
+    const html = schemeDocHtml({
+      scheme: scheme(), lang: 'kk-ru',
+      terms: { uchastok: { ru: 'Участок', kk: 'Телім' } },
+    });
+    expect(html).toContain('Телім / Участок');
+  });
+
+  it('приложение к акту тоже двуязычное, но падеж остаётся русским', () => {
+    const html = schemeAttachmentHtml({ scheme: scheme(), lang: 'kk-ru' }, '14');
+    expect(html).toContain('Қосымша / Приложение к акту № 14');
+  });
+});

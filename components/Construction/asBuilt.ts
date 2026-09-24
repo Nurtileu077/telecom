@@ -4,6 +4,7 @@ import { esc, ACT_DOC_CSS, fmtDate } from './actDocument';
 import { nearestOnRoute } from './measureTool';
 import { routeLengthM } from './routeProgress';
 import { formatMeters } from './mapDecor';
+import { term, type Bilingual, type TermPair } from './bilingual';
 
 /**
  * Исполнительная схема.
@@ -167,6 +168,10 @@ export function schemeSvg(s: Scheme, width = 1000): string {
 
 export interface SchemeDocInput {
   scheme: Scheme;
+  /** Двуязычный бланк: государственный язык рядом с русским. */
+  lang?: Bilingual;
+  /** Свои переводы терминов, если словарные поправили. */
+  terms?: Partial<Record<string, TermPair>>;
   oblast?: string;
   rayon?: string;
   contractor?: string;
@@ -177,13 +182,14 @@ export interface SchemeDocInput {
 
 export function schemeDocHtml(i: SchemeDocInput): string {
   const s = i.scheme;
+  const t = (key: string) => term(key as never, i.lang ?? 'off', i.terms ?? {});
   const rows = s.spans.map((sp, n) => '<tr>'
     + `<td class="val">${n + 1}</td>`
     + `<td class="lbl">${esc(sp.from)} — ${esc(sp.to)}</td>`
     + `<td class="val">${Math.round(sp.meters).toLocaleString('ru')}</td>`
     + '</tr>').join('');
 
-  return '<h1>ИСПОЛНИТЕЛЬНАЯ СХЕМА</h1>'
+  return `<h1>${esc(t('scheme'))}</h1>`
     + (i.number ? `<p class="center">№ ${esc(i.number)}</p>` : '')
     + `<p class="obj">${esc(s.route)}</p>`
     + (i.oblast || i.rayon
@@ -193,15 +199,16 @@ export function schemeDocHtml(i: SchemeDocInput): string {
     + `<p>Протяжённость: <span class="b">${esc(formatMeters(s.totalM))}</span>, `
     + `отметок на схеме: <span class="b">${s.marks.length}</span>.</p>`
     + '<table class="act"><tr>'
-    + '<td class="val b">№</td><td class="lbl b">Участок</td><td class="val b">Длина, м</td>'
+    + `<td class="val b">№</td><td class="lbl b">${esc(t('uchastok'))}</td>`
+    + `<td class="val b">${esc(t('length'))}</td>`
     + '</tr>' + rows + '</table>'
     + (s.skipped.length
       ? `<p class="warn">Не отнесены к трассе: ${esc(s.skipped.join('; '))}. `
         + 'Проверьте координаты — на схему они не попали.</p>'
       : '')
     + '<table class="sign"><tr>'
-    + `<td class="s">Составил<br/>_______________ / ${esc(i.contractor || '')}</td>`
-    + `<td class="s">Проверил<br/>_______________ / ${esc(i.customer || '')}</td>`
+    + `<td class="s">${esc(t('composed'))}<br/>_______________ / ${esc(i.contractor || '')}</td>`
+    + `<td class="s">${esc(t('checked'))}<br/>_______________ / ${esc(i.customer || '')}</td>`
     + '</tr></table>';
 }
 
@@ -239,9 +246,13 @@ export function schemeAttachmentHtml(
     + `<td class="val">${Math.round(sp.meters).toLocaleString('ru')}</td>`
     + '</tr>').join('');
 
+  const t = (key: string) => term(key as never, i.lang ?? 'off', i.terms ?? {});
   return '<div style="page-break-before:always">'
-    + `<p class="right">Приложение${actNumber ? ` к акту № ${esc(actNumber)}` : ''}</p>`
-    + '<h1>ИСПОЛНИТЕЛЬНАЯ СХЕМА</h1>'
+    // «к акту» — падеж, а не слово из словаря: собирать фразу из
+    // терминов значит получить «Приложение акт № 14».
+    + `<p class="right">${esc(t('attachment'))}`
+    + `${actNumber ? ` к акту № ${esc(actNumber)}` : ''}</p>`
+    + `<h1>${esc(t('scheme'))}</h1>`
     + `<p class="obj">${esc(s.route)}</p>`
     + `<div style="margin:8pt 0">${schemeSvg(s, width)}</div>`
     + `<p>Протяжённость: <span class="b">${esc(formatMeters(s.totalM))}</span>, `
