@@ -16,6 +16,7 @@ import { placeCrews } from './crewPlace';
 import { crewsFromJournal } from './crewDerive';
 import { lastPlans, lastEquipment } from './dayPlan';
 import Glyph from '@/components/Layout/Glyph';
+import { useT } from '@/components/Layout/LangProvider';
 
 /**
  * Первый экран стройки: что делать сегодня.
@@ -33,6 +34,7 @@ interface Props {
 }
 
 export default function TodayView({ journal, onOpenView, onSetStage, onAddEntry }: Props) {
+  const { t } = useT();
   const tasks = useMemo(
     () => handoffTasks(pendingTasks(journal.progress, { orders: journal.orders, drills: journal.drills })),
     [journal.progress, journal.orders, journal.drills],
@@ -79,10 +81,10 @@ export default function TodayView({ journal, onOpenView, onSetStage, onAddEntry 
             {' '}<b>{fmtKm(lastMeters)} км</b>
           </span>
         ) : (
-          <span className="text-[12.5px] text-[var(--text-muted)]">Отчётов ещё нет</span>
+          <span className="text-[12.5px] text-[var(--text-muted)]">{t('Отчётов ещё нет')}</span>
         )}
         <button type="button" onClick={onAddEntry} className="btn btn-primary text-[11px] ml-auto">
-          Закрыть день
+          {t('Закрыть день')}
         </button>
         <button type="button" onClick={() => onOpenView('summary')}
                 className="text-[11px] text-[var(--accent)] hover:underline">

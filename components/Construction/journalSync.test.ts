@@ -469,3 +469,65 @@ describe('цены: кто правил позже, тот и прав', () => {
     expect(mergeJournalStates(old, other).merged.prices['МКТ']).toBe(620);
   });
 });
+
+/**
+ * Границы правила «кто позже, тот прав» для цен. Каждая из них —
+ * решение, а не случайность, и записана тестом именно поэтому.
+ */
+describe('цены: границы правила', () => {
+  const at = (iso: string) => ({ 'МКТ': iso });
+
+  it('ключ, о котором знает только время правки, цены не рождает', () => {
+    const merged = mergeJournalStates(
+      state({ prices: {}, pricedAt: at(T('10')) }),
+      state({ prices: {} }),
+    ).merged;
+    expect(merged.prices['МКТ']).toBeUndefined();
+    expect(merged.pricedAt?.['МКТ']).toBe(T('10'));
+  });
+
+  it('сброс со временем бьёт цену без времени: намеренное действие важнее', () => {
+    const merged = mergeJournalStates(
+      state({ prices: {}, pricedAt: at(T('10')) }),
+      state({ prices: { 'МКТ': 420 } }),
+    ).merged;
+    expect(merged.prices['МКТ']).toBeUndefined();
+  });
+
+  it('и в обратную сторону — тоже', () => {
+    const merged = mergeJournalStates(
+      state({ prices: { 'МКТ': 420 } }),
+      state({ prices: {}, pricedAt: at(T('10')) }),
+    ).merged;
+    expect(merged.prices['МКТ']).toBeUndefined();
+  });
+
+  it('цена со временем бьёт цену без времени', () => {
+    const merged = mergeJournalStates(
+      state({ prices: { 'МКТ': 420 } }),
+      state({ prices: { 'МКТ': 620 }, pricedAt: at(T('10')) }),
+    ).merged;
+    expect(merged.prices['МКТ']).toBe(620);
+  });
+
+  it('обмен сам с собой ничего не меняет', () => {
+    const one = state({ prices: { 'МКТ': 420, 'ПЭТ': 310 }, pricedAt: at(T('10')) });
+    const merged = mergeJournalStates(one, one).merged;
+    expect(merged.prices).toEqual({ 'МКТ': 420, 'ПЭТ': 310 });
+  });
+
+  it('слияние не зависит от того, кто первый: цена сходится с обеих сторон', () => {
+    const a = state({ prices: { 'МКТ': 420 }, pricedAt: at(T('10')) });
+    const b = state({ prices: { 'МКТ': 620 }, pricedAt: at(T('12')) });
+    expect(mergeJournalStates(a, b).merged.prices['МКТ']).toBe(620);
+    expect(mergeJournalStates(b, a).merged.prices['МКТ']).toBe(620);
+  });
+
+  it('чужие материалы не теряются, пока их никто не сбрасывал', () => {
+    const merged = mergeJournalStates(
+      state({ prices: { 'МКТ': 420 }, pricedAt: at(T('10')) }),
+      state({ prices: { 'ПЭТ': 310, 'Лента': 90 } }),
+    ).merged;
+    expect(merged.prices).toEqual({ 'МКТ': 420, 'ПЭТ': 310, 'Лента': 90 });
+  });
+});

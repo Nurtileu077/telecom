@@ -852,7 +852,7 @@ export default function ConstructionPanel({
       <div data-print="hide" className="flex items-center gap-2 px-3 md:px-4 py-2.5 border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0"
            style={{ paddingTop: 'calc(0.625rem + env(safe-area-inset-top, 0px))' }}>
         <Wrench size={17} className="text-[var(--accent)] shrink-0" />
-        <h2 className="text-sm font-semibold text-[var(--text)] shrink-0">Журнал стройки</h2>
+        <h2 className="text-sm font-semibold text-[var(--text)] shrink-0">{t('Журнал стройки')}</h2>
         {anchor && (
           <span className="text-[11px] font-mono text-[var(--text-muted)] hidden sm:inline">
             данные по {new Date(`${anchor}T00:00:00Z`).toLocaleDateString('ru')}
@@ -912,7 +912,7 @@ export default function ConstructionPanel({
           </button>
           <button type="button" className="journal-primary btn btn-primary text-[11px]"
                   onClick={() => setFormOpen(true)}>
-            <Plus size={15} /><span className="hidden sm:inline">Закрыть день</span>
+            <Plus size={15} /><span className="hidden sm:inline">{t('Закрыть день')}</span>
           </button>
           <button type="button" className="btn btn-ghost btn-icon" onClick={onClose} aria-label="Закрыть"><X size={16} /></button>
         </div>
