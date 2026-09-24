@@ -5,9 +5,10 @@ import {
   PAYMENT_KIND_LABEL, type WorkRate, type Payment, type PaymentKind,
 } from '@/types/construction';
 import type { JournalState } from './journalStore';
+import ExportButton, { type ExportColumn } from '@/components/Layout/ExportButton';
 import {
   payroll, compareContractors, payrollSummary, paymentLines, costPerMeter,
-  PAYABLE_WORKS, rateFor,
+  PAYABLE_WORKS, rateFor, type PayLine,
 } from './payroll';
 
 /**
@@ -33,6 +34,22 @@ interface Props {
 
 const money = (v: number) => `${Math.round(v).toLocaleString('ru')} ₸`;
 const newId = (p: string) => `${p}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+
+/**
+ * Колонки расчёта — те же, что на экране.
+ *
+ * Оценённый объём стоит отдельной колонкой: по нему считается сумма, а
+ * по общему — нет, и в файле это должно быть видно так же, как в
+ * разговоре с подрядчиком.
+ */
+const PAY_COLUMNS: ExportColumn<PayLine>[] = [
+  { header: 'Работа', value: (l) => l.label },
+  { header: `Объём`, value: (l) => l.quantity },
+  { header: 'Единица', value: (l) => l.unit },
+  { header: 'По расценке', value: (l) => l.pricedQuantity },
+  { header: 'Цена', value: (l) => l.price ?? '' },
+  { header: 'Сумма', value: (l) => l.sum ?? '' },
+];
 
 export default function PayrollView({
   journal, from, to, author, onAddRate, onRemoveRate, onAddPayment, onRemovePayment, onFlash,
@@ -170,10 +187,20 @@ export default function PayrollView({
           <span className="text-[11px] text-[var(--text-muted)]">
             {result.shifts} смен · {Math.round(result.meters).toLocaleString('ru')} м
           </span>
-          <button type="button" onClick={copySummary} className="btn btn-ghost btn-icon ml-auto"
-                  title="Скопировать расчёт">
-            <Copy size={14} />
-          </button>
+          <span className="ml-auto inline-flex gap-1">
+            <button type="button" onClick={copySummary} className="btn btn-ghost btn-icon"
+                    title="Скопировать расчёт текстом — для чата">
+              <Copy size={14} />
+            </button>
+            <ExportButton
+              compact
+              name={`Расчёт ${current}`}
+              rows={result.lines}
+              columns={PAY_COLUMNS}
+              footer={['Начислено', '', '', '', result.accrued]}
+              onFlash={onFlash}
+            />
+          </span>
         </div>
 
         <table className="w-full text-left text-[11.5px]">

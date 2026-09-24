@@ -2,8 +2,10 @@
 import { useMemo, useState } from 'react';
 import { Copy, AlertTriangle } from 'lucide-react';
 import type { DailyWorkEntry, Crew } from '@/types/construction';
+import ExportButton, { type ExportColumn } from '@/components/Layout/ExportButton';
 import {
   timesheet, crewsWithoutMembers, shiftsWithoutCrew, timesheetTotals, timesheetToText,
+  type TimesheetRow,
 } from './timesheet';
 
 /**
@@ -25,6 +27,17 @@ interface Props {
   to?: string;
   onCopied?: (n: number) => void;
 }
+
+/** Колонки табеля — те же, что на экране: выгружается то, что видно. */
+const TIMESHEET_COLUMNS: ExportColumn<TimesheetRow>[] = [
+  { header: 'Фамилия', value: (r) => r.name },
+  { header: 'Должность', value: (r) => r.role ?? '' },
+  { header: 'Колонна', value: (r) => r.crew },
+  { header: 'Подрядчик', value: (r) => r.contractor ?? '' },
+  { header: 'Смен', value: (r) => r.shifts },
+  { header: 'Дней', value: (r) => r.days },
+  { header: 'Метры колонны', value: (r) => Math.round(r.crewMeters) },
+];
 
 export default function TimesheetView({ rows, crews, from, to, onCopied }: Props) {
   const [copied, setCopied] = useState(false);
@@ -66,9 +79,17 @@ export default function TimesheetView({ rows, crews, from, to, onCopied }: Props
             {Math.round(totals.meters).toLocaleString('ru')} м
           </span>
         </span>
-        <button type="button" onClick={copy} className="btn btn-ghost text-[11px] ml-auto">
-          <Copy size={13} />{copied ? 'Скопировано' : 'Скопировать табель'}
-        </button>
+        <span className="ml-auto inline-flex gap-1">
+          <button type="button" onClick={copy} className="btn btn-ghost text-[11px]">
+            <Copy size={13} />{copied ? 'Скопировано' : 'Табель в чат'}
+          </button>
+          <ExportButton
+            name="Табель"
+            rows={table}
+            columns={TIMESHEET_COLUMNS}
+            footer={['Итого', '', '', totals.shifts, '', totals.meters]}
+          />
+        </span>
       </div>
 
       {noCrew.shifts > 0 && (

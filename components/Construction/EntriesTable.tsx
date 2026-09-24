@@ -7,6 +7,7 @@ import {
 import type { DailyWorkEntry } from '@/types/construction';
 import type { JournalState } from './journalStore';
 import { hasPendingCorrection } from './journalStore';
+import ExportButton, { type ExportColumn } from '@/components/Layout/ExportButton';
 import {
   entryMeters, filterEntries, sortEntries, groupByWeek, tableTotals, rowsToText,
   SORT_LABEL, type SortKey, type SortDir,
@@ -39,7 +40,26 @@ interface Props {
   /** Повторить смену: те же цифры на другой день. */
   onRepeat?: (e: DailyWorkEntry) => void;
   onCopied?: (n: number) => void;
+  onFlash?: (text: string) => void;
 }
+
+/**
+ * Колонки для выгрузки — те же, что на экране, и в том же порядке.
+ *
+ * Метры остаются числом: в Excel по ним считают, а «1 240 м» строкой
+ * сложить нельзя.
+ */
+const ENTRY_COLUMNS: ExportColumn<DailyWorkEntry>[] = [
+  { header: 'Дата', value: (e) => e.date ?? '' },
+  { header: 'Область', value: (e) => e.oblast ?? '' },
+  { header: 'Район', value: (e) => e.rayon ?? '' },
+  { header: 'Участок', value: (e) => e.uchastok ?? '' },
+  { header: 'Подрядчик', value: (e) => e.contractor ?? '' },
+  { header: 'Колонна', value: (e) => e.column ?? '' },
+  { header: 'Метры', value: (e) => Math.round(entryMeters(e)) },
+  { header: 'ГНБ, м', value: (e) => Math.round(e.drillM ?? 0) },
+  { header: 'Простой', value: (e) => e.downtime ?? '' },
+];
 
 const COLUMNS: { key: SortKey; className: string }[] = [
   { key: 'date', className: 'w-[92px]' },
@@ -53,7 +73,7 @@ const fmtM = (v: number) => `${Math.round(v).toLocaleString('ru')} м`;
 
 export default function EntriesTable({
   rows, journal, onDelete, onEdit, onShowOnMap, onBulkPatch, onDispute, onPresent,
-  onRepeat, onCopied,
+  onRepeat, onCopied, onFlash,
 }: Props) {
   const [q, setQ] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('date');
@@ -272,6 +292,17 @@ export default function EntriesTable({
                 title={pickedRows.length ? `Скопировать ${pickedRows.length} строк` : 'Скопировать всё найденное'}>
           <Copy size={14} />
         </button>
+        <ExportButton
+          compact
+          name="Журнал"
+          rows={pickedRows.length ? pickedRows : found}
+          columns={ENTRY_COLUMNS}
+          footer={[
+            'Итого', '', '', '', '', '',
+            Math.round(totals.meters), Math.round(totals.drillM), '',
+          ]}
+          onFlash={onFlash}
+        />
         <button type="button" onClick={() => window.print()} className="btn btn-ghost btn-icon"
                 title="Напечатать журнал">
           <Printer size={14} />

@@ -1419,6 +1419,7 @@ export default function ConstructionPanel({
           <EntriesTable
             rows={ground}
             journal={journal}
+            onFlash={setFlash}
             onDelete={handleDelete}
             onEdit={(e) => { setEditing(e); setFormOpen(true); }}
             onShowOnMap={(e) => {
