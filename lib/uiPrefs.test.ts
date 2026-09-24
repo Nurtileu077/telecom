@@ -22,9 +22,9 @@ beforeEach(() => { store = fakeWindow(); });
 
 describe('настройки вида', () => {
   it('что сохранили, то и прочитали', () => {
-    saveUiPrefs({ theme: 'light', density: 'compact', scale: 1.2, byClock: true });
+    saveUiPrefs({ theme: 'light', density: 'compact', scale: 1.2, byClock: true, oneHand: true });
     expect(loadUiPrefs()).toEqual({
-      theme: 'light', density: 'compact', scale: 1.2, byClock: true,
+      theme: 'light', density: 'compact', scale: 1.2, byClock: true, oneHand: true,
     });
   });
 
@@ -87,5 +87,28 @@ describe('effectiveTheme', () => {
 
   it('система молчит — остаёмся тёмными', () => {
     expect(effectiveTheme({ ...base, theme: 'auto' })).toBe('dark');
+  });
+});
+
+/**
+ * Планшет в поле держат одной рукой, второй — рейку или лопату. Верх
+ * экрана большим пальцем не достать, а именно там вкладки и главная
+ * кнопка.
+ */
+describe('режим одной руки', () => {
+  it('по умолчанию выключен: на компьютере он лишний', () => {
+    expect(DEFAULT_UI_PREFS.oneHand).toBe(false);
+    expect(loadUiPrefs().oneHand).toBe(false);
+  });
+
+  it('включённый переживает перезагрузку', () => {
+    saveUiPrefs({ ...DEFAULT_UI_PREFS, oneHand: true });
+    expect(loadUiPrefs().oneHand).toBe(true);
+  });
+
+  it('старые настройки без этого поля читаются', () => {
+    store.set('optiq-ui-prefs-v1', JSON.stringify({ theme: 'light', density: 'compact' }));
+    expect(loadUiPrefs().oneHand).toBe(false);
+    expect(loadUiPrefs().theme).toBe('light');
   });
 });

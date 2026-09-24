@@ -43,6 +43,7 @@ import ViewPrefs from '@/components/Layout/ViewPrefs';
 import HelpSheet from './HelpSheet';
 import MaintenanceView from './MaintenanceView';
 import RequisitesView from './RequisitesView';
+import { errorLine } from '@/lib/errors';
 import { loadImports, saveImports, noteImport } from './backup';
 import { demoJournal } from './demoData';
 import { reminders } from './siteRecords';
@@ -486,7 +487,7 @@ export default function ConstructionPanel({
         setPendingPoints({ points: res.points, source: file.name });
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Не удалось прочитать файл');
+      setError(errorLine(e, 'прочитать файл'));
     } finally { setBusy(false); }
   }, [persist]);
 
@@ -501,7 +502,7 @@ export default function ConstructionPanel({
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Не удалось собрать файл');
+      setError(errorLine(e, 'собрать файл'));
     } finally { setBusy(false); }
   }, [journal]);
 
@@ -896,7 +897,8 @@ export default function ConstructionPanel({
                     + scoped.objects.length === 0)}>
             <Share2 size={15} />
           </button>
-          <button type="button" className="btn btn-primary text-[11px]" onClick={() => setFormOpen(true)}>
+          <button type="button" className="journal-primary btn btn-primary text-[11px]"
+                  onClick={() => setFormOpen(true)}>
             <Plus size={15} /><span className="hidden sm:inline">Закрыть день</span>
           </button>
           <button type="button" className="btn btn-ghost btn-icon" onClick={onClose} aria-label="Закрыть"><X size={16} /></button>
@@ -905,7 +907,8 @@ export default function ConstructionPanel({
 
       {/* Фильтры */}
       {!empty && (
-        <div className="flex flex-wrap items-center gap-1.5 px-3 md:px-4 py-2 border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0">
+        <div className="journal-tabs flex flex-wrap items-center gap-1.5 px-3 md:px-4 py-2
+                        border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0">
           <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md mr-1">
             {shownViews.map(([v, label]) => {
               const badge = v === 'corrections' ? pending.length
@@ -1087,7 +1090,7 @@ export default function ConstructionPanel({
       )}
 
       {/* Содержимое */}
-      <div className="flex-1 overflow-y-auto px-3 md:px-4 py-3 md:py-4">
+      <div className="journal-scroll flex-1 overflow-y-auto px-3 md:px-4 py-3 md:py-4">
         {error && (
           <div className="mb-3 flex items-start gap-2 p-3 rounded-lg border border-[var(--danger)]/40 bg-[var(--danger)]/10 text-[12px] text-[var(--danger)]">
             <AlertTriangle size={15} className="shrink-0 mt-0.5" /><span>{error}</span>

@@ -4,6 +4,7 @@ import { Project, ProjectSnapshot, ProjectStatus, PROJECT_STATUS_LABELS } from '
 import SnapshotsPanel from './SnapshotsPanel';
 import ServerHistoryPanel from './ServerHistoryPanel';
 import type { ProjectHistoryEntry } from '@/lib/supabase';
+import { errorLine } from '@/lib/errors';
 
 interface Props {
   projectId: string;
@@ -90,7 +91,7 @@ export default function ProjectsTab({
           <input ref={fileRef} type="file" accept=".json" className="hidden"
                  onChange={(e) => {
                    const f = e.target.files?.[0];
-                   if (f) importProjectJSON(f).then(refresh).catch((err) => alert('Ошибка: ' + err.message));
+                   if (f) importProjectJSON(f).then(refresh).catch((err) => alert(errorLine(err, 'загрузить проект')));
                  }} />
         </div>
 

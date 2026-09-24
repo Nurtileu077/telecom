@@ -734,3 +734,48 @@ body {
 
 /* Масштаб интерфейса — один множитель на весь корневой шрифт. */
 html { font-size: calc(16px * var(--ui-scale, 1)); }
+
+/* ── Режим одной руки ────────────────────────────────────────────────────
+   Планшет в поле держат одной рукой, второй — рейку, телефон или лопату.
+   Верх экрана большим пальцем не достать, а именно там вкладки и главная
+   кнопка. В этом режиме они уезжают вниз, под палец.
+
+   Только на узком экране: на компьютере кнопка внизу — это просто
+   кнопка не на месте. */
+@media (max-width: 720px) {
+  :root[data-hand="one"] .journal-tabs {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    border-top: 1px solid var(--border);
+    border-bottom: none;
+    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+    /* Тень кверху: иначе полоса сливается с содержимым под ней. */
+    box-shadow: 0 -4px 14px rgba(0, 0, 0, 0.18);
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+
+  /* Содержимое не должно уходить под полосу: последняя строка таблицы
+     иначе не читается и не нажимается. */
+  :root[data-hand="one"] .journal-scroll {
+    padding-bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Главное действие — под большой палец правой руки. */
+  :root[data-hand="one"] .journal-primary {
+    position: fixed;
+    right: 12px;
+    bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
+    z-index: 31;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  }
+}
+
+/* На печать ни полоса вкладок, ни кнопка не идут. */
+@media print {
+  .journal-tabs,
+  .journal-primary { display: none !important; }
+}

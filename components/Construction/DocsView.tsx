@@ -26,6 +26,7 @@ import {
   DOC_FORMATS, DOC_FORMAT_LABEL, DOC_FORMAT_HINT, type DocFormat,
 } from './docxExport';
 import { htmlToPdfBlob, pdfFileName } from '@/lib/pdf';
+import { errorLine } from '@/lib/errors';
 import { getPhotoBlob } from './photoStore';
 import { downloadText, downloadBlob } from '@/lib/download';
 import { toCsv, csvBlob } from '@/lib/csv';
@@ -276,7 +277,7 @@ export default function DocsView({
       downloadBlob(`Пакет документов ${from}—${to}.zip`, blob);
       onFlash?.('Пакет собран');
     } catch (err) {
-      onFlash?.(err instanceof Error ? `Не собралось: ${err.message}` : 'Не собралось');
+      onFlash?.(errorLine(err, 'собрать пакет'));
     } finally {
       setBusy(false);
     }

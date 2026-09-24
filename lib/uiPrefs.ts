@@ -26,6 +26,16 @@ export interface UiPrefs {
    * тёмной круглые сутки, а солнце садится в своё время.
    */
   byClock: boolean;
+  /**
+   * Режим одной руки.
+   *
+   * Планшет в поле держат одной рукой, второй — рейку, телефон или
+   * лопату. Верх экрана большим пальцем не достать, а именно там
+   * вкладки и главная кнопка. В этом режиме они уезжают вниз.
+   *
+   * Только на узком экране: на компьютере это лишнее.
+   */
+  oneHand: boolean;
 }
 
 export const DEFAULT_UI_PREFS: UiPrefs = {
@@ -33,6 +43,7 @@ export const DEFAULT_UI_PREFS: UiPrefs = {
   density: 'comfortable',
   scale: 1,
   byClock: false,
+  oneHand: false,
 };
 
 export const THEME_LABEL: Record<ThemeMode, string> = {
@@ -62,6 +73,7 @@ export function loadUiPrefs(): UiPrefs {
       density: saved.density === 'compact' ? 'compact' : 'comfortable',
       scale: clampScale(Number(saved.scale)),
       byClock: !!saved.byClock,
+      oneHand: !!saved.oneHand,
     };
   } catch {
     return { ...DEFAULT_UI_PREFS };
@@ -111,5 +123,9 @@ export function applyUiPrefs(prefs: UiPrefs, opts: { systemDark?: boolean; now?:
   const root = document.documentElement;
   root.setAttribute('data-theme', effectiveTheme(prefs, opts));
   root.setAttribute('data-density', prefs.density);
+  // Не атрибут-значение, а наличие: правила режима одной руки и так
+  // включаются только на узком экране, через медиазапрос в CSS.
+  if (prefs.oneHand) root.setAttribute('data-hand', 'one');
+  else root.removeAttribute('data-hand');
   root.style.setProperty('--ui-scale', String(prefs.scale));
 }

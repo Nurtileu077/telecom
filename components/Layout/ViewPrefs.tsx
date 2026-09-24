@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Sun, Moon, Laptop, Clock } from 'lucide-react';
+import { Sun, Moon, Laptop, Clock, Hand } from 'lucide-react';
 import {
   loadUiPrefs, saveUiPrefs, applyUiPrefs, clampScale,
   THEME_LABEL, DENSITY_LABEL, MIN_SCALE, MAX_SCALE,
@@ -120,6 +120,27 @@ export default function ViewPrefs({ className, compact }: Props) {
         <p className="text-[10px] text-[var(--text-muted)] mt-1 leading-snug">
           Системная тема на планшете обычно стоит тёмной круглые сутки, а солнце
           садится в своё время.
+        </p>
+      </div>
+
+      <div>
+        <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)] mb-1">
+          Одной рукой
+        </div>
+        <button
+          type="button"
+          onClick={() => update({ oneHand: !prefs.oneHand })}
+          aria-pressed={prefs.oneHand}
+          className={`w-full px-2 py-1.5 rounded text-[11px] border inline-flex items-center
+                      justify-center gap-1 ${
+            prefs.oneHand ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent-dim)]'
+              : 'border-[var(--border)] text-[var(--text-muted)]'}`}
+        >
+          <Hand size={13} />Вкладки и кнопка внизу
+        </button>
+        <p className="text-[10px] text-[var(--text-muted)] mt-1 leading-snug">
+          Планшет в поле держат одной рукой, второй — рейку или лопату. Верх
+          экрана большим пальцем не достать. На широком экране ничего не меняет.
         </p>
       </div>
 

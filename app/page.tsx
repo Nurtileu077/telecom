@@ -70,6 +70,7 @@ import {
 import type { Crew, SiteObject, Incident, SiteObjectKind, FieldPhoto } from '@/types/construction';
 import { SITE_OBJECT_SPECS } from '@/types/construction';
 const ConstructionPanel = dynamic(() => import('@/components/Construction/ConstructionPanel'), { ssr: false });
+const FirstRun = dynamic(() => import('@/components/Layout/FirstRun'), { ssr: false });
 import { useSupabaseAuth } from '@/hooks/useSupabaseAuth';
 import { roleFromUser } from '@/lib/authSession';
 import { dbLoadProject } from '@/lib/supabase';
@@ -225,11 +226,15 @@ export default function HomePage() {
     // показывая пальцем в место, а не называя запись, к которой они
     // приложены.
     setFieldPhotos(j.photos.filter((p) => p.lat !== undefined && p.lon !== undefined));
+    // Сколько всего записано — по этому решается, показывать ли подсказки
+    // при первом входе: заполненному журналу они не нужны.
+    setJournalEntryCount(j.ground.length + j.aerial.length + j.drills.length);
   }, []);
   useEffect(() => { refreshJournalLayers(); }, [refreshJournalLayers]);
 
   /** Короткое сообщение внизу экрана: «скопировано», «сохранено». */
   const [toast, setToast] = useState<string | null>(null);
+  const [journalEntryCount, setJournalEntryCount] = useState(0);
 
   const say = useCallback((text: string, ms = 1800) => {
     setToast(text);
@@ -2190,6 +2195,17 @@ export default function HomePage() {
             persist(next);
             refreshJournalLayers();
           }}
+        />
+      )}
+
+      {/*
+        Три шага при первом входе — только пустому журналу и только раз.
+        Пока журнал открыт, не мешаем: там своих подсказок хватает.
+      */}
+      {!showJournal && (
+        <FirstRun
+          counts={{ routes: planRoutes.length, entries: journalEntryCount }}
+          onGo={(where) => { if (where !== 'map') setShowJournal(true); }}
         />
       )}
 
