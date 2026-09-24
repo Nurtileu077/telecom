@@ -354,11 +354,20 @@ export function docxFileName(name: string): string {
  * и привычка к .doc, а прораб шлёт файл с телефона — ему нужен .docx.
  * Выбор помним, чтобы не переключать его при каждом документе.
  */
-export type DocFormat = 'doc' | 'docx';
+export type DocFormat = 'doc' | 'docx' | 'pdf';
+
+export const DOC_FORMATS: DocFormat[] = ['docx', 'pdf', 'doc'];
 
 export const DOC_FORMAT_LABEL: Record<DocFormat, string> = {
-  docx: 'Word (.docx)',
+  docx: 'Word',
+  pdf: 'PDF',
   doc: 'HTML (.doc)',
+};
+
+export const DOC_FORMAT_HINT: Record<DocFormat, string> = {
+  docx: 'Открывается и на телефоне, и в Гугл-Документах. Можно править.',
+  pdf: 'Открывается везде и выглядит одинаково. Править нельзя — и это к лучшему, когда документ ушёл.',
+  doc: 'Старый формат: открывает только настольный Word, и тот с оговоркой.',
 };
 
 const FORMAT_KEY = 'optiq-doc-format';
@@ -366,7 +375,8 @@ const FORMAT_KEY = 'optiq-doc-format';
 export function loadDocFormat(): DocFormat {
   if (typeof window === 'undefined') return 'docx';
   try {
-    return window.localStorage.getItem(FORMAT_KEY) === 'doc' ? 'doc' : 'docx';
+    const saved = window.localStorage.getItem(FORMAT_KEY);
+    return DOC_FORMATS.includes(saved as DocFormat) ? (saved as DocFormat) : 'docx';
   } catch {
     return 'docx';
   }

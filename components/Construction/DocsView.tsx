@@ -22,8 +22,9 @@ import {
 import { buildScheme, schemeDocPage, schemeFileName } from './asBuilt';
 import {
   buildDocx, docxFileName, loadDocFormat, saveDocFormat,
-  DOC_FORMAT_LABEL, type DocFormat,
+  DOC_FORMATS, DOC_FORMAT_LABEL, DOC_FORMAT_HINT, type DocFormat,
 } from './docxExport';
+import { htmlToPdfBlob, pdfFileName } from '@/lib/pdf';
 import { getPhotoBlob } from './photoStore';
 import { downloadText, downloadBlob } from '@/lib/download';
 import { toCsv, csvBlob } from '@/lib/csv';
@@ -165,6 +166,22 @@ export default function DocsView({
       onFlash?.(`Файл собран: ${name}`);
       return;
     }
+    if (format === 'pdf') {
+      // Снимок страницы делает браузер, и на длинном документе это
+      // занимает секунды: без отметки о работе кнопка выглядит нажатой
+      // впустую, и её жмут ещё раз.
+      setBusy(true);
+      try {
+        const file = pdfFileName(name);
+        downloadBlob(file, await htmlToPdfBlob(html, ACT_DOC_CSS, { landscape }));
+        onFlash?.(`Файл собран: ${file}`);
+      } catch {
+        onFlash?.('PDF не собрался. Сохраните в Word — документ тот же.');
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     const file = docxFileName(name);
     downloadBlob(file, await buildDocx(html, { landscape }));
     onFlash?.(`Файл собран: ${file}`);
@@ -183,6 +200,9 @@ export default function DocsView({
       const zip = new JSZip();
       // В пакет кладём то же, что и по одному: переключатель формата
       // общий, иначе в архиве окажется не то, что человек выбрал.
+      // В архив кладём Word, даже когда по одному сохраняют в PDF: снимок
+      // каждой страницы — это минуты на пакет из двадцати документов, а
+      // пакет собирают, чтобы отправить его сейчас.
       const put = async (folder: InstanceType<typeof JSZip>, name: string, html: string) => {
         if (format === 'doc') folder.file(name, html);
         else folder.file(docxFileName(name), await buildDocx(html));
@@ -265,14 +285,12 @@ export default function DocsView({
       {/* Формат — общий для всех документов на этом экране. */}
       <div className="flex items-center gap-1.5 flex-wrap">
         <span className="text-[11px] text-[var(--text-muted)]">Сохранять как</span>
-        {(['docx', 'doc'] as DocFormat[]).map((f) => (
+        {DOC_FORMATS.map((f) => (
           <button
             key={f}
             type="button"
             onClick={() => { setFormat(f); saveDocFormat(f); }}
-            title={f === 'docx'
-              ? 'Настоящий Word: открывается и на телефоне, и в Гугл-Документах'
-              : 'HTML с расширением .doc: открывает только настольный Word'}
+            title={DOC_FORMAT_HINT[f]}
             className={`px-2 py-0.5 rounded text-[11px] border ${
               f === format
                 ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent-dim)]'
@@ -281,6 +299,9 @@ export default function DocsView({
             {DOC_FORMAT_LABEL[f]}
           </button>
         ))}
+        <span className="w-full text-[10.5px] text-[var(--text-muted)]">
+          {DOC_FORMAT_HINT[format]}
+        </span>
       </div>
 
       {/* Пакет */}
