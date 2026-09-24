@@ -135,10 +135,7 @@ export default function SheetImport({ file, oblast, author, onDone, onClose }: P
                         key={s.name}
                         type="button"
                         onClick={() => setActive(i)}
-                        className={`px-2 py-1 rounded text-[11.5px] border ${
-                          i === active
-                            ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent-dim)]'
-                            : 'border-[var(--border)] text-[var(--text-muted)]'}`}
+                        className={`chip ${i === active ? 'chip-on' : ''}`}
                       >
                         {s.name}
                         <span className="ml-1 text-[10px]">{s.rows.length}</span>

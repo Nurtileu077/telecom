@@ -8,6 +8,7 @@ import {
 } from '@/types/construction';
 import { JournalState, distinct, plural } from './journalStore';
 import { getCurrentPosition, positionErrorText } from './currentPosition';
+import Glyph from '@/components/Layout/Glyph';
 
 /**
  * Что стоит вдоль трассы.
@@ -78,9 +79,9 @@ export default function ObjectsView({
           </button>
           {SITE_OBJECT_KINDS.map((k) => (
             <button key={k} type="button" onClick={() => setKindFilter(k)}
-              className={`px-2.5 py-1 text-[11.5px] rounded ${
+              className={`px-2.5 py-1 text-[11.5px] rounded inline-flex items-center gap-1 ${
                 kindFilter === k ? 'bg-[var(--accent-dim)] text-[var(--accent)]' : 'text-[var(--text-muted)]'}`}>
-              {SITE_OBJECT_SPECS[k].icon} {SITE_OBJECT_SPECS[k].plural}
+              <Glyph name={SITE_OBJECT_SPECS[k].icon} /> {SITE_OBJECT_SPECS[k].plural}
               {counts[k] > 0 && <span className="ml-1 text-[10px]">{counts[k]}</span>}
             </button>
           ))}
@@ -118,7 +119,7 @@ export default function ObjectsView({
               : o.endpointKind || spec.label;
             return (
               <div key={o.id} className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] px-3 py-2 flex items-center gap-2">
-                <span className="text-[15px] leading-none">{spec.icon}</span>
+                <Glyph name={spec.icon} size={15} />
                 <div className="min-w-0 flex-1">
                   <div className="text-[12.5px] text-[var(--text)] truncate">
                     {o.name || spec.label}
@@ -283,7 +284,7 @@ function ObjectForm({ journal, initial, author, onSave, onClose, onRequestPick }
                   kind === k
                     ? 'border-[var(--accent)] bg-[var(--accent-dim)] text-[var(--accent)]'
                     : 'border-[var(--border)] text-[var(--text-muted)]'}`}>
-                {SITE_OBJECT_SPECS[k].icon} {SITE_OBJECT_SPECS[k].label}
+                <Glyph name={SITE_OBJECT_SPECS[k].icon} /> {SITE_OBJECT_SPECS[k].label}
               </button>
             ))}
           </div>

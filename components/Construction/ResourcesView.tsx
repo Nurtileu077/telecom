@@ -98,11 +98,7 @@ export default function ResourcesView({
             key={k}
             type="button"
             onClick={() => setTab(k)}
-            className={`flex-1 px-2 py-1.5 rounded text-[11.5px] border inline-flex items-center
-                        justify-center gap-1 ${
-              tab === k
-                ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent-dim)]'
-                : 'border-[var(--border)] text-[var(--text-muted)]'}`}
+            className={`chip flex-1 justify-center ${tab === k ? 'chip-on' : ''}`}
           >
             <Icon size={13} />{label}
           </button>

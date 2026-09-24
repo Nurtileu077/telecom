@@ -96,10 +96,7 @@ export default function ViewPrefs({ className, compact }: Props) {
                 type="button"
                 onClick={() => update({ theme: t, byClock: false })}
                 aria-pressed={on}
-                className={`flex-1 px-2 py-1.5 rounded text-[11px] border inline-flex items-center
-                            justify-center gap-1 ${
-                  on ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent-dim)]'
-                    : 'border-[var(--border)] text-[var(--text-muted)]'}`}
+                className={`chip flex-1 justify-center ${on ? 'chip-on' : ''}`}
               >
                 <Icon size={13} />{THEME_LABEL[t]}
               </button>
@@ -110,10 +107,7 @@ export default function ViewPrefs({ className, compact }: Props) {
           type="button"
           onClick={() => update({ byClock: !prefs.byClock })}
           aria-pressed={prefs.byClock}
-          className={`mt-1 w-full px-2 py-1.5 rounded text-[11px] border inline-flex items-center
-                      justify-center gap-1 ${
-            prefs.byClock ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent-dim)]'
-              : 'border-[var(--border)] text-[var(--text-muted)]'}`}
+          className={`chip mt-1 w-full justify-center ${prefs.byClock ? 'chip-on' : ''}`}
         >
           <Clock size={13} />Светлая днём, тёмная вечером
         </button>
@@ -131,10 +125,7 @@ export default function ViewPrefs({ className, compact }: Props) {
           type="button"
           onClick={() => update({ oneHand: !prefs.oneHand })}
           aria-pressed={prefs.oneHand}
-          className={`w-full px-2 py-1.5 rounded text-[11px] border inline-flex items-center
-                      justify-center gap-1 ${
-            prefs.oneHand ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent-dim)]'
-              : 'border-[var(--border)] text-[var(--text-muted)]'}`}
+          className={`chip w-full justify-center ${prefs.oneHand ? 'chip-on' : ''}`}
         >
           <Hand size={13} />Вкладки и кнопка внизу
         </button>
@@ -155,10 +146,7 @@ export default function ViewPrefs({ className, compact }: Props) {
               type="button"
               onClick={() => update({ density: d })}
               aria-pressed={prefs.density === d}
-              className={`flex-1 px-2 py-1.5 rounded text-[11px] border ${
-                prefs.density === d
-                  ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent-dim)]'
-                  : 'border-[var(--border)] text-[var(--text-muted)]'}`}
+              className={`chip flex-1 ${prefs.density === d ? 'chip-on' : ''}`}
             >
               {DENSITY_LABEL[d]}
             </button>

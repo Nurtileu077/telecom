@@ -7,6 +7,7 @@ import {
   CREW_KINDS, CREW_KIND_LIST, CREW_STATUS, EQUIPMENT_KINDS,
 } from '@/types/construction';
 import { JournalState, suggestContractor } from './journalStore';
+import Glyph from '@/components/Layout/Glyph';
 
 /**
  * Карточка колонны: вид работ, состояние, где стоит, состав и техника.
@@ -113,7 +114,7 @@ export default function CrewForm({ journal, initial, onSave, onRequestPick, onCl
                       flex flex-col max-h-full sm:max-h-[90vh] overflow-hidden">
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--border)] shrink-0"
              style={{ paddingTop: 'calc(0.75rem + env(safe-area-inset-top, 0px))' }}>
-          <span className="text-lg leading-none">{CREW_KINDS[kind].icon}</span>
+          <Glyph name={CREW_KINDS[kind].icon} size={18} />
           <div className="min-w-0">
             <h3 className="text-sm font-semibold text-[var(--text)]">
               {initial ? 'Колонна' : 'Новая колонна'}
@@ -135,7 +136,7 @@ export default function CrewForm({ journal, initial, onSave, onRequestPick, onCl
                   className={`py-1.5 px-1 text-[11px] rounded border transition-colors flex flex-col items-center gap-0.5 ${
                     kind === k ? 'border-current' : 'border-[var(--border)] text-[var(--text-muted)]'}`}
                   style={kind === k ? { color: CREW_KINDS[k].color, background: `${CREW_KINDS[k].color}18` } : undefined}>
-                  <span className="text-sm leading-none">{CREW_KINDS[k].icon}</span>
+                  <Glyph name={CREW_KINDS[k].icon} size={14} />
                   {CREW_KINDS[k].short}
                 </button>
               ))}

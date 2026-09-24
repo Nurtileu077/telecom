@@ -58,6 +58,7 @@ import PlanView from './PlanView';
 import SiteRecordsView from './SiteRecordsView';
 import EntriesTable from './EntriesTable';
 import QuickEntryBar from './QuickEntryBar';
+import Glyph from '@/components/Layout/Glyph';
 import SheetImport from './SheetImport';
 import type { QuickParse } from './quickEntry';
 import { planFact } from './entriesTable';
@@ -980,7 +981,7 @@ export default function ConstructionPanel({
                   }}
                   className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded-md px-2 py-1 text-[11px] text-[var(--text)]">
             {JOURNAL_ROLE_LIST.map((r) => (
-              <option key={r} value={r}>{JOURNAL_ROLES[r].icon} {JOURNAL_ROLES[r].label}</option>
+              <option key={r} value={r}><Glyph name={JOURNAL_ROLES[r].icon} /> {JOURNAL_ROLES[r].label}</option>
             ))}
           </select>
           {/* Субподрядчику показываем только его — значит надо знать, чей он. */}
@@ -1679,7 +1680,7 @@ function CrewsList({ rows, derived, onAdd, onEdit, onDelete, onAdopt }: {
                 <div className="flex items-start gap-2">
                   <span className="w-8 h-8 rounded-full flex items-center justify-center text-base shrink-0"
                         style={{ background: `${kind.color}22`, border: `2px solid ${st.color}` }}>
-                    {kind.icon}
+                    <Glyph name={kind.icon} size={16} />
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2 flex-wrap">
@@ -2217,7 +2218,7 @@ function PointImport({ points, source, onImport, onCancel }: {
                      className="mt-0.5 accent-[var(--accent)]" />
               <span className="min-w-0 flex-1">
                 <span className="text-[12px] text-[var(--text)]">
-                  {spec.icon} {spec.label}
+                  <Glyph name={spec.icon} /> {spec.label}
                   <b className="ml-1.5 font-mono">{b.points.length}</b>
                 </span>
                 <span className="block text-[10.5px] text-[var(--text-muted)]">

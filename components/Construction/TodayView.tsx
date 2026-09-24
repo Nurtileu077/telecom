@@ -15,6 +15,7 @@ import { MATERIAL_LABEL } from './journalStore';
 import { placeCrews } from './crewPlace';
 import { crewsFromJournal } from './crewDerive';
 import { lastPlans, lastEquipment } from './dayPlan';
+import Glyph from '@/components/Layout/Glyph';
 
 /**
  * Первый экран стройки: что делать сегодня.
@@ -130,7 +131,7 @@ export default function TodayView({ journal, onOpenView, onSetStage, onAddEntry 
           {tasks.slice(0, 6).map((t) => (
             <div key={`${t.kato}-${t.stage}`}
                  className="flex items-center gap-2 rounded-lg border border-[var(--accent)]/40 bg-[var(--accent-dim)] px-3 py-2">
-              {t.crewKind && <span className="text-[15px] leading-none">{CREW_KINDS[t.crewKind].icon}</span>}
+              {t.crewKind && <Glyph name={CREW_KINDS[t.crewKind].icon} size={15} />}
               <div className="min-w-0 flex-1">
                 <div className="text-[12.5px] text-[var(--text)] truncate">{t.snp}</div>
                 <div className="text-[10.5px] text-[var(--text-muted)] truncate">
@@ -175,7 +176,7 @@ export default function TodayView({ journal, onOpenView, onSetStage, onAddEntry 
                 <div key={c.id}
                      className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5"
                      style={{ borderColor: st.color, background: 'var(--bg-surface)' }}>
-                  <span className="text-[14px] leading-none">{CREW_KINDS[c.kind].icon}</span>
+                  <Glyph name={CREW_KINDS[c.kind].icon} size={14} />
                   <div className="min-w-0">
                     <div className="text-[11.5px] text-[var(--text)] truncate">{c.name}</div>
                     <div className="text-[10px] truncate" style={{ color: st.color }}>

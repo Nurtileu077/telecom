@@ -357,10 +357,7 @@ export default function DocsView({
             key={m}
             type="button"
             onClick={() => { setLang(m); saveBilingual(m); }}
-            className={`px-2 py-0.5 rounded text-[11px] border ${
-              m === lang
-                ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent-dim)]'
-                : 'border-[var(--border)] text-[var(--text-muted)]'}`}
+            className={`chip ${m === lang ? 'chip-on' : ''}`}
           >
             {BILINGUAL_LABEL[m]}
           </button>
@@ -390,10 +387,7 @@ export default function DocsView({
             type="button"
             onClick={() => { setFormat(f); saveDocFormat(f); }}
             title={DOC_FORMAT_HINT[f]}
-            className={`px-2 py-0.5 rounded text-[11px] border ${
-              f === format
-                ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent-dim)]'
-                : 'border-[var(--border)] text-[var(--text-muted)]'}`}
+            className={`chip ${f === format ? 'chip-on' : ''}`}
           >
             {DOC_FORMAT_LABEL[f]}
           </button>

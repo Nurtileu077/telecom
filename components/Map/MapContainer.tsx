@@ -19,6 +19,7 @@ import {
 } from '@/types/construction';
 import { routeTitle, PLAN_LINE_COLOR } from '@/components/Construction/routeStyle';
 import { moveToBounds } from './smoothMove';
+import { GLYPH_FALLBACK, isGlyphName } from '@/lib/glyphs';
 import {
   METHOD_COLOR, METHOD_LABEL, kksPoints,
 } from '@/components/Construction/routeSegments';
@@ -566,6 +567,17 @@ function metersPerPixel(lat: number, zoom: number): number {
  * Акмолинская, теперь Жамбылская, а между ними ничего. Но и лететь к
  * соседнему селу незачем: это ожидание на ровном месте.
  */
+/**
+ * Значок для метки на карте.
+ *
+ * Метки Leaflet рисуются строкой HTML, а не разметкой: компонент туда не
+ * вставить. Здесь значок остаётся символом — тем самым, что был до
+ * перехода на общий набор.
+ */
+function glyphChar(name: string): string {
+  return isGlyphName(name) ? GLYPH_FALLBACK[name] : name;
+}
+
 function moveHere(
   map: { getCenter(): { lat: number; lng: number } } | null | undefined,
   pts: [number, number][],
@@ -1515,7 +1527,7 @@ export default function LeafletMap(props: Props) {
                 box-shadow:0 0 10px ${st.color}66, 0 2px 6px rgba(0,0,0,.6);
                 display:flex;align-items:center;justify-content:center;
                 font-size:19px;line-height:1;${pulse}
-              ">${kind.icon}</div>
+              ">${glyphChar(kind.icon)}</div>
               <div style="
                 margin-top:2px;padding:1px 5px;border-radius:4px;white-space:nowrap;
                 background:#0c1018ee;border:1px solid ${kind.color}88;
@@ -1547,7 +1559,7 @@ export default function LeafletMap(props: Props) {
 
         m.bindPopup(`
           <div style="min-width:210px">
-            <b style="color:${kind.color}">${kind.icon} ${esc(c.name)}</b>
+            <b style="color:${kind.color}">${glyphChar(kind.icon)} ${esc(c.name)}</b>
             <span style="color:#64748b;font-size:11px"> · ${esc(kind.label)}</span><br/>
             <span style="color:${st.color};font-size:11px">● ${esc(st.label)}</span>
             ${c.uchastok ? `<br/><span style="font-size:11px">${esc(c.uchastok)}</span>` : ''}
@@ -2195,7 +2207,7 @@ export default function LeafletMap(props: Props) {
             display:flex;align-items:center;justify-content:center;
             font-size:${Math.round(size * 0.5)}px;line-height:1;
             box-shadow:0 0 6px ${color}66;
-          ">${spec.icon}</div>`,
+          ">${glyphChar(spec.icon)}</div>`,
         });
 
         const state = o.kind === 'mufta'
@@ -2203,7 +2215,7 @@ export default function LeafletMap(props: Props) {
           : o.endpointKind || spec.label;
 
         const m = L.marker([o.lat, o.lon], { icon, zIndexOffset: 500 });
-        m.bindTooltip(`${spec.icon} ${esc(o.name || spec.label)} — ${esc(state)}`,
+        m.bindTooltip(`${glyphChar(spec.icon)} ${esc(o.name || spec.label)} — ${esc(state)}`,
           { sticky: true, className: 'text-xs' });
         m.bindPopup(
           `<b>${esc(o.name || spec.label)}</b>`
@@ -2485,7 +2497,7 @@ export default function LeafletMap(props: Props) {
           : STAGE_STATUS_SPECS[p.status].color;
         const spec = p.stage ? SNP_STAGE_SPECS[p.stage] : null;
         const glyph = doneAll ? '✓'
-          : spec?.crewKind ? CREW_KINDS[spec.crewKind].icon
+          : spec?.crewKind ? glyphChar(CREW_KINDS[spec.crewKind].icon)
           : '🏁';
         // Пульсирует только то, что кого-то ждёт: иначе пульсирует вся карта
         // и перестаёт что-либо значить.

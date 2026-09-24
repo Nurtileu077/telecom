@@ -170,10 +170,7 @@ export default function PayrollView({
             key={c}
             type="button"
             onClick={() => setWho(c)}
-            className={`px-2 py-1 rounded text-[11.5px] border ${
-              c === current
-                ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent-dim)]'
-                : 'border-[var(--border)] text-[var(--text-muted)]'}`}
+            className={`chip ${c === current ? 'chip-on' : ''}`}
           >
             {c}
           </button>

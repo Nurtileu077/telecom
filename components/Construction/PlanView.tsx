@@ -152,10 +152,7 @@ export default function PlanView({ journal, author, onAddPlan, onRemovePlan, onF
             key={w}
             type="button"
             onClick={() => setWeek(w)}
-            className={`px-2 py-1 rounded text-[11.5px] border ${
-              w === week
-                ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent-dim)]'
-                : 'border-[var(--border)] text-[var(--text-muted)]'}`}
+            className={`chip ${w === week ? 'chip-on' : ''}`}
           >
             {weekLabel(w)}
             {w === thisWeek && <span className="text-[9px] ml-1">сейчас</span>}

@@ -460,10 +460,10 @@ export interface SiteObjectSpec {
 }
 
 export const SITE_OBJECT_SPECS: Record<SiteObjectKind, SiteObjectSpec> = {
-  mufta:    { label: 'Муфта',           plural: 'Муфты',           icon: '🔗', color: '#38bdf8' },
-  stolb:    { label: 'Столб',           plural: 'Столбы',          icon: '🪵', color: '#a78bfa' },
-  endpoint: { label: 'Конечная точка',  plural: 'Конечные точки',  icon: '🏫', color: '#4ade80' },
-  kks:      { label: 'ККС',             plural: 'ККС',             icon: '⬛', color: '#94a3b8' },
+  mufta:    { label: 'Муфта',           plural: 'Муфты',           icon: 'mufta', color: '#38bdf8' },
+  stolb:    { label: 'Столб',           plural: 'Столбы',          icon: 'stolb', color: '#a78bfa' },
+  endpoint: { label: 'Конечная точка',  plural: 'Конечные точки',  icon: 'endpoint', color: '#4ade80' },
+  kks:      { label: 'ККС',             plural: 'ККС',             icon: 'kks', color: '#94a3b8' },
 };
 
 export const SITE_OBJECT_KINDS = Object.keys(SITE_OBJECT_SPECS) as SiteObjectKind[];
@@ -799,11 +799,11 @@ export interface CrewKindSpec {
 }
 
 export const CREW_KINDS: Record<CrewKind, CrewKindSpec> = {
-  mkt:     { label: 'Прокладка МКТ', short: 'МКТ',    color: '#2dd4bf', icon: '🚜' },
-  gnb:     { label: 'ГНБ / ГНП',     short: 'ГНБ',    color: '#fbbf24', icon: '🛠' },
-  zaduvka: { label: 'Задувка',       short: 'Задувка', color: '#38bdf8', icon: '💨' },
-  podves:  { label: 'Подвес',        short: 'Подвес', color: '#a78bfa', icon: '🗼' },
-  svarka:  { label: 'Сварка',        short: 'Сварка', color: '#f472b6', icon: '🔥' },
+  mkt:     { label: 'Прокладка МКТ', short: 'МКТ',    color: '#2dd4bf', icon: 'mkt' },
+  gnb:     { label: 'ГНБ / ГНП',     short: 'ГНБ',    color: '#fbbf24', icon: 'gnb' },
+  zaduvka: { label: 'Задувка',       short: 'Задувка', color: '#38bdf8', icon: 'zaduvka' },
+  podves:  { label: 'Подвес',        short: 'Подвес', color: '#a78bfa', icon: 'podves' },
+  svarka:  { label: 'Сварка',        short: 'Сварка', color: '#f472b6', icon: 'svarka' },
 };
 
 export const CREW_KIND_LIST = Object.keys(CREW_KINDS) as CrewKind[];
@@ -1109,33 +1109,33 @@ export interface JournalRoleSpec {
 
 export const JOURNAL_ROLES: Record<JournalRole, JournalRoleSpec> = {
   mkt: {
-    label: 'МКТ', icon: '🚜', home: 'today',
+    label: 'МКТ', icon: 'mkt', home: 'today',
     views: ['today', 'entries', 'stages', 'crews', 'objects', 'deviations', 'materials'],
   },
   gnb: {
-    label: 'ГНБ', icon: '🛠', home: 'drills',
+    label: 'ГНБ', icon: 'gnb', home: 'drills',
     views: ['today', 'drills', 'stages', 'crews', 'objects'],
   },
   zaduvka: {
-    label: 'Задувка', icon: '💨', home: 'today',
+    label: 'Задувка', icon: 'zaduvka', home: 'today',
     views: ['today', 'entries', 'stages', 'materials', 'objects'],
   },
   podves: {
-    label: 'Подвес', icon: '🗼', home: 'today',
+    label: 'Подвес', icon: 'podves', home: 'today',
     views: ['today', 'entries', 'stages', 'objects', 'materials'],
   },
   svarka: {
-    label: 'Сварка', icon: '🔥', home: 'passport',
+    label: 'Сварка', icon: 'svarka', home: 'passport',
     views: ['today', 'passport', 'objects', 'stages'],
   },
   office: {
-    label: 'Отчётность', icon: '📋', home: 'corrections',
+    label: 'Отчётность', icon: 'office', home: 'corrections',
     views: ['today', 'summary', 'entries', 'corrections', 'closing', 'materials',
       'deviations', 'docs', 'requisites', 'log'],
     canApprove: true,
   },
   boss: {
-    label: 'Руководство', icon: '📈', home: 'management',
+    label: 'Руководство', icon: 'boss', home: 'management',
     views: ['management', 'summary', 'today', 'stages', 'incidents', 'materials', 'log',
       'plan', 'payroll', 'docs', 'requisites', 'resources', 'timesheet', 'records',
       'maintenance'],
@@ -1148,7 +1148,7 @@ export const JOURNAL_ROLES: Record<JournalRole, JournalRoleSpec> = {
    * смены и свой расчёт ему нужны каждый день.
    */
   sub: {
-    label: 'Субподрядчик', icon: '🤝', home: 'today',
+    label: 'Субподрядчик', icon: 'sub', home: 'today',
     views: ['today', 'entries', 'plan', 'payroll', 'objects', 'stages'],
     ownContractorOnly: true,
   },

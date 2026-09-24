@@ -7,6 +7,7 @@ import {
 } from '@/types/construction';
 import { JournalState } from './journalStore';
 import { passports, passportSummary } from './passport';
+import Glyph from '@/components/Layout/Glyph';
 
 /**
  * Паспорт сети: как построено.
@@ -78,7 +79,7 @@ export default function PassportView({
           return (
             <div key={o.id} className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-3 flex flex-col gap-1.5">
               <div className="flex items-baseline gap-2 flex-wrap">
-                <span className="text-[14px] leading-none">{spec.icon}</span>
+                <Glyph name={spec.icon} size={14} />
                 <span className="text-[12.5px] font-medium text-[var(--text)]">
                   {o.name || spec.label}
                 </span>

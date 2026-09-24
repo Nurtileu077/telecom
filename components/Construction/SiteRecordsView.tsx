@@ -9,6 +9,7 @@ import {
   effectiveStatus, daysLeft, contactsText,
   type SiteRecord, type RecordKind, type RecordStatus,
 } from './siteRecords';
+import Glyph from '@/components/Layout/Glyph';
 
 /**
  * Разрешения, допуски, контакты, претензии, задачи.
@@ -122,7 +123,7 @@ export default function SiteRecordsView({ records, author, onUpsert, onRemove, o
           {soon.slice(0, 8).map((rem) => (
             <div key={rem.record.id} className="flex items-baseline gap-2 text-[11.5px]">
               <span className="min-w-0 flex-1 text-[var(--text)] truncate">
-                {RECORD_KINDS[rem.record.kind].icon} {rem.record.title}
+                <Glyph name={RECORD_KINDS[rem.record.kind].icon} /> {rem.record.title}
                 {rem.record.who ? ` · ${rem.record.who}` : ''}
               </span>
               <span className={`font-mono tabular-nums shrink-0 ${
@@ -142,12 +143,9 @@ export default function SiteRecordsView({ records, author, onUpsert, onRemove, o
               key={k}
               type="button"
               onClick={() => setKind(k)}
-              className={`px-2 py-1 rounded text-[11.5px] border inline-flex items-center gap-1 ${
-                k === kind
-                  ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent-dim)]'
-                  : 'border-[var(--border)] text-[var(--text-muted)]'}`}
+              className={`chip ${k === kind ? 'chip-on' : ''}`}
             >
-              <span>{RECORD_KINDS[k].icon}</span>
+              <Glyph name={RECORD_KINDS[k].icon} />
               {RECORD_KINDS[k].label}
               {(c?.total ?? 0) > 0 && (
                 <span className="font-mono text-[10px]">{c!.total}</span>

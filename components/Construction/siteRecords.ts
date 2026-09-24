@@ -28,7 +28,7 @@ export const RECORD_KINDS: Record<RecordKind, RecordKindSpec> = {
   permit: {
     label: 'Разрешение',
     plural: 'Разрешения и согласования',
-    icon: '📄',
+    icon: 'permit',
     dated: true,
     whoLabel: 'Кто выдал',
     hint: 'дорожники, электросети, аким, земельный отдел',
@@ -36,7 +36,7 @@ export const RECORD_KINDS: Record<RecordKind, RecordKindSpec> = {
   clearance: {
     label: 'Допуск',
     plural: 'Допуски и инструктажи',
-    icon: '🎓',
+    icon: 'clearance',
     dated: true,
     whoLabel: 'Кому',
     hint: 'сварщик, машинист, работы на высоте',
@@ -44,7 +44,7 @@ export const RECORD_KINDS: Record<RecordKind, RecordKindSpec> = {
   contact: {
     label: 'Контакт',
     plural: 'Контакты на объекте',
-    icon: '📞',
+    icon: 'contact',
     dated: false,
     whoLabel: 'Кто',
     hint: 'аким, электросети, дорожники, участковый',
@@ -52,7 +52,7 @@ export const RECORD_KINDS: Record<RecordKind, RecordKindSpec> = {
   claim: {
     label: 'Претензия',
     plural: 'Претензии',
-    icon: '⚖',
+    icon: 'claim',
     dated: true,
     whoLabel: 'Кому предъявлена',
     hint: 'что предъявили подрядчику и чем закрыли',
@@ -60,7 +60,7 @@ export const RECORD_KINDS: Record<RecordKind, RecordKindSpec> = {
   task: {
     label: 'Задача',
     plural: 'Доска задач',
-    icon: '✔',
+    icon: 'task',
     dated: true,
     whoLabel: 'Кому поручено',
     hint: 'мелкие поручения по объекту',

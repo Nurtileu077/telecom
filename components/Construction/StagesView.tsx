@@ -12,6 +12,7 @@ import {
   pendingTasks, stageStatus, stageState, blockedStages, snpCompletion, handoffTasks,
   nextStageAction,
 } from './stageTasks';
+import Glyph from '@/components/Layout/Glyph';
 
 /**
  * Этапы по населённым пунктам и наряды между бригадами.
@@ -117,7 +118,7 @@ export default function StagesView({
               <button key={k} type="button" onClick={() => setCrewFilter(k)}
                 className={`px-2 py-1 text-[11px] rounded ${crewFilter === k ? 'bg-[var(--accent-dim)] text-[var(--accent)]' : 'text-[var(--text-muted)]'}`}
                 title={CREW_KINDS[k].label}>
-                {CREW_KINDS[k].icon}
+                <Glyph name={CREW_KINDS[k].icon} />
               </button>
             ))}
           </div>
@@ -135,7 +136,7 @@ export default function StagesView({
               <div key={`${t.kato}-${t.stage}`}
                    className="rounded-lg border border-[var(--accent)]/40 bg-[var(--accent-dim)] p-3 flex flex-col gap-1.5">
                 <div className="flex items-baseline gap-2 flex-wrap">
-                  {t.crewKind && <span className="text-base leading-none">{CREW_KINDS[t.crewKind].icon}</span>}
+                  {t.crewKind && <Glyph name={CREW_KINDS[t.crewKind].icon} size={16} />}
                   <span className="text-[13px] font-medium text-[var(--text)]">{t.snp}</span>
                   <span className="text-[11px] text-[var(--accent)]">{SNP_STAGE_SPECS[t.stage].label}</span>
                   <span className="ml-auto font-mono text-[10px] text-[var(--text-muted)]">{t.kato}</span>
