@@ -1,5 +1,5 @@
 import {
-  JournalState, DeletedMark, emptyJournal, PRICE_TOMB_PREFIX,
+  JournalState, DeletedMark, emptyJournal,
   fixList, fixWorkEntry, fixDrillEntry,
 } from './journalStore';
 import type { MaterialPrices } from './materialCost';
@@ -74,20 +74,61 @@ function mergeChanges(a: ChangeLogEntry[] = [], b: ChangeLogEntry[] = []): Chang
 /**
  * Цены материалов.
  *
- * Своя позиция важнее чужой: цену ставит тот, кто покупает. А
- * сброшенную позицию чужая не возвращает — на неё стоит надгробие.
+ * Кто правил позже, тот и прав — то же правило, что и у записей. Сброс
+ * цены это тоже правка, просто без значения: у неё есть своё время, и
+ * потому она честно проигрывает более поздней чужой цене.
+ *
+ * Где времени нет — журнал заведён до того, как оно появилось, — своя
+ * позиция важнее чужой, как было раньше.
  */
 function mergePrices(
   local: MaterialPrices,
   remote: MaterialPrices,
-  tombs: Map<string, string>,
-): MaterialPrices {
-  const out: MaterialPrices = { ...remote, ...local };
-  for (const key of Object.keys(out) as (keyof MaterialPrices)[]) {
-    if (key in local) continue;
-    if (tombs.has(`${PRICE_TOMB_PREFIX}${String(key)}`)) delete out[key];
+  localAt: Record<string, string> = {},
+  remoteAt: Record<string, string> = {},
+): { prices: MaterialPrices; pricedAt: Record<string, string> } {
+  const keys = new Set([
+    ...Object.keys(local), ...Object.keys(remote),
+    ...Object.keys(localAt), ...Object.keys(remoteAt),
+  ]) as Set<keyof MaterialPrices>;
+
+  const prices: MaterialPrices = {};
+  const pricedAt: Record<string, string> = {};
+
+  for (const key of keys) {
+    const k = String(key);
+    const lAt = localAt[k] ?? '';
+    const rAt = remoteAt[k] ?? '';
+
+    if (!lAt && !rAt) {
+      // Времени нет ни у кого: журнал заведён до того, как оно
+      // появилось. Тогда старое правило — своё значение важнее чужого,
+      // но своё ОТСУТСТВИЕ ничего не перебивает: его нельзя отличить от
+      // «просто не заполнял».
+      const value = local[key] ?? remote[key];
+      if (value !== undefined) prices[key] = value;
+      continue;
+    }
+
+    /**
+     * Сброс бьёт цену, только если он строго позже.
+     *
+     * При равном времени — а две правки попадают в одну миллисекунду
+     * чаще, чем кажется, — побеждает та сторона, у которой цена есть.
+     * Отсутствие значения само по себе не новость: новостью его делает
+     * то, что оно записано позже.
+     */
+    let mine: boolean;
+    if (lAt !== rAt) mine = lAt > rAt;
+    else if (local[key] === undefined) mine = false;
+    else mine = true;
+
+    const value = mine ? local[key] : remote[key];
+    const at = mine ? lAt : rAt;
+    if (value !== undefined) prices[key] = value;
+    if (at) pricedAt[k] = at;
   }
-  return out;
+  return { prices, pricedAt };
 }
 
 function newerRequisites(
@@ -195,10 +236,8 @@ export function mergeJournalStates(
     // Продвижение по участку — позже записанное вернее: это накопленный
     // метраж, и свежая запись включает в себя прежнюю.
     sectionProgress: mergeSectionProgress(local.sectionProgress, remote.sectionProgress),
-    // Цены — справочник: чужие позиции добираем, свои не отдаём. Но
-    // сброшенную у себя цену чужая не восстанавливает: у неё есть
-    // надгробие, и без этого сброс не пережил бы первый же обмен.
-    prices: mergePrices(local.prices, remote.prices, tombs),
+    // Цены: кто правил позже, тот и прав. Сброс — тоже правка.
+    ...mergePrices(local.prices, remote.prices, local.pricedAt, remote.pricedAt),
     // Расценки и деньги — общие данные, у них есть id и время правки.
     rates: mergeCollection<WorkRate>(local.rates ?? [], remote.rates ?? [], tombs, stats),
     payments: mergeCollection<Payment>(local.payments ?? [], remote.payments ?? [], tombs, stats),

@@ -410,3 +410,62 @@ describe('реквизиты в обмене', () => {
     expect(withDefaults(merged.requisites).customer.name).toBeTruthy();
   });
 });
+
+/**
+ * Надгробие на цену было вечным: сбросил её — и правильная цена,
+ * поставленная соседом позже, уже никогда не доезжала, потому что
+ * надгробие убивало её при каждом обмене. Теперь у цен своё время
+ * правки, и сброс — тоже правка, просто без значения.
+ */
+describe('цены: кто правил позже, тот и прав', () => {
+  it('чужая цена, поставленная после моего сброса, доезжает', () => {
+    let a = setMaterialPrice(state({ prices: { 'МКТ': 420 } }), 'МКТ', undefined);
+    expect(a.prices['МКТ']).toBeUndefined();
+
+    // Сосед получил сброс обменом, потом поставил правильную цену.
+    let b = mergeJournalStates(state({ prices: { 'МКТ': 420 } }), a).merged;
+    expect(b.prices['МКТ']).toBeUndefined();
+    b = setMaterialPrice(b, 'МКТ', 620);
+
+    a = mergeJournalStates(a, b).merged;
+    expect(a.prices['МКТ']).toBe(620);
+  });
+
+  it('и не отваливается при повторных обменах', () => {
+    let a = setMaterialPrice(state({ prices: { 'МКТ': 420 } }), 'МКТ', undefined);
+    const b = setMaterialPrice(mergeJournalStates(state({}), a).merged, 'МКТ', 620);
+    a = mergeJournalStates(a, b).merged;
+    for (let i = 0; i < 5; i += 1) a = mergeJournalStates(a, b).merged;
+    expect(a.prices['МКТ']).toBe(620);
+  });
+
+  it('мой сброс переживает обмен, пока никто не поправил позже', () => {
+    const before = state({ prices: { 'МКТ': 420, 'ПЭТ': 310 } });
+    const a = setMaterialPrice(before, 'МКТ', undefined);
+    const merged = mergeJournalStates(a, before).merged;
+    expect(merged.prices['МКТ']).toBeUndefined();
+    expect(merged.prices['ПЭТ']).toBe(310);
+  });
+
+  it('более старый чужой сброс мою свежую цену не убивает', () => {
+    const cleared = setMaterialPrice(state({ prices: { 'МКТ': 420 } }), 'МКТ', undefined);
+    const mine = setMaterialPrice(cleared, 'МКТ', 500);
+    expect(mergeJournalStates(mine, cleared).merged.prices['МКТ']).toBe(500);
+  });
+
+  it('время правки уезжает на обмен, а не теряется', () => {
+    const a = setMaterialPrice(state({}), 'МКТ', 500);
+    const merged = mergeJournalStates(a, state({})).merged;
+    expect(merged.pricedAt?.['МКТ']).toBeTruthy();
+  });
+
+  it('старые надгробия на цены больше не мешают', () => {
+    // Журнал, сохранённый прежней версией: надгробие есть, времени нет.
+    const old = state({
+      prices: {},
+      deleted: [{ id: 'price:МКТ', at: T('05') }],
+    });
+    const other = state({ prices: { 'МКТ': 620 } });
+    expect(mergeJournalStates(old, other).merged.prices['МКТ']).toBe(620);
+  });
+});

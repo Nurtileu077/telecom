@@ -175,3 +175,44 @@ describe('в описи копии ничего не потеряно', () => {
     }
   });
 });
+
+/**
+ * Опись в файле могли снять до того, как в ней появились новые виды
+ * записей. Считать отсутствие ключа за ноль значит пугать потерей всего,
+ * чего прежняя опись не знала, — и человек отменяет разворачивание
+ * хорошей копии.
+ */
+describe('старая копия с неполной описью', () => {
+  function oldBackup(j: JournalState) {
+    const full = makeBackup(j);
+    // Прежняя версия не знала про поставки, барабаны и сварки.
+    const counts = { ...full.counts };
+    for (const k of ['поставки', 'барабаны', 'сварки', 'реестр СНП']) delete counts[k];
+    return { ...full, counts };
+  }
+
+  it('не пугает потерей того, что в копии на самом деле есть', () => {
+    const j: JournalState = {
+      ...emptyJournal(),
+      deliveries: [{ id: 'd1' }, { id: 'd2' }] as never[],
+      drums: [{ id: 'b1' }] as never[],
+    };
+    expect(restoreWarning(j, oldBackup(j))).toBeNull();
+  });
+
+  it('но о настоящей потере говорит', () => {
+    const inFile: JournalState = { ...emptyJournal(), deliveries: [{ id: 'd1' }] as never[] };
+    const now: JournalState = {
+      ...emptyJournal(),
+      deliveries: [{ id: 'd1' }, { id: 'd2' }, { id: 'd3' }] as never[],
+    };
+    const warn = restoreWarning(now, oldBackup(inFile));
+    expect(warn).toContain('поставки: сейчас 3, в копии 1');
+  });
+
+  it('ключ, который в описи есть, берётся из описи', () => {
+    const j: JournalState = { ...emptyJournal(), ground: [{ id: 'a' }] as never[] };
+    const file = makeBackup(j);
+    expect(restoreWarning(j, file)).toBeNull();
+  });
+});

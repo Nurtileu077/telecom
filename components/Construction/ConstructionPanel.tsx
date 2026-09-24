@@ -43,6 +43,8 @@ import ViewPrefs from '@/components/Layout/ViewPrefs';
 import HelpSheet from './HelpSheet';
 import MaintenanceView from './MaintenanceView';
 import RequisitesView from './RequisitesView';
+import LangView from '@/components/Layout/LangView';
+import { useT } from '@/components/Layout/LangProvider';
 import { errorLine } from '@/lib/errors';
 import { loadImports, saveImports, noteImport } from './backup';
 import { demoJournal } from './demoData';
@@ -97,7 +99,7 @@ import {
 } from '@/types/construction';
 
 type Period = 'day' | 'week' | 'month' | 'all';
-type View = 'today' | 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages' | 'drills' | 'objects' | 'passport' | 'incidents' | 'log' | 'checks' | 'timesheet' | 'docs' | 'payroll' | 'resources' | 'plan' | 'records' | 'maintenance' | 'requisites';
+type View = 'today' | 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages' | 'drills' | 'objects' | 'passport' | 'incidents' | 'log' | 'checks' | 'timesheet' | 'docs' | 'payroll' | 'resources' | 'plan' | 'records' | 'maintenance' | 'requisites' | 'lang';
 
 const PERIOD_LABEL: Record<Period, string> = {
   day: 'Последний день', week: '7 дней', month: '30 дней', all: 'Всё время',
@@ -122,6 +124,7 @@ export default function ConstructionPanel({
   onClose, onRequestPick, editObjectId, onDoneEditObject, onPlayDay, onShowRoute,
   onShowCoords,
 }: Props) {
+  const { t } = useT();
   const [journal, setJournal] = useState<JournalState>(emptyJournal);
   const [period, setPeriod] = useState<Period>('month');
   const [oblast, setOblast] = useState('');
@@ -799,7 +802,8 @@ export default function ConstructionPanel({
     ['incidents', 'Аварии'], ['deviations', 'Отклонения'], ['materials', 'Материалы'],
     ['closing', 'Закрытие'], ['corrections', 'Заявки'], ['log', 'Изменения'],
     ['plan', 'План'], ['docs', 'Документы'], ['payroll', 'Расчёты'], ['resources', 'Ресурсы'],
-    ['records', 'Допуски'], ['requisites', 'Реквизиты'], ['maintenance', 'Обслуживание'],
+    ['records', 'Допуски'], ['requisites', 'Реквизиты'],
+    ['lang', 'Язык'], ['maintenance', 'Обслуживание'],
     ['checks', 'Проверки'], ['timesheet', 'Табель'],
   ];
   const roleViews = new Set(JOURNAL_ROLES[role].views);
@@ -947,7 +951,7 @@ export default function ConstructionPanel({
                   className={`px-2.5 py-1 text-[11px] rounded transition-colors inline-flex items-center gap-1 ${
                     hiddenViews.includes(v) ? 'opacity-50 ' : ''}${
                     view === v ? 'bg-[var(--accent-dim)] text-[var(--accent)] font-medium' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}>
-                  {label}
+                  {t(label)}
                   {badge > 0 && (
                     <span className="min-w-[16px] px-1 rounded-full bg-[var(--warn)] text-[#041016] text-[9.5px] font-semibold leading-[15px] text-center">
                       {badge}
@@ -1288,6 +1292,8 @@ export default function ConstructionPanel({
               persist(removeIncident(loadJournal(), id));
             }}
           />
+        ) : view === 'lang' ? (
+          <LangView onFlash={setFlash} />
         ) : view === 'requisites' ? (
           <RequisitesView
             requisites={journal.requisites}

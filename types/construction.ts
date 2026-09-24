@@ -1131,14 +1131,14 @@ export const JOURNAL_ROLES: Record<JournalRole, JournalRoleSpec> = {
   office: {
     label: 'Отчётность', icon: 'office', home: 'corrections',
     views: ['today', 'summary', 'entries', 'corrections', 'closing', 'materials',
-      'deviations', 'docs', 'requisites', 'log'],
+      'deviations', 'docs', 'requisites', 'lang', 'log'],
     canApprove: true,
   },
   boss: {
     label: 'Руководство', icon: 'boss', home: 'management',
     views: ['management', 'summary', 'today', 'stages', 'incidents', 'materials', 'log',
-      'plan', 'payroll', 'docs', 'requisites', 'resources', 'timesheet', 'records',
-      'maintenance'],
+      'plan', 'payroll', 'docs', 'requisites', 'lang', 'resources', 'timesheet',
+      'records', 'maintenance'],
   },
   /**
    * Субподрядчик видит только своё.

@@ -6,6 +6,7 @@ import { Plus_Jakarta_Sans, JetBrains_Mono } from 'next/font/google';
 // открываться из кэша целиком.
 import 'leaflet/dist/leaflet.css';
 import './globals.css';
+import LangProvider from '@/components/Layout/LangProvider';
 
 const jakarta = Plus_Jakarta_Sans({
   subsets: ['latin', 'latin-ext', 'cyrillic-ext'],
@@ -60,7 +61,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="apple-touch-icon-precomposed" href="/apple-touch-icon.png?v=3" />
         <link rel="icon" href="/favicon-32.png?v=3" type="image/png" sizes="32x32" />
       </head>
-      <body className={jakarta.className}>{children}</body>
+      {/*
+        Язык — на всё дерево сразу: и карта, и журнал. Иначе при
+        переключении половина экрана успевала бы перерисоваться, а
+        половина нет.
+      */}
+      <body className={jakarta.className}>
+        <LangProvider>{children}</LangProvider>
+      </body>
     </html>
   );
 }

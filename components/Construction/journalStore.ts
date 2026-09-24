@@ -37,6 +37,11 @@ export interface JournalState {
   areas: MapArea[];
   /** Цены материалов — у каждого подрядчика свои, система их не выдумывает. */
   prices: import('./materialCost').MaterialPrices;
+  /**
+   * Когда правили каждую цену. Сброс — тоже правка, просто без значения:
+   * по этому времени обмен и решает, чья версия свежее.
+   */
+  pricedAt?: Record<string, string>;
   /** Расценки по видам работ — у каждого подрядчика свои и с какого числа. */
   rates: WorkRate[];
   /** Движение денег с подрядчиками: аванс, удержание, оплата. */
@@ -103,7 +108,7 @@ export function emptyJournal(): JournalState {
     orders: [], ground: [], aerial: [], drills: [],
     corrections: [], deviations: [], crews: [], deliveries: [], drums: [],
     photos: [], splices: [], incidents: [], planRoutes: [],
-    areas: [], prices: {}, rates: [], payments: [],
+    areas: [], prices: {}, pricedAt: {}, rates: [], payments: [],
     requests: [], plans: [], records: [],
     objects: [], sectionProgress: {}, progress: [],
     contractors: DEFAULT_CONTRACTORS, changes: [], actFields: {},
@@ -435,6 +440,7 @@ export function loadJournal(): JournalState {
       incidents: p.incidents ?? [],
       areas: p.areas ?? [],
       prices: p.prices ?? {},
+      pricedAt: p.pricedAt ?? {},
       rates: p.rates ?? [],
       requests: p.requests ?? [],
       plans: p.plans ?? [],
@@ -489,6 +495,7 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     // Импорт файла не трогает заявки, отклонения, колонны, контуры и справочник.
     areas: base.areas,
     prices: base.prices,
+    pricedAt: base.pricedAt,
     rates: base.rates,
     requests: base.requests,
     plans: base.plans,
@@ -1411,15 +1418,6 @@ export function areaSources(base: JournalState): { source: string; areas: number
 }
 
 /**
- * Надгробие на сброшенную цену.
- *
- * У цен нет своих id и времени правки — это справочник, а не записи. Но
- * сброс цены надо как-то отличить от «у меня её просто нет», иначе при
- * обмене старая вернётся с сервера и ляжет обратно в расчёт.
- */
-export const PRICE_TOMB_PREFIX = 'price:';
-
-/**
  * Реквизиты сторон.
  *
  * Общие данные: их заводят один раз и они уезжают на обмен вместе с
@@ -1434,7 +1432,21 @@ export function setRequisites(
   return { ...base, requisites: { ...r, updatedAt: now }, updatedAt: now };
 }
 
-/** Цены материалов: задаются руками и живут вместе с журналом. */
+/**
+ * Цены материалов: задаются руками и живут вместе с журналом.
+ *
+ * У цен нет своих id, но время правки им нужно. Иначе сброс цены не
+ * отличить от «у меня её просто нет», и при обмене старая возвращается
+ * с сервера в расчёт.
+ *
+ * Надгробие тут не годится: оно вечное. Сбросил цену — и правильная
+ * цена, поставленная соседом позже, уже никогда до меня не доедет,
+ * потому что надгробие продолжает её убивать при каждом обмене.
+ *
+ * Поэтому у каждой цены своё время правки, и сброс — это тоже правка,
+ * просто без значения. Кто правил позже, тот и прав: то же правило, что
+ * и у всего остального в журнале.
+ */
 export function setMaterialPrice(
   base: JournalState,
   material: MaterialKind,
@@ -1442,16 +1454,16 @@ export function setMaterialPrice(
 ): JournalState {
   const now = new Date().toISOString();
   const prices = { ...base.prices };
-  const tombId = `${PRICE_TOMB_PREFIX}${material}`;
   const cleared = price === undefined || !Number.isFinite(price) || price <= 0;
   if (cleared) delete prices[material];
   else prices[material] = price;
   return {
     ...base,
     prices,
-    deleted: cleared
-      ? withTombstone(base, tombId, now)
-      : base.deleted.filter((d) => d.id !== tombId),
+    pricedAt: { ...(base.pricedAt ?? {}), [material]: now },
+    // Старые надгробия на цены больше не нужны: они и были тем, что
+    // не давало чужой правке доехать.
+    deleted: base.deleted.filter((d) => !d.id.startsWith('price:')),
     updatedAt: now,
   };
 }

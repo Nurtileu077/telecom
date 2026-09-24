@@ -155,10 +155,21 @@ export function backupAge(at: string, now = new Date()): string {
  */
 export function restoreWarning(current: JournalState, file: BackupFile): string | null {
   const now = journalCounts(current);
-  const then = file.counts ?? journalCounts(file.journal);
+  /**
+   * Опись в файле могли снять до того, как в ней появились новые виды
+   * записей. Тогда ключа в ней просто нет — а записи в самом журнале
+   * копии есть.
+   *
+   * Считать отсутствие ключа за ноль значит пугать потерей всего, чего
+   * прежняя опись не знала: «поставки: сейчас 40, в копии 0». Человек
+   * отменяет разворачивание хорошей копии — ровно то, чего
+   * предупреждение и должно было не допустить.
+   */
+  const stated = file.counts ?? {};
+  const real = journalCounts(file.journal);
   const losses: string[] = [];
   for (const [key, value] of Object.entries(now)) {
-    const was = then[key] ?? 0;
+    const was = key in stated ? stated[key] : (real[key] ?? 0);
     if (value > was) losses.push(`${key}: сейчас ${value}, в копии ${was}`);
   }
   if (losses.length === 0) return null;

@@ -2,9 +2,9 @@
 import { useMemo, useState } from 'react';
 import { Languages, Check, RotateCcw, AlertTriangle } from 'lucide-react';
 import {
-  DICT, DICT_KEYS, LANGS, LANG_LABEL, translate, coverage,
-  loadLang, saveLang, loadLangTerms, saveLangTerms, type Lang,
+  DICT, DICT_KEYS, LANGS, LANG_LABEL, translate, coverage, type Lang,
 } from '@/lib/i18n';
+import { useT } from './LangProvider';
 
 /**
  * Язык интерфейса и сверка терминов.
@@ -19,13 +19,10 @@ import {
 
 interface Props {
   onFlash?: (text: string) => void;
-  /** Перерисовать интерфейс после смены языка. */
-  onChange?: (lang: Lang) => void;
 }
 
-export default function LangView({ onFlash, onChange }: Props) {
-  const [lang, setLang] = useState<Lang>(() => loadLang());
-  const [terms, setTerms] = useState<Record<string, string>>(() => loadLangTerms());
+export default function LangView({ onFlash }: Props) {
+  const { lang, setLang, terms, setTerm } = useT();
   const [q, setQ] = useState('');
 
   const edited = useMemo(() => Object.keys(terms).length, [terms]);
@@ -40,22 +37,17 @@ export default function LangView({ onFlash, onChange }: Props) {
     });
   }, [q, terms]);
 
-  function setTerm(key: string, value: string) {
-    setTerms((prev) => {
-      const next = { ...prev };
-      // Стёртая правка — не пустой перевод, а отказ от правки: возвращаем
-      // словарный. Иначе поле, очищенное случайно, обнулило бы слово.
-      if (!value.trim() || value.trim() === DICT[key].kk) delete next[key];
-      else next[key] = value;
-      saveLangTerms(next);
-      return next;
-    });
+  /**
+   * Стёртая правка — не пустой перевод, а отказ от правки: возвращаем
+   * словарный. Иначе поле, очищенное случайно, обнулило бы слово. То же
+   * и когда правка совпала со словарной: хранить её незачем.
+   */
+  function edit(key: string, value: string) {
+    setTerm(key, value.trim() === DICT[key].kk ? '' : value);
   }
 
   function pick(v: Lang) {
     setLang(v);
-    saveLang(v);
-    onChange?.(v);
     onFlash?.(v === 'kk' ? 'Интерфейс на қазақша' : 'Интерфейс на русском');
   }
 
@@ -121,7 +113,7 @@ export default function LangView({ onFlash, onChange }: Props) {
                 </span>
                 <input
                   value={value}
-                  onChange={(e) => setTerm(k, e.target.value)}
+                  onChange={(e) => edit(k, e.target.value)}
                   aria-label={`Перевод: ${k}`}
                   className={`min-w-0 flex-1 bg-[var(--bg-canvas)] border rounded px-2 py-1
                               text-[12px] text-[var(--text)] ${
@@ -131,7 +123,7 @@ export default function LangView({ onFlash, onChange }: Props) {
                   <button type="button" className="btn btn-ghost btn-icon"
                           aria-label="Вернуть словарный перевод"
                           title="Вернуть словарный перевод"
-                          onClick={() => setTerm(k, '')}>
+                          onClick={() => edit(k, '')}>
                     <RotateCcw size={13} />
                   </button>
                 )}
