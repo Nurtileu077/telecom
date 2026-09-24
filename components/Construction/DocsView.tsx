@@ -20,6 +20,7 @@ import {
   photoReportPage, letterPage, measureProtocolPage, measureProtocolFile,
 } from './fieldDocs';
 import { buildScheme, schemeDocPage, schemeFileName } from './asBuilt';
+import { withDefaults, missingForPayment, binLooksWrong } from './requisites';
 import {
   buildDocx, docxFileName, loadDocFormat, saveDocFormat,
   DOC_FORMATS, DOC_FORMAT_LABEL, DOC_FORMAT_HINT, type DocFormat,
@@ -100,6 +101,19 @@ export default function DocsView({
   const [prices, setPrices] = useState<WorkPrices>({});
   const [schemeRouteId, setSchemeRouteId] = useState('');
   const [format, setFormat] = useState<DocFormat>(() => loadDocFormat());
+
+  /**
+   * Реквизиты берём из журнала, а не из кода.
+   *
+   * Подряд меняется: сегодня работы идут под одним заказчиком, завтра
+   * под другим. Название, зашитое в программу, приходится править в
+   * каждом выгруженном документе руками.
+   */
+  const req = useMemo(() => withDefaults(journal.requisites), [journal.requisites]);
+  const partyNames = useMemo(
+    () => ({ contractor: contractor || req.contractor.name, customer: req.customer.name }),
+    [contractor, req],
+  );
 
   const registry = useMemo(() => actRegistry(journal.actFields ?? {}), [journal.actFields]);
   const sheet = useMemo(
@@ -282,6 +296,29 @@ export default function DocsView({
 
   return (
     <div className="p-3 space-y-3">
+      {/*
+        Чего не хватает в реквизитах.
+        Про это вспоминают, когда акт уже ушёл и вернулся из бухгалтерии.
+      */}
+      {missingForPayment(req).length > 0 && (
+        <div className="flex items-start gap-2 rounded-lg border border-[var(--warn)]/40
+                        bg-[var(--warn)]/10 px-3 py-2 text-[11.5px] text-[var(--warn)]">
+          <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+          <span>
+            В реквизитах не хватает: {missingForPayment(req).join(', ')}.
+            <span className="block text-[var(--text-muted)]">
+              Документы соберутся и так, но акт на оплату без этого в бухгалтерии
+              развернут. Заполняется один раз — вкладка «Реквизиты».
+            </span>
+          </span>
+        </div>
+      )}
+      {(binLooksWrong(req.contractor.bin) || binLooksWrong(req.customer.bin)) && (
+        <div className="text-[11px] text-[var(--warn)]">
+          БИН похож на опечатку: в нём двенадцать цифр.
+        </div>
+      )}
+
       {/* Формат — общий для всех документов на этом экране. */}
       <div className="flex items-center gap-1.5 flex-wrap">
         <span className="text-[11px] text-[var(--text-muted)]">Сохранять как</span>
@@ -447,7 +484,7 @@ export default function DocsView({
                   disabled={cost.total === 0}
                   onClick={() => save(
                     volumeDocFile({ sheet, cost }),
-                    volumeDocPage({ sheet, cost, contractor, customer: 'АО «Транстелеком»' }),
+                    volumeDocPage({ sheet, cost, contractor, customer: partyNames.customer }),
                   )}>
             <FileDown size={14} />КС-2
           </button>
@@ -472,7 +509,7 @@ export default function DocsView({
                     const rows = journal.ground.filter((x) => x.uchastok === uchastok);
                     const input = {
                       uchastok, rows, contractor,
-                      customer: 'АО «Транстелеком»',
+                      customer: partyNames.customer,
                       oblast: rows[0]?.oblast, rayon: rows[0]?.rayon,
                       date: to,
                     };
@@ -530,7 +567,7 @@ export default function DocsView({
                       uchastok: obj?.uchastok,
                       records,
                       contractor,
-                      customer: 'АО «Транстелеком»',
+                      customer: partyNames.customer,
                       date: to,
                     };
                     save(measureProtocolFile(input), measureProtocolPage(input));
@@ -548,7 +585,7 @@ export default function DocsView({
                     const subject = window.prompt('Тема письма:', 'О выполненных объёмах');
                     if (subject === null) return;
                     save('Письмо.doc', letterPage({
-                      to: 'АО «Транстелеком»',
+                      to: partyNames.customer,
                       subject,
                       date: to,
                       from: author,
@@ -601,7 +638,7 @@ export default function DocsView({
                           number: registry.find((r) => r.uchastok === schemeRoute?.uchastok)?.number,
                           date: to,
                           contractor,
-                          customer: 'АО «Транстелеком»',
+                          customer: partyNames.customer,
                           oblast: schemeObjects[0]?.oblast,
                           rayon: schemeObjects[0]?.rayon,
                         }),

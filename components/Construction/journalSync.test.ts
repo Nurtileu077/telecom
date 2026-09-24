@@ -8,6 +8,7 @@ import {
 import type {
   DailyWorkEntry, Crew, CorrectionRequest, PlanRoute, WorkRate,
 } from '@/types/construction';
+import { withDefaults, type Requisites } from './requisites';
 
 const T = (iso: string) => `2026-09-${iso}T00:00:00.000Z`;
 
@@ -320,5 +321,48 @@ describe('возврат из корзины', () => {
     const restored = restoreFromTrash(removeEntry(base, 'a', 'Иванов'), 'a');
     expect(restored.deleted.some((d) => d.id === 'a')).toBe(false);
     expect(restored.ground).toHaveLength(1);
+  });
+});
+
+/**
+ * Реквизиты правит один человек в конторе, а читают их все. «Моё
+ * главнее» здесь значило бы, что старый договор у кого-то в поле
+ * переживает новый.
+ */
+describe('реквизиты в обмене', () => {
+  const party = (name: string, at: string): Requisites => ({
+    contractor: { name: 'ТОО «СК Фаворит Инжиниринг»' },
+    customer: { name },
+    updatedAt: at,
+  });
+
+  it('берёт ту запись, что свежее', () => {
+    const { merged } = mergeJournalStates(
+      state({ requisites: party('Старый заказчик', T('10')) }),
+      state({ requisites: party('Новый заказчик', T('12')) }),
+    );
+    expect(merged.requisites?.customer.name).toBe('Новый заказчик');
+  });
+
+  it('свою свежую правку чужая давняя не перебивает', () => {
+    const { merged } = mergeJournalStates(
+      state({ requisites: party('Мой заказчик', T('12')) }),
+      state({ requisites: party('Чужой заказчик', T('10')) }),
+    );
+    expect(merged.requisites?.customer.name).toBe('Мой заказчик');
+  });
+
+  it('если реквизитов нет у одной стороны, берёт их у другой', () => {
+    const { merged } = mergeJournalStates(
+      state({}),
+      state({ requisites: party('Заказчик', T('10')) }),
+    );
+    expect(merged.requisites?.customer.name).toBe('Заказчик');
+  });
+
+  it('когда их нет нигде, документы печатаются по умолчанию', () => {
+    const { merged } = mergeJournalStates(state({}), state({}));
+    expect(merged.requisites).toBeUndefined();
+    expect(withDefaults(merged.requisites).customer.name).toBeTruthy();
   });
 });

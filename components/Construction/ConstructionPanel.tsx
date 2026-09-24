@@ -25,7 +25,7 @@ import {
   bulkPatchEntries, setDisputed, restoreFromTrash, purgeTrash, markPresented,
   upsertRate, removeRate, upsertPayment, removePayment,
   upsertRequest, setRequestStatus, removeRequest, upsertPlan, removePlan,
-  upsertSiteRecord, removeSiteRecord,
+  upsertSiteRecord, removeSiteRecord, setRequisites,
   restoreShape, upsertDrumRecord, removeDrumRecord, addPhoto, removePhoto,
   upsertSplice, removeSplice, upsertIncident, removeIncident,
 } from './journalStore';
@@ -42,6 +42,7 @@ import DocsView from './DocsView';
 import ViewPrefs from '@/components/Layout/ViewPrefs';
 import HelpSheet from './HelpSheet';
 import MaintenanceView from './MaintenanceView';
+import RequisitesView from './RequisitesView';
 import { loadImports, saveImports, noteImport } from './backup';
 import { demoJournal } from './demoData';
 import { reminders } from './siteRecords';
@@ -94,7 +95,7 @@ import {
 } from '@/types/construction';
 
 type Period = 'day' | 'week' | 'month' | 'all';
-type View = 'today' | 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages' | 'drills' | 'objects' | 'passport' | 'incidents' | 'log' | 'checks' | 'timesheet' | 'docs' | 'payroll' | 'resources' | 'plan' | 'records' | 'maintenance';
+type View = 'today' | 'summary' | 'management' | 'entries' | 'corrections' | 'deviations' | 'crews' | 'closing' | 'materials' | 'stages' | 'drills' | 'objects' | 'passport' | 'incidents' | 'log' | 'checks' | 'timesheet' | 'docs' | 'payroll' | 'resources' | 'plan' | 'records' | 'maintenance' | 'requisites';
 
 const PERIOD_LABEL: Record<Period, string> = {
   day: 'Последний день', week: '7 дней', month: '30 дней', all: 'Всё время',
@@ -796,7 +797,7 @@ export default function ConstructionPanel({
     ['incidents', 'Аварии'], ['deviations', 'Отклонения'], ['materials', 'Материалы'],
     ['closing', 'Закрытие'], ['corrections', 'Заявки'], ['log', 'Изменения'],
     ['plan', 'План'], ['docs', 'Документы'], ['payroll', 'Расчёты'], ['resources', 'Ресурсы'],
-    ['records', 'Допуски'], ['maintenance', 'Обслуживание'],
+    ['records', 'Допуски'], ['requisites', 'Реквизиты'], ['maintenance', 'Обслуживание'],
     ['checks', 'Проверки'], ['timesheet', 'Табель'],
   ];
   const roleViews = new Set(JOURNAL_ROLES[role].views);
@@ -1273,6 +1274,12 @@ export default function ConstructionPanel({
               if (!confirm('Удалить запись об аварии?')) return;
               persist(removeIncident(loadJournal(), id));
             }}
+          />
+        ) : view === 'requisites' ? (
+          <RequisitesView
+            requisites={journal.requisites}
+            onFlash={setFlash}
+            onSave={(r) => persist(setRequisites(loadJournal(), r))}
           />
         ) : view === 'maintenance' ? (
           <MaintenanceView

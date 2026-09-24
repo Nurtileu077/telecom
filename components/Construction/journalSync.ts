@@ -2,6 +2,7 @@ import {
   JournalState, DeletedMark, emptyJournal, PRICE_TOMB_PREFIX,
 } from './journalStore';
 import type { MaterialPrices } from './materialCost';
+import type { Requisites } from './requisites';
 import {
   DailyWorkEntry, AerialWorkEntry, DrillLogEntry, Deviation, Crew,
   CorrectionRequest, SettlementOrder, Contractor, MaterialDelivery, PlanRoute,
@@ -86,6 +87,15 @@ function mergePrices(
     if (tombs.has(`${PRICE_TOMB_PREFIX}${String(key)}`)) delete out[key];
   }
   return out;
+}
+
+function newerRequisites(
+  a: Requisites | undefined,
+  b: Requisites | undefined,
+): Requisites | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return (b.updatedAt ?? '') > (a.updatedAt ?? '') ? b : a;
 }
 
 function mergeCollection<T extends Identified>(
@@ -196,6 +206,10 @@ export function mergeJournalStates(
     contractors: mergeContractors(local.contractors, remote.contractors),
     // Поля актов: своё заполнение в приоритете, чужие участки добираем.
     actFields: { ...(remote.actFields ?? {}), ...(local.actFields ?? {}) },
+    // Реквизиты правит один человек в конторе, а читают их все. Берём
+    // ту запись, что свежее: «моё главнее» здесь значило бы, что
+    // старый договор у кого-то в поле переживает новый.
+    requisites: newerRequisites(local.requisites, remote.requisites),
     // Корзина не уезжает на сервер: это «что я удалил у себя», а не
     // общие данные. У каждого она своя, как и настройки вида.
     trash: local.trash ?? [],

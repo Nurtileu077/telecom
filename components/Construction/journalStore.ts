@@ -66,6 +66,14 @@ export interface JournalState {
   /** Поля актов, заполняемые при закрытии, по участкам. */
   actFields: Record<string, import('./sectionAct').SectionActManual>;
   /**
+   * Реквизиты сторон: кто сдаёт, кому и по какому договору.
+   *
+   * Подряд меняется, а документы печатаются каждый день. Держать
+   * название заказчика в коде — значит просить переписать программу
+   * всякий раз, когда меняется договор.
+   */
+  requisites?: import('./requisites').Requisites;
+  /**
    * Надгробия удалённых записей.
    *
    * Без них удаление не переживает синхронизацию: сосед, у которого запись
@@ -390,6 +398,7 @@ export function loadJournal(): JournalState {
       planRoutes: p.planRoutes ?? [],
       progress: p.progress ?? [],
       actFields: p.actFields ?? {},
+      requisites: p.requisites,
       deleted: p.deleted ?? [],
       trash: p.trash ?? [],
       // Пустой справочник заменяем стартовым — иначе подрядчика не из чего выбрать.
@@ -451,6 +460,7 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     progress: base.progress,
     contractors: base.contractors.length ? base.contractors : DEFAULT_CONTRACTORS,
     actFields: base.actFields,
+    requisites: base.requisites,
     deleted: base.deleted,
     trash: base.trash,
     updatedAt: new Date().toISOString(),
@@ -1359,6 +1369,21 @@ export function areaSources(base: JournalState): { source: string; areas: number
  * обмене старая вернётся с сервера и ляжет обратно в расчёт.
  */
 export const PRICE_TOMB_PREFIX = 'price:';
+
+/**
+ * Реквизиты сторон.
+ *
+ * Общие данные: их заводят один раз и они уезжают на обмен вместе с
+ * журналом, чтобы у бригады в поле документ печатался с теми же
+ * реквизитами, что и в конторе.
+ */
+export function setRequisites(
+  base: JournalState,
+  r: import('./requisites').Requisites,
+): JournalState {
+  const now = new Date().toISOString();
+  return { ...base, requisites: { ...r, updatedAt: now }, updatedAt: now };
+}
 
 /** Цены материалов: задаются руками и живут вместе с журналом. */
 export function setMaterialPrice(
