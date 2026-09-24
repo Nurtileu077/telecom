@@ -18,6 +18,7 @@ import {
   SITE_OBJECT_SPECS, MUFTA_STATES, siteObjectColor,
 } from '@/types/construction';
 import { routeTitle, PLAN_LINE_COLOR } from '@/components/Construction/routeStyle';
+import { moveToBounds } from './smoothMove';
 import {
   METHOD_COLOR, METHOD_LABEL, kksPoints,
 } from '@/components/Construction/routeSegments';
@@ -556,6 +557,26 @@ function lineScale(zoom: number): number {
  */
 function metersPerPixel(lat: number, zoom: number): number {
   return (156543.03392 * Math.cos((lat * Math.PI) / 180)) / 2 ** zoom;
+}
+
+/**
+ * Как переносить карту к рамке: пролётом или сразу.
+ *
+ * Мгновенный перескок через полстраны сбивает с толку — только что была
+ * Акмолинская, теперь Жамбылская, а между ними ничего. Но и лететь к
+ * соседнему селу незачем: это ожидание на ровном месте.
+ */
+function moveHere(
+  map: { getCenter(): { lat: number; lng: number } } | null | undefined,
+  pts: [number, number][],
+): { animate: boolean; duration?: number } {
+  if (!map) return { animate: false };
+  try {
+    const c = map.getCenter();
+    return moveToBounds({ lat: c.lat, lon: c.lng }, pts);
+  } catch {
+    return { animate: false };
+  }
 }
 
 export default function LeafletMap(props: Props) {
@@ -2145,10 +2166,10 @@ export default function LeafletMap(props: Props) {
           // Клик по куче раскрывает её: это то, чего от неё и ждут.
           m.on('click', () => {
             try {
-              mapRef.current?.fitBounds(
-                L.latLngBounds(c.items.map((it) => [it.lat, it.lon] as [number, number])),
-                { padding: [60, 60], maxZoom: 17 },
-              );
+              const cluster = c.items.map((it) => [it.lat, it.lon] as [number, number]);
+              mapRef.current?.fitBounds(L.latLngBounds(cluster), {
+                padding: [60, 60], maxZoom: 17, ...moveHere(mapRef.current, cluster),
+              });
             } catch { /* вырожденная рамка */ }
           });
           group.addLayer(m);
@@ -3210,7 +3231,9 @@ export default function LeafletMap(props: Props) {
         if (a?.coords?.length) {
           import('leaflet').then((L) => {
             try {
-              mapRef.current?.fitBounds(L.latLngBounds(a.coords), { padding: [40, 40] });
+              mapRef.current?.fitBounds(L.latLngBounds(a.coords), {
+                padding: [40, 40], ...moveHere(mapRef.current, a.coords),
+              });
             } catch { /* вырожденная рамка */ }
           });
         }
@@ -3390,8 +3413,10 @@ export default function LeafletMap(props: Props) {
             if (hit.bounds && hit.bounds.length > 1) {
               import('leaflet').then((L) => {
                 try {
-                  map.fitBounds(L.latLngBounds(hit.bounds as [number, number][]),
-                    { padding: [60, 60], maxZoom: 16 });
+                  map.fitBounds(L.latLngBounds(hit.bounds as [number, number][]), {
+                    padding: [60, 60], maxZoom: 16,
+                    ...moveHere(map, hit.bounds as [number, number][]),
+                  });
                 } catch {
                   map.flyTo([hit.lat, hit.lon], hit.zoom, { duration: 0.8 });
                 }

@@ -69,8 +69,21 @@ import {
 } from '@/components/Construction/mapLayers';
 import type { Crew, SiteObject, Incident, SiteObjectKind, FieldPhoto } from '@/types/construction';
 import { SITE_OBJECT_SPECS } from '@/types/construction';
-const ConstructionPanel = dynamic(() => import('@/components/Construction/ConstructionPanel'), { ssr: false });
+const ConstructionPanel = dynamic(
+  () => import('@/components/Construction/ConstructionPanel'),
+  {
+    ssr: false,
+    // Журнал — самый тяжёлый экран, и открывается он не мгновенно.
+    // Пустота на эту секунду читается как «не открылось».
+    loading: () => (
+      <div className="fixed inset-0 z-[9998] bg-[var(--bg-canvas)] journal-panel">
+        <Skeleton rows={9} label="Открываю журнал" />
+      </div>
+    ),
+  },
+);
 const FirstRun = dynamic(() => import('@/components/Layout/FirstRun'), { ssr: false });
+const Skeleton = dynamic(() => import('@/components/Layout/Skeleton'), { ssr: false });
 import { useSupabaseAuth } from '@/hooks/useSupabaseAuth';
 import { roleFromUser } from '@/lib/authSession';
 import { dbLoadProject } from '@/lib/supabase';
