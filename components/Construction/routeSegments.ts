@@ -1,7 +1,7 @@
 import {
   PlanRoute, DailyWorkEntry, LayMethod, LAY_METHODS, LAY_METHOD_LABEL,
 } from '@/types/construction';
-import { pointAtDistanceM, routeLengthM } from './routeProgress';
+import { pointAtDistanceM, routeLengthM, segMeters } from './routeProgress';
 
 /**
  * Трасса кусками: где шли баром, где кабелеукладчиком, где по колодцам.
@@ -43,9 +43,14 @@ export function sliceByDistance(
   const out: [number, number][] = [[start.lat, start.lon]];
   // Промежуточные вершины оставляем: без них кусок спрямился бы и перестал
   // совпадать с трассой там, где она поворачивает.
+  //
+  // Расстояние копим на ходу, а не пересчитываем от начала на каждой
+  // вершине: на трассе из KML вершин тысячи, а кусков за ней — по куску
+  // на каждый способ каждой смены. Пересчёт от начала превращал
+  // перерисовку карты в секунды ожидания.
   let acc = 0;
   for (let i = 1; i < coords.length; i++) {
-    acc = routeLengthM(coords.slice(0, i + 1));
+    acc += segMeters(coords[i - 1], coords[i]);
     if (acc <= fromM) continue;
     if (acc >= toM) break;
     out.push(coords[i]);

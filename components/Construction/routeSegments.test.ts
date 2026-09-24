@@ -132,3 +132,44 @@ describe('сводка и ККС', () => {
     expect(kksPoints(segs)).toHaveLength(0);
   });
 });
+
+/**
+ * На трассе из KML вершин тысячи, а кусков за ней — по куску на каждый
+ * способ каждой смены. Пересчёт длины от начала на каждой вершине
+ * превращал перерисовку карты в секунды ожидания.
+ */
+describe('резка длинной трассы не квадратична', () => {
+  /** Прямая на восток из n вершин, примерно 11 км. */
+  function long(n: number): [number, number][] {
+    return Array.from({ length: n }, (_, i) => [52, 71 + (i * 0.1) / (n - 1)] as [number, number]);
+  }
+
+  it('кусок длинной трассы остаётся правильным', () => {
+    const coords = long(2000);
+    const piece = sliceByDistance(coords, 1000, 3000);
+    expect(routeLengthM(piece)).toBeCloseTo(2000, 0);
+    expect(piece.length).toBeGreaterThan(100);
+  });
+
+  it('вчетверо больше вершин — не вшестнадцатеро дольше', () => {
+    const time = (n: number) => {
+      const coords = long(n);
+      const t = performance.now();
+      for (let k = 0; k < 20; k += 1) sliceByDistance(coords, 1000, 3000);
+      return performance.now() - t;
+    };
+    time(500); // прогрев
+    const small = Math.max(time(1000), 0.5);
+    const big = time(4000);
+    // При квадратичном росте это было бы около шестнадцати.
+    expect(big / small).toBeLessThan(8);
+  });
+
+  it('куски подряд дают всю трассу без потерь', () => {
+    const coords = long(500);
+    const total = routeLengthM(coords);
+    const a = sliceByDistance(coords, 0, total / 2);
+    const b = sliceByDistance(coords, total / 2, total);
+    expect(routeLengthM(a) + routeLengthM(b)).toBeCloseTo(total, 0);
+  });
+});

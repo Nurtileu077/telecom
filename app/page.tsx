@@ -40,7 +40,7 @@ import AuthButton from '@/components/Auth/AuthButton';
 import {
   loadJournal, saveJournal, drillMapPoints, drillMapLines, placedCrews, moveCrew,
   deviationMapItems,
-  type DrillMapPoint, type DrillMapLine, type DeviationMapItem,
+  type DrillMapPoint, type DrillMapLine, type DeviationMapItem, type JournalState,
 } from '@/components/Construction/journalStore';
 import { snpMapPoints, type SnpMapPoint } from '@/components/Construction/snpMap';
 import { effectiveProgress } from '@/components/Construction/stageDerive';
@@ -228,6 +228,29 @@ export default function HomePage() {
   }, []);
   useEffect(() => { refreshJournalLayers(); }, [refreshJournalLayers]);
 
+  /** Короткое сообщение внизу экрана: «скопировано», «сохранено». */
+  const [toast, setToast] = useState<string | null>(null);
+
+  const say = useCallback((text: string, ms = 1800) => {
+    setToast(text);
+    window.setTimeout(() => setToast(null), ms);
+  }, []);
+
+  /**
+   * Записать журнал и сказать, если не записалось.
+   *
+   * Память браузера кончается тихо. Карта при этом перерисовывается,
+   * будто правка легла: нарисованный контур виден, разрезанная трасса
+   * разрезана. А через день человек открывает карту и не находит ничего
+   * из этого — и не знает, что случилось и когда.
+   */
+  const persist = useCallback((next: JournalState): boolean => {
+    if (saveJournal(next)) return true;
+    say('Не сохранилось: в браузере кончилось место. Снимите копию журнала '
+      + 'и очистите старое — иначе правка пропадёт.', 7000);
+    return false;
+  }, [say]);
+
   const [editingRouteId, setEditingRouteId] = useState<string | null>(null);
   const [editObjectId, setEditObjectId] = useState<string | null>(null);
   /** Вчерашний день в движении: дату выбирают, движение считается. */
@@ -241,7 +264,7 @@ export default function HomePage() {
       if (c.length < 3) return;
       const name = prompt('Название контура:', '');
       if (name === null) return;
-      saveJournal(addDrawnArea(loadJournal(), {
+      persist(addDrawnArea(loadJournal(), {
         name, coords: c, author: getActorName() || 'Без имени',
       }));
       refreshJournalLayers();
@@ -282,7 +305,7 @@ export default function HomePage() {
    * Одобрения она не требует, но след оставляет: кто, когда и как было.
    */
   const handleUpdateRoute = useCallback((id: string, coords: [number, number][]) => {
-    saveJournal(updateRouteCoords(loadJournal(), id, coords, {
+    persist(updateRouteCoords(loadJournal(), id, coords, {
       author: getActorName() || 'Без имени',
       lengthM: polylineLengthM(coords),
     }));
@@ -296,7 +319,7 @@ export default function HomePage() {
   const [editingAreaId, setEditingAreaId] = useState<string | null>(null);
 
   const handleUpdateArea = useCallback((id: string, coords: [number, number][]) => {
-    saveJournal(updateAreaCoords(loadJournal(), id, coords, getActorName() || 'Без имени'));
+    persist(updateAreaCoords(loadJournal(), id, coords, getActorName() || 'Без имени'));
     refreshJournalLayers();
   }, [refreshJournalLayers]);
 
@@ -306,7 +329,7 @@ export default function HomePage() {
     if (!area) return;
     const name = prompt('Название контура:', area.name);
     if (name === null) return;
-    saveJournal(renameArea(base, id, name, getActorName() || 'Без имени'));
+    persist(renameArea(base, id, name, getActorName() || 'Без имени'));
     refreshJournalLayers();
   }, [refreshJournalLayers]);
 
@@ -315,14 +338,14 @@ export default function HomePage() {
     const area = base.areas.find((a) => a.id === id);
     if (!area) return;
     if (!confirm(`Удалить контур «${area.name}»?\nВернуть можно будет в журнале изменений.`)) return;
-    saveJournal(removeArea(base, id, getActorName() || 'Без имени'));
+    persist(removeArea(base, id, getActorName() || 'Без имени'));
     setEditingAreaId((cur) => (cur === id ? null : cur));
     refreshJournalLayers();
   }, [refreshJournalLayers]);
 
   const handleDeleteRoute = useCallback((id: string) => {
     if (!confirm('Удалить трассу с карты?\nВернуть её можно будет в журнале изменений.')) return;
-    saveJournal(deleteRoute(loadJournal(), id, getActorName() || 'Без имени'));
+    persist(deleteRoute(loadJournal(), id, getActorName() || 'Без имени'));
     setEditingRouteId(null);
     refreshJournalLayers();
   }, [refreshJournalLayers]);
@@ -351,7 +374,7 @@ export default function HomePage() {
       + `Получится ${km(cut.headM)} и ${km(cut.tailM)}.\n`
       + 'Вернуть можно в журнале изменений.',
     )) return;
-    saveJournal(splitPlanRoute(j, id, atM, getActorName() || 'Без имени'));
+    persist(splitPlanRoute(j, id, atM, getActorName() || 'Без имени'));
     setEditingRouteId(null);
     refreshJournalLayers();
     setToast('Трасса разрезана');
@@ -389,7 +412,7 @@ export default function HomePage() {
         ? 'Концы сходятся.'
         : `Между концами ${Math.round(best.gapM)} м — этот разрыв останется в линии.`),
     )) return;
-    saveJournal(joinPlanRoutes(j, id, best.id, getActorName() || 'Без имени'));
+    persist(joinPlanRoutes(j, id, best.id, getActorName() || 'Без имени'));
     setEditingRouteId(null);
     refreshJournalLayers();
     setToast('Трассы склеены');
@@ -500,7 +523,7 @@ export default function HomePage() {
   /** Перетащили колонну на карте — сохраняем новое место. */
   const handleMoveCrew = useCallback((id: string, lat: number, lon: number) => {
     const next = moveCrew(loadJournal(), id, lat, lon);
-    saveJournal(next);
+    persist(next);
     setCrews(placedCrews({ ...next, crews: placeCrews(withAutoCrews(next), next) }));
   }, []);
   const [showProjects, setShowProjects] = useState(false);
@@ -542,8 +565,6 @@ export default function HomePage() {
   const [coordInput, setCoordInput] = useState<
     { kind: 'sub' | 'olt' | 'tb' | 'ork' | 'goto' } | null
   >(null);
-  /** Короткое сообщение внизу экрана: «скопировано», «сохранено». */
-  const [toast, setToast] = useState<string | null>(null);
   /**
    * «Мы вот здесь — где ближайшая муфта и докуда тянуть».
    * Искать ответ глазами по карте дольше, чем спросить.
@@ -988,7 +1009,7 @@ export default function HomePage() {
     const name = window.prompt(`${spec.label}: название или номер`, '');
     if (name === null) return;
     const now = new Date().toISOString();
-    saveJournal(upsertObject(loadJournal(), {
+    persist(upsertObject(loadJournal(), {
       id: `obj-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
       kind,
       name: name.trim() || spec.label,
@@ -1321,7 +1342,7 @@ export default function HomePage() {
           onRemoveSource={(source) => {
             if (!confirm(`Удалить слой «${source}»? Уйдёт всё, что из него пришло.`)) return;
             const base = loadJournal();
-            saveJournal(removeAreaSource(removePlanSource(base, source), source));
+            persist(removeAreaSource(removePlanSource(base, source), source));
             refreshJournalLayers();
           }}
           validationIssues={net.validationIssues}
@@ -2161,12 +2182,12 @@ export default function HomePage() {
           onClose={() => setDrawnCoords(null)}
           onSaveRoute={(r) => {
             const next = addPlanRoutes(loadJournal(), [r]);
-            saveJournal(next);
+            persist(next);
             refreshJournalLayers();
           }}
           onSaveDeviation={(d) => {
             const next = addDeviation(loadJournal(), d);
-            saveJournal(next);
+            persist(next);
             refreshJournalLayers();
           }}
         />

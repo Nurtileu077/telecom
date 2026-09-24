@@ -28,9 +28,17 @@ export interface BackupFile {
   journal: JournalState;
 }
 
-/** Сколько чего в журнале — по этому и узнают файл. */
+/**
+ * Сколько чего в журнале — по этому и узнают файл.
+ *
+ * Здесь должно быть перечислено всё, что копия и восстановление реально
+ * переносят. Пропущенная коллекция не просто не показывается в списке:
+ * по этим же числам предупреждают, что восстановление сотрёт, — и о
+ * пропущенном оно промолчит.
+ */
 export function journalCounts(j: JournalState): Record<string, number> {
   return {
+    'реестр СНП': j.orders.length,
     смены: j.ground.length,
     подвес: j.aerial.length,
     проколы: j.drills.length,
@@ -41,11 +49,18 @@ export function journalCounts(j: JournalState): Record<string, number> {
     объекты: j.objects.length,
     фотографии: j.photos.length,
     аварии: j.incidents.length,
+    поставки: j.deliveries.length,
+    барабаны: j.drums.length,
+    сварки: j.splices.length,
+    'заявки на исправление': j.corrections.length,
     расценки: j.rates.length,
     платежи: j.payments.length,
     заявки: j.requests.length,
     план: j.plans.length,
     допуски: j.records.length,
+    'этапы по сёлам': j.progress.length,
+    подрядчики: j.contractors.length,
+    'поля актов': Object.keys(j.actFields ?? {}).length,
   };
 }
 

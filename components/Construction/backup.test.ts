@@ -144,3 +144,34 @@ describe('история импортов', () => {
     expect(loadImports()).toEqual([]);
   });
 });
+
+/**
+ * В списке должно быть перечислено всё, что копия переносит. Пропущенная
+ * коллекция не просто не видна: по этим же числам предупреждают, что
+ * восстановление сотрёт, — и о пропущенном оно промолчит.
+ */
+describe('в описи копии ничего не потеряно', () => {
+  it('считает каждую коллекцию журнала', () => {
+    const j = emptyJournal();
+    // Все коллекции-массивы журнала должны быть представлены в описи.
+    const lists = (Object.keys(j) as (keyof typeof j)[])
+      .filter((k) => Array.isArray(j[k]))
+      // Корзина и надгробия — служебное: их в описи не показывают.
+      .filter((k) => k !== 'trash' && k !== 'deleted' && k !== 'changes');
+    const counts = journalCounts(j);
+    expect(Object.keys(counts).length).toBeGreaterThanOrEqual(lists.length);
+  });
+
+  it('предупреждает о том, что сотрёт восстановление', () => {
+    const now = { ...emptyJournal(), drums: [{ id: 'b1' }] as never[] };
+    const warn = restoreWarning(now, makeBackup(emptyJournal()));
+    expect(warn).toContain('барабаны');
+  });
+
+  it('поставки и сварки в описи есть', () => {
+    const counts = journalCounts(emptyJournal());
+    for (const key of ['поставки', 'сварки', 'реестр СНП', 'заявки на исправление']) {
+      expect(Object.keys(counts)).toContain(key);
+    }
+  });
+});

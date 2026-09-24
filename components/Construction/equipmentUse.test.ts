@@ -130,3 +130,64 @@ describe('drillQueue', () => {
     expect(drillQueue([], [], '2026-08-01')).toEqual({ done: [], waiting: [] });
   });
 });
+
+/**
+ * Очередь на ГНБ ждут с последнего прокола, а не с последней работы.
+ * Наоборот получалось так: чем активнее на участке работают, тем
+ * «свежее» он выглядел и тем ниже уходил в очереди — а это ровно тот
+ * случай, когда установка нужна.
+ */
+describe('очередь на ГНБ', () => {
+  const today = '2026-07-30';
+  const w = e;
+  const d = (patch: Partial<DrillLogEntry>): DrillLogEntry => ({
+    id: 'd', kind: 'drill', drillKind: 'ГНБ', date: '2026-07-20',
+    smu: 'СМУ-1', oblast: 'Акмолинская область', uchastok: 'Зеренда', kato: '1',
+    meters: 72, count: 2, points: [], createdAt: '', updatedAt: '', ...patch,
+  });
+
+  it('участок с давним проколом и свежими работами — первый в очереди', () => {
+    const q = drillQueue(
+      [d({ uchastok: 'Исаковка', date: '2026-07-01' })],
+      [
+        w({ id: 'a', uchastok: 'Исаковка', date: '2026-07-29' }),
+        w({ id: 'b', uchastok: 'Зеренда', date: '2026-07-29' }),
+      ],
+      today,
+    );
+    expect(q.waiting[0].uchastok).toBe('Исаковка');
+    expect(q.waiting[0].days).toBe(29);
+    expect(q.waiting[0].sinceDate).toBe('2026-07-01');
+  });
+
+  it('где прокола не было вовсе, ждут с первой смены', () => {
+    const q = drillQueue([], [
+      w({ id: 'a', uchastok: 'Зеренда', date: '2026-07-10' }),
+      w({ id: 'b', uchastok: 'Зеренда', date: '2026-07-29' }),
+    ], today);
+    expect(q.waiting[0].sinceDate).toBe('2026-07-10');
+    expect(q.waiting[0].days).toBe(20);
+  });
+
+  it('свежий прокол снимает участок с верха очереди', () => {
+    const q = drillQueue(
+      [d({ uchastok: 'Исаковка', date: '2026-07-29' })],
+      [
+        w({ id: 'a', uchastok: 'Исаковка', date: '2026-07-01' }),
+        w({ id: 'a2', uchastok: 'Исаковка', date: '2026-07-29' }),
+        w({ id: 'b', uchastok: 'Зеренда', date: '2026-07-05' }),
+        w({ id: 'b2', uchastok: 'Зеренда', date: '2026-07-29' }),
+      ],
+      today,
+    );
+    // Зеренда ждёт с пятого июля, Исаковку прокололи вчера.
+    expect(q.waiting[0].uchastok).toBe('Зеренда');
+    expect(q.waiting[1].uchastok).toBe('Исаковка');
+    expect(q.waiting[1].days).toBe(1);
+  });
+
+  it('участок, где месяц не работают, установку не ждёт', () => {
+    const q = drillQueue([], [w({ id: 'a', uchastok: 'Старый', date: '2026-05-01' })], today);
+    expect(q.waiting).toHaveLength(0);
+  });
+});

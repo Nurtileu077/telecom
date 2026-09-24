@@ -21,7 +21,8 @@ export interface RoutePosition {
 
 const R = 6371000;
 
-function segMeters(a: [number, number], b: [number, number]): number {
+/** Длина одного звена, метры. Ею же меряют трассу по частям. */
+export function segMeters(a: [number, number], b: [number, number]): number {
   const dLat = ((b[0] - a[0]) * Math.PI) / 180;
   const dLon = ((b[1] - a[1]) * Math.PI) / 180;
   const h = Math.sin(dLat / 2) ** 2

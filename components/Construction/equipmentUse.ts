@@ -170,6 +170,16 @@ export interface DrillQueue {
   waiting: { uchastok: string; sinceDate: string; days: number }[];
 }
 
+/** Участок, где месяц не было смен, установку не ждёт. */
+export const STALE_SECTION_DAYS = 30;
+
+function daysBetweenDates(from: string, to: string): number | null {
+  const a = new Date(`${from}T00:00:00Z`).getTime();
+  const b = new Date(`${to}T00:00:00Z`).getTime();
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  return Math.round((b - a) / 86_400_000);
+}
+
 /**
  * Очередь на ГНБ.
  *
@@ -200,24 +210,33 @@ export function drillQueue(
   }
 
   // Участок ждёт ГНБ, если по нему идут работы, а проколов давно не было.
-  const lastWork = new Map<string, { date: string; name: string }>();
+  const work = new Map<string, { first: string; last: string; name: string }>();
   for (const e of rows) {
     if (!e.uchastok || !e.date) continue;
     const key = e.uchastok.trim().toLowerCase();
-    const prev = lastWork.get(key);
-    if (!prev || e.date > prev.date) lastWork.set(key, { date: e.date, name: e.uchastok });
+    const prev = work.get(key);
+    if (!prev) { work.set(key, { first: e.date, last: e.date, name: e.uchastok }); continue; }
+    if (e.date > prev.last) prev.last = e.date;
+    if (e.date < prev.first) prev.first = e.date;
   }
 
   const waiting: DrillQueue['waiting'] = [];
-  for (const [key, work] of lastWork) {
-    const drilled = lastDrill.get(key);
-    const since = drilled && drilled > work.date ? drilled : work.date;
-    const days = Math.round(
-      (new Date(`${today}T00:00:00Z`).getTime() - new Date(`${since}T00:00:00Z`).getTime())
-      / 86_400_000,
-    );
-    if (!Number.isFinite(days) || days < 0) continue;
-    waiting.push({ uchastok: work.name, sinceDate: since, days });
+  for (const [key, w] of work) {
+    // Участок, на котором давно никто не работает, ничего не ждёт: он
+    // либо закрыт, либо стоит по другой причине, и установка ему не нужна.
+    const idle = daysBetweenDates(w.last, today);
+    if (idle === null || idle > STALE_SECTION_DAYS) continue;
+    /**
+     * Ждут с последнего прокола, а не с последней работы.
+     *
+     * Наоборот получалось так: чем активнее на участке работают, тем
+     * «свежее» он выглядел в очереди — и уходил вниз. А это ровно тот
+     * случай, когда установка нужна: работы идут, переход не сделан.
+     */
+    const since = lastDrill.get(key) ?? w.first;
+    const days = daysBetweenDates(since, today);
+    if (days === null || days < 0) continue;
+    waiting.push({ uchastok: w.name, sinceDate: since, days });
   }
 
   return {
