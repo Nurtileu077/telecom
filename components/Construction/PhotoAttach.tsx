@@ -6,6 +6,7 @@ import {
   photoMeta, putPhotoBlob, getPhotoBlob, deletePhotoBlob,
   GEO_SOURCE_LABEL, fmtBytes,
 } from './photoStore';
+import { shrinkPhoto } from './photoShrink';
 
 /**
  * Фотографии к записи.
@@ -30,6 +31,7 @@ interface Props {
   place?: { oblast?: string; rayon?: string; uchastok?: string; kato?: string };
   onAdd: (p: FieldPhoto) => void;
   onRemove: (id: string) => void;
+  onFlash?: (text: string) => void;
 }
 
 /** Положение устройства — спрашиваем только когда в файле координат нет. */
@@ -47,6 +49,7 @@ function devicePosition(): Promise<{ lat: number; lon: number } | null> {
 
 export default function PhotoAttach({
   photos, kind, refId, author, place, onAdd, onRemove,
+  onFlash,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -60,10 +63,20 @@ export default function PhotoAttach({
       // Положение спрашиваем один раз на всю пачку: диалог разрешения на
       // каждый файл — верный способ получить отказ.
       let pos: { lat: number; lon: number } | null | undefined;
+      let savedBytes = 0;
       for (const file of Array.from(files)) {
         const id = `ph-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        // Координаты читаем из оригинала: пережатие стирает EXIF, а
+        // вместе с ним и место, где снято.
         const meta = await photoMeta(file, pos === undefined ? (pos = await devicePosition()) : pos);
-        const stored = await putPhotoBlob(id, file);
+        /**
+         * Телефон снимает в четыре-шесть мегабайт, а снимков за день
+         * сорок. Двести мегабайт в память браузера не влезают: она
+         * кончается, и вместе с ней перестаёт сохраняться журнал.
+         */
+        const small = await shrinkPhoto(file);
+        savedBytes += small.before - small.after;
+        const stored = await putPhotoBlob(id, small.blob);
         if (!stored) {
           setError('Файл не сохранился: браузер не дал места. Освободите память устройства.');
           continue;
@@ -79,9 +92,12 @@ export default function PhotoAttach({
           uchastok: place?.uchastok, kato: place?.kato,
           author,
           pending: true,
-          bytes: file.size,
+          bytes: small.after,
           createdAt: now, updatedAt: now, sync: 'local',
         });
+      }
+      if (savedBytes > 0) {
+        onFlash?.(`Снимки ужаты: ${fmtBytes(savedBytes)} осталось свободно`);
       }
     } catch {
       setError('Не удалось приложить фото. Попробуйте ещё раз.');
