@@ -215,6 +215,63 @@ ${ACT_DOC_CSS}</style></head>
 <body class="act-doc">${schemeDocHtml(i)}</body></html>`;
 }
 
+/**
+ * Схема приложением к акту.
+ *
+ * Её всё равно прикладывают — просто отдельным файлом, который по
+ * дороге теряется: акт дошёл, схема осталась в папке «Загрузки». Кладём
+ * её тем же листом, с новой страницы и с надписью, к чему это
+ * приложение.
+ *
+ * Лист остаётся книжным: акт печатают книжным, и разворачивать одну
+ * страницу посреди документа значит получить её вверх ногами в
+ * скоросшивателе. Схема по ширине листа читается и так.
+ */
+export function schemeAttachmentHtml(
+  i: SchemeDocInput,
+  actNumber?: string,
+  width = 640,
+): string {
+  const s = i.scheme;
+  const rows = s.spans.map((sp, n) => '<tr>'
+    + `<td class="val">${n + 1}</td>`
+    + `<td class="lbl">${esc(sp.from)} — ${esc(sp.to)}</td>`
+    + `<td class="val">${Math.round(sp.meters).toLocaleString('ru')}</td>`
+    + '</tr>').join('');
+
+  return '<div style="page-break-before:always">'
+    + `<p class="right">Приложение${actNumber ? ` к акту № ${esc(actNumber)}` : ''}</p>`
+    + '<h1>ИСПОЛНИТЕЛЬНАЯ СХЕМА</h1>'
+    + `<p class="obj">${esc(s.route)}</p>`
+    + `<div style="margin:8pt 0">${schemeSvg(s, width)}</div>`
+    + `<p>Протяжённость: <span class="b">${esc(formatMeters(s.totalM))}</span>, `
+    + `отметок на схеме: <span class="b">${s.marks.length}</span>.</p>`
+    + '<table class="act"><tr>'
+    + '<td class="val b">№</td><td class="lbl b">Участок</td><td class="val b">Длина, м</td>'
+    + '</tr>' + rows + '</table>'
+    + (s.skipped.length
+      ? `<p class="warn">Не отнесены к трассе: ${esc(s.skipped.join('; '))}.</p>`
+      : '')
+    + '</div>';
+}
+
+/**
+ * Вложить схему в готовый документ.
+ *
+ * Врезаемся перед закрытием тела: так приложение оказывается внутри
+ * того же файла, с теми же стилями и той же нумерацией страниц.
+ */
+export function withSchemeAttached(
+  documentHtml: string,
+  i: SchemeDocInput,
+  actNumber?: string,
+): string {
+  const attachment = schemeAttachmentHtml(i, actNumber);
+  const close = documentHtml.lastIndexOf('</body>');
+  if (close < 0) return documentHtml + attachment;
+  return documentHtml.slice(0, close) + attachment + documentHtml.slice(close);
+}
+
 export function schemeFileName(route: string, date?: string): string {
   const safe = route.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 60) || 'трасса';
   return `Исполнительная схема ${safe} ${date || new Date().toISOString().slice(0, 10)}.doc`;

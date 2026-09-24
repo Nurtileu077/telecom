@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildScheme, schemeSvg, schemeDocHtml, schemeDocPage, schemeFileName,
+  schemeAttachmentHtml, withSchemeAttached,
 } from './asBuilt';
 import type { SiteObject, PlanRoute } from '@/types/construction';
 
@@ -236,5 +237,54 @@ describe('schemeFileName', () => {
 
   it('безымянная трасса всё равно получает имя файла', () => {
     expect(schemeFileName('   ', '2026-05-20')).toContain('трасса');
+  });
+});
+
+/**
+ * Схему всё равно прикладывают к акту — просто отдельным файлом, который
+ * по дороге теряется: акт дошёл, схема осталась в папке «Загрузки».
+ */
+describe('схема приложением к акту', () => {
+  const scheme = () => buildScheme(route(), [
+    obj({ lat: 0, lon: 0.005, name: 'Муфта №1' }),
+  ]);
+
+  it('начинается с новой страницы и подписана как приложение', () => {
+    const html = schemeAttachmentHtml({ scheme: scheme() }, '14');
+    expect(html).toContain('page-break-before:always');
+    expect(html).toContain('Приложение к акту № 14');
+  });
+
+  it('без номера акта пишет просто «Приложение»', () => {
+    const html = schemeAttachmentHtml({ scheme: scheme() });
+    expect(html).toContain('Приложение<');
+    expect(html).not.toContain('к акту');
+  });
+
+  it('несёт и рисунок, и ведомость пролётов', () => {
+    const html = schemeAttachmentHtml({ scheme: scheme() }, '14');
+    expect(html).toContain('<svg');
+    expect(html).toContain('Муфта №1');
+    expect(html).toContain('<table class="act">');
+  });
+
+  it('вкладывается внутрь готового документа, а не рядом с ним', () => {
+    const doc = '<html><body class="act-doc"><h1>АКТ</h1></body></html>';
+    const out = withSchemeAttached(doc, { scheme: scheme() }, '14');
+    expect(out.indexOf('ИСПОЛНИТЕЛЬНАЯ СХЕМА')).toBeGreaterThan(out.indexOf('АКТ'));
+    expect(out.indexOf('ИСПОЛНИТЕЛЬНАЯ СХЕМА')).toBeLessThan(out.indexOf('</body>'));
+    expect(out.match(/<\/body>/g)).toHaveLength(1);
+  });
+
+  it('документ без тела не теряет приложение', () => {
+    const out = withSchemeAttached('<h1>АКТ</h1>', { scheme: scheme() });
+    expect(out).toContain('ИСПОЛНИТЕЛЬНАЯ СХЕМА');
+  });
+
+  it('в приложении лист остаётся книжным, а не поворачивается', () => {
+    const html = schemeAttachmentHtml({ scheme: scheme() }, '14');
+    expect(html).not.toContain('landscape');
+    // Рисунок уже готового акта: он должен помещаться в ширину листа.
+    expect(html).toMatch(/viewBox="0 0 640 /);
   });
 });

@@ -72,7 +72,7 @@ export default function OfflineTilesButton({ getBounds, template, className }: P
                onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--border)]">
               <h3 className="text-sm font-semibold text-[var(--text)] flex-1">Карта на устройство</h3>
-              <button type="button" onClick={() => !busy && setOpen(false)}
+              <button type="button" onClick={() => !busy && setOpen(false)} aria-label="Закрыть"
                       className="btn btn-ghost btn-icon"><X size={16} /></button>
             </div>
 

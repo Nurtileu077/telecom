@@ -265,7 +265,8 @@ function SpliceForm({ object, initial, author, onSave, onClose }: {
           <h3 className="text-sm font-semibold text-[var(--text)]">
             Протокол сварки — {object.name || 'муфта'}
           </h3>
-          <button type="button" className="btn btn-ghost btn-icon" onClick={onClose}>✕</button>
+          <button type="button" className="btn btn-ghost btn-icon" aria-label="Закрыть"
+                  onClick={onClose}>✕</button>
         </div>
         <div className="p-4 flex flex-col gap-3">
           <div className="grid grid-cols-2 gap-2">

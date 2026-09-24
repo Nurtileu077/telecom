@@ -779,3 +779,78 @@ html { font-size: calc(16px * var(--ui-scale, 1)); }
   .journal-tabs,
   .journal-primary { display: none !important; }
 }
+
+/* ── Доступность ─────────────────────────────────────────────────────────
+   Журналом пользуются не только мышью: в конторе по нему ходят
+   клавишей Tab, а на планшете в перчатках промахиваются пальцем. Там,
+   где не видно, что сейчас выбрано, оба способа перестают работать. */
+
+/* Видимый фокус — везде, где на него вообще можно встать.
+   :focus-visible, а не :focus: обводка вокруг кнопки, нажатой мышью,
+   выглядит поломкой, и первое, что делают, — просят её убрать. */
+:where(button, a, [role="button"], [role="tab"], summary, [tabindex]):focus-visible,
+:where(input, select, textarea):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Текст для тех, кто слушает экран. Убирать его display: none нельзя —
+   тогда его не прочтут ни глазами, ни голосом. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Перейти сразу к содержимому: тому, кто ходит клавишей, иначе
+   приходится протабать всю панель кнопок, прежде чем дойти до таблицы. */
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -60px;
+  z-index: 10001;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--bg-surface);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  font-size: 13px;
+  transition: top 0.15s ease;
+}
+.skip-link:focus { top: calc(8px + env(safe-area-inset-top, 0px)); }
+
+/* Кому нужен контраст повыше — границы и подписи становятся плотнее.
+   Бледно-серая рамка на солнце не видна вовсе. */
+@media (prefers-contrast: more) {
+  :root {
+    --border: rgba(148, 163, 184, 0.6);
+    --border-strong: rgba(203, 213, 225, 0.85);
+    --text-muted: #94a3b8;
+  }
+  :root[data-theme="light"] {
+    --border: rgba(51, 65, 85, 0.5);
+    --border-strong: rgba(15, 23, 42, 0.7);
+    --text-muted: #334155;
+  }
+  .btn { border-width: 1.5px; }
+}
+
+/* Движение выключают не из вкуса: от него укачивает и болит голова.
+   Выключаем всё, а не только то, что вспомнили по имени. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

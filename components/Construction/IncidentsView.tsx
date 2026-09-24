@@ -393,7 +393,8 @@ function IncidentForm({ journal, initial, author, onSave, onClose, onRequestPick
           <h3 className="text-[14px] font-semibold text-[var(--text)] flex-1">
             {initial ? 'Авария' : 'Новая авария'}
           </h3>
-          <button type="button" onClick={onClose} className="btn btn-ghost btn-icon">✕</button>
+          <button type="button" onClick={onClose} aria-label="Закрыть"
+                  className="btn btn-ghost btn-icon">✕</button>
         </header>
 
         <div className="p-4 flex flex-col gap-3">

@@ -193,7 +193,8 @@ export default function AppHeader(p: Props) {
             </button>
           </>
         )}
-        <button type="button" className="btn btn-ghost btn-icon" onClick={p.onHelp}><HelpCircle size={16} /></button>
+        <button type="button" className="btn btn-ghost btn-icon" onClick={p.onHelp}
+                aria-label="Справка и горячие клавиши" title="Справка"><HelpCircle size={16} /></button>
         <button type="button" className={`btn btn-icon ${p.chatOpen ? 'btn-secondary' : 'btn-ghost'}`} onClick={p.onToggleChat} title="AI"><Sparkles size={16} className="text-[var(--accent-2)]" /></button>
       </div>
     </header>

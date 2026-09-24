@@ -466,7 +466,8 @@ function DeliveryForm({ oblasti, defaultOblast, author, onSave, onClose }: {
       <div className="bg-[var(--bg-surface)] w-full max-w-[420px] rounded-xl border border-[var(--border)] overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)]">
           <h3 className="text-sm font-semibold text-[var(--text)]">Приход материала</h3>
-          <button type="button" className="btn btn-ghost btn-icon" onClick={onClose}>✕</button>
+          <button type="button" className="btn btn-ghost btn-icon" aria-label="Закрыть"
+                  onClick={onClose}>✕</button>
         </div>
         <div className="p-4 flex flex-col gap-3">
           <div className="grid grid-cols-2 gap-2">
@@ -567,7 +568,8 @@ function DrumForm({ oblasti, defaultOblast, author, onSave, onClose }: {
       <div className="bg-[var(--bg-surface)] w-full max-w-[420px] rounded-xl border border-[var(--border)] overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)]">
           <h3 className="text-sm font-semibold text-[var(--text)]">Барабан кабеля</h3>
-          <button type="button" className="btn btn-ghost btn-icon" onClick={onClose}>✕</button>
+          <button type="button" className="btn btn-ghost btn-icon" aria-label="Закрыть"
+                  onClick={onClose}>✕</button>
         </div>
         <div className="p-4 flex flex-col gap-3">
           <div className="grid grid-cols-2 gap-2">

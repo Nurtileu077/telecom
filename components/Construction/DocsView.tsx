@@ -19,8 +19,11 @@ import {
   hiddenWorksPage, hiddenWorksFile, remarksFromDeviations, remarksPage,
   photoReportPage, letterPage, measureProtocolPage, measureProtocolFile,
 } from './fieldDocs';
-import { buildScheme, schemeDocPage, schemeFileName } from './asBuilt';
+import {
+  buildScheme, schemeDocPage, schemeFileName, withSchemeAttached,
+} from './asBuilt';
 import { withDefaults, missingForPayment, binLooksWrong } from './requisites';
+import { normName } from './areaImport';
 import {
   buildDocx, docxFileName, loadDocFormat, saveDocFormat,
   DOC_FORMATS, DOC_FORMAT_LABEL, DOC_FORMAT_HINT, type DocFormat,
@@ -56,6 +59,9 @@ interface Props {
 }
 
 const DOC_MIME = 'application/msword;charset=utf-8';
+
+/** Участок в KML и в журнале пишут по-разному — сверяем нестрого. */
+const normLoose = (v: string | undefined) => normName(v ?? '');
 
 /**
  * Сводный реестр за период.
@@ -253,22 +259,38 @@ export default function DocsView({
           .map((x) => String(x).replace(/[\\/:*?"<>|]+/g, ' ').trim())
           .join('/');
         const folder = zip.folder(where || 'Участки') ?? zip;
+        /**
+         * Схема — приложением к акту, а не отдельным файлом.
+         *
+         * Отдельный файл по дороге теряется: акт дошёл, схема осталась
+         * в папке «Загрузки». Берём трассу этого же участка; если её
+         * нет — акт уходит как есть, без выдуманной схемы.
+         */
+        const own = journal.planRoutes.find((r) => normLoose(r.uchastok) === normLoose(uchastok))
+          ?? journal.planRoutes.find((r) => normLoose(r.name) === normLoose(uchastok));
+        const attachment = own
+          ? buildScheme(own, journal.objects.filter((o) => normLoose(o.uchastok) === normLoose(uchastok)))
+          : null;
+
         for (const kind of ['ASR', 'OSR'] as ActKind[]) {
+          const body = actDocHtml({
+            kind,
+            uchastok,
+            fields,
+            totals,
+            variants: totals.variants,
+            oblast: sample.oblast,
+            rayon: sample.rayon,
+            contractor,
+            dateFrom: totals.dateFrom,
+            dateTo: totals.dateTo,
+          });
           await put(
             folder,
             actFileName(kind, uchastok, fields.actDate),
-            actDocHtml({
-              kind,
-              uchastok,
-              fields,
-              totals,
-              variants: totals.variants,
-              oblast: sample.oblast,
-              rayon: sample.rayon,
-              contractor,
-              dateFrom: totals.dateFrom,
-              dateTo: totals.dateTo,
-            }),
+            attachment
+              ? withSchemeAttached(body, { scheme: attachment }, fields.actNumber)
+              : body,
           );
         }
       }
