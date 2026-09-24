@@ -368,6 +368,49 @@ export function distinct<T extends Filterable>(list: T[], key: (e: T) => string)
 
 const KEY = 'optiq-journal-v1';
 
+/**
+ * Починить запись, пришедшую снаружи.
+ *
+ * Типы гарантируют форму записи, пока она рождается в нашем коде. Но
+ * записи приходят и из чужих рук: из копии, снятой полгода назад, из
+ * импорта таблицы, с сервера, где работает устройство постарше. Там поля
+ * может не быть.
+ *
+ * Одна такая запись роняет полприложения: `e.materials` разыменовывают в
+ * десятке мест — ведомость объёмов, акт, сводка за день, прогноз
+ * материалов, выгрузка в Excel. Падает уже при отрисовке, и try/catch
+ * вокруг чтения не спасает: разбор-то прошёл.
+ *
+ * Поэтому чиним один раз на входе, а не десятью проверками по месту.
+ * То же и с проколами: без `points` падает карта проколов и план ГНБ.
+ */
+const isPlainObject = (v: unknown): boolean =>
+  !!v && typeof v === 'object' && !Array.isArray(v);
+
+/** Смена: без `materials` и `byMethod` падают ведомость, акт и сводка. */
+export function fixWorkEntry<T>(e: T): T {
+  if (!isPlainObject(e)) return e;
+  const r = e as Record<string, unknown>;
+  const patch: Record<string, unknown> = {};
+  if (!isPlainObject(r.materials)) patch.materials = {};
+  if (!isPlainObject(r.byMethod)) patch.byMethod = {};
+  return Object.keys(patch).length ? { ...r, ...patch } as T : e;
+}
+
+/** Прокол: без `points` падает карта проколов и план ГНБ. */
+export function fixDrillEntry<T>(d: T): T {
+  if (!isPlainObject(d)) return d;
+  const r = d as Record<string, unknown>;
+  if (Array.isArray(r.points)) return d;
+  return { ...r, points: [] } as T;
+}
+
+/** Список не тот — отдаём пустой, а не падаем. */
+export function fixList<T>(list: T[] | undefined, fix: (x: T) => T): T[] {
+  if (!Array.isArray(list)) return [];
+  return list.map(fix);
+}
+
 export function loadJournal(): JournalState {
   if (typeof window === 'undefined') return emptyJournal();
   try {
@@ -375,8 +418,12 @@ export function loadJournal(): JournalState {
     if (!raw) return emptyJournal();
     const p = JSON.parse(raw) as Partial<JournalState>;
     return {
-      orders: p.orders ?? [], ground: p.ground ?? [],
-      aerial: p.aerial ?? [], drills: p.drills ?? [],
+      orders: p.orders ?? [],
+      // Записи чиним на входе: у пришедшей из старой копии может не быть
+      // полей, которые весь остальной код считает обязательными.
+      ground: fixList(p.ground, fixWorkEntry),
+      aerial: fixList(p.aerial, fixWorkEntry),
+      drills: fixList(p.drills, fixDrillEntry),
       corrections: p.corrections ?? [],
       changes: p.changes ?? [],
       deviations: p.deviations ?? [],
@@ -434,9 +481,11 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
   };
   return {
     orders: mergeOrders(base.orders, add.orders ?? []),
-    ground: mergeList(base.ground, add.ground ?? []),
-    aerial: mergeList(base.aerial, add.aerial ?? []),
-    drills: mergeList(base.drills, add.drills ?? []),
+    // Импортированный файл делали не мы: поля, которое весь остальной код
+    // считает обязательным, там может не быть.
+    ground: mergeList(base.ground, fixList(add.ground, fixWorkEntry)),
+    aerial: mergeList(base.aerial, fixList(add.aerial, fixWorkEntry)),
+    drills: mergeList(base.drills, fixList(add.drills, fixDrillEntry)),
     // Импорт файла не трогает заявки, отклонения, колонны, контуры и справочник.
     areas: base.areas,
     prices: base.prices,
@@ -1700,22 +1749,43 @@ export function restoreFromTrash(base: JournalState, id: string): JournalState {
   const item = base.trash.find((t) => t.id === id);
   if (!item) return base;
   const now = new Date().toISOString();
-  const back = { ...item.entry, updatedAt: now, sync: 'local' as const };
+  const trashedAt = item.entry.updatedAt ?? '';
+
   /**
-   * Пока запись лежала в корзине, она могла вернуться обменом с другого
-   * устройства. Дописать её второй раз — значит задвоить метры смены в
-   * журнале, а по ним считают и акт, и деньги.
+   * Пока запись лежала в корзине, с ней могло случиться две вещи.
+   *
+   * Она могла вернуться обменом такой же, какой была. Тогда дописать её
+   * второй раз — значит задвоить метры смены, а по ним считают и акт, и
+   * деньги.
+   *
+   * А могла вернуться исправленной: сосед поправил её у себя позже, чем
+   * я удалил, и обмен признал его правку старше удаления. Тогда положить
+   * поверх свою версию из корзины — значит стереть чужую работу, да ещё
+   * и свежей отметкой времени, так что обмен разнесёт потерю по всем
+   * устройствам.
+   *
+   * Поэтому сравниваем: что новее — то и остаётся.
    */
-  const put = <T extends { id: string }>(list: T[], from: string): T[] => (
-    item.from === from
-      ? [...list.filter((x) => x.id !== item.id), back as unknown as T]
-      : list
-  );
+  let keptLive = false;
+  const put = <T extends { id: string; updatedAt?: string }>(list: T[], from: string): T[] => {
+    if (item.from !== from) return list;
+    const live = list.find((x) => x.id === item.id);
+    if (live && (live.updatedAt ?? '') > trashedAt) {
+      // Живая версия свежее той, что лежала в корзине: оставляем её.
+      keptLive = true;
+      return list;
+    }
+    const back = { ...item.entry, updatedAt: now, sync: 'local' as const };
+    return [...list.filter((x) => x.id !== item.id), back as unknown as T];
+  };
+
   const next: JournalState = {
     ...base,
     ground: put(base.ground, 'ground'),
     aerial: put(base.aerial, 'aerial'),
     drills: put(base.drills, 'drills'),
+    // Надгробие снимаем в любом случае: запись снова живая, и обмен
+    // должен видеть её, а не считать удалённой.
     deleted: base.deleted.filter((d) => d.id !== id),
     trash: base.trash.filter((t) => t.id !== id),
     updatedAt: now,
@@ -1725,7 +1795,9 @@ export function restoreFromTrash(base: JournalState, id: string): JournalState {
     author: item.author ?? 'без имени',
     kind: 'entry_restore',
     target: ('uchastok' in item.entry ? item.entry.uchastok : '') || 'смена',
-    detail: `${item.entry.date || 'без даты'} — возвращена из корзины`,
+    detail: keptLive
+      ? `${item.entry.date || 'без даты'} — уже вернулась обменом, оставлена свежая версия`
+      : `${item.entry.date || 'без даты'} — возвращена из корзины`,
   });
 }
 

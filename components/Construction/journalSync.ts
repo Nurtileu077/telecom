@@ -1,5 +1,6 @@
 import {
   JournalState, DeletedMark, emptyJournal, PRICE_TOMB_PREFIX,
+  fixList, fixWorkEntry, fixDrillEntry,
 } from './journalStore';
 import type { MaterialPrices } from './materialCost';
 import type { Requisites } from './requisites';
@@ -166,9 +167,21 @@ export function mergeJournalStates(
 
   const merged: JournalState = {
     orders: mergeOrders(local.orders, remote.orders),
-    ground: mergeCollection<DailyWorkEntry>(local.ground, remote.ground, tombs, stats),
-    aerial: mergeCollection<AerialWorkEntry>(local.aerial, remote.aerial, tombs, stats),
-    drills: mergeCollection<DrillLogEntry>(local.drills, remote.drills, tombs, stats),
+    // Чужая сторона может быть устройством постарше, где поля ещё не
+    // было. Чиним на входе: иначе одна такая запись роняет ведомость,
+    // акт и сводку — и уже при отрисовке, а не при разборе.
+    ground: fixList(
+      mergeCollection<DailyWorkEntry>(local.ground, remote.ground, tombs, stats),
+      fixWorkEntry,
+    ),
+    aerial: fixList(
+      mergeCollection<AerialWorkEntry>(local.aerial, remote.aerial, tombs, stats),
+      fixWorkEntry,
+    ),
+    drills: fixList(
+      mergeCollection<DrillLogEntry>(local.drills, remote.drills, tombs, stats),
+      fixDrillEntry,
+    ),
     deviations: mergeCollection<Deviation>(local.deviations, remote.deviations, tombs, stats),
     crews: mergeCollection<Crew>(local.crews, remote.crews, tombs, stats),
     deliveries: mergeCollection<MaterialDelivery>(local.deliveries, remote.deliveries, tombs, stats),

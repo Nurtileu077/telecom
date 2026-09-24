@@ -179,6 +179,84 @@ describe('shiftsWithoutCrew', () => {
       e({ id: 'a', column: '', date: '2026-07-01' }),
       e({ id: 'b', column: '', date: '2026-07-25' }),
     ];
-    expect(shiftsWithoutCrew(rows, { from: '2026-07-20', to: '2026-07-31' }).shifts).toBe(1);
+    expect(shiftsWithoutCrew(rows, [], { from: '2026-07-20', to: '2026-07-31' }).shifts).toBe(1);
+  });
+});
+
+/**
+ * Дыра, которую завело само исправление «одинаковые названия у разных
+ * подрядчиков»: смена с общим именем колонны и без подрядчика не
+ * попадала ни к кому и при этом нигде не называлась. Семьсот метров
+ * исчезали из табеля молча.
+ */
+describe('смена, которую некому отнести', () => {
+  const TWO: Crew[] = [
+    {
+      id: 'd1', kind: 'mkt', name: 'Колонна 1', contractor: 'Дозер',
+      status: 'working', members: [{ name: 'Ахметов А.' }], equipment: {}, updatedAt: '',
+    } as Crew,
+    {
+      id: 't1', kind: 'mkt', name: 'Колонна 1', contractor: 'TERRA TECH',
+      status: 'working', members: [{ name: 'Жумабеков С.' }], equipment: {}, updatedAt: '',
+    } as Crew,
+  ];
+
+  const rows = [
+    e({ id: 'a', column: 'Колонна 1', contractor: 'TERRA TECH', byMethod: { 'бар': 500 } }),
+    // Подрядчика не записали, а имя колонны делят двое.
+    e({ id: 'b', column: 'Колонна 1', contractor: undefined, byMethod: { 'бар': 700 } }),
+  ];
+
+  it('чужой бригаде её не приписывает', () => {
+    const t = timesheet(rows, TWO);
+    const terra = t.find((r) => r.name === 'Жумабеков С.')!;
+    expect(terra.crewMeters).toBe(500);
+    expect(t.find((r) => r.name === 'Ахметов А.')).toBeUndefined();
+  });
+
+  it('но и не теряет молча — называет вслух', () => {
+    const out = shiftsWithoutCrew(rows, TWO);
+    expect(out.shifts).toBe(1);
+    expect(out.meters).toBe(700);
+    expect(out.reasons[0].why).toContain('подрядчик в смене не указан');
+    expect(out.reasons[0].columns).toEqual(['Колонна 1']);
+  });
+
+  it('колонну, которой нет в справочнике, тоже называет', () => {
+    const out = shiftsWithoutCrew([e({ id: 'x', column: 'Колонна 9' })], TWO);
+    expect(out.shifts).toBe(1);
+    expect(out.reasons[0].why).toContain('нет в справочнике');
+  });
+
+  it('разные причины считает порознь', () => {
+    const out = shiftsWithoutCrew([
+      e({ id: 'a', column: '', byMethod: { 'бар': 100 } }),
+      e({ id: 'b', column: 'Колонна 1', contractor: undefined, byMethod: { 'бар': 200 } }),
+      e({ id: 'c', column: 'Колонна 9', byMethod: { 'бар': 300 } }),
+    ], TWO);
+    expect(out.shifts).toBe(3);
+    expect(out.meters).toBe(600);
+    expect(out.reasons).toHaveLength(3);
+  });
+
+  it('когда имя уникально, подрядчика можно не писать и смена не теряется', () => {
+    const one: Crew[] = [TWO[0]];
+    const rows2 = [e({ id: 'a', column: 'Колонна 1', contractor: undefined })];
+    expect(timesheet(rows2, one)).toHaveLength(1);
+    expect(shiftsWithoutCrew(rows2, one).shifts).toBe(0);
+  });
+
+  it('без справочника судить не берётся: там и колонн никаких нет', () => {
+    const out = shiftsWithoutCrew([e({ id: 'a', column: 'Колонна 1' })], []);
+    expect(out.shifts).toBe(0);
+  });
+
+  it('метры сошлись: что в табеле плюс что названо равно всему', () => {
+    const t = timesheet(rows, TWO);
+    const inSheet = new Set(t.map((r) => r.crew + r.contractor));
+    const sheetM = [...inSheet].reduce(
+      (s, k) => s + (t.find((r) => r.crew + r.contractor === k)?.crewMeters ?? 0), 0,
+    );
+    expect(sheetM + shiftsWithoutCrew(rows, TWO).meters).toBe(1200);
   });
 });

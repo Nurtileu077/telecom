@@ -48,7 +48,10 @@ export default function TimesheetView({ rows, crews, from, to, onCopied }: Props
     [rows, crews, from, to],
   );
   const totals = useMemo(() => timesheetTotals(table), [table]);
-  const noCrew = useMemo(() => shiftsWithoutCrew(rows, { from, to }), [rows, from, to]);
+  const noCrew = useMemo(
+    () => shiftsWithoutCrew(rows, crews, { from, to }),
+    [rows, crews, from, to],
+  );
 
   async function copy() {
     const text = timesheetToText(table);
@@ -97,18 +100,24 @@ export default function TimesheetView({ rows, crews, from, to, onCopied }: Props
                         bg-[var(--warn)]/10 px-3 py-2 text-[11.5px] text-[var(--warn)]">
           <AlertTriangle size={14} className="shrink-0 mt-0.5" />
           <span>
-            Смен без колонны: {noCrew.shifts} ·{' '}
+            Не попали в табель: смен {noCrew.shifts} ·{' '}
             <span className="font-mono tabular-nums">
               {Math.round(noCrew.meters).toLocaleString('ru')} м
             </span>
-            <span className="block text-[var(--text-muted)]">
-              Они не попали ни к кому в табель. Укажите колонну в этих сменах
-              {noCrew.dates.length > 0
-                ? ` (${noCrew.dates.slice(0, 5).map((d) => new Date(`${d}T00:00:00Z`)
-                    .toLocaleDateString('ru')).join(', ')}`
-                  + `${noCrew.dates.length > 5 ? ' и другие' : ''})`
-                : ''}.
-            </span>
+            {/* Причины разные, и исправляются они по-разному. */}
+            {noCrew.reasons.map((r) => (
+              <span key={r.why} className="block text-[var(--text-muted)]">
+                {r.why} — смен {r.shifts}
+                {r.columns.length > 0 ? ` (${r.columns.slice(0, 3).join(', ')})` : ''}
+              </span>
+            ))}
+            {noCrew.dates.length > 0 && (
+              <span className="block text-[var(--text-muted)]">
+                Даты: {noCrew.dates.slice(0, 5).map((d) => new Date(`${d}T00:00:00Z`)
+                  .toLocaleDateString('ru')).join(', ')}
+                {noCrew.dates.length > 5 ? ' и другие' : ''}.
+              </span>
+            )}
           </span>
         </div>
       )}

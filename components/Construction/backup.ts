@@ -1,5 +1,5 @@
 import type { JournalState } from './journalStore';
-import { emptyJournal } from './journalStore';
+import { emptyJournal, fixList, fixWorkEntry, fixDrillEntry } from './journalStore';
 
 /**
  * Забрать своё и вернуть обратно.
@@ -125,7 +125,15 @@ export function readBackup(text: string): BackupCheck {
  * этого он не должен.
  */
 export function restoreBackup(file: BackupFile): JournalState {
-  return { ...emptyJournal(), ...file.journal };
+  const j = { ...emptyJournal(), ...file.journal };
+  // Копию могли снять полгода назад, когда поля ещё не было. Одна такая
+  // запись роняет ведомость, акт и сводку — уже при отрисовке.
+  return {
+    ...j,
+    ground: fixList(j.ground, fixWorkEntry),
+    aerial: fixList(j.aerial, fixWorkEntry),
+    drills: fixList(j.drills, fixDrillEntry),
+  };
 }
 
 /** Насколько копия старая — по этому решают, разворачивать ли её. */

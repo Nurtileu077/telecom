@@ -152,29 +152,83 @@ export function crewsWithoutMembers(
   return out.sort((a, b) => a.localeCompare(b, 'ru'));
 }
 
+export interface UnassignedShifts {
+  shifts: number;
+  meters: number;
+  dates: string[];
+  /** Почему не попали — по видам, чтобы было понятно, что исправлять. */
+  reasons: { why: string; shifts: number; columns: string[] }[];
+}
+
 /**
- * Смены, в которых колонна вообще не записана.
+ * Смены, не попавшие в табель ни к кому.
  *
- * Они не попадают в табель ни к кому — и это единственный вид пропажи,
- * о котором табель раньше молчал. Человек видел неполную сводку и решал,
- * что потерялись данные, хотя потерялось поле в паре строк.
+ * Два разных случая, и человеку нужно различать их, потому что
+ * исправляются они по-разному.
+ *
+ * Первый: колонну не записали вовсе. Тогда и отнести смену не к кому.
+ *
+ * Второй хитрее. «Колонна 1» есть и у TERRA TECH, и у Дозера — это
+ * разные бригады с одинаковым номером, и различаем мы их подрядчиком.
+ * Если в смене подрядчика не указали, отнести её можно с равным
+ * основанием к любой из двух. Выбрать одну наугад — значит записать
+ * чужую выработку чужой бригаде, а по табелю считают деньги. Поэтому не
+ * выбираем, а называем вслух.
+ *
+ * Молчать нельзя ни в том, ни в другом: человек увидит неполный табель
+ * и решит, что потерялись данные, хотя потерялось поле в паре строк.
  */
 export function shiftsWithoutCrew(
   rows: DailyWorkEntry[],
+  crews: Crew[] = [],
   opts: { from?: string; to?: string } = {},
-): { shifts: number; meters: number; dates: string[] } {
+): UnassignedShifts {
+  const shared = sharedNames(crews);
+  const known = new Set(crews.map((c) => bucketKey(c.name, c.contractor, shared)));
+
   const dates = new Set<string>();
+  const byReason = new Map<string, { shifts: number; columns: Set<string> }>();
   let shifts = 0;
   let meters = 0;
+
+  const note = (why: string, column: string) => {
+    const acc = byReason.get(why) ?? { shifts: 0, columns: new Set<string>() };
+    acc.shifts += 1;
+    if (column) acc.columns.add(column);
+    byReason.set(why, acc);
+  };
+
   for (const e of rows) {
     if (opts.from && (e.date || '') < opts.from) continue;
     if (opts.to && (e.date || '') > opts.to) continue;
-    if (crewKey(e.column)) continue;
+
+    const column = e.column?.trim() ?? '';
+    let why: string | null = null;
+    if (!crewKey(column)) {
+      why = 'колонна не записана';
+    } else if (crews.length > 0 && !known.has(bucketKey(column, e.contractor, shared))) {
+      // Имя колонны делят несколько подрядчиков, а в смене подрядчика нет —
+      // либо такой колонны нет вовсе.
+      why = shared.has(crewKey(column))
+        ? 'такая колонна есть у нескольких подрядчиков, а подрядчик в смене не указан'
+        : 'такой колонны нет в справочнике';
+    }
+    if (!why) continue;
+
     shifts += 1;
     meters += entryMeters(e);
     if (e.date) dates.add(e.date);
+    note(why, column);
   }
-  return { shifts, meters, dates: [...dates].sort() };
+
+  return {
+    shifts,
+    meters,
+    dates: [...dates].sort(),
+    reasons: [...byReason.entries()]
+      .map(([why, acc]) => ({ why, shifts: acc.shifts, columns: [...acc.columns].sort() }))
+      .sort((a, b) => b.shifts - a.shifts),
+  };
 }
 
 export function timesheetTotals(rows: TimesheetRow[]): TimesheetTotals {

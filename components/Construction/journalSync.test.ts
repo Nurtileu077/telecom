@@ -316,6 +316,50 @@ describe('возврат из корзины', () => {
     expect(restored.ground).toHaveLength(1);
   });
 
+  /**
+   * Пока запись лежала в корзине, сосед мог её поправить — позже, чем я
+   * удалил. Обмен признаёт такую правку старше удаления и возвращает
+   * запись живой. Положить поверх свою версию из корзины значит стереть
+   * чужую работу, да ещё и свежей отметкой времени: обмен разнесёт
+   * потерю по всем устройствам.
+   */
+  it('не затирает чужую правку, сделанную позже удаления', () => {
+    const base = state({ ground: [g('a', T('10'), { uchastok: 'старое' })] });
+    const trashed = removeEntry(base, 'a', 'Иванов');
+    const withFresher = { ...trashed, ground: [g('a', T('14'), { uchastok: 'правка соседа' })] };
+    const restored = restoreFromTrash(withFresher, 'a');
+    expect(restored.ground).toHaveLength(1);
+    expect(restored.ground[0].uchastok).toBe('правка соседа');
+  });
+
+  it('но свою версию возвращает, когда живая старше', () => {
+    const base = state({ ground: [g('a', T('14'), { uchastok: 'моё' })] });
+    const trashed = removeEntry(base, 'a', 'Иванов');
+    const withOlder = { ...trashed, ground: [g('a', T('09'), { uchastok: 'давнее чужое' })] };
+    const restored = restoreFromTrash(withOlder, 'a');
+    expect(restored.ground).toHaveLength(1);
+    expect(restored.ground[0].uchastok).toBe('моё');
+  });
+
+  it('в обоих случаях снимает надгробие: запись снова живая', () => {
+    const base = state({ ground: [g('a', T('10'))] });
+    const trashed = removeEntry(base, 'a', 'Иванов');
+    for (const live of [T('14'), T('09')]) {
+      const r = restoreFromTrash({ ...trashed, ground: [g('a', live)] }, 'a');
+      expect(r.deleted.some((d) => d.id === 'a')).toBe(false);
+      expect(r.trash.some((t) => t.id === 'a')).toBe(false);
+    }
+  });
+
+  it('и говорит в журнале изменений, что именно произошло', () => {
+    const base = state({ ground: [g('a', T('10'))] });
+    const trashed = removeEntry(base, 'a', 'Иванов');
+    const kept = restoreFromTrash({ ...trashed, ground: [g('a', T('14'))] }, 'a');
+    expect(kept.changes[0].detail).toContain('оставлена свежая версия');
+    const back = restoreFromTrash(trashed, 'a');
+    expect(back.changes[0].detail).toContain('возвращена из корзины');
+  });
+
   it('возврат снимает надгробие', () => {
     const base = state({ ground: [g('a', T('10'))] });
     const restored = restoreFromTrash(removeEntry(base, 'a', 'Иванов'), 'a');

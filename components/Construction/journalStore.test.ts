@@ -6,6 +6,7 @@ import {
   restoreFromTrash, purgeTrash, bulkPatchEntries, setDisputed,
   submitCorrection, approveCorrection, rejectCorrection, pendingCorrections,
   hasPendingCorrection, diffEntries, suggestContractor, DEFAULT_CONTRACTORS,
+  fixWorkEntry, fixDrillEntry, fixList,
   addDeviation, removeDeviation, openDeviations, isDeviationClosed, needsProtocol,
   documentContractor, upsertCrew, removeCrew, moveCrew, placedCrews,
   crewOnDuty, crewEquipmentCount, deviationMapItems, plural,
@@ -789,5 +790,67 @@ describe('спорные строки', () => {
     const cleared = setDisputed(marked, 'a', false);
     expect(cleared.ground[0].disputed).toBe(false);
     expect(cleared.ground[0].disputeNote).toBeUndefined();
+  });
+});
+
+/**
+ * Типы гарантируют форму записи, пока она рождается в нашем коде. Но
+ * записи приходят и из чужих рук: из копии, снятой полгода назад, из
+ * импорта таблицы, с сервера, где работает устройство постарше.
+ *
+ * Одна такая запись роняла полприложения: `e.materials` разыменовывают в
+ * десятке мест — ведомость объёмов, акт, сводка за день, прогноз
+ * материалов, выгрузка в Excel. Падало уже при отрисовке, и try/catch
+ * вокруг чтения не спасал: разбор-то проходил.
+ */
+describe('запись из чужих рук', () => {
+  it('смена без материалов получает пустой набор, а не undefined', () => {
+    const fixed = fixWorkEntry({ id: 'a', date: '2026-07-25' } as never) as {
+      materials: unknown; byMethod: unknown;
+    };
+    expect(fixed.materials).toEqual({});
+    expect(fixed.byMethod).toEqual({});
+  });
+
+  it('заполненную запись не трогает и не копирует зря', () => {
+    const ok = { id: 'a', materials: { 'МКТ': 100 }, byMethod: { 'бар': 400 } } as never;
+    expect(fixWorkEntry(ok)).toBe(ok);
+  });
+
+  it('массив вместо набора материалов — это не набор', () => {
+    const fixed = fixWorkEntry({ id: 'a', materials: [], byMethod: null } as never) as {
+      materials: unknown; byMethod: unknown;
+    };
+    expect(fixed.materials).toEqual({});
+    expect(fixed.byMethod).toEqual({});
+  });
+
+  it('прокол без точек получает пустой список', () => {
+    const fixed = fixDrillEntry({ id: 'd' } as never) as { points: unknown[] };
+    expect(fixed.points).toEqual([]);
+  });
+
+  it('список не тот — отдаём пустой, а не падаем', () => {
+    expect(fixList(undefined, fixWorkEntry)).toEqual([]);
+    expect(fixList(null as never, fixWorkEntry)).toEqual([]);
+  });
+
+  it('мусор вместо записи не роняет починку', () => {
+    for (const bad of [null, undefined, 'строка', 42]) {
+      expect(() => fixWorkEntry(bad as never)).not.toThrow();
+      expect(() => fixDrillEntry(bad as never)).not.toThrow();
+    }
+  });
+
+  it('после починки запись проходит через всё, что её читает', () => {
+    const broken = [{
+      id: 'a', kind: 'ground', date: '2026-07-25', smu: 'СМУ-1',
+      oblast: 'Акмолинская область', uchastok: 'Зеренда', kato: '1',
+      createdAt: '', updatedAt: '',
+    }] as never;
+    const fixed = fixList(broken, fixWorkEntry);
+    // Именно так к ней обращаются ведомость, акт и прогноз материалов.
+    expect(() => Object.entries((fixed[0] as { materials: object }).materials)).not.toThrow();
+    expect(() => Object.keys((fixed[0] as { byMethod: object }).byMethod)).not.toThrow();
   });
 });
