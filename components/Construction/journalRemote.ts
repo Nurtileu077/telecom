@@ -35,10 +35,42 @@ export interface RemoteJournal {
   updatedBy?: string;
 }
 
+/**
+ * Субподрядчику стол закрыт.
+ *
+ * Отбор по подрядчику раньше делал экран: журнал приходил целиком, а
+ * фильтровался в браузере. Для удобства этого хватало, для доступа —
+ * нет: аккаунт субподрядчика читал через API весь журнал, включая чужие
+ * объёмы и расчёты с другими подрядчиками.
+ *
+ * Теперь чужое отрезает сервер, а субподрядчик читает свой срез
+ * функцией. Писать он не может — и это не ограничение, а их порядок
+ * работы: смены закрывает генподрядчик, субподрядчик смотрит, что ему
+ * насчитали.
+ */
+export async function isSubcontractorAccount(): Promise<boolean> {
+  if (!supabase) return false;
+  const { data } = await supabase.auth.getSession();
+  return data.session?.user?.app_metadata?.role === 'sub';
+}
+
 /** Чтение журнала с сервера. null — строки ещё нет (первая синхронизация). */
 export async function fetchRemoteJournal(): Promise<RemoteJournal | null> {
   if (!supabase) return null;
   await assertSupabaseAccess();
+
+  if (await isSubcontractorAccount()) {
+    const { data, error } = await supabase.rpc('optiq_journal_mine');
+    if (error) throw error;
+    const row = (data as Record<string, unknown>[] | null)?.[0];
+    if (!row) return null;
+    return {
+      state: { ...emptyJournal(), ...(row.data as Partial<JournalState>) },
+      updatedAt: String(row.updated_at ?? ''),
+      updatedBy: (row.updated_by as string) ?? undefined,
+    };
+  }
+
   const { data, error } = await supabase
     .from(TABLE)
     .select('data, updated_at, updated_by')
@@ -72,7 +104,7 @@ export async function pushRemoteJournal(state: JournalState, by: string): Promis
 
 export type SyncOutcome =
   | { ok: true; merged: JournalState; stats: MergeStats; at: string; firstPush: boolean }
-  | { ok: false; reason: 'disabled' | 'auth' | 'network'; message: string };
+  | { ok: false; reason: 'disabled' | 'auth' | 'network' | 'readonly'; message: string };
 
 /**
  * Обмен с сервером: забрать, слить, вернуть обратно.
@@ -86,6 +118,23 @@ export async function syncJournal(local: JournalState, by: string): Promise<Sync
   }
   try {
     const remote = await fetchRemoteJournal();
+
+    /**
+     * Субподрядчик журнал читает, но не пишет: смены закрывает
+     * генподрядчик. Забрать свежее ему надо — иначе он не увидит, что
+     * ему насчитали, — а отправлять нечего.
+     */
+    if (await isSubcontractorAccount()) {
+      if (!remote) {
+        return {
+          ok: false, reason: 'readonly',
+          message: 'Пока нечего показать: генподрядчик ещё не отправлял журнал.',
+        };
+      }
+      const { merged, stats } = mergeJournalStates(local, remote.state);
+      return { ok: true, merged, stats, at: remote.updatedAt, firstPush: false };
+    }
+
     const { merged, stats } = remote
       ? mergeJournalStates(local, remote.state)
       : { merged: local, stats: { pulled: 0, pushed: local.ground.length, conflicts: 0, removed: 0 } };
