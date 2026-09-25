@@ -84,6 +84,25 @@ export interface PdfOptions {
  * Работает только в браузере: снимок делает он же. В тестах проверяется
  * раскладка по листам, она отсюда вынесена нарочно.
  */
+/**
+ * Стили из самого документа.
+ *
+ * У фотоотчёта свои правила для снимков, у схемы — свои для рисунка. Они
+ * живут в `<style>` этого документа, а не в общем наборе. Собрать PDF
+ * только с общим значит получить фотоотчёт, где снимки во всю ширину
+ * экрана, а не во всю ширину листа.
+ */
+export function stylesOf(html: string): string {
+  const out: string[] = [];
+  const re = /<style\b[^>]*>([\s\S]*?)<\/style>/gi;
+  let m = re.exec(html);
+  while (m) {
+    out.push(m[1]);
+    m = re.exec(html);
+  }
+  return out.join('\n');
+}
+
 export async function htmlToPdfBlob(
   html: string,
   css: string,
@@ -101,7 +120,11 @@ export async function htmlToPdfBlob(
   // За экраном, но не display:none: скрытое не измеряется и снимка не даёт.
   host.style.cssText = `position:fixed; left:-10000px; top:0; width:${inner}px;`
     + ' background:#fff; z-index:-1;';
-  host.innerHTML = `<style>${css}</style><div class="act-doc pdf-root">${bodyOf(html)}</div>`;
+  // Свои стили документа важнее общих и идут после них: у фотоотчёта
+  // свои правила для снимков, у схемы — свои для рисунка.
+  const own = stylesOf(html);
+  host.innerHTML = `<style>${css}</style>${own ? `<style>${own}</style>` : ''}`
+    + `<div class="act-doc pdf-root">${bodyOf(html)}</div>`;
   document.body.appendChild(host);
 
   try {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pageBreaks, pdfPageCount, pdfFileName, A4_PX } from './pdf';
+import { pageBreaks, pdfPageCount, pdfFileName, stylesOf, A4_PX } from './pdf';
 
 /**
  * Резать ровно по высоте листа нельзя: разрез попадает в середину строки
@@ -109,5 +109,38 @@ describe('pdfFileName', () => {
 
   it('точку внутри имени за расширение не принимает', () => {
     expect(pdfFileName('Акт 1.2 км.doc')).toBe('Акт 1.2 км.pdf');
+  });
+});
+
+/**
+ * У фотоотчёта свои правила для снимков, у схемы — свои для рисунка. Они
+ * живут в `<style>` самого документа, а не в общем наборе. Собрать PDF
+ * только с общим значит получить фотоотчёт, где снимки во всю ширину
+ * экрана, а не во всю ширину листа.
+ */
+describe('stylesOf', () => {
+  it('забирает стили документа', () => {
+    const html = '<html><head><style>.ph img { width: 100%; }</style></head>'
+      + '<body><p>Текст</p></body></html>';
+    expect(stylesOf(html)).toContain('.ph img');
+  });
+
+  it('забирает все блоки, а не первый', () => {
+    const html = '<head><style>a{}</style><style>b{}</style></head><body></body>';
+    const css = stylesOf(html);
+    expect(css).toContain('a{}');
+    expect(css).toContain('b{}');
+  });
+
+  it('документ без своих стилей даёт пустоту, а не мусор', () => {
+    expect(stylesOf('<body><p>Текст</p></body>')).toBe('');
+  });
+
+  it('слово style внутри текста за стили не принимает', () => {
+    expect(stylesOf('<body><p>style="x" в тексте</p></body>')).toBe('');
+  });
+
+  it('атрибуты тега не мешают', () => {
+    expect(stylesOf('<style type="text/css" media="print">.a{}</style>')).toContain('.a{}');
   });
 });
