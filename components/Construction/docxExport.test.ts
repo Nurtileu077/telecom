@@ -439,3 +439,55 @@ describe('снимки в документе', () => {
     expect(text['word/document.xml']).not.toContain('<w:drawing>');
   });
 });
+
+/**
+ * Снимок, который не прочитался, не должен сдвигать остальные: подпись
+ * под фотографией в акте — это где и когда снято, и чужая подпись под
+ * снимком хуже отсутствующего снимка.
+ */
+describe('битый снимок среди целых', () => {
+  function pngUrl(w: number, h: number): string {
+    const b = Buffer.alloc(33);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(b, 0);
+    b.writeUInt32BE(13, 8); Buffer.from('IHDR').copy(b, 12);
+    b.writeUInt32BE(w, 16); b.writeUInt32BE(h, 20);
+    return `data:image/png;base64,${b.toString('base64')}`;
+  }
+
+  const mixed = '<body>'
+    // Первый не прочитается: это не data-URL.
+    + '<div class="ph"><img src="/photos/a.jpg"/><div class="cap">Первый</div></div>'
+    + `<div class="ph"><img src="${pngUrl(1600, 1200)}"/><div class="cap">Второй</div></div>`
+    + `<div class="ph"><img src="${pngUrl(800, 600)}"/><div class="cap">Третий</div></div>`
+    + '</body>';
+
+  it('целые снимки попадают в пакет, битый — нет', () => {
+    expect(docxParts(mixed).media).toHaveLength(2);
+  });
+
+  it('подписи не съезжают: под битым сказано, что его нет', () => {
+    const doc = docxParts(mixed).text['word/document.xml'];
+    const first = doc.indexOf('Первый');
+    expect(doc.slice(Math.max(0, first - 200), first)).toContain('снимок не вложен');
+  });
+
+  it('целые снимки остаются при своих подписях', () => {
+    const doc = docxParts(mixed).text['word/document.xml'];
+    // Между «Второй» и «Третий» должен быть ровно один рисунок.
+    const between = doc.slice(doc.indexOf('Второй'), doc.indexOf('Третий'));
+    expect(between.match(/<w:drawing>/g)).toHaveLength(1);
+  });
+
+  it('число рисунков равно числу целых снимков', () => {
+    const doc = docxParts(mixed).text['word/document.xml'];
+    expect(doc.match(/<w:drawing>/g)).toHaveLength(2);
+  });
+
+  it('каждый рисунок ссылается на своё отношение', () => {
+    const { text, media } = docxParts(mixed);
+    const doc = text['word/document.xml'];
+    const refs = [...doc.matchAll(/r:embed="([^"]+)"/g)].map((m) => m[1]);
+    expect(refs).toEqual(media.map((m) => m.relId));
+    expect(new Set(refs)).toHaveLength(refs.length);
+  });
+});

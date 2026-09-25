@@ -339,6 +339,15 @@ const A4 = { w: 11906, h: 16838 };
  * устроен OOXML, картинку внутрь разметки не положишь.
  */
 export interface DocxMedia {
+  /**
+   * Номер блока документа, к которому относится снимок.
+   *
+   * Не порядковый номер среди снимков: один снимок мог не прочитаться, и
+   * тогда все следующие съезжают на подпись назад. Подпись под
+   * фотографией в акте — это где и когда снято, и чужая подпись хуже
+   * отсутствующего снимка.
+   */
+  blockIndex: number;
   /** Путь внутри пакета: word/media/image1.jpeg. */
   path: string;
   /** Идентификатор отношения, по которому на неё ссылается разметка. */
@@ -352,16 +361,17 @@ export interface DocxMedia {
 
 export function collectMedia(blocks: DocBlock[]): DocxMedia[] {
   const out: DocxMedia[] = [];
-  for (const b of blocks) {
-    if (b.type !== 'image') continue;
+  blocks.forEach((b, blockIndex) => {
+    if (b.type !== 'image') return;
     const bytes = dataUrlBytes(b.src);
     const size = imageSize(bytes);
     // Снимок, размер которого не прочитался, не вставляем: без
     // настоящих пропорций он встанет в документ кривым зеркалом.
-    if (!bytes || !size) continue;
+    if (!bytes || !size) return;
     const n = out.length + 1;
     const fit = fitOnPage(size);
     out.push({
+      blockIndex,
       path: `word/media/image${n}.${size.kind}`,
       relId: `rIdImg${n}`,
       bytes,
@@ -369,7 +379,7 @@ export function collectMedia(blocks: DocBlock[]): DocxMedia[] {
       widthEmu: fit.widthEmu,
       heightEmu: fit.heightEmu,
     });
-  }
+  });
   return out;
 }
 
@@ -407,12 +417,15 @@ export function documentXml(
   opts: DocxOptions = {},
   media: DocxMedia[] = [],
 ): string {
-  let shot = 0;
-  const body = blocks.map((b) => {
+  // Снимок ищем по номеру его блока, а не по порядку среди снимков:
+  // один мог не прочитаться, и тогда все следующие съехали бы на
+  // подпись назад.
+  const byBlock = new Map(media.map((m, i) => [m.blockIndex, { m, n: i + 1 }]));
+  const body = blocks.map((b, blockIndex) => {
     if (b.type === 'table') return tableXml(b);
     if (b.type === 'image') {
-      const m = media[shot];
-      if (!m) {
+      const hit = byBlock.get(blockIndex);
+      if (!hit) {
         // Снимок не вложился — говорим об этом в документе, а не молчим
         // пустым местом там, где должна быть фотография.
         return paraXml({
@@ -421,8 +434,7 @@ export function documentXml(
           align: 'center',
         });
       }
-      shot += 1;
-      return imageXml(m, shot, b.caption);
+      return imageXml(hit.m, hit.n, b.caption);
     }
     return paraXml(b);
   }).join('');
