@@ -4,6 +4,7 @@ import {
   schemeAttachmentHtml, withSchemeAttached,
 } from './asBuilt';
 import type { SiteObject, PlanRoute } from '@/types/construction';
+import { formatMeters } from './mapDecor';
 
 /**
  * Трасса строго на восток по экватору: на нём градус долготы даёт
@@ -326,5 +327,57 @@ describe('двуязычный бланк схемы', () => {
   it('приложение к акту тоже двуязычное, но падеж остаётся русским', () => {
     const html = schemeAttachmentHtml({ scheme: scheme(), lang: 'kk-ru' }, '14');
     expect(html).toContain('Қосымша / Приложение к акту № 14');
+  });
+});
+
+/**
+ * Пролёты короче метра пропускаются: две отметки в одной точке пролётом
+ * не считаются. Но после первого же пропуска порядковый номер пролёта
+ * перестаёт совпадать с номером отметки — и подписи длин на рисунке
+ * съезжали на пролёт левее.
+ */
+describe('подписи длин при совпавших отметках', () => {
+  const twoAtOnce = () => buildScheme(route(), [
+    obj({ lat: 0, lon: 0.003, name: 'Муфта №1' }),
+    // Ровно там же: ККС стоит в том же колодце.
+    obj({ lat: 0, lon: 0.003, kind: 'kks', name: 'ККС 12' }),
+    obj({ lat: 0, lon: 0.007, name: 'Муфта №2' }),
+  ]);
+
+  it('нулевой пролёт в ведомость не попадает', () => {
+    const s = twoAtOnce();
+    expect(s.marks).toHaveLength(5);
+    expect(s.spans.every((sp) => sp.meters >= 1)).toBe(true);
+    expect(s.spans.length).toBeLessThan(s.marks.length - 1);
+  });
+
+  it('каждый пролёт помнит, между какими отметками он лежит', () => {
+    for (const sp of twoAtOnce().spans) {
+      const s = twoAtOnce();
+      expect(s.marks[sp.fromIndex].label).toBe(sp.from);
+      expect(s.marks[sp.toIndex].label).toBe(sp.to);
+    }
+  });
+
+  it('длина пролёта сходится с расстоянием между его отметками', () => {
+    const s = twoAtOnce();
+    for (const sp of s.spans) {
+      expect(sp.meters).toBeCloseTo(s.marks[sp.toIndex].atM - s.marks[sp.fromIndex].atM, 6);
+    }
+  });
+
+  it('на рисунке подписей длин столько же, сколько пролётов', () => {
+    const s = twoAtOnce();
+    const svg = schemeSvg(s);
+    const spanLabels = [...svg.matchAll(/fill="#334155">([^<]+)<\/text>/g)].map((m) => m[1]);
+    expect(spanLabels).toHaveLength(s.spans.length);
+  });
+
+  it('и каждая подпись равна длине своего пролёта', () => {
+    const s = twoAtOnce();
+    const svg = schemeSvg(s);
+    for (const sp of s.spans) {
+      expect(svg).toContain(`>${formatMeters(sp.meters)}</text>`);
+    }
   });
 });

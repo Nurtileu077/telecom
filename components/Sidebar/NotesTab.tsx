@@ -1,7 +1,6 @@
 'use client';
 import { useState } from 'react';
 import { MapAnnotation, AnnotationType, ANNOTATION_PRESETS } from '@/types/network';
-import Glyph from '@/components/Layout/Glyph';
 
 export type DrawingTool = 'point' | 'polygon' | 'line' | 'circle' | 'arrow' | null;
 
@@ -129,7 +128,9 @@ export default function NotesTab({
             return (
               <div key={a.id} className="border-b border-[#1e3a5f]/40 p-2 hover:bg-[#1a2744]/30 transition-colors">
                 <div className="flex items-start gap-2">
-                  <Glyph name={preset.icon} size={16} />
+                  {/* Пометки на карте — свой справочник, и в нём символы,
+                      а не имена из общего набора значков. */}
+                  <span className="text-base flex-shrink-0">{preset.icon}</span>
                   <div className="flex-1 min-w-0">
                     {isEditing ? (
                       <>

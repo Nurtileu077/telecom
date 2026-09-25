@@ -232,10 +232,23 @@ export function shiftsWithoutCrew(
 }
 
 export function timesheetTotals(rows: TimesheetRow[]): TimesheetTotals {
+  /**
+   * Колонна опознаётся именем И подрядчиком.
+   *
+   * «Колонна 1» есть и у TERRA TECH, и у Дозера. По одному имени они
+   * схлопываются в одну, и половина выработки пропадает из итога — при
+   * том, что в самих строках табеля она есть. Человек видит, что итог не
+   * сходится со строками, и не понимает, какой цифре верить.
+   */
+  const crewId = (r: TimesheetRow) => `${r.contractor ?? ''}\u0000${r.crew}`;
+
   const crews = new Map<string, number>();
-  for (const r of rows) crews.set(r.crew, r.crewMeters);
+  for (const r of rows) crews.set(crewId(r), r.crewMeters);
+
   return {
-    people: new Set(rows.map((r) => `${r.crew}|${r.name}`)).size,
+    people: new Set(rows.map((r) => `${crewId(r)}|${r.name}`)).size,
+    // Человеко-смены: у колонны из трёх человек десять смен дают
+    // тридцать. Так это и считают при расчёте.
     shifts: rows.reduce((s, r) => s + r.shifts, 0),
     // Метры считаем по колоннам, а не по строкам табеля: иначе одна и
     // та же выработка сложится столько раз, сколько в колонне людей.

@@ -83,6 +83,7 @@ const ConstructionPanel = dynamic(
   },
 );
 const FirstRun = dynamic(() => import('@/components/Layout/FirstRun'), { ssr: false });
+const Glyph = dynamic(() => import('@/components/Layout/Glyph'), { ssr: false });
 const Skeleton = dynamic(() => import('@/components/Layout/Skeleton'), { ssr: false });
 import { useSupabaseAuth } from '@/hooks/useSupabaseAuth';
 import { roleFromUser } from '@/lib/authSession';
@@ -392,11 +393,13 @@ export default function HomePage() {
       + `Получится ${km(cut.headM)} и ${km(cut.tailM)}.\n`
       + 'Вернуть можно в журнале изменений.',
     )) return;
-    persist(splitPlanRoute(j, id, atM, getActorName() || 'Без имени'));
+    // Победный тост — только если запись прошла. Иначе человек видит
+    // «разрезана», а через день трассы целы: сообщение об отказе он не
+    // успел прочесть, его затёрли через миг.
+    const ok = persist(splitPlanRoute(j, id, atM, getActorName() || 'Без имени'));
     setEditingRouteId(null);
     refreshJournalLayers();
-    setToast('Трасса разрезана');
-    window.setTimeout(() => setToast(null), 1800);
+    if (ok) say('Трасса разрезана');
   }, [refreshJournalLayers]);
 
   /**
@@ -430,11 +433,10 @@ export default function HomePage() {
         ? 'Концы сходятся.'
         : `Между концами ${Math.round(best.gapM)} м — этот разрыв останется в линии.`),
     )) return;
-    persist(joinPlanRoutes(j, id, best.id, getActorName() || 'Без имени'));
+    const ok = persist(joinPlanRoutes(j, id, best.id, getActorName() || 'Без имени'));
     setEditingRouteId(null);
     refreshJournalLayers();
-    setToast('Трассы склеены');
-    window.setTimeout(() => setToast(null), 1800);
+    if (ok) say('Трассы склеены');
   }, [refreshJournalLayers]);
 
 
@@ -1027,7 +1029,7 @@ export default function HomePage() {
     const name = window.prompt(`${spec.label}: название или номер`, '');
     if (name === null) return;
     const now = new Date().toISOString();
-    persist(upsertObject(loadJournal(), {
+    const ok = persist(upsertObject(loadJournal(), {
       id: `obj-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
       kind,
       name: name.trim() || spec.label,
@@ -1039,9 +1041,8 @@ export default function HomePage() {
       sync: 'local',
     }));
     refreshJournalLayers();
-    setToast(`${spec.label} поставлена`);
-    window.setTimeout(() => setToast(null), 1800);
-  }, [refreshJournalLayers]);
+    if (ok) say(`${spec.label} поставлена`);
+  }, [refreshJournalLayers, say]);
 
   /**
    * Копирование в буфер: в поле открывают систему по http, а там
@@ -1967,7 +1968,7 @@ export default function HomePage() {
                     }}
                     className="w-full px-3 py-1.5 text-left hover:bg-[#2dd4bf]/10 text-[#e2e8f0] flex items-center gap-2"
                   >
-                    <span>{SITE_OBJECT_SPECS[kind].icon}</span>
+                    <Glyph name={SITE_OBJECT_SPECS[kind].icon} size={15} />
                     <span>Поставить {SITE_OBJECT_SPECS[kind].label.toLowerCase()}</span>
                   </button>
                 ))}

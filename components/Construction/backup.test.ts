@@ -216,3 +216,46 @@ describe('старая копия с неполной описью', () => {
     expect(restoreWarning(j, file)).toBeNull();
   });
 });
+
+/**
+ * Копию могли снять версией, которая половины списков не знала, или
+ * подсунуть обрезанный файл. Спрашивать длину отсутствующего списка
+ * нельзя: разворачивание падает молча, и человек видит просто не
+ * открывшийся файл.
+ */
+describe('опись не падает на чужом файле', () => {
+  it('журнал без половины списков считается, а не роняет', () => {
+    const half = { ground: [{ id: 'a' }], updatedAt: '' } as unknown as JournalState;
+    expect(() => journalCounts(half)).not.toThrow();
+    expect(journalCounts(half).смены).toBe(1);
+    expect(journalCounts(half).поставки).toBe(0);
+  });
+
+  it('не список на месте списка — ноль, а не падение', () => {
+    const weird = { ground: 'не список', orders: null } as unknown as JournalState;
+    expect(journalCounts(weird).смены).toBe(0);
+    expect(journalCounts(weird)['реестр СНП']).toBe(0);
+  });
+
+  it('предупреждение о развороте пустого файла не падает', () => {
+    const empty = { format: 'optiq-journal', version: 1, at: '' } as never;
+    expect(() => restoreWarning(emptyJournal(), empty)).not.toThrow();
+  });
+
+  it('цены и продвижение по участкам в описи есть: их развороткой тоже стирает', () => {
+    const j: JournalState = {
+      ...emptyJournal(),
+      prices: { 'МКТ': 420 },
+      sectionProgress: { 'Зеренда': { meters: 100 } as never },
+    };
+    const c = journalCounts(j);
+    expect(c['цены материалов']).toBe(1);
+    expect(c['продвижение по участкам']).toBe(1);
+  });
+
+  it('и о их потере предупреждает', () => {
+    const now: JournalState = { ...emptyJournal(), prices: { 'МКТ': 420, 'ПЭТ': 310 } };
+    const warn = restoreWarning(now, makeBackup(emptyJournal()));
+    expect(warn).toContain('цены материалов');
+  });
+});

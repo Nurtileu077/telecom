@@ -260,3 +260,56 @@ describe('смена, которую некому отнести', () => {
     expect(sheetM + shiftsWithoutCrew(rows, TWO).meters).toBe(1200);
   });
 });
+
+/**
+ * Итог считался по имени колонны. «Колонна 1» есть и у TERRA TECH, и у
+ * Дозера — по одному имени они схлопывались в одну, и половина
+ * выработки пропадала из итога при том, что в самих строках табеля она
+ * есть. Человек видел, что итог не сходится со строками.
+ */
+describe('итог по одноимённым колоннам', () => {
+  const TWO: Crew[] = [
+    {
+      id: 'd1', kind: 'mkt', name: 'Колонна 1', contractor: 'Дозер',
+      status: 'working', members: [{ name: 'Ахметов А.' }], equipment: {}, updatedAt: '',
+    } as Crew,
+    {
+      id: 't1', kind: 'mkt', name: 'Колонна 1', contractor: 'TERRA TECH',
+      status: 'working', members: [{ name: 'Жумабеков С.' }], equipment: {}, updatedAt: '',
+    } as Crew,
+  ];
+  const rows = [
+    e({ id: 'a', column: 'Колонна 1', contractor: 'Дозер', byMethod: { 'бар': 400 } }),
+    e({ id: 'b', column: 'Колонна 1', contractor: 'TERRA TECH', byMethod: { 'бар': 600 } }),
+  ];
+
+  it('метры обеих колонн попадают в итог', () => {
+    expect(timesheetTotals(timesheet(rows, TWO)).meters).toBe(1000);
+  });
+
+  it('итог сходится с тем, что видно в строках', () => {
+    const t = timesheet(rows, TWO);
+    const seen = new Map<string, number>();
+    for (const r of t) seen.set(`${r.contractor}|${r.crew}`, r.crewMeters);
+    const bySight = [...seen.values()].reduce((s, v) => s + v, 0);
+    expect(timesheetTotals(t).meters).toBe(bySight);
+  });
+
+  it('людей считает по колоннам, а не по одинаковым фамилиям', () => {
+    const namesakes: Crew[] = [
+      { ...TWO[0], members: [{ name: 'Ахметов А.' }] } as Crew,
+      { ...TWO[1], members: [{ name: 'Ахметов А.' }] } as Crew,
+    ];
+    expect(timesheetTotals(timesheet(rows, namesakes)).people).toBe(2);
+  });
+
+  it('выработку колонны на людей не множит', () => {
+    const big: Crew[] = [{
+      id: 'c1', kind: 'mkt', name: 'Большая', contractor: 'Дозер', status: 'working',
+      members: [{ name: 'А' }, { name: 'Б' }, { name: 'В' }], equipment: {}, updatedAt: '',
+    } as Crew];
+    const t = timesheet([e({ id: 'a', column: 'Большая', contractor: 'Дозер', byMethod: { 'бар': 900 } })], big);
+    expect(t).toHaveLength(3);
+    expect(timesheetTotals(t).meters).toBe(900);
+  });
+});

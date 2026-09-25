@@ -77,7 +77,7 @@ export default function TimesheetView({ rows, crews, from, to, onCopied }: Props
     <div className="p-3 space-y-3">
       <div className="flex items-baseline gap-2 flex-wrap">
         <span className="text-[13px] text-[var(--text)]">
-          {totals.people} человек · {totals.shifts} смен ·{' '}
+          {totals.people} человек · {totals.shifts} человеко-смен ·{' '}
           <span className="font-mono tabular-nums">
             {Math.round(totals.meters).toLocaleString('ru')} м
           </span>
@@ -90,7 +90,11 @@ export default function TimesheetView({ rows, crews, from, to, onCopied }: Props
             name="Табель"
             rows={table}
             columns={TIMESHEET_COLUMNS}
-            footer={['Итого', '', '', totals.shifts, '', totals.meters]}
+            footer={{
+              'Фамилия': 'Итого',
+              'Смен': totals.shifts,
+              'Метры колонны': Math.round(totals.meters),
+            }}
           />
         </span>
       </div>

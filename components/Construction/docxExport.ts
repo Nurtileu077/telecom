@@ -1,3 +1,4 @@
+import { dataUrlBytes, imageSize, fitOnPage } from './imageSize';
 /**
  * Настоящий .docx вместо HTML с расширением .doc.
  *
@@ -41,7 +42,15 @@ export interface DocTable {
   borderless?: boolean;
 }
 
-export type DocBlock = DocParagraph | DocTable;
+export interface DocImage {
+  type: 'image';
+  /** data-URL снимка: другого источника в наших документах нет. */
+  src: string;
+  /** Подпись под снимком — где снято и когда. */
+  caption?: string;
+}
+
+export type DocBlock = DocParagraph | DocTable | DocImage;
 
 // ── Разбор нашего HTML ───────────────────────────────────────────────────────
 
@@ -61,12 +70,22 @@ export function unescapeHtml(s: string): string {
  */
 export function parseRuns(inner: string): DocRun[] {
   const runs: DocRun[] = [];
-  const re = /<span[^>]*class="[^"]*\bb\b[^"]*"[^>]*>([\s\S]*?)<\/span>|<br\s*\/?>/gi;
+  const re = /<span\b[^>]*class="[^"]*\bb\b[^"]*"[^>]*>([\s\S]*?)<\/span>|<br\s*\/?>/gi;
   let last = 0;
   let m: RegExpExecArray | null;
 
+  /**
+   * Перевод строки в исходнике — это вёрстка, а не разрыв в тексте.
+   *
+   * Наши генераторы пишут разметку многострочными шаблонами, с отступами.
+   * Оставить их как есть значит получить в документе жёсткий разрыв и
+   * восемь пробелов посреди фразы. Настоящий разрыв ставится тегом
+   * `<br/>`, и только он.
+   */
   const plain = (chunk: string) => {
-    const text = unescapeHtml(chunk.replace(/<[^>]+>/g, ''));
+    const text = unescapeHtml(chunk.replace(/<[^>]+>/g, ''))
+      .replace(/[\t\r\n]+/g, ' ')
+      .replace(/ {2,}/g, ' ');
     if (text) runs.push({ text });
   };
 
@@ -74,7 +93,9 @@ export function parseRuns(inner: string): DocRun[] {
   while ((m = re.exec(inner)) !== null) {
     plain(inner.slice(last, m.index));
     if (m[1] !== undefined) {
-      const text = unescapeHtml(m[1].replace(/<[^>]+>/g, ''));
+      const text = unescapeHtml(m[1].replace(/<[^>]+>/g, ''))
+        .replace(/[\t\r\n]+/g, ' ')
+        .replace(/ {2,}/g, ' ');
       if (text) runs.push({ text, bold: true });
     } else {
       runs.push({ text: '\n' });
@@ -97,19 +118,52 @@ function alignFrom(attrs: string, fallback: DocAlign = 'both'): DocAlign {
   return fallback;
 }
 
+/** Ни одна колонка не должна стать уже этого: иначе текст в ней встаёт столбиком. */
+const MIN_COLUMN_PCT = 12;
+
+/**
+ * Ширины колонок.
+ *
+ * Колонки в наших таблицах заданы классом, а не процентами: номер узкий,
+ * название широкое. Но брать 18% на каждую цифровую нельзя вслепую: в
+ * КС-2 их пять, и на название работ остаётся десять процентов — слово
+ * в строку не влезает и встаёт столбиком по букве.
+ *
+ * Поэтому цифровые колонки ужимаются, когда их много, а название
+ * получает не меньше половины листа: его и читают.
+ */
 function cellWidths(cells: string[]): number[] | null {
-  // Колонки в наших таблицах заданы классом, а не процентами. Ширины
-  // берём те же, что в печатном CSS: номер узкий, название широкое.
-  const w: number[] = cells.map((cls) => {
-    if (/\bval\b/.test(cls)) return 18;
-    if (/\bunit\b/.test(cls)) return 8;
-    return 0;
+  const kinds = cells.map((cls) => {
+    if (/\bval\b/.test(cls)) return 'val';
+    if (/\bunit\b/.test(cls)) return 'unit';
+    return 'label';
   });
-  const fixed = w.reduce((a, b) => a + b, 0);
-  const free = w.filter((x) => x === 0).length;
-  if (free === 0 || fixed >= 100) return null;
-  const each = (100 - fixed) / free;
-  return w.map((x) => (x === 0 ? each : x));
+  const labels = kinds.filter((k) => k === 'label').length;
+  if (labels === 0) return null;
+
+  // Сначала как в печатном CSS: цифровой колонке 18%, единице 8%.
+  const natural: number[] = kinds.map((k) => (k === 'val' ? 18 : k === 'unit' ? 8 : 0));
+  const taken = natural.reduce((a, b) => a + b, 0);
+  const perLabel = (100 - taken) / labels;
+
+  // На трёх колонках так и выходит: названию шестьдесят с лишним. Но в
+  // КС-2 цифровых пять, и названию остаётся десять — слово в строку не
+  // влезает и встаёт столбиком по букве. Тогда ужимаем цифровые.
+  if (taken < 100 && perLabel >= MIN_COLUMN_PCT * 2) {
+    return kinds.map((k, i) => (k === 'label' ? perLabel : natural[i]));
+  }
+
+  const forLabels = Math.min(60, 100 - (cells.length - labels) * MIN_COLUMN_PCT);
+  // Колонок столько, что минимум не помещается ни при каком дележе.
+  // Тогда честнее поровну, чем никак: ровные колонки предсказуемы, а без
+  // ширин Ворд раздаёт их по содержимому и строки пляшут от страницы к
+  // странице.
+  if (forLabels < labels * MIN_COLUMN_PCT) {
+    const even = 100 / cells.length;
+    return cells.map(() => even);
+  }
+  const rest = (100 - forLabels) / Math.max(1, cells.length - labels);
+  return kinds.map((k) => (k === 'label' ? forLabels / labels : rest));
 }
 
 /**
@@ -122,7 +176,21 @@ function cellWidths(cells: string[]): number[] | null {
 export function parseDocHtml(html: string): DocBlock[] {
   const body = html.replace(/[\s\S]*<body[^>]*>/i, '').replace(/<\/body>[\s\S]*/i, '');
   const blocks: DocBlock[] = [];
-  const re = /<h1[^>]*>([\s\S]*?)<\/h1>|<p([^>]*)>([\s\S]*?)<\/p>|<table([^>]*)>([\s\S]*?)<\/table>/gi;
+  /**
+   * `\b` после имени тега — не придирка: `<path d="…">` начинается с
+   * `<p`, и без границы он читается абзацем. В исполнительной схеме
+   * таких путей десятки, и каждый проглатывает кусок документа до
+   * следующего `</p>`.
+   */
+  const re = new RegExp(
+    '<h1\\b[^>]*>([\\s\\S]*?)<\\/h1>'
+    + '|<p\\b([^>]*)>([\\s\\S]*?)<\\/p>'
+    + '|<table\\b([^>]*)>([\\s\\S]*?)<\\/table>'
+    // Снимок с подписью: в фотоотчёте они и есть весь документ, и без
+    // них .docx уходит пустым листом с заголовком.
+    + '|<div\\b[^>]*class="[^"]*\\bph\\b[^"]*"[^>]*>([\\s\\S]*?)<\\/div>',
+    'gi',
+  );
   let m: RegExpExecArray | null;
 
   // eslint-disable-next-line no-cond-assign
@@ -142,6 +210,12 @@ export function parseDocHtml(html: string): DocBlock[] {
     } else if (m[5] !== undefined) {
       const table = parseTable(m[5], /\bsign\b/.test(m[4] ?? ''));
       if (table.rows.length > 0) blocks.push(table);
+    } else if (m[6] !== undefined) {
+      const src = /<img\b[^>]*\ssrc="([^"]+)"/i.exec(m[6])?.[1];
+      const caption = parseRuns(m[6].replace(/<img\b[^>]*>/gi, ''))
+        .map((r) => r.text).join('').trim();
+      if (src) blocks.push({ type: 'image', src, caption: caption || undefined });
+      else if (caption) blocks.push({ type: 'p', runs: [{ text: caption }], align: 'center' });
     }
   }
   return blocks;
@@ -149,13 +223,13 @@ export function parseDocHtml(html: string): DocBlock[] {
 
 function parseTable(inner: string, borderless: boolean): DocTable {
   const rows: DocCell[][] = [];
-  const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  const rowRe = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
   let r: RegExpExecArray | null;
   // eslint-disable-next-line no-cond-assign
   while ((r = rowRe.exec(inner)) !== null) {
     const cells: DocCell[] = [];
     const classes: string[] = [];
-    const cellRe = /<t[dh]([^>]*)>([\s\S]*?)<\/t[dh]>/gi;
+    const cellRe = /<t[dh]\b([^>]*)>([\s\S]*?)<\/t[dh]>/gi;
     let c: RegExpExecArray | null;
     // eslint-disable-next-line no-cond-assign
     while ((c = cellRe.exec(r[1])) !== null) {
@@ -258,10 +332,100 @@ export interface DocxOptions {
 /** А4 в твипах: 1 дюйм = 1440, лист 210 × 297 мм. */
 const A4 = { w: 11906, h: 16838 };
 
-export function documentXml(blocks: DocBlock[], opts: DocxOptions = {}): string {
-  const body = blocks
-    .map((b) => (b.type === 'table' ? tableXml(b) : paraXml(b)))
-    .join('');
+/**
+ * Снимки, собранные из блоков.
+ *
+ * Каждый становится отдельной частью пакета со своим отношением: так
+ * устроен OOXML, картинку внутрь разметки не положишь.
+ */
+export interface DocxMedia {
+  /** Путь внутри пакета: word/media/image1.jpeg. */
+  path: string;
+  /** Идентификатор отношения, по которому на неё ссылается разметка. */
+  relId: string;
+  /** Байты самого файла. */
+  bytes: Uint8Array;
+  ext: 'png' | 'jpeg';
+  widthEmu: number;
+  heightEmu: number;
+}
+
+export function collectMedia(blocks: DocBlock[]): DocxMedia[] {
+  const out: DocxMedia[] = [];
+  for (const b of blocks) {
+    if (b.type !== 'image') continue;
+    const bytes = dataUrlBytes(b.src);
+    const size = imageSize(bytes);
+    // Снимок, размер которого не прочитался, не вставляем: без
+    // настоящих пропорций он встанет в документ кривым зеркалом.
+    if (!bytes || !size) continue;
+    const n = out.length + 1;
+    const fit = fitOnPage(size);
+    out.push({
+      path: `word/media/image${n}.${size.kind}`,
+      relId: `rIdImg${n}`,
+      bytes,
+      ext: size.kind,
+      widthEmu: fit.widthEmu,
+      heightEmu: fit.heightEmu,
+    });
+  }
+  return out;
+}
+
+const DRAWING_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main';
+const PIC_NS = 'http://schemas.openxmlformats.org/drawingml/2006/picture';
+const WP_NS = 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing';
+
+function imageXml(m: DocxMedia, n: number, caption?: string): string {
+  const pic = `<pic:pic xmlns:pic="${PIC_NS}">`
+    + `<pic:nvPicPr><pic:cNvPr id="${n}" name="Снимок ${n}"/><pic:cNvPicPr/></pic:nvPicPr>`
+    + `<pic:blipFill><a:blip r:embed="${m.relId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>`
+    + '<pic:spPr><a:xfrm><a:off x="0" y="0"/>'
+    + `<a:ext cx="${m.widthEmu}" cy="${m.heightEmu}"/></a:xfrm>`
+    + '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>';
+
+  const drawing = '<w:drawing>'
+    + `<wp:inline distT="0" distB="0" distL="0" distR="0" xmlns:wp="${WP_NS}">`
+    + `<wp:extent cx="${m.widthEmu}" cy="${m.heightEmu}"/>`
+    + `<wp:docPr id="${n}" name="Снимок ${n}"/>`
+    + `<a:graphic xmlns:a="${DRAWING_NS}"><a:graphicData uri="${PIC_NS}">${pic}</a:graphicData></a:graphic>`
+    + '</wp:inline></w:drawing>';
+
+  const body = `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:before="120"/></w:pPr>`
+    + `<w:r>${drawing}</w:r></w:p>`;
+  if (!caption) return body;
+  // Подпись под снимком — мельче и по центру, как в печатном отчёте.
+  return body
+    + '<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="160"/></w:pPr>'
+    + `<w:r><w:rPr><w:sz w:val="18"/></w:rPr>`
+    + `<w:t xml:space="preserve">${xmlEsc(caption)}</w:t></w:r></w:p>`;
+}
+
+export function documentXml(
+  blocks: DocBlock[],
+  opts: DocxOptions = {},
+  media: DocxMedia[] = [],
+): string {
+  let shot = 0;
+  const body = blocks.map((b) => {
+    if (b.type === 'table') return tableXml(b);
+    if (b.type === 'image') {
+      const m = media[shot];
+      if (!m) {
+        // Снимок не вложился — говорим об этом в документе, а не молчим
+        // пустым местом там, где должна быть фотография.
+        return paraXml({
+          type: 'p',
+          runs: [{ text: b.caption ? `[снимок не вложен] ${b.caption}` : '[снимок не вложен]' }],
+          align: 'center',
+        });
+      }
+      shot += 1;
+      return imageXml(m, shot, b.caption);
+    }
+    return paraXml(b);
+  }).join('');
   const [w, h] = opts.landscape ? [A4.h, A4.w] : [A4.w, A4.h];
   const sect = '<w:sectPr>'
     + `<w:pgSz w:w="${w}" w:h="${h}"${opts.landscape ? ' w:orient="landscape"' : ''}/>`
@@ -269,7 +433,10 @@ export function documentXml(blocks: DocBlock[], opts: DocxOptions = {}): string 
     + ' w:header="708" w:footer="708" w:gutter="0"/>'
     + '</w:sectPr>';
   return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-    + '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+    + '<w:document'
+    + ' xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+    + ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+    + ` xmlns:a="${DRAWING_NS}">`
     + `<w:body>${body}${sect}</w:body></w:document>`;
 }
 
@@ -310,14 +477,43 @@ const DOC_RELS = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
   + ' Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"/>'
   + '</Relationships>';
 
-/** Всё содержимое пакета — отдельно от упаковки, чтобы было чем проверять. */
-export function docxParts(html: string, opts: DocxOptions = {}): Record<string, string> {
+/**
+ * Всё содержимое пакета — отдельно от упаковки, чтобы было чем проверять.
+ *
+ * Картинки возвращаются рядом: они двоичные и в строку не лезут, а
+ * упаковщик кладёт их теми же байтами, что прочитал из снимка.
+ */
+export function docxParts(
+  html: string,
+  opts: DocxOptions = {},
+): { text: Record<string, string>; media: DocxMedia[] } {
+  const blocks = parseDocHtml(html);
+  const media = collectMedia(blocks);
+
+  // Типы картинок объявляем только те, что реально лежат в пакете:
+  // лишнее объявление Ворд не любит.
+  const exts = [...new Set(media.map((m) => m.ext))];
+  const types = CONTENT_TYPES.replace(
+    '</Types>',
+    exts.map((e) => `<Default Extension="${e}" ContentType="image/${e}"/>`).join('') + '</Types>',
+  );
+
+  const rels = DOC_RELS.replace(
+    '</Relationships>',
+    media.map((m) => `<Relationship Id="${m.relId}" Target="${m.path.replace('word/', '')}"`
+      + ' Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"/>')
+      .join('') + '</Relationships>',
+  );
+
   return {
-    '[Content_Types].xml': CONTENT_TYPES,
-    '_rels/.rels': ROOT_RELS,
-    'word/_rels/document.xml.rels': DOC_RELS,
-    'word/styles.xml': stylesXml(opts.fontPt ?? 12),
-    'word/document.xml': documentXml(parseDocHtml(html), opts),
+    text: {
+      '[Content_Types].xml': types,
+      '_rels/.rels': ROOT_RELS,
+      'word/_rels/document.xml.rels': rels,
+      'word/styles.xml': stylesXml(opts.fontPt ?? 12),
+      'word/document.xml': documentXml(blocks, opts, media),
+    },
+    media,
   };
 }
 
@@ -330,10 +526,14 @@ export function docxParts(html: string, opts: DocxOptions = {}): Record<string, 
 export async function buildDocx(html: string, opts: DocxOptions = {}): Promise<Blob> {
   const { default: JSZip } = await import('jszip');
   const zip = new JSZip();
-  for (const [path, content] of Object.entries(docxParts(html, opts))) {
+  const { text, media } = docxParts(html, opts);
+  for (const [path, content] of Object.entries(text)) {
     // Записи-папки в пакете лишние: строгие распаковщики на них спотыкаются.
     zip.file(path, content, { createFolders: false });
   }
+  // Снимки кладём теми же байтами, что прочитали: пережимать их второй
+  // раз незачем, они уже ужаты при добавлении в журнал.
+  for (const m of media) zip.file(m.path, m.bytes, { createFolders: false, binary: true });
   return zip.generateAsync({
     type: 'blob',
     compression: 'DEFLATE',

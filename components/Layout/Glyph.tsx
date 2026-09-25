@@ -47,12 +47,20 @@ interface Props {
 
 export default function Glyph({ name, size = 14, className }: Props) {
   const Icon = GLYPHS[name as GlyphName];
-  // Незнакомое имя рисуем вопросом, а не пустотой: пустое место в ряду
-  // значков читается как «здесь ничего нет», и это неправда.
-  if (!Icon) {
-    const emoji = GLYPH_FALLBACK[name as GlyphName];
-    if (emoji) return <span className={className} aria-hidden>{emoji}</span>;
-    return <HelpCircle size={size} className={className} aria-hidden />;
+  if (Icon) return <Icon size={size} className={className} aria-hidden />;
+
+  const emoji = GLYPH_FALLBACK[name as GlyphName];
+  if (emoji) return <span className={className} aria-hidden>{emoji}</span>;
+
+  /**
+   * Имени нет в наборе. Если это сам символ — а такое бывает, когда
+   * значок пришёл из другого справочника, — рисуем его как есть.
+   * Вопросительный знак оставляем тому, что на символ не похоже: там
+   * это и правда ошибка, и она должна быть видна.
+   */
+  const looksLikeSymbol = name.length <= 3 && !/^[a-z0-9_-]+$/i.test(name);
+  if (looksLikeSymbol) {
+    return <span className={className} aria-hidden>{name}</span>;
   }
-  return <Icon size={size} className={className} aria-hidden />;
+  return <HelpCircle size={size} className={className} aria-hidden />;
 }

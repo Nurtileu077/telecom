@@ -4,7 +4,8 @@ import { Download, Copy, Check } from 'lucide-react';
 import { toCsv, csvBlob, type CsvDialect } from '@/lib/csv';
 import { downloadBlob } from '@/lib/download';
 import {
-  tableRows, tableToTabs, exportFileName, type ExportColumn,
+  tableRows, tableToTabs, footerRow, exportFileName,
+  type ExportColumn, type FooterValues,
 } from '@/lib/tableExport';
 
 export type { ExportColumn };
@@ -27,8 +28,11 @@ interface Props<T> {
   columns: ExportColumn<T>[];
   /** Имя файла без расширения. */
   name: string;
-  /** Строка итогов, если она есть на экране: в файле она тоже нужна. */
-  footer?: (string | number | undefined)[];
+  /**
+   * Строка итогов, если она есть на экране: в файле она тоже нужна.
+   * Задаётся подписями колонок, а не порядком — промахнуться нечем.
+   */
+  footer?: FooterValues;
   dialect?: CsvDialect;
   onFlash?: (text: string) => void;
   compact?: boolean;
@@ -42,7 +46,7 @@ export default function ExportButton<T>({
 
   function build(d: CsvDialect): string {
     const body = tableRows(rows, columns);
-    if (footer) body.push(footer);
+    if (footer) body.push(footerRow(columns, footer));
     return toCsv(columns.map((c) => c.header), body, { dialect: d });
   }
 

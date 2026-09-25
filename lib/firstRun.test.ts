@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   STEPS, introSeen, markIntroSeen, resetIntro, shouldShowIntro, nextStep, stepLabel,
+  loadStep, saveStep,
 } from './firstRun';
 
 /** В node нет window: подкладываем ровно то, чем пользуется модуль. */
@@ -101,5 +102,71 @@ describe('переход по шагам', () => {
   it('человеку видно, сколько осталось', () => {
     expect(stepLabel(0)).toBe('Шаг 1 из 3');
     expect(stepLabel(2)).toBe('Шаг 3 из 3');
+  });
+});
+
+/**
+ * Второй шаг открывает журнал, и подсказка уходит с экрана вместе с
+ * картой. Шаг, который жил только в памяти, при этом терялся: журнал
+ * закрыли — подсказка вернулась на первый, и так по кругу, каждый заход.
+ */
+describe('прогресс по шагам переживает уход с экрана', () => {
+  it('начинается с первого', () => {
+    expect(loadStep()).toBe(0);
+  });
+
+  it('запомненный шаг возвращается после перезагрузки', () => {
+    saveStep(1);
+    expect(loadStep()).toBe(1);
+  });
+
+  it('шаг за пределами списка читается как первый', () => {
+    store.set('optiq-first-run-step', '99');
+    expect(loadStep()).toBe(0);
+    store.set('optiq-first-run-step', '-1');
+    expect(loadStep()).toBe(0);
+    store.set('optiq-first-run-step', 'второй');
+    expect(loadStep()).toBe(0);
+  });
+
+  it('пройденная подсказка шаг за собой не оставляет', () => {
+    saveStep(2);
+    markIntroSeen();
+    expect(loadStep()).toBe(0);
+    expect(introSeen()).toBe(true);
+  });
+
+  it('сброс возвращает и отметку, и шаг', () => {
+    saveStep(2);
+    markIntroSeen();
+    resetIntro();
+    expect(introSeen()).toBe(false);
+    expect(loadStep()).toBe(0);
+  });
+
+  it('до последнего шага дойти можно', () => {
+    let step = loadStep();
+    const seen = [step];
+    for (;;) {
+      const next = nextStep(step);
+      if (next === null) break;
+      saveStep(next);
+      // Уход с экрана и возврат: шаг читается заново.
+      step = loadStep();
+      seen.push(step);
+    }
+    expect(seen).toEqual([0, 1, 2]);
+  });
+
+  it('в приватном окне не падает и начинает сначала', () => {
+    (globalThis as { window?: unknown }).window = {
+      localStorage: {
+        getItem: () => { throw new Error('заблокировано'); },
+        setItem: () => { throw new Error('заблокировано'); },
+        removeItem: () => { throw new Error('заблокировано'); },
+      },
+    };
+    expect(loadStep()).toBe(0);
+    expect(() => saveStep(1)).not.toThrow();
   });
 });

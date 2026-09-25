@@ -2,7 +2,8 @@
 import { useEffect, useState } from 'react';
 import { X, ArrowRight, Map, NotebookPen, FileText } from 'lucide-react';
 import {
-  STEPS, markIntroSeen, shouldShowIntro, nextStep, stepLabel, type Step,
+  STEPS, markIntroSeen, shouldShowIntro, nextStep, stepLabel,
+  loadStep, saveStep, type Step,
 } from '@/lib/firstRun';
 
 /**
@@ -36,7 +37,9 @@ export default function FirstRun({ counts, onGo }: Props) {
   // Решаем после первой отрисовки: на сервере localStorage нет, и
   // угаданный ответ дал бы мигание подсказки у тех, кто её уже закрыл.
   useEffect(() => {
-    if (shouldShowIntro(counts)) setStep(0);
+    // Продолжаем с того шага, на котором остановились: второй открывает
+    // журнал, и подсказка уходит с экрана вместе с картой.
+    if (shouldShowIntro(counts)) setStep(loadStep());
     // Смотрим один раз за заход: подсказка, появляющаяся в середине
     // работы, — это помеха, а не помощь.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -52,10 +55,12 @@ export default function FirstRun({ counts, onGo }: Props) {
   }
 
   function go() {
-    if (s.goto) onGo?.(s.goto);
     const next = nextStep(step ?? 0);
+    // Шаг запоминаем ДО перехода: переход может увести с экрана вместе с
+    // подсказкой, и записать его после уже не получится.
     if (next === null) close();
-    else setStep(next);
+    else { saveStep(next); setStep(next); }
+    if (s.goto) onGo?.(s.goto);
   }
 
   return (

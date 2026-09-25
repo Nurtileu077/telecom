@@ -194,7 +194,7 @@ export default function PayrollView({
               name={`Расчёт ${current}`}
               rows={result.lines}
               columns={PAY_COLUMNS}
-              footer={['Начислено', '', '', '', result.accrued]}
+              footer={{ 'Работа': 'Начислено', 'Сумма': result.accrued }}
               onFlash={onFlash}
             />
           </span>

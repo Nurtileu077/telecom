@@ -195,7 +195,7 @@ describe('documentXml', () => {
 
 describe('docxParts', () => {
   it('в пакете лежит всё, без чего Ворд файл не откроет', () => {
-    const parts = docxParts('<body><p>Текст</p></body>');
+    const parts = docxParts('<body><p>Текст</p></body>').text;
     expect(Object.keys(parts).sort()).toEqual([
       '[Content_Types].xml',
       '_rels/.rels',
@@ -206,7 +206,7 @@ describe('docxParts', () => {
   });
 
   it('описание типов ссылается на те же части, что лежат в пакете', () => {
-    const parts = docxParts('<body><p>Т</p></body>');
+    const parts = docxParts('<body><p>Т</p></body>').text;
     expect(parts['[Content_Types].xml']).toContain('/word/document.xml');
     expect(parts['[Content_Types].xml']).toContain('/word/styles.xml');
     expect(parts['_rels/.rels']).toContain('word/document.xml');
@@ -214,14 +214,14 @@ describe('docxParts', () => {
   });
 
   it('шрифт документа — тот же Times, что на бумаге', () => {
-    const parts = docxParts('<body><p>Т</p></body>', { fontPt: 12 });
+    const parts = docxParts('<body><p>Т</p></body>', { fontPt: 12 }).text;
     expect(parts['word/styles.xml']).toContain('Times New Roman');
     // Кегль в OOXML — половинки пункта.
     expect(parts['word/styles.xml']).toContain('<w:sz w:val="24"/>');
   });
 
   it('каждая часть — самостоятельный XML с объявлением', () => {
-    for (const body of Object.values(docxParts('<body><p>Т</p></body>'))) {
+    for (const body of Object.values(docxParts('<body><p>Т</p></body>').text)) {
       expect(body.startsWith('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>')).toBe(true);
     }
   });
@@ -237,7 +237,7 @@ describe('настоящие документы проходят насквоз�
       from: 'Нуртилеу А.',
       body: 'За период выполнено 1 240 м.\nУчастки: Аксу — Карабулак.',
     });
-    const doc = docxParts(html)['word/document.xml'];
+    const doc = docxParts(html).text['word/document.xml'];
     expect(doc).toContain('О выполненных объёмах');
     expect(doc).toContain('АО «Транстелеком»');
     expect(doc).toContain('Аксу — Карабулак');
@@ -259,7 +259,7 @@ describe('настоящие документы проходят насквоз�
       scheme: buildScheme(route, []),
       contractor: 'ТОО «СК Фаворит Инжиниринг»',
     });
-    const doc = docxParts(html, { landscape: true })['word/document.xml'];
+    const doc = docxParts(html, { landscape: true }).text['word/document.xml'];
     expect(doc).toContain('ИСПОЛНИТЕЛЬНАЯ СХЕМА');
     expect(doc).toContain('Фаворит');
     expect(doc).toContain('<w:tbl>');
@@ -291,9 +291,151 @@ describe('выключка в шапке письма', () => {
   it('номер слева, адресат справа — как на бланке', () => {
     const doc = docxParts(letterPage({
       to: 'АО «Транстелеком»', subject: 'Тема', body: 'Текст', number: '14', date: '2026-05-20',
-    }))['word/document.xml'];
+    })).text['word/document.xml'];
     const cells = [...doc.matchAll(/<w:tc>[\s\S]*?<w:jc w:val="(\w+)"\/>[\s\S]*?<\/w:tc>/g)]
       .map((m) => m[1]);
     expect(cells.slice(0, 2)).toEqual(['left', 'right']);
+  });
+});
+
+/**
+ * В КС-2 цифровых колонок пять, и по 18% на каждую названию работ
+ * оставляло десять процентов: слово в строку не влезает и встаёт
+ * столбиком по букве.
+ */
+describe('ширины колонок при многих цифровых', () => {
+  const widths = (headerHtml: string) => {
+    const t = parseDocHtml(`<body><table class="act"><tr>${headerHtml}</tr></table></body>`)
+      .find((b) => b.type === 'table');
+    return t && 'rows' in t ? t.rows[0].map((c) => c.widthPct ?? 0) : [];
+  };
+
+  it('на трёх колонках названию по-прежнему больше половины', () => {
+    expect(widths('<td class="val">1</td><td class="lbl">Работа</td><td class="val">2</td>'))
+      .toEqual([18, 64, 18]);
+  });
+
+  it('на пяти цифровых название не сжимается в букву', () => {
+    const w = widths(
+      '<td class="val">№</td><td class="lbl">Наименование работ</td>'
+      + '<td class="val">Ед</td><td class="val">Кол</td>'
+      + '<td class="val">Цена</td><td class="val">Сумма</td>',
+    );
+    expect(w[1]).toBeGreaterThanOrEqual(40);
+    for (const x of w) expect(x).toBeGreaterThanOrEqual(12);
+  });
+
+  it('ширины всегда складываются в сто процентов', () => {
+    for (const html of [
+      '<td class="val">1</td><td class="lbl">А</td>',
+      '<td class="val">1</td><td class="lbl">А</td><td class="unit">м</td>',
+      '<td class="val">1</td><td class="lbl">А</td><td class="val">2</td><td class="val">3</td>'
+        + '<td class="val">4</td><td class="val">5</td>',
+      '<td class="lbl">А</td><td class="lbl">Б</td><td class="val">1</td>',
+    ]) {
+      const w = widths(html);
+      expect(w.reduce((a, b) => a + b, 0)).toBeCloseTo(100, 6);
+    }
+  });
+
+  /**
+   * Девять колонок по двенадцать процентов не помещаются ни при каком
+   * дележе. Тогда честнее поровну, чем никак: ровные колонки
+   * предсказуемы, а без ширин Ворд раздаёт их по содержимому, и строки
+   * пляшут от страницы к странице.
+   */
+  it('когда минимум не помещается — делит поровну', () => {
+    const w = widths(Array.from({ length: 8 }, () => '<td class="val">1</td>').join('')
+      + '<td class="lbl">Работа</td>');
+    expect(w).toHaveLength(9);
+    expect(new Set(w.map((x) => Math.round(x * 100)))).toHaveLength(1);
+    expect(w.reduce((a, b) => a + b, 0)).toBeCloseTo(100, 6);
+  });
+});
+
+/**
+ * Фотоотчёт уходил в .docx пустым листом с заголовком: ни снимков, ни
+ * подписей под ними. А снимки и есть весь смысл этого документа — ими
+ * подтверждают глубину, засыпку, установленную муфту.
+ */
+describe('снимки в документе', () => {
+  /** Настоящий заголовок PNG заданного размера. */
+  function pngUrl(width: number, height: number): string {
+    const b = Buffer.alloc(33);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(b, 0);
+    b.writeUInt32BE(13, 8);
+    Buffer.from('IHDR').copy(b, 12);
+    b.writeUInt32BE(width, 16);
+    b.writeUInt32BE(height, 20);
+    return `data:image/png;base64,${b.toString('base64')}`;
+  }
+
+  const report = (n = 2) => '<body class="act-doc"><h1>ФОТООТЧЁТ</h1>'
+    + Array.from({ length: n }, (_, i) => '<div class="ph">'
+      + `<img src="${pngUrl(1600, 1200)}" alt=""/>`
+      + `<div class="cap">Зеренда, 25.07.2026, снимок ${i + 1}</div>`
+      + '</div>').join('')
+    + '</body>';
+
+  it('снимок становится блоком документа, а не пропадает', () => {
+    const blocks = parseDocHtml(report(2));
+    expect(blocks.filter((b) => b.type === 'image')).toHaveLength(2);
+  });
+
+  it('подпись под снимком сохраняется', () => {
+    const img = parseDocHtml(report(1)).find((b) => b.type === 'image');
+    expect(img && 'caption' in img && img.caption).toContain('Зеренда');
+  });
+
+  it('каждый снимок кладётся в пакет отдельной частью', () => {
+    const { media } = docxParts(report(3));
+    expect(media).toHaveLength(3);
+    expect(new Set(media.map((m) => m.path))).toHaveLength(3);
+    expect(media[0].path).toBe('word/media/image1.png');
+  });
+
+  it('на снимок есть отношение, и разметка на него ссылается', () => {
+    const { text, media } = docxParts(report(1));
+    expect(text['word/_rels/document.xml.rels']).toContain(media[0].relId);
+    expect(text['word/_rels/document.xml.rels']).toContain('media/image1.png');
+    expect(text['word/document.xml']).toContain(`r:embed="${media[0].relId}"`);
+  });
+
+  it('тип картинки объявлен — без этого Ворд файл не откроет', () => {
+    const { text } = docxParts(report(1));
+    expect(text['[Content_Types].xml']).toContain('Extension="png"');
+    expect(text['[Content_Types].xml']).toContain('image/png');
+  });
+
+  it('лишних типов не объявляет', () => {
+    expect(docxParts(report(1)).text['[Content_Types].xml']).not.toContain('image/jpeg');
+  });
+
+  it('размер снимка не врёт: пропорции те же, что у файла', () => {
+    const { media } = docxParts(report(1));
+    expect(media[0].heightEmu / media[0].widthEmu).toBeCloseTo(1200 / 1600, 3);
+  });
+
+  it('разметка объявляет пространства имён, без которых картинки не будет', () => {
+    const doc = docxParts(report(1)).text['word/document.xml'];
+    expect(doc).toContain('xmlns:r=');
+    expect(doc).toContain('xmlns:a=');
+    expect(doc).toContain('<w:drawing>');
+    expect(doc).toContain('<wp:extent');
+  });
+
+  it('снимок, который не прочитался, назван вслух, а не пропущен молча', () => {
+    const broken = '<body><div class="ph"><img src="/photos/a.jpg"/>'
+      + '<div class="cap">Зеренда</div></div></body>';
+    const doc = docxParts(broken).text['word/document.xml'];
+    expect(doc).toContain('снимок не вложен');
+    expect(doc).toContain('Зеренда');
+  });
+
+  it('документ без снимков остаётся как был', () => {
+    const { text, media } = docxParts('<body><p>Текст</p></body>');
+    expect(media).toHaveLength(0);
+    expect(text['[Content_Types].xml']).not.toContain('Extension="png"');
+    expect(text['word/document.xml']).not.toContain('<w:drawing>');
   });
 });

@@ -32,8 +32,16 @@ export interface Scheme {
   route: string;
   totalM: number;
   marks: SchemeMark[];
-  /** Расстояния между соседними отметками. */
-  spans: { from: string; to: string; meters: number }[];
+  /**
+   * Расстояния между соседними отметками.
+   *
+   * Номера отметок хранятся рядом с длиной нарочно. Пролёты короче
+   * метра мы пропускаем — две отметки в одной точке пролётом не
+   * считаются, — и после первого же пропуска порядковый номер пролёта
+   * перестаёт совпадать с номером отметки. Рисунок, который считал бы
+   * их равными, подписал бы длины на пролёт левее.
+   */
+  spans: { from: string; to: string; meters: number; fromIndex: number; toIndex: number }[];
   /** Объекты, которые к трассе не отнеслись: слишком далеко. */
   skipped: string[];
 }
@@ -91,7 +99,13 @@ export function buildScheme(
   for (let i = 1; i < marks.length; i += 1) {
     const meters = marks[i].atM - marks[i - 1].atM;
     if (meters < 1) continue;
-    spans.push({ from: marks[i - 1].label, to: marks[i].label, meters });
+    spans.push({
+      from: marks[i - 1].label,
+      to: marks[i].label,
+      meters,
+      fromIndex: i - 1,
+      toIndex: i,
+    });
   }
 
   return { route: route.name, totalM, marks, spans, skipped };
@@ -147,10 +161,12 @@ export function schemeSvg(s: Scheme, width = 1000): string {
     </g>`;
   }).join('');
 
-  // Длины пролётов — под линией, по центру каждого.
-  const spans = s.spans.map((sp, i) => {
-    const a = s.marks[i];
-    const b = s.marks[i + 1];
+  // Длины пролётов — под линией, по центру каждого. Отметки берём по
+  // номеру из самого пролёта, а не по его порядку: пропущенные пролёты
+  // сдвинули бы все подписи левее.
+  const spans = s.spans.map((sp) => {
+    const a = s.marks[sp.fromIndex];
+    const b = s.marks[sp.toIndex];
     if (!a || !b) return '';
     const cx = (x(a.atM) + x(b.atM)) / 2;
     return `<text x="${cx}" y="${y + 20}" text-anchor="middle" font-size="10" fill="#334155">`

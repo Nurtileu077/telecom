@@ -37,30 +37,43 @@ export interface BackupFile {
  * пропущенном оно промолчит.
  */
 export function journalCounts(j: JournalState): Record<string, number> {
+  /**
+   * Копию могли снять версией, которая половины этих списков не знала.
+   * Длину отсутствующего списка спрашивать нельзя: разворачивание
+   * падает молча, и человек видит просто не открывшийся файл.
+   */
+  const n = (list: unknown): number => (Array.isArray(list) ? list.length : 0);
+  const keys = (obj: unknown): number => (
+    obj && typeof obj === 'object' ? Object.keys(obj).length : 0
+  );
   return {
-    'реестр СНП': j.orders.length,
-    смены: j.ground.length,
-    подвес: j.aerial.length,
-    проколы: j.drills.length,
-    отклонения: j.deviations.length,
-    колонны: j.crews.length,
-    трассы: j.planRoutes.length,
-    контуры: j.areas.length,
-    объекты: j.objects.length,
-    фотографии: j.photos.length,
-    аварии: j.incidents.length,
-    поставки: j.deliveries.length,
-    барабаны: j.drums.length,
-    сварки: j.splices.length,
-    'заявки на исправление': j.corrections.length,
-    расценки: j.rates.length,
-    платежи: j.payments.length,
-    заявки: j.requests.length,
-    план: j.plans.length,
-    допуски: j.records.length,
-    'этапы по сёлам': j.progress.length,
-    подрядчики: j.contractors.length,
-    'поля актов': Object.keys(j.actFields ?? {}).length,
+    'реестр СНП': n(j.orders),
+    смены: n(j.ground),
+    подвес: n(j.aerial),
+    проколы: n(j.drills),
+    отклонения: n(j.deviations),
+    колонны: n(j.crews),
+    трассы: n(j.planRoutes),
+    контуры: n(j.areas),
+    объекты: n(j.objects),
+    фотографии: n(j.photos),
+    аварии: n(j.incidents),
+    поставки: n(j.deliveries),
+    барабаны: n(j.drums),
+    сварки: n(j.splices),
+    'заявки на исправление': n(j.corrections),
+    расценки: n(j.rates),
+    платежи: n(j.payments),
+    заявки: n(j.requests),
+    план: n(j.plans),
+    допуски: n(j.records),
+    'этапы по сёлам': n(j.progress),
+    подрядчики: n(j.contractors),
+    'поля актов': keys(j.actFields),
+    // Цены и продвижение по трассе тоже стираются при развороте —
+    // значит, и в описи им место.
+    'цены материалов': keys(j.prices),
+    'продвижение по участкам': keys(j.sectionProgress),
   };
 }
 
@@ -166,7 +179,9 @@ export function restoreWarning(current: JournalState, file: BackupFile): string 
    * предупреждение и должно было не допустить.
    */
   const stated = file.counts ?? {};
-  const real = journalCounts(file.journal);
+  // Файл могли подсунуть чужой или обрезанный: журнала в нём может не
+  // быть вовсе, и тогда честный ответ — «в копии ноль», а не падение.
+  const real = journalCounts((file.journal ?? {}) as JournalState);
   const losses: string[] = [];
   for (const [key, value] of Object.entries(now)) {
     const was = key in stated ? stated[key] : (real[key] ?? 0);

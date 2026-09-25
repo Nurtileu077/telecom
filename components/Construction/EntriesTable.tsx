@@ -102,6 +102,13 @@ export default function EntriesTable({
     [found, picked],
   );
 
+  /** Что уйдёт в файл: отмеченное, а если ничего не отмечено — всё найденное. */
+  const exported = useMemo(
+    () => (pickedRows.length ? pickedRows : found),
+    [pickedRows, found],
+  );
+  const exportedTotals = useMemo(() => tableTotals(exported), [exported]);
+
   function toggleSort(key: SortKey) {
     if (key === sortKey) {
       setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -295,12 +302,20 @@ export default function EntriesTable({
         <ExportButton
           compact
           name="Журнал"
-          rows={pickedRows.length ? pickedRows : found}
+          rows={exported}
           columns={ENTRY_COLUMNS}
-          footer={[
-            'Итого', '', '', '', '', '',
-            Math.round(totals.meters), Math.round(totals.drillM), '',
-          ]}
+          /*
+            Итог считаем по тому, что выгружается, а не по всему
+            найденному. Отметили двадцать строк из двухсот — в файле
+            двадцать строк, и «Итого» под ними должно быть их, иначе
+            сумма не сходится со строками прямо на глазах у того, кто
+            этот файл открыл.
+          */
+          footer={{
+            'Дата': 'Итого',
+            'Метры': Math.round(exportedTotals.meters),
+            'ГНБ, м': Math.round(exportedTotals.drillM),
+          }}
           onFlash={onFlash}
         />
         <button type="button" onClick={() => window.print()} className="btn btn-ghost btn-icon"

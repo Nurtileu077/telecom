@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { tableRows, tableToTabs, exportFileName, type ExportColumn } from './tableExport';
+import {
+  tableRows, tableToTabs, footerRow, strayFooterKeys, exportFileName,
+  type ExportColumn, type FooterValues,
+} from './tableExport';
 import { toCsv } from './csv';
 
 interface Row { name: string; meters: number; note?: string }
@@ -34,9 +37,9 @@ describe('tableRows', () => {
 });
 
 describe('выгрузка целиком', () => {
-  const build = (rows: Row[], footer?: (string | number | undefined)[]) => {
+  const build = (rows: Row[], footer?: FooterValues) => {
     const body = tableRows(rows, COLUMNS);
-    if (footer) body.push(footer);
+    if (footer) body.push(footerRow(COLUMNS, footer));
     return toCsv(COLUMNS.map((c) => c.header), body);
   };
 
@@ -49,7 +52,7 @@ describe('выгрузка целиком', () => {
   });
 
   it('итог из подвала тоже попадает в файл', () => {
-    const lines = build(ROWS, ['Итого', 2100, '']).split('\r\n');
+    const lines = build(ROWS, { 'Участок': 'Итого', 'Метры': 2100 }).split('\r\n');
     expect(lines[lines.length - 1]).toBe('Итого;2100;');
   });
 
@@ -60,7 +63,7 @@ describe('выгрузка целиком', () => {
   });
 
   it('в каждой строке столько же колонок, сколько в заголовке', () => {
-    const lines = build(ROWS, ['Итого', 2100, '']).split('\r\n');
+    const lines = build(ROWS, { 'Участок': 'Итого', 'Метры': 2100 }).split('\r\n');
     for (const l of lines) {
       // Разделители внутри кавычек не считаем.
       const outside = l.replace(/"[^"]*"/g, '');
@@ -79,7 +82,7 @@ describe('tableToTabs', () => {
   });
 
   it('итог из подвала попадает и в буфер', () => {
-    const lines = tableToTabs(ROWS, COLUMNS, ['Итого', 2100, '']).split('\n');
+    const lines = tableToTabs(ROWS, COLUMNS, { 'Участок': 'Итого', 'Метры': 2100 }).split('\n');
     expect(lines[lines.length - 1]).toBe('Итого\t2100\t');
   });
 });
@@ -97,5 +100,39 @@ describe('exportFileName', () => {
 
   it('безымянная таблица всё равно получает имя', () => {
     expect(exportFileName('   ', '2026-07-31')).toBe('Таблица 2026-07-31.csv');
+  });
+});
+
+/**
+ * Позиционным массивом итог задавать нельзя: колонок семь, в массиве
+ * шесть — и «смен» встаёт в «подрядчика», а «метры» в «дни». Ошибка
+ * невидима на экране и видна только в файле, который уже ушёл в
+ * бухгалтерию.
+ */
+describe('строка итогов по подписям колонок', () => {
+  it('значение встаёт под свою колонку, а не по счёту', () => {
+    expect(footerRow(COLUMNS, { 'Метры': 2100 })).toEqual([undefined, 2100, undefined]);
+  });
+
+  it('порядок ключей в итоге ничего не решает', () => {
+    const a = footerRow(COLUMNS, { 'Метры': 2100, 'Участок': 'Итого' });
+    const b = footerRow(COLUMNS, { 'Участок': 'Итого', 'Метры': 2100 });
+    expect(a).toEqual(b);
+    expect(a).toEqual(['Итого', 2100, undefined]);
+  });
+
+  it('пустой итог даёт пустую строку, а не ломает длину', () => {
+    expect(footerRow(COLUMNS, {})).toHaveLength(COLUMNS.length);
+  });
+
+  it('длина строки итогов всегда равна числу колонок', () => {
+    for (const f of [{}, { 'Метры': 1 }, { 'Участок': 'а', 'Метры': 1, 'Примечание': 'б' }]) {
+      expect(footerRow(COLUMNS, f)).toHaveLength(COLUMNS.length);
+    }
+  });
+
+  it('опечатка в подписи видна, а не проглатывается', () => {
+    expect(strayFooterKeys(COLUMNS, { 'Метры': 1, 'Метраж': 2 })).toEqual(['Метраж']);
+    expect(strayFooterKeys(COLUMNS, { 'Метры': 1 })).toEqual([]);
   });
 });

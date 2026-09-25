@@ -47,6 +47,30 @@ export const STEPS: Step[] = [
 ];
 
 const KEY = 'optiq-first-run-v1';
+const STEP_KEY = 'optiq-first-run-step';
+
+/**
+ * На каком шаге остановились.
+ *
+ * Второй шаг открывает журнал, и подсказка при этом уходит с экрана
+ * вместе с картой. Если держать шаг только в памяти, до третьего шага
+ * дойти невозможно: журнал закрыли — подсказка вернулась на первый и так
+ * по кругу, каждый заход.
+ */
+export function loadStep(): number {
+  if (typeof window === 'undefined') return 0;
+  try {
+    const n = Number(window.localStorage.getItem(STEP_KEY));
+    return Number.isInteger(n) && n >= 0 && n < STEPS.length ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function saveStep(n: number): void {
+  if (typeof window === 'undefined') return;
+  try { window.localStorage.setItem(STEP_KEY, String(n)); } catch { /* приватный режим */ }
+}
 
 /**
  * Показывали ли уже.
@@ -65,13 +89,20 @@ export function introSeen(): boolean {
 
 export function markIntroSeen(): void {
   if (typeof window === 'undefined') return;
-  try { window.localStorage.setItem(KEY, 'done'); } catch { /* приватный режим */ }
+  try {
+    window.localStorage.setItem(KEY, 'done');
+    // Шаг больше не нужен: подсказка своё отработала.
+    window.localStorage.removeItem(STEP_KEY);
+  } catch { /* приватный режим */ }
 }
 
 /** Снова показать — на случай «а покажи, как это было». */
 export function resetIntro(): void {
   if (typeof window === 'undefined') return;
-  try { window.localStorage.removeItem(KEY); } catch { /* приватный режим */ }
+  try {
+    window.localStorage.removeItem(KEY);
+    window.localStorage.removeItem(STEP_KEY);
+  } catch { /* приватный режим */ }
 }
 
 /**
