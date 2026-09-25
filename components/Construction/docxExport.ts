@@ -212,8 +212,12 @@ export function parseDocHtml(html: string): DocBlock[] {
       if (table.rows.length > 0) blocks.push(table);
     } else if (m[6] !== undefined) {
       const src = /<img\b[^>]*\ssrc="([^"]+)"/i.exec(m[6])?.[1];
-      const caption = parseRuns(m[6].replace(/<img\b[^>]*>/gi, ''))
-        .map((r) => r.text).join('').trim();
+      // Закрывающий блочный тег — это граница строки, а не пустое место:
+      // без пробела «[снимок не вложен]» слипается со следующей подписью.
+      const inner = m[6]
+        .replace(/<img\b[^>]*>/gi, '')
+        .replace(/<\/(p|div|h\d)>/gi, ' ');
+      const caption = parseRuns(inner).map((r) => r.text).join('').replace(/\s+/g, ' ').trim();
       if (src) blocks.push({ type: 'image', src, caption: caption || undefined });
       else if (caption) blocks.push({ type: 'p', runs: [{ text: caption }], align: 'center' });
     }

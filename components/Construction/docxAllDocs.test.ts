@@ -138,3 +138,116 @@ describe('все документы собираются в .docx', () => {
     expect(land).toContain('w:orient="landscape"');
   });
 });
+
+/**
+ * Фотоотчёт через свой настоящий генератор, а не через выдуманную
+ * разметку: снимки в нём и есть документ, и подпись под каждым — это
+ * где и когда снято.
+ */
+describe('фотоотчёт со снимками', () => {
+  function pngUrl(w: number, h: number): string {
+    const b = Buffer.alloc(33);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(b, 0);
+    b.writeUInt32BE(13, 8); Buffer.from('IHDR').copy(b, 12);
+    b.writeUInt32BE(w, 16); b.writeUInt32BE(h, 20);
+    return `data:image/png;base64,${b.toString('base64')}`;
+  }
+
+  const photo = (id: string, over: Record<string, unknown> = {}) => ({
+    id, kind: 'entry' as const, refId: 'e1',
+    lat: 52.1, lon: 71.2, geoSource: 'exif' as const,
+    takenAt: '2026-07-25T09:00:00.000Z',
+    uchastok: 'Зеренда', createdAt: '', updatedAt: '', ...over,
+  });
+
+  const html = photoReportPage({
+    title: 'ФОТООТЧЁТ',
+    from: '2026-07-01',
+    to: '2026-07-31',
+    items: [
+      { photo: photo('p1') as never, dataUrl: pngUrl(1600, 1200) },
+      // Этот снимок не нашёлся на устройстве: генератор пишет так сам.
+      { photo: photo('p2') as never },
+      { photo: photo('p3') as never, dataUrl: pngUrl(1200, 1600) },
+    ],
+  });
+
+  const { text, media } = docxParts(html);
+  const doc = text['word/document.xml'];
+
+  it('вложены оба целых снимка', () => {
+    expect(media).toHaveLength(2);
+    expect(doc.match(/<w:drawing>/g)).toHaveLength(2);
+  });
+
+  it('о невложенном сказано прямо в документе', () => {
+    expect(doc).toContain('снимок не вложен');
+  });
+
+  it('подпись есть у каждого снимка: координаты и время съёмки', () => {
+    // Именно по ним потом доказывают, что это тот самый участок.
+    expect(doc.match(/52\.10000, 71\.20000/g)).toHaveLength(3);
+    expect(doc.match(/25\.07\.2026/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
+  });
+
+  it('снимок без координат помечен, а не выдаётся за привязанный', () => {
+    const noGeo = photoReportPage({
+      title: 'ФОТООТЧЁТ',
+      items: [{ photo: photo('p9', { lat: undefined, lon: undefined }) as never,
+        dataUrl: pngUrl(800, 600) }],
+    });
+    expect(docxParts(noGeo).text['word/document.xml']).toContain('без координат');
+  });
+
+  it('вертикальный снимок не растянут в горизонтальный', () => {
+    const tall = media.find((m) => m.heightEmu > m.widthEmu);
+    expect(tall).toBeTruthy();
+    expect(tall!.heightEmu / tall!.widthEmu).toBeCloseTo(1600 / 1200, 2);
+  });
+
+  it('разметка отчёта в документ не протекла', () => {
+    for (const leak of LEAKS) expect(doc).not.toContain(leak);
+  });
+
+  it('число снимков в шапке совпадает с тем, что приложено', () => {
+    expect(doc).toContain('Снимков: 3');
+  });
+});
+
+/**
+ * Вложенные блоки в фотоотчёте обрывали разбор: у снимка, которого нет
+ * на устройстве, подпись терялась целиком — а по ней и видно, что это
+ * за место и когда снято.
+ */
+describe('подпись под снимком не теряется', () => {
+  function pngUrl(w: number, h: number): string {
+    const b = Buffer.alloc(33);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(b, 0);
+    b.writeUInt32BE(13, 8); Buffer.from('IHDR').copy(b, 12);
+    b.writeUInt32BE(w, 16); b.writeUInt32BE(h, 20);
+    return `data:image/png;base64,${b.toString('base64')}`;
+  }
+  const ph = (id: string) => ({
+    id, kind: 'entry' as const, refId: 'e1', lat: 52.1, lon: 71.2,
+    geoSource: 'exif' as const, takenAt: '2026-07-25T09:00:00.000Z',
+    createdAt: '', updatedAt: '',
+  });
+
+  const doc = docxParts(photoReportPage({
+    title: 'ФОТООТЧЁТ',
+    items: [
+      { photo: ph('p1') as never, dataUrl: pngUrl(1600, 1200) },
+      { photo: ph('p2') as never },
+      { photo: ph('p3') as never, dataUrl: pngUrl(1200, 1600) },
+    ],
+  })).text['word/document.xml'];
+
+  it('подпись есть под каждым снимком, включая невложенный', () => {
+    expect(doc.match(/52\.10000, 71\.20000/g)).toHaveLength(3);
+  });
+
+  it('и не слипается с пометкой о том, что снимка нет', () => {
+    expect(doc).not.toMatch(/вложен\]\d/);
+    expect(doc).toMatch(/снимок не вложен\]\s/);
+  });
+});

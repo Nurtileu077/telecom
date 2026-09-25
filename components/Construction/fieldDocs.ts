@@ -155,9 +155,12 @@ export function photoCaption(p: FieldPhoto): string {
  * нему нельзя сказать, что это тот самый участок.
  */
 export function photoReportHtml(i: PhotoReportInput): string {
+  // Подпись — абзац, а не вложенный блок: вложенные <div> обрывают
+  // разбор при сборке .docx, и подпись под снимком теряется. А подпись
+  // под фотографией в акте — это где и когда снято.
   const body = i.items.map((it) => '<div class="ph">'
-    + (it.dataUrl ? `<img src="${it.dataUrl}" alt=""/>` : '<div class="cap">[снимок не вложен]</div>')
-    + `<div class="cap">${esc(photoCaption(it.photo))}</div>`
+    + (it.dataUrl ? `<img src="${it.dataUrl}" alt=""/>` : '<p class="cap">[снимок не вложен]</p>')
+    + `<p class="cap">${esc(photoCaption(it.photo))}</p>`
     + '</div>').join('');
 
   return `<h1>${esc(i.title)}</h1>`
