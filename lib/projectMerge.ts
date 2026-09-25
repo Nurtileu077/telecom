@@ -27,13 +27,25 @@ function applyFieldToOrk(local: ORK, server: ORK): ORK {
 }
 
 /** Слить полевые данные (чеклист, фото) с сервера в локальную топологию. */
+/**
+ * Ключ — путь, а не номер.
+ *
+ * Номера шкафов повторяются: «ОРК-1» есть почти у каждой транзитной
+ * муфты, и «МТОК-1» — почти в каждом районе. Класть их в один справочник
+ * по номеру значит отдать чеклист и фотографии осмотра чужому шкафу, а
+ * это доказательство проверки того, чего не проверяли.
+ */
+const tbKey = (district: string, tbId: string) => `${district}\u0000${tbId}`;
+const orkKey = (district: string, tbId: string, orkId: string) =>
+  `${district}\u0000${tbId}\u0000${orkId}`;
+
 export function mergeFieldDataIntoDistricts(local: District[], server: District[]): District[] {
   const serverTb = new Map<string, TransitBox>();
   const serverOrk = new Map<string, ORK>();
   for (const d of server) {
     for (const tb of d.olt.transitBoxes) {
-      serverTb.set(tb.id, tb);
-      for (const ork of tb.orks) serverOrk.set(ork.id, ork);
+      serverTb.set(tbKey(d.name, tb.id), tb);
+      for (const ork of tb.orks) serverOrk.set(orkKey(d.name, tb.id, ork.id), ork);
     }
   }
 
@@ -42,12 +54,12 @@ export function mergeFieldDataIntoDistricts(local: District[], server: District[
     olt: {
       ...d.olt,
       transitBoxes: d.olt.transitBoxes.map((tb) => {
-        const st = serverTb.get(tb.id);
+        const st = serverTb.get(tbKey(d.name, tb.id));
         const mergedTb = st ? applyFieldToTb(tb, st) : tb;
         return {
           ...mergedTb,
           orks: mergedTb.orks.map((ork) => {
-            const so = serverOrk.get(ork.id);
+            const so = serverOrk.get(orkKey(d.name, tb.id, ork.id));
             return so ? applyFieldToOrk(ork, so) : ork;
           }),
         };
