@@ -3,6 +3,7 @@ import { mergeJournalStates } from './journalSync';
 import {
   emptyJournal, splitPlanRoute, joinPlanRoutes, deleteRoute, removePlanSource,
   removeRate, setMaterialPrice, removeEntry, restoreFromTrash,
+  addGroundEntry, setRequisites, upsertRate, addPlanRoutes,
   type JournalState,
 } from './journalStore';
 import type {
@@ -529,5 +530,92 @@ describe('цены: границы правила', () => {
       state({ prices: { 'ПЭТ': 310, 'Лента': 90 } }),
     ).merged;
     expect(merged.prices).toEqual({ 'МКТ': 420, 'ПЭТ': 310, 'Лента': 90 });
+  });
+});
+
+/**
+ * Журнал, собранный настоящими действиями, а не руками из литералов.
+ *
+ * Поля в состоянии добавляются по одному, а обмен перечисляет их
+ * поимённо. Забыть новое поле в этом перечислении легко, и тогда оно
+ * тихо пропадает при первом же обмене — вместе с реквизитами, ценами
+ * или временем их правки. На экране это не видно до тех пор, пока кто-то
+ * не синхронизируется.
+ */
+describe('обмен ничего не теряет из настоящего журнала', () => {
+  function realJournal(): JournalState {
+    let j = emptyJournal();
+    j = addGroundEntry(j, {
+      id: 'g1', kind: 'ground', date: '2026-07-25', smu: 'СМУ-1',
+      oblast: 'Акмолинская область', rayon: 'Бурабайский',
+      uchastok: 'Зеренда', kato: '1',
+      byMethod: { 'бар': 1240 }, materials: { 'МКТ': 1265 },
+      contractor: 'ТОО «Дозер»', createdAt: T('10'), updatedAt: T('10'),
+    } as never);
+    j = setMaterialPrice(j, 'МКТ', 420);
+    j = setRequisites(j, {
+      contractor: { name: 'ТОО «СК Фаворит Инжиниринг»', bin: '123456789012' },
+      customer: { name: 'АО «Транстелеком»' },
+      contractNumber: '14',
+    });
+    j = upsertRate(j, {
+      id: 'rt1', work: 'бар', price: 300, unit: 'м', from: '2026-01-01', updatedAt: T('10'),
+    } as never);
+    j = addPlanRoutes(j, [{
+      id: 'r1', name: 'Зеренда — Серафимовка', uchastok: 'Зеренда',
+      coords: [[52, 71], [52, 71.02]], lengthM: 2226, source: 'plan.kml',
+      createdAt: T('10'), updatedAt: T('10'),
+    }]);
+    return j;
+  }
+
+  it('после обмена с пустым журналом остаётся всё', () => {
+    const j = realJournal();
+    const { merged } = mergeJournalStates(j, emptyJournal());
+    expect(merged.ground).toHaveLength(1);
+    expect(merged.planRoutes).toHaveLength(1);
+    expect(merged.rates).toHaveLength(1);
+    expect(merged.prices['МКТ']).toBe(420);
+    expect(merged.pricedAt?.['МКТ']).toBeTruthy();
+    expect(merged.requisites?.contractNumber).toBe('14');
+    expect(merged.requisites?.contractor.bin).toBe('123456789012');
+  });
+
+  /**
+   * Эта проверка — про будущее. Новое поле в состоянии, забытое в
+   * обмене, исчезнет молча; здесь оно назовёт себя само.
+   */
+  it('ни одно поле состояния не пропадает', () => {
+    const j = realJournal();
+    const { merged } = mergeJournalStates(j, emptyJournal());
+    const lost: string[] = [];
+    for (const key of Object.keys(j) as (keyof JournalState)[]) {
+      // Корзина нарочно не уезжает: это «что я удалил у себя».
+      if (key === 'trash' || key === 'updatedAt') continue;
+      if (merged[key] === undefined && j[key] !== undefined) lost.push(key);
+    }
+    expect(lost).toEqual([]);
+  });
+
+  it('обмен сам с собой ничего не меняет и не множит', () => {
+    const j = realJournal();
+    const once = mergeJournalStates(j, j).merged;
+    const twice = mergeJournalStates(once, j).merged;
+    expect(twice.ground).toHaveLength(1);
+    expect(twice.planRoutes).toHaveLength(1);
+    expect(twice.rates).toHaveLength(1);
+    expect(twice.prices['МКТ']).toBe(420);
+  });
+
+  it('удаление трассы переживает обмен с тем, у кого она ещё есть', () => {
+    const j = realJournal();
+    const { merged } = mergeJournalStates(deleteRoute(j, 'r1', 'Иванов'), j);
+    expect(merged.planRoutes).toHaveLength(0);
+  });
+
+  it('и смена, удалённая в корзину, не возвращается', () => {
+    const j = realJournal();
+    const { merged } = mergeJournalStates(removeEntry(j, 'g1', 'Иванов'), j);
+    expect(merged.ground).toHaveLength(0);
   });
 });
