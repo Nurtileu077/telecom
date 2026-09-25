@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   DICT, DICT_KEYS, LANGS, LANG_LABEL, translate, missing, coverage, makeT,
-  loadLang, saveLang, loadLangTerms, saveLangTerms, type Lang,
+  loadLang, saveLang, loadLangTerms, saveLangTerms,
+  missedKeys, clearMisses, type Lang,
 } from './i18n';
 
 /** В node нет window: подкладываем ровно то, чем пользуется модуль. */
@@ -182,5 +183,58 @@ describe('разделы журнала переведены все', () => {
 
   it('и у каждого есть казахская сторона', () => {
     for (const v of VIEWS) expect(translate(v, 'kk').trim().length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Словарь заполнен не до конца, и сказать «переведено 40%» мало: человеку
+ * нужно знать, какие именно слова он увидит по-русски — и увидеть их там
+ * же, где может вписать перевод.
+ */
+describe('чего не хватило на экране', () => {
+  beforeEach(() => { clearMisses(); });
+
+  it('незнакомое слово запоминается', () => {
+    const t = makeT('kk');
+    t('Пропорка');
+    expect(missedKeys()).toEqual(['Пропорка']);
+  });
+
+  it('переведённое не запоминается', () => {
+    const t = makeT('kk');
+    t('Сохранить');
+    expect(missedKeys()).toEqual([]);
+  });
+
+  it('на русском промахов не бывает: там и переводить нечего', () => {
+    const t = makeT('ru');
+    t('Пропорка');
+    expect(missedKeys()).toEqual([]);
+  });
+
+  it('свой перевод закрывает промах', () => {
+    const t = makeT('kk', { 'Пропорка': 'Кесу' });
+    t('Пропорка');
+    expect(missedKeys()).toEqual([]);
+  });
+
+  it('одно и то же слово не копится', () => {
+    const t = makeT('kk');
+    for (let i = 0; i < 10; i += 1) t('Пропорка');
+    expect(missedKeys()).toHaveLength(1);
+  });
+
+  it('список отсортирован по-русски, а не по кодам', () => {
+    const t = makeT('kk');
+    ['Ярлык', 'Барабан', 'Ёмкость'].forEach(t);
+    expect(missedKeys()).toEqual(['Барабан', 'Ёмкость', 'Ярлык']);
+  });
+
+  it('слово без перевода в словаре тоже считается промахом', () => {
+    const backup = DICT['Отмена'].kk;
+    DICT['Отмена'].kk = '';
+    makeT('kk')('Отмена');
+    expect(missedKeys()).toContain('Отмена');
+    DICT['Отмена'].kk = backup;
   });
 });

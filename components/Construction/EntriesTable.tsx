@@ -8,6 +8,7 @@ import type { DailyWorkEntry } from '@/types/construction';
 import type { JournalState } from './journalStore';
 import { hasPendingCorrection } from './journalStore';
 import ExportButton, { type ExportColumn } from '@/components/Layout/ExportButton';
+import { useT } from '@/components/Layout/LangProvider';
 import {
   entryMeters, filterEntries, sortEntries, groupByWeek, tableTotals, rowsToText,
   SORT_LABEL, type SortKey, type SortDir,
@@ -75,6 +76,7 @@ export default function EntriesTable({
   rows, journal, onDelete, onEdit, onShowOnMap, onBulkPatch, onDispute, onPresent,
   onRepeat, onCopied, onFlash,
 }: Props) {
+  const { t } = useT();
   const [q, setQ] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('date');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -374,7 +376,7 @@ export default function EntriesTable({
                                 text-[var(--text-muted)] font-medium ${c.className}`}>
                   <button type="button" onClick={() => toggleSort(c.key)}
                           className="inline-flex items-center gap-0.5 hover:text-[var(--text)]">
-                    {SORT_LABEL[c.key]}
+                    {t(SORT_LABEL[c.key])}
                     {sortKey === c.key && (sortDir === 'asc'
                       ? <ChevronUp size={11} /> : <ChevronDown size={11} />)}
                   </button>
