@@ -42,6 +42,22 @@ export async function authSignOut() {
   await supabase.auth.signOut();
 }
 
+/**
+ * Выйти везде, а не только здесь.
+ *
+ * Телефон с открытым журналом теряют, оставляют в машине, отдают в
+ * ремонт. Обычный выход закрывает только ту вкладку, в которой нажали, —
+ * а на потерянном телефоне сессия живёт месяцами и обновляется сама.
+ *
+ * После этого войти заново придётся всем, включая того, кто нажал: иначе
+ * не закрыть то устройство, до которого не дотянуться.
+ */
+export async function authSignOutEverywhere(): Promise<void> {
+  if (!supabase) return;
+  const { error } = await supabase.auth.signOut({ scope: 'global' });
+  if (error) throw error;
+}
+
 export async function authResetPassword(email: string) {
   if (!supabase) throw new Error('Supabase не настроен');
   const redirectTo = typeof window !== 'undefined'

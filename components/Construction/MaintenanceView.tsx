@@ -2,7 +2,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Download, Upload, AlertTriangle, Bug, HardDrive, Wifi, WifiOff, History,
+  KeyRound, LogOut, RefreshCw, Loader2,
 } from 'lucide-react';
+import {
+  loginLogEnabled, fetchLoginLog, loginLine, loginSummary, type LoginEntry,
+} from '@/lib/loginLog';
+import { authSignOutEverywhere } from '@/lib/authSession';
+import { errorLine } from '@/lib/errors';
 import type { JournalState } from './journalStore';
 import {
   makeBackup, backupFileName, readBackup, restoreBackup, restoreWarning,
@@ -40,6 +46,27 @@ export default function MaintenanceView({
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [errors, setErrors] = useState<ErrorNote[]>([]);
+
+  // Входы не тянем при открытии раздела: это запрос к серверу, а раздел
+  // открывают и ради копии журнала, которая работает без сети.
+  const [logins, setLogins] = useState<LoginEntry[]>([]);
+  const [loginsBusy, setLoginsBusy] = useState(false);
+  const [loginsShown, setLoginsShown] = useState(false);
+  const [loginsError, setLoginsError] = useState('');
+
+  async function loadLogins() {
+    setLoginsBusy(true);
+    setLoginsError('');
+    try {
+      setLogins(await fetchLoginLog(200));
+      setLoginsShown(true);
+    } catch (e) {
+      setLoginsError(errorLine(e, 'прочитать журнал входов'));
+    } finally {
+      setLoginsBusy(false);
+    }
+  }
+
   const [storage, setStorage] = useState<StorageInfo>({});
   const [online, setOnline] = useState(true);
   const [imports, setImports] = useState<ImportRecord[]>([]);
@@ -159,6 +186,71 @@ export default function MaintenanceView({
           </div>
         )}
       </div>
+
+      {/* Кто заходил и как закрыть доступ */}
+      {loginLogEnabled() && (
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-3 space-y-2">
+          <div className="flex items-baseline gap-2">
+            <KeyRound size={14} className="text-[var(--text-muted)]" />
+            <span className="text-[13px] font-semibold text-[var(--text)]">Входы</span>
+            {logins.length > 0 && (
+              <span className="text-[11px] text-[var(--text-muted)]">
+                {loginSummary(logins).people} человек
+              </span>
+            )}
+            <button type="button" className="btn btn-ghost text-[11px] ml-auto"
+                    disabled={loginsBusy} onClick={loadLogins}>
+              {loginsBusy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+              Показать
+            </button>
+          </div>
+
+          {loginsError && (
+            <div className="text-[11px] text-[var(--warn)]">{loginsError}</div>
+          )}
+
+          {logins.length === 0 && loginsShown && !loginsError && (
+            <div className="text-[11px] text-[var(--text-muted)]">
+              Записей нет. Supabase чистит старые сам — это его устройство, а не
+              потеря: список наполнится по мере входов.
+            </div>
+          )}
+
+          {logins.slice(0, 20).map((e, i) => (
+            <div key={`${e.at}-${i}`} className="text-[11px] text-[var(--text-muted)] truncate"
+                 title={loginLine(e)}>
+              {loginLine(e)}
+            </div>
+          ))}
+
+          <div className="text-[10.5px] text-[var(--text-muted)] leading-snug">
+            Записи ведёт сам Supabase, браузер их не пишет и подделать не может.
+          </div>
+
+          <button type="button" className="btn btn-warn text-[11.5px]"
+                  disabled={loginsBusy}
+                  onClick={async () => {
+                    if (!confirm(
+                      'Закрыть доступ на всех устройствах?\n\n'
+                      + 'Войти заново придётся всем, включая вас: иначе не закрыть '
+                      + 'то устройство, до которого не дотянуться.',
+                    )) return;
+                    try {
+                      await authSignOutEverywhere();
+                      onFlash?.('Доступ закрыт везде. Войдите заново.');
+                    } catch (err) {
+                      setLoginsError(errorLine(err, 'закрыть доступ'));
+                    }
+                  }}>
+            <LogOut size={14} />Выйти на всех устройствах
+          </button>
+          <div className="text-[10.5px] text-[var(--text-muted)] leading-snug">
+            Телефон с открытым журналом теряют, оставляют в машине, отдают в
+            ремонт. Обычный выход закрывает только эту вкладку — а там сессия
+            живёт месяцами и обновляется сама.
+          </div>
+        </div>
+      )}
 
       {/* Копия */}
       <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-3 space-y-2">

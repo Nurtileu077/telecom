@@ -138,3 +138,53 @@ revoke execute on function public.optiq_current_org() from anon;
 --   чужой org_id         → видит только свои, наших не видит
 --   подделан user_metadata → не видит ничего          ← дыра закрыта
 --   без организации      → не видит и не пишет ничего
+
+
+-- ── Кто когда заходил ───────────────────────────────────────────────────────
+--
+-- Записи ведёт сам Supabase, в auth.audit_log_entries. Берём их оттуда, а
+-- не пишем с клиента: запись, сделанную браузером, браузер и подделает, а
+-- смысл журнала входов ровно в том, чтобы ей верить.
+--
+-- Список короткий по своей природе: Supabase чистит старое сам. Пустой
+-- список — нормальный ответ, а не поломка.
+create or replace function public.optiq_login_log(limit_rows int default 200)
+returns table (
+  email text,
+  событие text,
+  когда timestamptz,
+  откуда text
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select u.email::text,
+         case a.payload ->> 'action'
+           when 'login'          then 'вход'
+           when 'logout'         then 'выход'
+           when 'token_refreshed' then 'продление'
+           when 'user_recovery_requested' then 'сброс пароля'
+           when 'user_signedup'  then 'регистрация'
+           else coalesce(a.payload ->> 'action', 'неизвестно')
+         end,
+         a.created_at,
+         coalesce(a.ip_address, '—')
+    from auth.audit_log_entries a
+    join auth.users u
+      on u.id = nullif(a.payload ->> 'actor_id', '')::uuid
+   where public.optiq_current_org() is not null
+     and u.raw_app_meta_data ->> 'org_id' = public.optiq_current_org()
+     -- Продление токена случается каждый час у каждого: в списке оно
+     -- вытеснит всё остальное и смотреть его станет незачем.
+     and coalesce(a.payload ->> 'action', '') <> 'token_refreshed'
+   order by a.created_at desc
+   limit greatest(1, least(coalesce(limit_rows, 200), 1000));
+$$;
+
+revoke execute on function public.optiq_login_log(int) from anon, public;
+grant execute on function public.optiq_login_log(int) to authenticated;
+
+-- Проверено: свой видит свою запись, чужая организация — ни одной,
+-- вошедший без организации — ни одной.
