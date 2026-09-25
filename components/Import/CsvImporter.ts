@@ -3,14 +3,31 @@ import { Subscriber } from '@/types/network';
 let idCounter = 0;
 function newId() { return `sub-csv-${++idCounter}`; }
 
-// "40.777, 68.32"  →  [40.777, 68.32]
+/**
+ * «40.777, 68.32» в одной ячейке — так координаты копируют из карт.
+ *
+ * Запятая здесь значит либо «дальше вторая координата», либо «дальше
+ * дробная часть» — русский Excel пишет 52,091435. Раньше «52,091435»
+ * читалось парой (52 и 91435), долгота выходила за пределы карты, и вся
+ * строка молча отбрасывалась. Файл из конторы импортировался нулём
+ * точек, и понять почему было нельзя.
+ *
+ * Различаем по тому, чем в этой же строке отделена дробная часть: если
+ * точкой, запятая — разделитель; если точки нет, запятая может быть
+ * дробной, и разделителем считаем только то, что дробным не бывает, —
+ * точку с запятой, пробел или запятую с пробелом после неё.
+ */
 function parseLatLngString(s: string): [number, number] | null {
-  if (!s) return null;
-  const m = s.trim().match(/^\s*(-?\d+(?:[.,]\d+)?)\s*[,;\s]\s*(-?\d+(?:[.,]\d+)?)\s*$/);
-  if (!m) return null;
-  const lat = parseFloat(m[1].replace(',', '.'));
-  const lon = parseFloat(m[2].replace(',', '.'));
-  if (isNaN(lat) || isNaN(lon)) return null;
+  const t = (s ?? '').trim();
+  if (!t) return null;
+  const dotDecimals = t.includes('.');
+  const sep = dotDecimals ? /\s*[,;]\s*|\s+/ : /\s*;\s*|,\s+|\s+/;
+  const parts = t.split(sep).filter(Boolean);
+  if (parts.length !== 2) return null;
+  const num = (x: string) => parseFloat(x.replace(',', '.'));
+  const lat = num(parts[0]);
+  const lon = num(parts[1]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
   return [lat, lon];
 }
 
