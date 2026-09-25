@@ -10,6 +10,7 @@ import {
   type SiteRecord, type RecordKind, type RecordStatus,
 } from './siteRecords';
 import Glyph from '@/components/Layout/Glyph';
+import { useT } from '@/components/Layout/LangProvider';
 
 /**
  * Разрешения, допуски, контакты, претензии, задачи.
@@ -34,6 +35,7 @@ const newId = () => `rec-${Date.now().toString(36)}-${Math.random().toString(36)
 const STATUSES: RecordStatus[] = ['открыто', 'в работе', 'закрыто'];
 
 export default function SiteRecordsView({ records, author, onUpsert, onRemove, onFlash }: Props) {
+  const { t } = useT();
   const [kind, setKind] = useState<RecordKind>('permit');
   const [notifyPerm, setNotifyPerm] = useState<NotifyPermission>('unsupported');
   useEffect(() => { setNotifyPerm(notifyState()); }, []);
@@ -167,8 +169,7 @@ export default function SiteRecordsView({ records, author, onUpsert, onRemove, o
           </button>
         )}
         <button type="button" className="btn btn-ghost text-[11px] ml-auto" onClick={add}>
-          <Plus size={13} />Добавить
-        </button>
+          <Plus size={13} />{t('Добавить')}</button>
       </div>
 
       {list.length === 0 ? (

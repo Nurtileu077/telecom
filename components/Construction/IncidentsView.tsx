@@ -13,6 +13,7 @@ import {
   problemSpots, incidentStats,
 } from './incidents';
 import { getCurrentPosition, positionErrorText } from './currentPosition';
+import { useT } from '@/components/Layout/LangProvider';
 
 /**
  * Аварии и эксплуатация.
@@ -37,6 +38,7 @@ const todayIso = () => new Date().toISOString().slice(0, 10);
 export default function IncidentsView({
   journal, author, onSave, onRemove, onRequestPick,
 }: Props) {
+  const { t } = useT();
   const [editing, setEditing] = useState<Incident | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -312,6 +314,7 @@ function IncidentForm({ journal, initial, author, onSave, onClose, onRequestPick
   onClose: () => void;
   onRequestPick?: (label: string) => Promise<{ lat: number; lon: number } | null>;
 }) {
+  const { t } = useT();
   const [damage, setDamage] = useState(initial?.damage ?? '');
   const [reporter, setReporter] = useState(initial?.reporter ?? '');
   const [cause, setCause] = useState<IncidentCause | ''>(initial?.cause ?? '');
@@ -423,7 +426,7 @@ function IncidentForm({ journal, initial, author, onSave, onClose, onRequestPick
                      className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[12px] text-[var(--text)]" />
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-[10.5px] text-[var(--text-muted)]">Участок</span>
+              <span className="text-[10.5px] text-[var(--text-muted)]">{t('Участок')}</span>
               <input list="inc-sections" value={uchastok} onChange={(e) => setUchastok(e.target.value)}
                      className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[12px] text-[var(--text)]" />
               <datalist id="inc-sections">{sections.map((s) => <option key={s} value={s} />)}</datalist>
@@ -451,15 +454,13 @@ function IncidentForm({ journal, initial, author, onSave, onClose, onRequestPick
                       onClick={async () => {
                         const p = await onRequestPick('место аварии');
                         if (p) { setLat(String(p.lat)); setLon(String(p.lon)); }
-                      }}>
-                Указать на карте
-              </button>
+                      }}>{t('Указать на карте')}</button>
             )}
             {geoNote && <span className="text-[10.5px] text-[var(--text-muted)]">{geoNote}</span>}
           </div>
 
           <label className="flex flex-col gap-1">
-            <span className="text-[10.5px] text-[var(--text-muted)]">Причина</span>
+            <span className="text-[10.5px] text-[var(--text-muted)]">{t('Причина')}</span>
             <select value={cause} onChange={(e) => setCause(e.target.value as IncidentCause | '')}
                     className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[12px] text-[var(--text)]">
               <option value="">не установлена</option>
@@ -520,17 +521,15 @@ function IncidentForm({ journal, initial, author, onSave, onClose, onRequestPick
           </details>
 
           <label className="flex flex-col gap-1">
-            <span className="text-[10.5px] text-[var(--text-muted)]">Примечание</span>
+            <span className="text-[10.5px] text-[var(--text-muted)]">{t('Примечание')}</span>
             <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2}
                       className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[12px] text-[var(--text)] resize-none" />
           </label>
         </div>
 
         <div className="flex gap-2 px-4 py-3 border-t border-[var(--border)] sticky bottom-0 bg-[var(--bg-surface)]">
-          <button type="button" className="btn btn-ghost flex-1" onClick={onClose}>Отмена</button>
-          <button type="button" className="btn btn-primary flex-1" disabled={!canSave} onClick={save}>
-            Сохранить
-          </button>
+          <button type="button" className="btn btn-ghost flex-1" onClick={onClose}>{t('Отмена')}</button>
+          <button type="button" className="btn btn-primary flex-1" disabled={!canSave} onClick={save}>{t('Сохранить')}</button>
         </div>
       </div>
     </div>

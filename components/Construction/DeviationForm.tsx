@@ -7,6 +7,7 @@ import {
   DESIGN_DEPTH_M, needsProtocol, isKzLat, isKzLon,
 } from '@/types/construction';
 import { JournalState, suggestContractor } from './journalStore';
+import { useT } from '@/components/Layout/LangProvider';
 
 /**
  * Отклонение от проекта: по глубине или по трассе.
@@ -29,6 +30,7 @@ const todayIso = () => new Date().toISOString().slice(0, 10);
 const numToStr = (v?: number) => (v === undefined || v === null ? '' : String(v));
 
 export default function DeviationForm({ journal, initial, onSave, onRequestPick, onClose }: Props) {
+  const { t } = useT();
   const [geoBusy, setGeoBusy] = useState<'a' | 'b' | null>(null);
   const [geoNote, setGeoNote] = useState('');
   const [kind, setKind] = useState<DeviationKind>(initial?.kind ?? 'depth');
@@ -295,8 +297,7 @@ export default function DeviationForm({ journal, initial, onSave, onRequestPick,
                 {onRequestPick && (
                   <button type="button" onClick={() => pickOnMap('a')}
                           className="btn btn-ghost text-[10.5px] flex-1" title="Указать началом на карте">
-                    <MapPin size={13} />На карте
-                  </button>
+                    <MapPin size={13} />{t('На карте')}</button>
                 )}
               </div>
               <div className="flex gap-1">
@@ -308,8 +309,7 @@ export default function DeviationForm({ journal, initial, onSave, onRequestPick,
                 {onRequestPick && (
                   <button type="button" onClick={() => pickOnMap('b')}
                           className="btn btn-ghost text-[10.5px] flex-1" title="Указать концом на карте">
-                    <MapPin size={13} />На карте
-                  </button>
+                    <MapPin size={13} />{t('На карте')}</button>
                 )}
               </div>
             </div>
@@ -397,10 +397,9 @@ export default function DeviationForm({ journal, initial, onSave, onRequestPick,
 
         <div className="flex gap-2 px-4 py-3 border-t border-[var(--border)] shrink-0"
              style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}>
-          <button type="button" className="btn btn-ghost flex-1" onClick={onClose}>Отмена</button>
+          <button type="button" className="btn btn-ghost flex-1" onClick={onClose}>{t('Отмена')}</button>
           <button type="button" className="btn btn-primary flex-1" onClick={submit} disabled={!canSave}>
-            <Check size={15} />Сохранить
-          </button>
+            <Check size={15} />{t('Сохранить')}</button>
         </div>
       </div>
 

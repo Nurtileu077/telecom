@@ -9,6 +9,7 @@ import {
 import { JournalState, distinct, plural } from './journalStore';
 import { getCurrentPosition, positionErrorText } from './currentPosition';
 import Glyph from '@/components/Layout/Glyph';
+import { useT } from '@/components/Layout/LangProvider';
 
 /**
  * Что стоит вдоль трассы.
@@ -33,6 +34,7 @@ const todayIso = () => new Date().toISOString().slice(0, 10);
 export default function ObjectsView({
   journal, author, editingId, onSave, onDelete, onDoneEditing, onRequestPick,
 }: Props) {
+  const { t } = useT();
   const [kindFilter, setKindFilter] = useState<SiteObjectKind | ''>('');
   const [formOpen, setFormOpen] = useState(false);
   const [draft, setDraft] = useState<SiteObject | null>(null);
@@ -74,9 +76,7 @@ export default function ObjectsView({
         <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md">
           <button type="button" onClick={() => setKindFilter('')}
             className={`px-2.5 py-1 text-[11.5px] rounded ${
-              !kindFilter ? 'bg-[var(--accent-dim)] text-[var(--accent)]' : 'text-[var(--text-muted)]'}`}>
-            Все
-          </button>
+              !kindFilter ? 'bg-[var(--accent-dim)] text-[var(--accent)]' : 'text-[var(--text-muted)]'}`}>{t('Все')}</button>
           {SITE_OBJECT_KINDS.map((k) => (
             <button key={k} type="button" onClick={() => setKindFilter(k)}
               className={`px-2.5 py-1 text-[11.5px] rounded inline-flex items-center gap-1 ${
@@ -180,6 +180,7 @@ function ObjectForm({ journal, initial, author, onSave, onClose, onRequestPick }
   onClose: () => void;
   onRequestPick?: (label: string) => Promise<{ lat: number; lon: number } | null>;
 }) {
+  const { t } = useT();
   const [kind, setKind] = useState<SiteObjectKind>(initial?.kind ?? 'mufta');
   const [name, setName] = useState(initial?.name ?? '');
   const [number, setNumber] = useState(initial?.number ?? '');
@@ -316,13 +317,13 @@ function ObjectForm({ journal, initial, author, onSave, onClose, onRequestPick }
 
           <div className="grid grid-cols-2 gap-2">
             <label className="flex flex-col gap-1">
-              <span className="text-[10.5px] text-[var(--text-muted)]">Название</span>
+              <span className="text-[10.5px] text-[var(--text-muted)]">{t('Название')}</span>
               <input value={name} onChange={(e) => setName(e.target.value)}
                      placeholder={SITE_OBJECT_SPECS[kind].label}
                      className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[12px] text-[var(--text)]" />
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-[10.5px] text-[var(--text-muted)]">Номер</span>
+              <span className="text-[10.5px] text-[var(--text-muted)]">{t('Номер')}</span>
               <input value={number} onChange={(e) => setNumber(e.target.value)}
                      placeholder="по проекту"
                      className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[12px] text-[var(--text)] font-mono" />
@@ -330,7 +331,7 @@ function ObjectForm({ journal, initial, author, onSave, onClose, onRequestPick }
           </div>
 
           <label className="flex flex-col gap-1">
-            <span className="text-[10.5px] text-[var(--text-muted)]">Участок</span>
+            <span className="text-[10.5px] text-[var(--text-muted)]">{t('Участок')}</span>
             <input list="obj-sections" value={uchastok} onChange={(e) => setUchastok(e.target.value)}
                    className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[12px] text-[var(--text)]" />
             <datalist id="obj-sections">
@@ -347,8 +348,7 @@ function ObjectForm({ journal, initial, author, onSave, onClose, onRequestPick }
               </button>
               {onRequestPick && (
                 <button type="button" onClick={pickOnMap} className="btn btn-ghost text-[10.5px] flex-1">
-                  <MapPin size={13} />На карте
-                </button>
+                  <MapPin size={13} />{t('На карте')}</button>
               )}
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -362,12 +362,12 @@ function ObjectForm({ journal, initial, author, onSave, onClose, onRequestPick }
 
           <div className="grid grid-cols-2 gap-2">
             <label className="flex flex-col gap-1">
-              <span className="text-[10.5px] text-[var(--text-muted)]">Дата</span>
+              <span className="text-[10.5px] text-[var(--text-muted)]">{t('Дата')}</span>
               <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
                      className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[12px] text-[var(--text)]" />
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-[10.5px] text-[var(--text-muted)]">Примечание</span>
+              <span className="text-[10.5px] text-[var(--text-muted)]">{t('Примечание')}</span>
               <input value={note} onChange={(e) => setNote(e.target.value)}
                      className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[12px] text-[var(--text)]" />
             </label>
@@ -392,9 +392,8 @@ function ObjectForm({ journal, initial, author, onSave, onClose, onRequestPick }
 
           <div className="flex gap-2 pt-1">
             <button type="button" className="btn btn-primary text-[12px]" disabled={!coordsOk} onClick={save}>
-              <Check size={14} />Сохранить
-            </button>
-            <button type="button" className="btn btn-ghost text-[12px]" onClick={onClose}>Отменить</button>
+              <Check size={14} />{t('Сохранить')}</button>
+            <button type="button" className="btn btn-ghost text-[12px]" onClick={onClose}>{t('Отменить')}</button>
           </div>
           {!coordsOk && (
             <p className="text-[10.5px] text-[var(--text-muted)]">

@@ -13,6 +13,7 @@ import {
   nextStageAction,
 } from './stageTasks';
 import Glyph from '@/components/Layout/Glyph';
+import { useT } from '@/components/Layout/LangProvider';
 
 /**
  * Этапы по населённым пунктам и наряды между бригадами.
@@ -39,6 +40,7 @@ interface Props {
 export default function StagesView({
   journal, onSeed, onSetStage, onShowRoute, routeKatos,
 }: Props) {
+  const { t } = useT();
   /** Раскрытые строки: там, где нужно отметить не ближайший этап. */
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const toggle = (kato: string) => setExpanded((prev) => {
@@ -111,9 +113,7 @@ export default function StagesView({
           </button>
           <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md ml-auto">
             <button type="button" onClick={() => setCrewFilter('')}
-              className={`px-2 py-1 text-[11px] rounded ${!crewFilter ? 'bg-[var(--accent-dim)] text-[var(--accent)]' : 'text-[var(--text-muted)]'}`}>
-              Все
-            </button>
+              className={`px-2 py-1 text-[11px] rounded ${!crewFilter ? 'bg-[var(--accent-dim)] text-[var(--accent)]' : 'text-[var(--text-muted)]'}`}>{t('Все')}</button>
             {(Object.keys(CREW_KINDS) as CrewKind[]).map((k) => (
               <button key={k} type="button" onClick={() => setCrewFilter(k)}
                 className={`px-2 py-1 text-[11px] rounded ${crewFilter === k ? 'bg-[var(--accent-dim)] text-[var(--accent)]' : 'text-[var(--text-muted)]'}`}

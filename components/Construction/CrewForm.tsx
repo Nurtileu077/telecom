@@ -8,6 +8,7 @@ import {
 } from '@/types/construction';
 import { JournalState, suggestContractor } from './journalStore';
 import Glyph from '@/components/Layout/Glyph';
+import { useT } from '@/components/Layout/LangProvider';
 
 /**
  * Карточка колонны: вид работ, состояние, где стоит, состав и техника.
@@ -26,6 +27,7 @@ interface Props {
 const STATUSES = Object.keys(CREW_STATUS) as CrewStatus[];
 
 export default function CrewForm({ journal, initial, onSave, onRequestPick, onClose }: Props) {
+  const { t } = useT();
   const [geoBusy, setGeoBusy] = useState(false);
   const [geoNote, setGeoNote] = useState('');
   const [kind, setKind] = useState<CrewKind>(initial?.kind ?? 'mkt');
@@ -215,8 +217,7 @@ export default function CrewForm({ journal, initial, onSave, onRequestPick, onCl
                           const p = await onRequestPick(`колонна ${name || ''}`.trim());
                           if (p) { setLat(p.lat.toFixed(6)); setLon(p.lon.toFixed(6)); }
                         }}>
-                  <MapPin size={13} />На карте
-                </button>
+                  <MapPin size={13} />{t('На карте')}</button>
               )}
             </div>
             <p className="text-[10.5px] text-[var(--text-muted)] -mt-1">
@@ -229,13 +230,13 @@ export default function CrewForm({ journal, initial, onSave, onRequestPick, onCl
             {members.map((m, i) => (
               <div key={i} className="flex gap-2 items-end">
                 <label className="flex flex-col gap-1 flex-1">
-                  <span className="text-[10.5px] text-[var(--text-muted)]">ФИО</span>
+                  <span className="text-[10.5px] text-[var(--text-muted)]">{t('ФИО')}</span>
                   <input value={m.name} placeholder="Какенов Е.А."
                          onChange={(e) => setMembers((p) => p.map((x, j) => j === i ? { ...x, name: e.target.value } : x))}
                          className="inp" />
                 </label>
                 <label className="flex flex-col gap-1 w-[34%]">
-                  <span className="text-[10.5px] text-[var(--text-muted)]">Должность</span>
+                  <span className="text-[10.5px] text-[var(--text-muted)]">{t('Должность')}</span>
                   <input value={m.role ?? ''} placeholder="мастер участка"
                          onChange={(e) => setMembers((p) => p.map((x, j) => j === i ? { ...x, role: e.target.value } : x))}
                          className="inp" />
@@ -283,10 +284,9 @@ export default function CrewForm({ journal, initial, onSave, onRequestPick, onCl
 
         <div className="flex gap-2 px-4 py-3 border-t border-[var(--border)] shrink-0"
              style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}>
-          <button type="button" className="btn btn-ghost flex-1" onClick={onClose}>Отмена</button>
+          <button type="button" className="btn btn-ghost flex-1" onClick={onClose}>{t('Отмена')}</button>
           <button type="button" className="btn btn-primary flex-1" onClick={submit} disabled={!canSave}>
-            <Check size={15} />Сохранить
-          </button>
+            <Check size={15} />{t('Сохранить')}</button>
         </div>
       </div>
 

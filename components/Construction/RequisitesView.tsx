@@ -5,6 +5,7 @@ import {
   withDefaults, missingForPayment, binLooksWrong, partyLine, contractLine,
   PARTY_FIELDS, type Requisites, type Party,
 } from './requisites';
+import { useT } from '@/components/Layout/LangProvider';
 
 /**
  * Реквизиты сторон.
@@ -30,6 +31,7 @@ const SIDES: { key: 'contractor' | 'customer'; label: string; hint: string }[] =
 ];
 
 export default function RequisitesView({ requisites, onSave, onFlash }: Props) {
+  const { t } = useT();
   const [draft, setDraft] = useState<Requisites>(() => withDefaults(requisites));
   const [saved, setSaved] = useState(false);
 
@@ -107,7 +109,7 @@ export default function RequisitesView({ requisites, onSave, onFlash }: Props) {
         <div className="text-[13px] font-semibold text-[var(--text)]">Договор</div>
         <div className="flex gap-2">
           <label className="flex-1">
-            <span className="block text-[10.5px] text-[var(--text-muted)]">Номер</span>
+            <span className="block text-[10.5px] text-[var(--text-muted)]">{t('Номер')}</span>
             <input
               value={draft.contractNumber ?? ''}
               onChange={(e) => { setDraft((d) => ({ ...d, contractNumber: e.target.value })); setSaved(false); }}
@@ -116,7 +118,7 @@ export default function RequisitesView({ requisites, onSave, onFlash }: Props) {
             />
           </label>
           <label className="flex-1">
-            <span className="block text-[10.5px] text-[var(--text-muted)]">Дата</span>
+            <span className="block text-[10.5px] text-[var(--text-muted)]">{t('Дата')}</span>
             <input
               type="date"
               value={draft.contractDate ?? ''}

@@ -21,6 +21,7 @@ import {
 import { pendingPhotos } from './photoStore';
 import { downloadText } from '@/lib/download';
 import { APP_VERSION, WHATS_NEW } from '@/lib/version';
+import { useT } from '@/components/Layout/LangProvider';
 
 /**
  * Обслуживание: копия, состояние, ошибки.
@@ -44,6 +45,7 @@ interface Props {
 export default function MaintenanceView({
   journal, author, lastSyncAt, onRestore, onFlash,
 }: Props) {
+  const { t } = useT();
   const fileRef = useRef<HTMLInputElement>(null);
   const [errors, setErrors] = useState<ErrorNote[]>([]);
 
@@ -164,7 +166,7 @@ export default function MaintenanceView({
           {online
             ? <Wifi size={15} className="text-[var(--success)]" />
             : <WifiOff size={15} className="text-[var(--warn)]" />}
-          <span className="text-[13px] font-semibold text-[var(--text)]">Состояние</span>
+          <span className="text-[13px] font-semibold text-[var(--text)]">{t('Состояние')}</span>
           <span className="ml-auto text-[11px] text-[var(--text-muted)]">{APP_VERSION}</span>
         </div>
         <div className="text-[11.5px] text-[var(--text-muted)]">{statusLine(diagnostics)}</div>

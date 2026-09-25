@@ -5,6 +5,7 @@ import { JournalState } from './journalStore';
 import {
   changeFeed, filterFeed, FEED_KIND_LABEL, FEED_KIND_ICON, type FeedKind,
 } from './changeLog';
+import { useT } from '@/components/Layout/LangProvider';
 
 /**
  * Единый журнал изменений.
@@ -26,6 +27,7 @@ interface Props {
 const KINDS: FeedKind[] = ['route', 'correction', 'deviation', 'stage', 'delivery', 'object'];
 
 export default function ChangeLogView({ journal, oblast, onRestore }: Props) {
+  const { t } = useT();
   const [kinds, setKinds] = useState<Set<FeedKind>>(new Set());
   const [q, setQ] = useState('');
 
@@ -53,9 +55,7 @@ export default function ChangeLogView({ journal, oblast, onRestore }: Props) {
         <div className="flex gap-0.5 bg-[var(--bg-canvas)] p-0.5 rounded-md flex-wrap">
           <button type="button" onClick={() => setKinds(new Set())}
                   className={`px-2 py-1 text-[11px] rounded ${
-                    kinds.size === 0 ? 'bg-[var(--accent-dim)] text-[var(--accent)]' : 'text-[var(--text-muted)]'}`}>
-            Все
-          </button>
+                    kinds.size === 0 ? 'bg-[var(--accent-dim)] text-[var(--accent)]' : 'text-[var(--text-muted)]'}`}>{t('Все')}</button>
           {KINDS.map((k) => (
             <button key={k} type="button" onClick={() => toggle(k)}
                     title={FEED_KIND_LABEL[k]}

@@ -10,6 +10,7 @@ import {
   REQUEST_STATUS_LIST, type MaterialRequest, type RequestStatus,
 } from './supply';
 import { equipmentUse, idleShare, fuelNeed, fuelTotal, drillQueue } from './equipmentUse';
+import { useT } from '@/components/Layout/LangProvider';
 
 /**
  * Ресурсы: материал, техника, ГНБ.
@@ -40,6 +41,7 @@ export default function ResourcesView({
   journal, requests, from, to, author,
   onAddRequest, onSetRequestStatus, onRemoveRequest, onFlash,
 }: Props) {
+  const { t } = useT();
   const [tab, setTab] = useState<'material' | 'equipment' | 'drill'>('material');
 
   const over = useMemo(
@@ -213,8 +215,8 @@ export default function ResourcesView({
                   <thead className="text-[10px] uppercase text-[var(--text-muted)]">
                     <tr>
                       <th className="py-1 font-medium">Техника</th>
-                      <th className="py-1 font-medium text-right">Смен</th>
-                      <th className="py-1 font-medium text-right">Простой</th>
+                      <th className="py-1 font-medium text-right">{t('Смен')}</th>
+                      <th className="py-1 font-medium text-right">{t('Простой')}</th>
                       <th className="py-1 font-medium">Где была</th>
                     </tr>
                   </thead>

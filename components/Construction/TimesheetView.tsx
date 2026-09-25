@@ -7,6 +7,7 @@ import {
   timesheet, crewsWithoutMembers, shiftsWithoutCrew, timesheetTotals, timesheetToText,
   type TimesheetRow,
 } from './timesheet';
+import { useT } from '@/components/Layout/LangProvider';
 
 /**
  * Табель.
@@ -40,6 +41,7 @@ const TIMESHEET_COLUMNS: ExportColumn<TimesheetRow>[] = [
 ];
 
 export default function TimesheetView({ rows, crews, from, to, onCopied }: Props) {
+  const { t } = useT();
   const [copied, setCopied] = useState(false);
 
   const table = useMemo(() => timesheet(rows, crews, { from, to }), [rows, crews, from, to]);
@@ -144,10 +146,10 @@ export default function TimesheetView({ rows, crews, from, to, onCopied }: Props
           <table className="w-full border-collapse text-left">
             <thead>
               <tr className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">
-                <th className="px-2 py-1.5 font-medium">ФИО</th>
-                <th className="px-2 py-1.5 font-medium hidden sm:table-cell">Должность</th>
-                <th className="px-2 py-1.5 font-medium">Колонна</th>
-                <th className="px-2 py-1.5 font-medium text-right w-[64px]">Смен</th>
+                <th className="px-2 py-1.5 font-medium">{t('ФИО')}</th>
+                <th className="px-2 py-1.5 font-medium hidden sm:table-cell">{t('Должность')}</th>
+                <th className="px-2 py-1.5 font-medium">{t('Колонна')}</th>
+                <th className="px-2 py-1.5 font-medium text-right w-[64px]">{t('Смен')}</th>
                 <th className="px-2 py-1.5 font-medium text-right w-[64px]">Дней</th>
                 <th className="px-2 py-1.5 font-medium text-right w-[110px] hidden md:table-cell">
                   Метры колонны

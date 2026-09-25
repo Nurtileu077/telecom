@@ -11,6 +11,7 @@ import {
 } from './materialForecast';
 import { spendOf, stockValueOf, fmtMoney, hasPrices } from './materialCost';
 import { drumStates, drumTotals, unknownDrums } from './drums';
+import { useT } from '@/components/Layout/LangProvider';
 
 /**
  * Остатки материалов и прогноз, на сколько хватит.
@@ -36,6 +37,7 @@ const todayIso = () => new Date().toISOString().slice(0, 10);
 export default function MaterialsView({
   journal, onAddDelivery, onRemoveDelivery, onSetPrice, onSaveDrum, onRemoveDrum, author,
 }: Props) {
+  const { t } = useT();
   const oblasti = useMemo(() => distinct(journal.ground, (e) => e.oblast), [journal.ground]);
   const [oblast, setOblast] = useState('');
   const [adding, setAdding] = useState(false);
@@ -89,7 +91,7 @@ export default function MaterialsView({
       <div className="flex flex-wrap items-center gap-2">
         <select value={oblast} onChange={(e) => setOblast(e.target.value)}
                 className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[12px] text-[var(--text)] max-w-[220px]">
-          <option value="">Все области</option>
+          <option value="">{t('Все области')}</option>
           {oblasti.map((o) => <option key={o} value={o}>{o}</option>)}
         </select>
         <p className="text-[11px] text-[var(--text-muted)] flex-1 min-w-[200px]">
@@ -438,6 +440,7 @@ function DeliveryForm({ oblasti, defaultOblast, author, onSave, onClose }: {
   onSave: (d: MaterialDelivery) => void;
   onClose: () => void;
 }) {
+  const { t } = useT();
   const [date, setDate] = useState(todayIso);
   const [oblast, setOblast] = useState(defaultOblast || oblasti[0] || '');
   const [material, setMaterial] = useState<MaterialKind>('МКТ');
@@ -472,7 +475,7 @@ function DeliveryForm({ oblasti, defaultOblast, author, onSave, onClose }: {
         <div className="p-4 flex flex-col gap-3">
           <div className="grid grid-cols-2 gap-2">
             <label className="flex flex-col gap-1">
-              <span className="text-[11px] text-[var(--text-muted)]">Дата</span>
+              <span className="text-[11px] text-[var(--text-muted)]">{t('Дата')}</span>
               <input id="dl-date" type="date" value={date} onChange={(e) => setDate(e.target.value)}
                      className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[13px] text-[var(--text)]" />
             </label>
@@ -487,7 +490,7 @@ function DeliveryForm({ oblasti, defaultOblast, author, onSave, onClose }: {
             </label>
           </div>
           <label className="flex flex-col gap-1">
-            <span className="text-[11px] text-[var(--text-muted)]">Область</span>
+            <span className="text-[11px] text-[var(--text-muted)]">{t('Область')}</span>
             <input id="dl-oblast" list="dl-oblasti" value={oblast} onChange={(e) => setOblast(e.target.value)}
                    placeholder="Акмолинская область"
                    className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[13px] text-[var(--text)]" />
@@ -513,7 +516,7 @@ function DeliveryForm({ oblasti, defaultOblast, author, onSave, onClose }: {
           )}
         </div>
         <div className="flex gap-2 px-4 py-3 border-t border-[var(--border)]">
-          <button type="button" className="btn btn-ghost flex-1" onClick={onClose}>Отмена</button>
+          <button type="button" className="btn btn-ghost flex-1" onClick={onClose}>{t('Отмена')}</button>
           <button type="button" className="btn btn-primary flex-1" onClick={submit} disabled={!canSave}>
             Записать приход
           </button>
@@ -534,6 +537,7 @@ function DrumForm({ oblasti, defaultOblast, author, onSave, onClose }: {
   onSave: (d: CableDrum) => void;
   onClose: () => void;
 }) {
+  const { t } = useT();
   const [date, setDate] = useState(todayIso);
   const [number, setNumber] = useState('');
   const [cable, setCable] = useState('');
@@ -595,13 +599,13 @@ function DrumForm({ oblasti, defaultOblast, author, onSave, onClose }: {
           </label>
           <div className="grid grid-cols-2 gap-2">
             <label className="flex flex-col gap-1">
-              <span className="text-[11px] text-[var(--text-muted)]">Область</span>
+              <span className="text-[11px] text-[var(--text-muted)]">{t('Область')}</span>
               <input id="dr-oblast" list="dr-oblasti" value={oblast} onChange={(e) => setOblast(e.target.value)}
                      className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[13px] text-[var(--text)]" />
               <datalist id="dr-oblasti">{oblasti.map((o) => <option key={o} value={o} />)}</datalist>
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-[11px] text-[var(--text-muted)]">Район</span>
+              <span className="text-[11px] text-[var(--text-muted)]">{t('Район')}</span>
               <input id="dr-rayon" value={rayon} onChange={(e) => setRayon(e.target.value)}
                      className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[13px] text-[var(--text)]" />
             </label>
@@ -612,7 +616,7 @@ function DrumForm({ oblasti, defaultOblast, author, onSave, onClose }: {
                    className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[13px] text-[var(--text)]" />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-[11px] text-[var(--text-muted)]">Примечание</span>
+            <span className="text-[11px] text-[var(--text-muted)]">{t('Примечание')}</span>
             <input id="dr-note" value={note} onChange={(e) => setNote(e.target.value)}
                    placeholder="№ накладной, склад"
                    className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[13px] text-[var(--text)]" />
@@ -626,7 +630,7 @@ function DrumForm({ oblasti, defaultOblast, author, onSave, onClose }: {
           </p>
         </div>
         <div className="flex gap-2 px-4 py-3 border-t border-[var(--border)]">
-          <button type="button" className="btn btn-ghost flex-1" onClick={onClose}>Отмена</button>
+          <button type="button" className="btn btn-ghost flex-1" onClick={onClose}>{t('Отмена')}</button>
           <button type="button" className="btn btn-primary flex-1" onClick={submit} disabled={!canSave}>
             Завести барабан
           </button>

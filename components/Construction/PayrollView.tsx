@@ -10,6 +10,7 @@ import {
   payroll, compareContractors, payrollSummary, paymentLines, costPerMeter,
   PAYABLE_WORKS, rateFor, type PayLine,
 } from './payroll';
+import { useT } from '@/components/Layout/LangProvider';
 
 /**
  * Деньги с подрядчиками.
@@ -54,6 +55,7 @@ const PAY_COLUMNS: ExportColumn<PayLine>[] = [
 export default function PayrollView({
   journal, from, to, author, onAddRate, onRemoveRate, onAddPayment, onRemovePayment, onFlash,
 }: Props) {
+  const { t } = useT();
   const contractors = useMemo(
     () => [...new Set(journal.ground.map((e) => e.contractor).filter((v): v is string => !!v))]
       .sort((a, b) => a.localeCompare(b, 'ru')),
@@ -363,7 +365,7 @@ export default function PayrollView({
             <table className="w-full text-left text-[11.5px]">
               <thead className="text-[10px] uppercase text-[var(--text-muted)]">
                 <tr>
-                  <th className="py-1 font-medium">Подрядчик</th>
+                  <th className="py-1 font-medium">{t('Подрядчик')}</th>
                   <th className="py-1 font-medium text-right">м/смену</th>
                   <th className="py-1 font-medium text-right">₸/м</th>
                   <th className="py-1 font-medium text-right">Отклонений</th>

@@ -8,6 +8,7 @@ import {
 import { JournalState } from './journalStore';
 import { passports, passportSummary } from './passport';
 import Glyph from '@/components/Layout/Glyph';
+import { useT } from '@/components/Layout/LangProvider';
 
 /**
  * Паспорт сети: как построено.
@@ -31,6 +32,7 @@ interface Props {
 export default function PassportView({
   journal, author, onSaveSplice, onRemoveSplice, onEditObject,
 }: Props) {
+  const { t } = useT();
   const rows = useMemo(
     () => passports(journal.objects, journal.splices),
     [journal.objects, journal.splices],
@@ -208,6 +210,7 @@ function SpliceForm({ object, initial, author, onSave, onClose }: {
   onSave: (r: SpliceRecord) => void;
   onClose: () => void;
 }) {
+  const { t } = useT();
   const [date, setDate] = useState(initial?.date ?? new Date().toISOString().slice(0, 10));
   const [crew, setCrew] = useState(initial?.crew ?? '');
   const [device, setDevice] = useState(initial?.device ?? '');
@@ -272,7 +275,7 @@ function SpliceForm({ object, initial, author, onSave, onClose }: {
         <div className="p-4 flex flex-col gap-3">
           <div className="grid grid-cols-2 gap-2">
             <label className="flex flex-col gap-1">
-              <span className="text-[11px] text-[var(--text-muted)]">Дата</span>
+              <span className="text-[11px] text-[var(--text-muted)]">{t('Дата')}</span>
               <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
                      className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[13px] text-[var(--text)]" />
             </label>
@@ -353,13 +356,13 @@ function SpliceForm({ object, initial, author, onSave, onClose }: {
           </label>
 
           <label className="flex flex-col gap-1">
-            <span className="text-[11px] text-[var(--text-muted)]">Примечание</span>
+            <span className="text-[11px] text-[var(--text-muted)]">{t('Примечание')}</span>
             <input value={note} onChange={(e) => setNote(e.target.value)}
                    className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[13px] text-[var(--text)]" />
           </label>
         </div>
         <div className="flex gap-2 px-4 py-3 border-t border-[var(--border)] sticky bottom-0 bg-[var(--bg-surface)]">
-          <button type="button" className="btn btn-ghost flex-1" onClick={onClose}>Отмена</button>
+          <button type="button" className="btn btn-ghost flex-1" onClick={onClose}>{t('Отмена')}</button>
           <button type="button" className="btn btn-primary flex-1" onClick={submit}>
             Сохранить протокол
           </button>

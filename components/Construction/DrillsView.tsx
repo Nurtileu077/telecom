@@ -4,6 +4,7 @@ import { Plus, Check, Pencil, Trash2, MapPin, CalendarDays } from 'lucide-react'
 import type { DrillLogEntry } from '@/types/construction';
 import { JournalState, fmtKm, plural, distinct } from './journalStore';
 import { plannedDrills, drillSummary, isPlanned } from './drillPlan';
+import { useT } from '@/components/Layout/LangProvider';
 
 /**
  * Проколы: что взяли на сегодня, что на неделю, что уже сделано.
@@ -30,6 +31,7 @@ interface Props {
 }
 
 export default function DrillsView({ journal, onAdd, onEdit, onDelete, onMarkDone }: Props) {
+  const { t } = useT();
   const [tab, setTab] = useState<Tab>('today');
   const [oblast, setOblast] = useState('');
 
@@ -68,7 +70,7 @@ export default function DrillsView({ journal, onAdd, onEdit, onDelete, onMarkDon
         {oblasti.length > 1 && (
           <select value={oblast} onChange={(e) => setOblast(e.target.value)}
                   className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded-md px-2 py-1 text-[11px] text-[var(--text)] max-w-[190px]">
-            <option value="">Все области</option>
+            <option value="">{t('Все области')}</option>
             {oblasti.map((o) => <option key={o} value={o}>{o}</option>)}
           </select>
         )}
@@ -151,8 +153,7 @@ export default function DrillsView({ journal, onAdd, onEdit, onDelete, onMarkDon
                       <button type="button" onClick={() => onMarkDone(d)}
                               title="Закрыть прокол: метраж и координаты"
                               className="btn btn-ghost text-[10.5px] text-[var(--accent)]">
-                        <Check size={13} />Сделано
-                      </button>
+                        <Check size={13} />{t('Сделано')}</button>
                     )}
                     <button type="button" onClick={() => onEdit(d)} title="Изменить"
                             className="btn btn-ghost btn-icon text-[var(--text-muted)] hover:text-[var(--accent)]">

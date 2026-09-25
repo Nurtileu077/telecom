@@ -7,6 +7,7 @@ import {
 import { JournalState, distinct } from './journalStore';
 import { getCurrentPosition, positionErrorText } from './currentPosition';
 import { drillLengthM } from './drillPlan';
+import { useT } from '@/components/Layout/LangProvider';
 
 /**
  * Прокол: сначала план, потом факт.
@@ -38,6 +39,7 @@ function num(v: string): number {
 export default function DrillForm({
   journal, initial, author, onSave, onClose, onRequestPick,
 }: Props) {
+  const { t } = useT();
   const [status, setStatus] = useState<'planned' | 'done'>(initial?.status ?? 'done');
   const [date, setDate] = useState(initial?.date || todayIso());
   const [plannedFor, setPlannedFor] = useState(initial?.plannedFor || todayIso());
@@ -172,7 +174,7 @@ export default function DrillForm({
           </div>
 
           <label className="flex flex-col gap-1">
-            <span className="text-[10.5px] text-[var(--text-muted)]">Участок</span>
+            <span className="text-[10.5px] text-[var(--text-muted)]">{t('Участок')}</span>
             <input list="drill-sections" value={uchastok} onChange={(e) => setUchastok(e.target.value)}
                    placeholder="например, с.Сауыншы"
                    className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[12px] text-[var(--text)]" />
@@ -231,8 +233,7 @@ export default function DrillForm({
                   {onRequestPick && (
                     <button type="button" onClick={() => pickOnMap('a')}
                             className="btn btn-ghost text-[10.5px] flex-1">
-                      <MapPin size={13} />На карте
-                    </button>
+                      <MapPin size={13} />{t('На карте')}</button>
                   )}
                 </div>
                 <div className="flex gap-1">
@@ -244,8 +245,7 @@ export default function DrillForm({
                   {onRequestPick && (
                     <button type="button" onClick={() => pickOnMap('b')}
                             className="btn btn-ghost text-[10.5px] flex-1">
-                      <MapPin size={13} />На карте
-                    </button>
+                      <MapPin size={13} />{t('На карте')}</button>
                   )}
                 </div>
               </div>
@@ -270,7 +270,7 @@ export default function DrillForm({
           )}
 
           <label className="flex flex-col gap-1">
-            <span className="text-[10.5px] text-[var(--text-muted)]">Примечание</span>
+            <span className="text-[10.5px] text-[var(--text-muted)]">{t('Примечание')}</span>
             <input value={note} onChange={(e) => setNote(e.target.value)}
                    placeholder="что мешало, чем пересекались"
                    className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[12px] text-[var(--text)]" />
@@ -281,7 +281,7 @@ export default function DrillForm({
               <Check size={14} />
               {status === 'planned' ? 'В план' : 'Сохранить как сделанный'}
             </button>
-            <button type="button" className="btn btn-ghost text-[12px]" onClick={onClose}>Отменить</button>
+            <button type="button" className="btn btn-ghost text-[12px]" onClick={onClose}>{t('Отменить')}</button>
           </div>
           {!canSave && (
             <p className="text-[10.5px] text-[var(--text-muted)]">

@@ -24,6 +24,7 @@ import {
 import {
   saveDraft, loadDraft, clearDraft, draftAge, draftWorthKeeping, type Draft,
 } from './drafts';
+import { useT } from '@/components/Layout/LangProvider';
 
 /** Черновик дня — один на устройство: две смены разом никто не пишет. */
 const DRAFT_KEY = 'day-entry';
@@ -92,6 +93,7 @@ export default function DailyEntryForm({
   journal, initial, prefill, onSave, onClose, onRequestPick,
   author = '', onAddPhoto, onRemovePhoto,
 }: Props) {
+  const { t } = useT();
   const correcting = !!initial;
   const last = useMemo(() => (correcting ? null : loadLastContext()), [correcting]);
 
@@ -730,8 +732,7 @@ export default function DailyEntryForm({
                               const p = await onRequestPick('где остановились');
                               if (p) { setStopPoint(p); setStopConfirmed(true); }
                             }}>
-                      <MapPin size={12} />Указать на карте
-                    </button>
+                      <MapPin size={12} />{t('Указать на карте')}</button>
                   )}
                 </div>
               </div>
@@ -858,7 +859,7 @@ export default function DailyEntryForm({
                              className="inp font-mono" />
                     </label>
                     <label className="flex flex-col gap-1 flex-1">
-                      <span className="text-[10.5px] text-[var(--text-muted)]">Метраж</span>
+                      <span className="text-[10.5px] text-[var(--text-muted)]">{t('Метраж')}</span>
                       <div className="relative">
                         <input value={m.meters} inputMode="decimal" placeholder="0000"
                                onChange={(e) => setDuctMarks((p) => p.map((x, j) => j === i ? { ...x, meters: e.target.value.replace(/[^\d.,]/g, '') } : x))}
@@ -990,7 +991,7 @@ export default function DailyEntryForm({
         {/* Кнопки */}
         <div className="flex gap-2 px-4 py-3 border-t border-[var(--border)] shrink-0"
              style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}>
-          <button type="button" className="btn btn-ghost flex-1" onClick={onClose}>Отмена</button>
+          <button type="button" className="btn btn-ghost flex-1" onClick={onClose}>{t('Отмена')}</button>
           <button type="button" className="btn btn-primary flex-1" onClick={submit} disabled={!canSave}>
             <Check size={15} />{correcting ? 'Отправить на согласование' : 'Сохранить день'}
           </button>
