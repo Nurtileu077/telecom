@@ -55,7 +55,11 @@ export function searchNetwork(
         }
       }
     }
-    for (const s of d.subscribers) {
+    // Район приходит из файла проекта, а файл могли сделать версией, где
+    // этого списка не было. Одного такого района хватает, чтобы поиск
+    // перестал работать целиком — а он единственное, чем на карте с
+    // тысячей точек вообще можно что-то найти.
+    for (const s of d.subscribers ?? []) {
       if (hits.some((h) => h.kind === 'sub' && h.id === s.id)) continue;
       if (norm(s.id).includes(q) || norm(s.desc).includes(q)) {
         hits.push({
