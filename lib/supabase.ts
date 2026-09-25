@@ -2,6 +2,9 @@ import { createClient } from '@supabase/supabase-js';
 import type { Project, CatalogItem } from '@/types/network';
 import { getDefaultOrgId } from '@/lib/orgId';
 import { assertSupabaseAccess } from '@/lib/supabaseAccess';
+import {
+  DOC_BUCKET, docPath, expiresAt, DEFAULT_LINK_LIFE, type LinkLife,
+} from '@/lib/docLink';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
@@ -258,5 +261,59 @@ export async function storageUploadJournalPhoto(
 export async function storageDeleteFieldPhoto(storagePath: string): Promise<void> {
   if (!supabase || !storagePath) return;
   const { error } = await supabase.storage.from(FIELD_PHOTOS_BUCKET).remove([storagePath]);
+  if (error) throw error;
+}
+
+// ── Документы, которые отдают ссылкой ────────────────────────────────────────
+
+/**
+ * Положить документ и получить ссылку на него.
+ *
+ * Акт уходит в почту вложением, потом в нём находят ошибку, отправляют
+ * второй — и у заказчика их два, а какой верный, видно только по дате
+ * письма. Ссылка решает это: она одна, и открывается по ней всегда то,
+ * что лежит сейчас.
+ *
+ * Поэтому адрес постоянный, а `upsert` заменяет прежнее. Иначе получится
+ * та же пачка файлов, только в облаке.
+ *
+ * Заказчику аккаунт не нужен: ссылка подписанная и со сроком. Срок нужен
+ * потому, что письма пересылают, а папки «Загрузки» живут годами.
+ */
+export async function shareDocument(
+  kind: string,
+  subject: string,
+  ext: string,
+  blob: Blob,
+  life: LinkLife = DEFAULT_LINK_LIFE,
+  now: Date = new Date(),
+): Promise<{ url: string; path: string; until: string }> {
+  if (!supabase) throw new Error('Облако не настроено');
+  await assertSupabaseAccess();
+
+  const org = getDefaultOrgId()
+    ?? (await supabase.auth.getSession()).data.session?.user?.app_metadata?.org_id;
+  if (!org) throw new Error('Не известна организация: доступ выдаёт тот, кто ведёт журнал в конторе');
+
+  const path = docPath(String(org), kind, subject, ext);
+  const { error } = await supabase.storage
+    .from(DOC_BUCKET)
+    .upload(path, blob, { contentType: blob.type || 'application/octet-stream', upsert: true });
+  if (error) throw error;
+
+  const { data, error: signError } = await supabase.storage
+    .from(DOC_BUCKET)
+    .createSignedUrl(path, life.seconds);
+  if (signError) throw signError;
+  if (!data?.signedUrl) throw new Error('Ссылка не создалась');
+
+  return { url: data.signedUrl, path, until: expiresAt(life, now) };
+}
+
+/** Убрать документ из облака: ссылка перестанет открываться сразу. */
+export async function unshareDocument(path: string): Promise<void> {
+  if (!supabase || !path) return;
+  await assertSupabaseAccess();
+  const { error } = await supabase.storage.from(DOC_BUCKET).remove([path]);
   if (error) throw error;
 }

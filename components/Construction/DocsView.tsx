@@ -1,7 +1,8 @@
 'use client';
 import { useMemo, useState } from 'react';
 import {
-  FileDown, Package, AlertTriangle, Check, Hash, Loader2,
+  FileDown, Package, AlertTriangle, Check, Hash, Loader2, Copy,
+  Link as LinkIcon,
 } from 'lucide-react';
 import type { JournalState } from './journalStore';
 import { actRegistry, nextActNumber, formatActNumber } from './docRegistry';
@@ -32,6 +33,11 @@ import {
   DOC_FORMATS, DOC_FORMAT_LABEL, DOC_FORMAT_HINT, type DocFormat,
 } from './docxExport';
 import { htmlToPdfBlob, pdfFileName } from '@/lib/pdf';
+import { shareDocument } from '@/lib/supabase';
+import { journalCloudEnabled } from './journalRemote';
+import {
+  LINK_LIVES, DEFAULT_LINK_LIFE, lifeByKey, linkMessage, validFor,
+} from '@/lib/docLink';
 import { errorLine } from '@/lib/errors';
 import { getPhotoBlob } from './photoStore';
 import { downloadText, downloadBlob } from '@/lib/download';
@@ -110,6 +116,12 @@ export default function DocsView({
   const [busy, setBusy] = useState(false);
   const [prices, setPrices] = useState<WorkPrices>({});
   const [schemeRouteId, setSchemeRouteId] = useState('');
+  const [linkLife, setLinkLife] = useState(DEFAULT_LINK_LIFE.key);
+  // Без облака ссылку давать неоткуда: документ останется файлом.
+  const cloudReady = journalCloudEnabled();
+  const [link, setLink] = useState<
+    { url: string; until: string; text: string; subject: string } | null
+  >(null);
   const [format, setFormat] = useState<DocFormat>(() => loadDocFormat());
   const [lang, setLang] = useState<Bilingual>(() => loadBilingual());
   const docTerms = useMemo(() => loadTerms(), []);
@@ -211,6 +223,53 @@ export default function DocsView({
     const file = docxFileName(name);
     downloadBlob(file, await buildDocx(html, { landscape }));
     onFlash?.(`Файл собран: ${file}`);
+  }
+
+  /**
+   * Собрать документ тем же способом, что и на сохранение.
+   *
+   * Отдельно от самого сохранения, потому что ссылке нужен не скачанный
+   * файл, а его содержимое: имя и способ должны совпадать, иначе по
+   * ссылке уйдёт не то, что отдали вложением.
+   */
+  async function buildFile(
+    name: string, html: string, landscape: boolean,
+  ): Promise<{ blob: Blob; ext: string }> {
+    if (format === 'doc') {
+      return { blob: new Blob([html], { type: DOC_MIME }), ext: 'doc' };
+    }
+    if (format === 'pdf') {
+      return { blob: await htmlToPdfBlob(html, ACT_DOC_CSS, { landscape }), ext: 'pdf' };
+    }
+    return { blob: await buildDocx(html, { landscape }), ext: 'docx' };
+  }
+
+  /**
+   * Отдать ссылкой, а не файлом.
+   *
+   * Акт уходит вложением, потом в нём находят ошибку, отправляют второй —
+   * и у заказчика их два, а какой верный, видно только по дате письма.
+   * Ссылка одна, и по ней всегда то, что лежит сейчас.
+   */
+  async function share(kind: string, subject: string, html: string, landscape = false) {
+    setBusy(true);
+    try {
+      const { blob, ext } = await buildFile(subject, html, landscape);
+      const life = lifeByKey(linkLife);
+      const { url, until } = await shareDocument(kind, subject, ext, blob, life);
+      const text = linkMessage(subject, url, life, until);
+      setLink({ url, until, text, subject });
+      try {
+        await navigator.clipboard.writeText(text);
+        onFlash?.(`Ссылка скопирована, ${validFor(until, new Date())}`);
+      } catch {
+        onFlash?.('Ссылка готова — скопируйте её ниже');
+      }
+    } catch (e) {
+      onFlash?.(errorLine(e, 'собрать ссылку'));
+    } finally {
+      setBusy(false);
+    }
   }
 
   /**
@@ -397,6 +456,73 @@ export default function DocsView({
         </span>
       </div>
 
+      {/* Ссылка вместо файла */}
+      {cloudReady && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-[11px] text-[var(--text-muted)]">Ссылка живёт</span>
+          {LINK_LIVES.map((l) => (
+            <button
+              key={l.key}
+              type="button"
+              onClick={() => setLinkLife(l.key)}
+              title={l.hint}
+              className={`chip ${l.key === linkLife ? 'chip-on' : ''}`}
+            >
+              {l.label}
+            </button>
+          ))}
+          <span className="w-full text-[10.5px] text-[var(--text-muted)]">
+            Заказчику не нужен вход: ссылка подписанная. Срок нужен потому, что
+            письма пересылают, а папки «Загрузки» живут годами.
+          </span>
+        </div>
+      )}
+
+      {link && (
+        <div className="rounded-lg border border-[var(--accent)]/40 bg-[var(--accent-dim)]
+                        p-3 space-y-2">
+          <div className="flex items-baseline gap-2">
+            <LinkIcon size={13} className="text-[var(--accent)]" />
+            <span className="text-[12.5px] font-semibold text-[var(--text)] min-w-0 flex-1 truncate">
+              {link.subject}
+            </span>
+            <span className="text-[10.5px] text-[var(--text-muted)] shrink-0">
+              {validFor(link.until, new Date())}
+            </span>
+          </div>
+          <textarea
+            readOnly
+            value={link.text}
+            rows={4}
+            onFocus={(e) => e.currentTarget.select()}
+            aria-label="Письмо со ссылкой"
+            className="w-full bg-[var(--bg-canvas)] border border-[var(--border)] rounded
+                       px-2 py-1.5 text-[11px] text-[var(--text)] font-mono"
+          />
+          <div className="flex gap-1.5 flex-wrap">
+            <button type="button" className="btn btn-ghost text-[11px]"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(link.text);
+                        onFlash?.('Скопировано');
+                      } catch {
+                        onFlash?.('Выделите текст и скопируйте вручную');
+                      }
+                    }}>
+              <Copy size={13} />Скопировать письмо
+            </button>
+            <button type="button" className="btn btn-ghost text-[11px]"
+                    onClick={() => setLink(null)}>
+              Закрыть
+            </button>
+          </div>
+          <div className="text-[10.5px] text-[var(--text-muted)] leading-snug">
+            Соберёте документ заново — по этой же ссылке будет новая версия.
+            Перезапрашивать её заказчику не нужно.
+          </div>
+        </div>
+      )}
+
       {/* Пакет */}
       <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-3 space-y-2">
         <div className="text-[13px] font-semibold text-[var(--text)]">За период</div>
@@ -425,6 +551,18 @@ export default function DocsView({
                   )}>
             <FileDown size={14} />Отчёт за период
           </button>
+          {cloudReady && (
+            <button type="button" className="btn btn-ghost text-[11.5px]"
+                    disabled={busy || report.shifts === 0}
+                    title="Отдать ссылкой: заказчик всегда открывает текущую версию"
+                    onClick={() => share(
+                      'отчёт за период',
+                      `Отчёт за период ${from} — ${to}`,
+                      periodDocPage({ report, pace, contractor, author }),
+                    )}>
+              <LinkIcon size={14} />Ссылкой
+            </button>
+          )}
           <button type="button" className="btn btn-ghost text-[11.5px]"
                   onClick={() => {
                     const w = weekRange(to || new Date().toISOString().slice(0, 10));
@@ -573,6 +711,24 @@ export default function DocsView({
                   }}>
             <FileDown size={14} />Акт скрытых работ
           </button>
+          {cloudReady && (
+            <button type="button" className="btn btn-ghost text-[11.5px]"
+                    disabled={busy || report.sections.length === 0}
+                    title="Отдать ссылкой: заказчик всегда открывает текущую версию"
+                    onClick={() => {
+                      const uchastok = report.sections[0].uchastok;
+                      const rows = journal.ground.filter((x) => x.uchastok === uchastok);
+                      share('акт скрытых работ', `Акт скрытых работ, ${uchastok}`,
+                        hiddenWorksPage({
+                          uchastok, rows, contractor,
+                          customer: partyNames.customer,
+                          oblast: rows[0]?.oblast, rayon: rows[0]?.rayon,
+                          date: to,
+                        }));
+                    }}>
+              <LinkIcon size={14} />Ссылкой
+            </button>
+          )}
           <button type="button" className="btn btn-ghost text-[11.5px]"
                   disabled={journal.deviations.length === 0}
                   onClick={() => save('Реестр замечаний.doc',
