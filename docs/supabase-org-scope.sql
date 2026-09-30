@@ -255,3 +255,62 @@ grant execute on function public.optiq_login_log(int) to authenticated;
 -- может только своя организация и только в свою папку (первый кусок
 -- пути — org_id); субподрядчику отправка закрыта — это дело
 -- генподрядчика, и его реквизиты стоят в документах.
+
+
+-- ── Владелец проекта сети и снимки ──────────────────────────────────────────
+--
+-- Пункт 2 выше перевёл на app_metadata политики таблиц, но функцию
+-- optiq_owns_project пропустил: она так и сверяла user_metadata, да ещё
+-- считала своими проекты без организации. А через неё решается, кто
+-- раздаёт доступ к проекту, — и раздача открывает чтение и правку.
+-- Проверено на живой базе 2026-09-30 до исправления: зарегистрировался
+-- сам, вписал себе нашу организацию — и выдал себе доступ, увидел проект,
+-- поправил его. Выполнено как миграция project_owner_from_app_metadata.
+create or replace function public.optiq_owns_project(pid text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+      from public.gpon_projects p
+     where p.id = pid
+       and public.optiq_current_org() is not null
+       and p.org_id::text = public.optiq_current_org()
+       -- Субподрядчик доступ не раздаёт: раздача — тоже запись.
+       and public.optiq_current_role() <> 'sub'
+  );
+$$;
+
+revoke execute on function public.optiq_owns_project(text) from anon, public;
+grant execute on function public.optiq_owns_project(text) to authenticated;
+
+-- Снимки клал и удалял любой вошедший. Регистрация открыта — значит,
+-- кто угодно мог завести почту и стереть снимки со стройки, а это
+-- доказательства к актам. Теперь — только тот, кому выдана организация;
+-- удалять субподрядчику нельзя. Читать по прямой ссылке можно всем, как и
+-- было: снимки открывают с телефона.
+drop policy if exists field_photos_auth_insert on storage.objects;
+create policy field_photos_auth_insert on storage.objects
+  for insert to authenticated
+  with check (bucket_id = 'field-photos' and public.optiq_current_org() is not null);
+
+drop policy if exists field_photos_auth_delete on storage.objects;
+create policy field_photos_auth_delete on storage.objects
+  for delete to authenticated
+  using (bucket_id = 'field-photos'
+         and public.optiq_current_org() is not null
+         and public.optiq_current_role() <> 'sub');
+
+-- Проверено после исправления:
+--   чужой с подделанным user_metadata → доступ не выдаёт, проекта не видит,
+--                                       снимок не кладёт и не удаляет
+--   свой                              → владеет проектом, кладёт и удаляет
+--   субподрядчик                      → доступ не раздаёт, снимки не удаляет
+--   вошедший без организации          → не владеет ничем
+--
+-- Осталось: снимки лежат без организации в пути (journal/…, проект/…),
+-- поэтому вторая организация, появись она, сможет удалить наши. Лечится
+-- папкой организации первым куском пути — как у документов.
