@@ -7,7 +7,7 @@ import {
   CableDrum, FieldPhoto, SpliceRecord, Incident, normalizeRole, WorkRate, Payment,
 } from '@/types/construction';
 import { haversineM } from '@/components/Network/KMeans';
-import { splitRoute, joinRoutes, joinedName, splitNames } from './routeEdit';
+import { splitRoute, joinRoutes, joinedName, splitNames, lineMatch } from './routeEdit';
 import { pointAtDistanceM, type SectionProgress } from './routeProgress';
 
 /** Состояние журнала стройки — Слой 2. */
@@ -926,29 +926,112 @@ export function removePhoto(base: JournalState, id: string): JournalState {
 
 // ── Плановые трассы ──────────────────────────────────────────────────────────
 
+/** Что загрузка плана сделала со счётом трасс — сказать человеку. */
+export interface PlanLoad {
+  state: JournalState;
+  notes: string[];
+  /** Среди заметок есть то, что надо проверить глазами. */
+  warn: boolean;
+}
+
+/** Название то же — без оглядки на регистр и лишние пробелы. */
+function sameTitle(a: string | undefined, b: string | undefined): boolean {
+  const norm = (s: string | undefined) => (s ?? '').trim().toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ');
+  return norm(a) === norm(b);
+}
+
 /**
  * Загрузка плана: трассы с теми же id заменяются, остальные добавляются.
  *
- * Направление счёта переживает повторную загрузку. Файл приходит в
- * порядке проектировщика, и без этого исправленный файл с одной
- * сдвинутой вершиной молча развернул бы счёт обратно — метры, колонна и
- * схема снова пошли бы от села.
+ * Направление счёта переживает повторную загрузку того же файла: файл
+ * приходит в порядке проектировщика, и без этого счёт молча развернулся
+ * бы обратно — метры, колонна и схема снова пошли бы от села.
+ *
+ * Но решаем по самой линии, а не по отметке. Номер линии — это её место
+ * в файле: исправленный файл, присланный по жалобе бригады уже от
+ * магистрали, разворачивать обратно нельзя, а добавленная в файл линия
+ * сдвигает номера — и отметка разворота уехала бы на чужую трассу. Если
+ * концы не сходятся ни так, ни так, линию не трогаем, отметку снимаем и
+ * говорим об этом.
  */
-export function addPlanRoutes(base: JournalState, routes: PlanRoute[]): JournalState {
+export function loadPlanRoutes(base: JournalState, routes: PlanRoute[]): PlanLoad {
   const byId = new Map(base.planRoutes.map((r) => [r.id, r]));
+  const notes: string[] = [];
+  let warn = false;
+  let sectionProgress = base.sectionProgress;
+  const now = new Date().toISOString();
+
   for (const r of routes) {
     const old = byId.get(r.id);
     // Пришедшая уже с отметкой — это не файл, а журнал: её координаты
     // уже развёрнуты, второй раз разворачивать нельзя.
-    const keepTurn = !!old?.reversed && r.reversed === undefined;
-    byId.set(r.id, {
-      ...r,
-      coords: keepTurn ? [...r.coords].reverse() : r.coords,
-      reversed: keepTurn ? true : r.reversed,
-      endsSwapped: r.endsSwapped ?? old?.endsSwapped,
-    });
+    if (!old || r.reversed !== undefined) {
+      byId.set(r.id, { ...r, endsSwapped: r.endsSwapped ?? old?.endsSwapped });
+      continue;
+    }
+
+    const title = r.name || old.name || 'трасса';
+    // Старые координаты лежат в порядке счёта, новые — в порядке файла.
+    const match = lineMatch(old.coords, r.coords);
+    let coords = r.coords;
+    let reversed: true | undefined;
+    if (old.reversed) {
+      if (match === 'flipped') {
+        // Тот же файл или правка вершин: файл снова нарисован от села.
+        coords = [...r.coords].reverse();
+        reversed = true;
+      } else if (match === 'same') {
+        notes.push(`«${title}» пришла уже нарисованной от нужного конца — отметка разворота больше не нужна`);
+      } else {
+        notes.push(`«${title}»: концы не совпали с прежней линией — счёт идёт как в файле, `
+          + 'проверьте, с того ли конца');
+        warn = true;
+      }
+    } else if (match === 'flipped') {
+      notes.push(`«${title}» в новом файле нарисована с другого конца — счёт метров теперь `
+        + 'от другого конца; если это не так, «⇄ Считать с другого конца»');
+      warn = true;
+    }
+
+    // Подписи меняли из-за названия именно этой линии: пришла другая
+    // линия или другое название — отметка ни к чему.
+    let endsSwapped = r.endsSwapped;
+    if (endsSwapped === undefined && old.endsSwapped) {
+      if (match !== 'other' && sameTitle(r.name, old.name)) {
+        endsSwapped = true;
+      } else {
+        notes.push(`«${title}»: подписи концов снова как в названии`);
+        warn = true;
+      }
+    }
+
+    byId.set(r.id, { ...r, coords, reversed, endsSwapped });
+    // Счёт пошёл с другого конца — посчитанные точки колонн вслед за ним.
+    if (lineMatch(old.coords, coords) === 'flipped') {
+      sectionProgress = realignProgress(sectionProgress, r.id, coords);
+    }
   }
-  return { ...base, planRoutes: [...byId.values()], updatedAt: new Date().toISOString() };
+  return {
+    state: { ...base, planRoutes: [...byId.values()], sectionProgress, updatedAt: now },
+    notes,
+    warn,
+  };
+}
+
+export function addPlanRoutes(base: JournalState, routes: PlanRoute[]): JournalState {
+  return loadPlanRoutes(base, routes).state;
+}
+
+/**
+ * Заметки загрузки одной строкой для сообщения после неё.
+ *
+ * Файл на двести линий, где сдвинулось всё, не должен вывалить двести
+ * строк: первые пять называем, остальные — числом.
+ */
+export function planLoadNote(notes: string[]): string {
+  if (notes.length === 0) return '';
+  const rest = notes.length - 5;
+  return ` Направление трасс: ${notes.slice(0, 5).join('; ')}${rest > 0 ? `; и ещё ${rest}` : ''}.`;
 }
 
 /**

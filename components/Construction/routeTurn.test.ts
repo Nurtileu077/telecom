@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { MapArea, PlanRoute, SiteObject, SnpProgress } from '@/types/construction';
 import {
   emptyJournal, addPlanRoutes, reversePlanRoute, swapRouteEnds, restoreShape,
-  updateRouteCoords, realignProgress, type JournalState,
+  updateRouteCoords, realignProgress, loadPlanRoutes, planLoadNote, type JournalState,
 } from './journalStore';
 import {
   routeViews, countFromText, placeNames, directionHint, routeEnds, samePlace,
@@ -128,6 +128,85 @@ describe('разворот трассы', () => {
     const j = addPlanRoutes(emptyJournal(), [route()]);
     expect(j.planRoutes[0].coords).toEqual(FILE_COORDS);
     expect(j.planRoutes[0].reversed).toBeUndefined();
+  });
+});
+
+/**
+ * Повторная загрузка разворачивала пришедшие координаты вслепую — по
+ * одной отметке у трассы с тем же номером. Исправленный файл, присланный
+ * уже от магистрали, система разворачивала обратно, а номер — это место
+ * линии в файле, и отметка уезжала на чужую трассу.
+ */
+describe('повторная загрузка решает по самой линии', () => {
+  const WORK_ORDER: [number, number][] = [...FILE_COORDS].reverse();
+
+  it('тот же файл снова — счёт остаётся развёрнутым, и говорить не о чем', () => {
+    const turned = reversePlanRoute(withRoute(), 'r1', 'И');
+    const load = loadPlanRoutes(turned, [route()]);
+    expect(load.state.planRoutes[0].coords).toEqual(WORK_ORDER);
+    expect(load.state.planRoutes[0].reversed).toBe(true);
+    expect(load.notes).toEqual([]);
+    expect(load.warn).toBe(false);
+  });
+
+  it('тот же файл с поправленной вершиной разворачивается как прежде', () => {
+    const turned = reversePlanRoute(withRoute(), 'r1', 'И');
+    const edited = route({ coords: [[0, 0], [0.0003, 0.005], [0, 0.01]] });
+    const r = loadPlanRoutes(turned, [edited]).state.planRoutes[0];
+    expect(r.reversed).toBe(true);
+    expect(r.coords[0]).toEqual([0, 0.01]);
+  });
+
+  it('исправленный файл, нарисованный уже от магистрали, обратно не разворачивается', () => {
+    const turned = reversePlanRoute(withRoute(), 'r1', 'И');
+    const load = loadPlanRoutes(turned, [route({ coords: WORK_ORDER })]);
+    const r = load.state.planRoutes[0];
+    expect(r.coords).toEqual(WORK_ORDER);
+    expect(r.reversed).toBeUndefined();
+    expect(load.notes[0]).toContain('уже нарисованной от нужного конца');
+    expect(load.warn).toBe(false);
+    // Счёт как шёл от магистрали, так и идёт — точке колонны ехать некуда.
+    expect(load.state.sectionProgress['111']).toEqual(turned.sectionProgress['111']);
+  });
+
+  it('под тем же номером пришла другая линия — её не разворачивают, отметки снимают и говорят', () => {
+    const marked = swapRouteEnds(reversePlanRoute(withRoute(), 'r1', 'И'), 'r1', 'И');
+    const other = route({ name: 'Кенжеколь — Акбеит', coords: [[1, 1], [1, 1.005], [1, 1.01]] });
+    const load = loadPlanRoutes(marked, [other]);
+    const r = load.state.planRoutes[0];
+    expect(r.coords).toEqual(other.coords);
+    expect(r.reversed).toBeUndefined();
+    expect(r.endsSwapped).toBeUndefined();
+    expect(load.warn).toBe(true);
+    expect(load.notes.join(' ')).toContain('концы не совпали с прежней линией');
+    expect(load.notes.join(' ')).toContain('подписи концов снова как в названии');
+  });
+
+  it('подписи наоборот переживают загрузку той же линии под тем же названием', () => {
+    const swapped = swapRouteEnds(withRoute(), 'r1', 'И');
+    const load = loadPlanRoutes(swapped, [route()]);
+    expect(load.state.planRoutes[0].endsSwapped).toBe(true);
+    expect(load.notes).toEqual([]);
+  });
+
+  it('файл перерисован с другого конца без разворота — счёт меняется, колонна вслед, и это сказано', () => {
+    const load = loadPlanRoutes(withRoute(), [route({ coords: WORK_ORDER })]);
+    expect(load.state.planRoutes[0].coords).toEqual(WORK_ORDER);
+    expect(load.warn).toBe(true);
+    expect(load.notes[0]).toContain('нарисована с другого конца');
+    // 300 м теперь от другого конца линии.
+    expect(load.state.sectionProgress['111'].lon).toBeGreaterThan(0.0071);
+    // Поставленная руками точка остаётся, где стоит колонна.
+    expect(load.state.sectionProgress['222']).toEqual(withRoute().sectionProgress['222']);
+  });
+
+  it('сообщение после загрузки называет первые пять, остальные — числом', () => {
+    expect(planLoadNote([])).toBe('');
+    const many = Array.from({ length: 7 }, (_, i) => `«Т${i + 1}»: снято`);
+    const text = planLoadNote(many);
+    expect(text).toContain('«Т5»: снято');
+    expect(text).not.toContain('«Т6»');
+    expect(text).toContain('и ещё 2');
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { splitRoute, joinRoutes, joinedName, splitNames } from './routeEdit';
+import { splitRoute, joinRoutes, joinedName, splitNames, lineMatch } from './routeEdit';
 import { routeLengthM } from './routeProgress';
 
 const LINE: [number, number][] = [[53, 69], [53, 69.05], [53, 69.1]];
@@ -145,5 +145,40 @@ describe('дубль не склеивается сам с собой', () => {
     const one: [number, number][] = [[52, 71], [52, 71.001]];
     const two: [number, number][] = [[52, 71.001], [52, 71.002]];
     expect(joinRoutes(one, two)).toBeTruthy();
+  });
+});
+
+/**
+ * Повторная загрузка решает, разворачивать ли линию снова, по её концам:
+ * номер линии в файле — это её место, а не она сама.
+ */
+describe('та же ли это линия', () => {
+  // LINE ≈ 6,7 км: допуск — 300 м.
+  const back = [...LINE].reverse() as [number, number][];
+
+  it('та же линия в том же порядке — «same», в обратном — «flipped»', () => {
+    expect(lineMatch(LINE, LINE)).toBe('same');
+    expect(lineMatch(LINE, back)).toBe('flipped');
+  });
+
+  it('конец, перенесённый на сотню метров к настоящей врезке, — та же линия', () => {
+    // 0,001° долготы на 53° широты ≈ 67 м.
+    const moved: [number, number][] = [[53, 68.9985], [53, 69.05], [53, 69.1]];
+    expect(lineMatch(LINE, moved)).toBe('same');
+  });
+
+  it('соседняя трасса из того же узла — другая линия', () => {
+    const neighbour: [number, number][] = [[53, 69], [53.05, 69.05], [53.1, 69.1]];
+    expect(lineMatch(LINE, neighbour)).toBe('other');
+  });
+
+  it('петля с совпавшими концами: сторону видно по четверти пути', () => {
+    const loop: [number, number][] = [[53, 69], [53, 69.01], [53.01, 69.01], [53.01, 69], [53, 69]];
+    expect(lineMatch(loop, loop)).toBe('same');
+    expect(lineMatch(loop, [...loop].reverse() as [number, number][])).toBe('flipped');
+  });
+
+  it('из одной точки линии нет — сверять нечего', () => {
+    expect(lineMatch([[53, 69]], LINE)).toBe('other');
   });
 });

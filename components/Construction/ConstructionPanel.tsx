@@ -18,7 +18,7 @@ import {
   hasPendingCorrection, diffEntries, loadJournalRole, saveJournalRole,
   addDeviation, removeDeviation, openDeviations, isDeviationClosed,
   upsertCrew, removeCrew, upsertDelivery, removeDelivery,
-  addPlanRoutes, removePlanSource, planSources, plural, setProgress, setStage,
+  loadPlanRoutes, planLoadNote, removePlanSource, planSources, plural, setProgress, setStage,
   reversePlanRoute, swapRouteEnds,
   addAreas, removeAreaSource, areaSources, setMaterialPrice, upsertDrill,
   upsertObject, removeObject, setSectionProgress, scopeJournal, scopeToContractor,
@@ -505,9 +505,12 @@ export default function ConstructionPanel({
         return;
       }
       let next = base;
-      if (res.routes.length) next = addPlanRoutes(next, res.routes);
+      // Что повторная загрузка сделала со счётом трасс — говорим сразу:
+      // молча снятый разворот всплыл бы через неделю закраской от села.
+      const turns = loadPlanRoutes(next, res.routes);
+      if (res.routes.length) next = turns.state;
       if (res.areas.areas.length) next = addAreas(next, res.areas.areas);
-      persist(next);
+      if (!persist(next)) return;
 
       const parts: string[] = [];
       if (res.routes.length) {
@@ -524,7 +527,11 @@ export default function ConstructionPanel({
       const dropped = res.stats.droppedCoords
         ? ` Не разобрано координат: ${res.stats.droppedCoords}.`
         : '';
-      setSyncNote({ tone: 'ok', text: `Загружено: ${parts.join(', ')}.${dropped}` });
+      const turnNote = planLoadNote(turns.notes);
+      setSyncNote({
+        tone: turns.warn ? 'warn' : 'ok',
+        text: `Загружено: ${parts.join(', ')}.${dropped}${turnNote}`,
+      });
 
       // Точки сами не раскладываем: в одном файле это столбы, в другом —
       // разметка обследования годичной давности. Спрашиваем.

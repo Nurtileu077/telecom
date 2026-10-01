@@ -124,6 +124,52 @@ export function joinRoutes(
   return best;
 }
 
+/**
+ * Та же ли это линия и в какую сторону она теперь нарисована.
+ *
+ * Повторная загрузка файла приходит с теми же номерами линий, но номер —
+ * это место линии в файле, а не сама линия: добавили в файл ещё одну
+ * перед ней, и под номером уже другая трасса. А исправленный файл
+ * проектировщик мог нарисовать уже от магистрали. Решать «разворачивать
+ * ли снова» по одной отметке нельзя — сверяем концы.
+ *
+ * Допуск — десятая часть линии, но не меньше 50 и не больше 300 м:
+ * конец, перенесённый к настоящей точке врезки, остаётся той же линией,
+ * а соседняя трасса из того же узла — нет.
+ */
+export type LineMatch = 'same' | 'flipped' | 'other';
+
+export function lineMatch(prev: [number, number][], next: [number, number][]): LineMatch {
+  if (prev.length < 2 || next.length < 2) return 'other';
+  const lenPrev = routeLengthM(prev);
+  const lenNext = routeLengthM(next);
+  const tol = Math.min(300, Math.max(50, 0.1 * Math.min(lenPrev, lenNext)));
+  const d = (a: [number, number], b: [number, number]) => haversineM(
+    { lat: a[0], lon: a[1] }, { lat: b[0], lon: b[1] },
+  );
+  const p0 = prev[0];
+  const p1 = prev[prev.length - 1];
+  const n0 = next[0];
+  const n1 = next[next.length - 1];
+  const same = d(p0, n0) <= tol && d(p1, n1) <= tol;
+  const flipped = d(p0, n1) <= tol && d(p1, n0) <= tol;
+  if (same && flipped) {
+    // Концы рядом друг с другом — петля или короткий заезд: по концам
+    // сторону не понять, смотрим, где у линий четверть пути.
+    const qPrev = pointAtDistanceM(prev, lenPrev / 4);
+    const qSame = pointAtDistanceM(next, lenNext / 4);
+    const qFlip = pointAtDistanceM(next, (lenNext * 3) / 4);
+    if (!qPrev || !qSame || !qFlip) return 'other';
+    const toSame = haversineM(qPrev, qSame);
+    const toFlip = haversineM(qPrev, qFlip);
+    if (Math.abs(toSame - toFlip) < 1) return 'other';
+    return toSame < toFlip ? 'same' : 'flipped';
+  }
+  if (same) return 'same';
+  if (flipped) return 'flipped';
+  return 'other';
+}
+
 /** Имя склеенной линии: «Зеренда — Серафимовка + Серафимовка — Школа». */
 export function joinedName(a: string, b: string): string {
   const left = (a || '').trim();
