@@ -197,11 +197,21 @@ function endName(part: string, known: Set<string>): string {
 export function labelEnds(label: string, known: Set<string>): { from?: string; to?: string } {
   const raw = label.trim();
   if (!raw) return {};
-  const parts = raw.split(END_SEPARATOR).map((p) => p.trim()).filter((p) => HAS_LETTER.test(p));
+  const pieces = raw.split(END_SEPARATOR).map((p) => p.trim()).filter((p) => HAS_LETTER.test(p));
+  if (pieces.length < 2) return parseEndpoints(raw, known);
+
+  // «Еленовка — альтернативный путь»: часть из одних служебных слов или
+  // цифр — пояснение, а не конец; подписывать ею конец линии нельзя.
+  const parts = pieces.filter((p) => nameWords(p, known)
+    .some((w) => isLineEnd(w) || (!STOP_WORDS.has(w.toLowerCase()) && !/^\d+$/.test(w))));
   if (parts.length >= 2) {
     return { from: endName(parts[0], known), to: endName(parts[parts.length - 1], known) };
   }
-  return parseEndpoints(raw, known);
+  if (parts.length === 0) return {};
+  // Осталось одно место — разбираем его само. Не узнали, начало это или
+  // конец, — считаем началом, как одно село в названии без тире.
+  const one = parseEndpoints(parts[0], known);
+  return one.from || one.to ? one : { from: endName(parts[0], known) };
 }
 
 /**
@@ -424,7 +434,7 @@ export function directionHint(
   const where = startAtEnd
     ? `Счёт начинается в селе «${v.startIn}», а по подписям трасса туда ведёт`
     : `Линия кончается в селе «${v.endIn}», а по подписям трасса оттуда начинается`;
-  return `${where}. Похоже, линию рисовали с другого конца: если бригада идёт`
-    + `${v.from ? ` от «${v.from}»` : ''}, нужен «⇄ Считать с другого конца»; если перепутано`
-    + ' название — «Подписи концов наоборот».';
+  const crew = v.from ? `от «${v.from}»` : 'к селу';
+  return `${where}. Похоже, линию рисовали с другого конца: если бригада идёт ${crew}, `
+    + 'нужен «⇄ Считать с другого конца»; если перепутано название — «Подписи концов наоборот».';
 }

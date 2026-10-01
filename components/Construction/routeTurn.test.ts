@@ -371,6 +371,11 @@ describe('карта и схема называют одни и те же кон
     expect([s.marks[0].label, s.marks[1].label]).toEqual(['Акбеит', 'Кенжеколь']);
   });
 
+  it('пояснение после тире концом не считается', () => {
+    expect(routeEnds(route({ name: 'Еленовка — альтернативный путь' }), new Set()))
+      .toEqual({ from: 'Еленовка' });
+  });
+
   it('название без мест не превращается в подпись обоих концов', () => {
     const s = buildScheme(route({ name: 'Трасса 3' }), [], { places });
     expect([s.marks[0].label, s.marks[1].label]).toEqual(['Начало', 'Конец']);
@@ -411,6 +416,12 @@ describe('линия нарисована от села', () => {
     const turned = reversePlanRoute(withRoute(), 'r1', 'И');
     const v = view(swapRouteEnds(turned, 'r1', 'И'));
     expect(directionHint(v)).toContain('Линия кончается в селе «с. Акбеит»');
+  });
+
+  it('у трассы «до села» без начала в названии подсказка всё равно читается', () => {
+    const v = view(withRoute({ name: 'Путь до Акбеит' }));
+    expect(v.from).toBeUndefined();
+    expect(directionHint(v)).toContain('если бригада идёт к селу, нужен «⇄ Считать с другого конца»');
   });
 
   it('без обводок ничего не утверждает: где село, по названию не угадать', () => {
