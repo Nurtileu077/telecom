@@ -1,6 +1,6 @@
 'use client';
 import { useMemo, useState } from 'react';
-import { Plus, Trash2, Copy, AlertTriangle } from 'lucide-react';
+import { Plus, Trash2, Copy, AlertTriangle, Pencil } from 'lucide-react';
 import {
   PAYMENT_KIND_LABEL, type WorkRate, type Payment, type PaymentKind,
 } from '@/types/construction';
@@ -8,7 +8,8 @@ import type { JournalState } from './journalStore';
 import ExportButton, { type ExportColumn } from '@/components/Layout/ExportButton';
 import {
   payroll, compareContractors, payrollSummary, paymentLines, costPerMeter,
-  PAYABLE_WORKS, rateFor, type PayLine,
+  PAYABLE_WORKS, rateFor, rateStart, brokenRates, checkRate, payableOption,
+  type PayLine, type RateDraft,
 } from './payroll';
 import { useT } from '@/components/Layout/LangProvider';
 
@@ -84,31 +85,36 @@ export default function PayrollView({
     [journal.ground, journal.rates, journal.payments, deviationsBy, from, to],
   );
 
-  function addRate() {
-    const work = window.prompt(
-      `Вид работ (${PAYABLE_WORKS.map((w) => w.key).join(', ')}):`,
-      'бар',
-    );
-    if (work === null) return;
-    const spec = PAYABLE_WORKS.find((w) => w.key === work.trim());
-    if (!spec) { onFlash?.('Такого вида работ нет'); return; }
-    const price = Number((window.prompt(`Цена за 1 ${spec.unit}, ₸:`, '') ?? '').replace(',', '.'));
-    if (!Number.isFinite(price) || price <= 0) return;
-    const fromDate = window.prompt(
-      'С какого числа действует (ГГГГ-ММ-ДД):',
-      new Date().toISOString().slice(0, 10),
-    );
-    if (fromDate === null) return;
-    onAddRate({
-      id: newId('rate'),
-      contractor: current || undefined,
-      work: spec.key,
-      price,
-      unit: spec.unit,
-      from: fromDate.trim(),
-      updatedAt: new Date().toISOString(),
-    });
-    onFlash?.('Расценка добавлена');
+  // Черновик расценки: открыт — значит, человек её сейчас заполняет.
+  const [rateDraft, setRateDraft] = useState<RateDraft | null>(null);
+  const [rateError, setRateError] = useState('');
+  const broken = useMemo(() => brokenRates(journal.rates), [journal.rates]);
+
+  function openRate(r?: WorkRate) {
+    setRateError('');
+    setRateDraft(r
+      ? {
+        id: r.id, work: r.work, price: String(r.price),
+        // Нечитаемую дату не подставляем в календарь: он её всё равно не
+        // покажет, а человек решит, что даты нет вовсе.
+        from: rateStart(r) ?? '',
+        contractor: r.contractor,
+      }
+      : {
+        work: PAYABLE_WORKS[0].key, price: '',
+        from: new Date().toISOString().slice(0, 10),
+        contractor: current || undefined,
+      });
+  }
+
+  function saveRate() {
+    if (!rateDraft) return;
+    const res = checkRate(rateDraft, new Date().toISOString(), () => newId('rate'));
+    if ('error' in res) { setRateError(res.error); return; }
+    onAddRate(res.rate);
+    setRateDraft(null);
+    setRateError('');
+    onFlash?.(rateDraft.id ? 'Расценка исправлена' : 'Расценка добавлена');
   }
 
   function addPayment(kind: PaymentKind) {
@@ -280,7 +286,7 @@ export default function PayrollView({
         )}
 
         <div className="flex gap-1.5 flex-wrap">
-          <button type="button" className="btn btn-ghost text-[11px]" onClick={addRate}>
+          <button type="button" className="btn btn-ghost text-[11px]" onClick={() => openRate()}>
             <Plus size={13} />Расценка
           </button>
           {(['advance', 'deduction', 'payment'] as PaymentKind[]).map((k) => (
@@ -318,34 +324,110 @@ export default function PayrollView({
         </div>
       )}
 
+      {/* Новая или исправляемая расценка */}
+      {rateDraft && (
+        <div className="rounded-lg border border-[var(--accent)]/40 bg-[var(--bg-surface)] p-3 space-y-2">
+          <div className="text-[12.5px] font-semibold text-[var(--text)]">
+            {rateDraft.id ? 'Исправить расценку' : 'Новая расценка'}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <label className="flex flex-col gap-1 sm:col-span-2">
+              <span className="text-[10.5px] text-[var(--text-muted)]">Вид работ</span>
+              <select value={rateDraft.work}
+                      onChange={(e) => setRateDraft({ ...rateDraft, work: e.target.value })}
+                      className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[12px] text-[var(--text)]">
+                {PAYABLE_WORKS.map((w) => (
+                  <option key={w.key} value={w.key}>{payableOption(w.key)}</option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10.5px] text-[var(--text-muted)]">
+                Цена за 1 {PAYABLE_WORKS.find((w) => w.key === rateDraft.work)?.unit ?? 'м'}, ₸
+              </span>
+              <input value={rateDraft.price} inputMode="decimal" autoFocus
+                     onChange={(e) => setRateDraft({ ...rateDraft, price: e.target.value })}
+                     onKeyDown={(e) => { if (e.key === 'Enter') saveRate(); }}
+                     className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[12px] text-[var(--text)] font-mono tabular-nums" />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10.5px] text-[var(--text-muted)]">Действует с</span>
+              <input type="date" value={rateDraft.from}
+                     onChange={(e) => setRateDraft({ ...rateDraft, from: e.target.value })}
+                     className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[12px] text-[var(--text)]" />
+            </label>
+            <label className="flex flex-col gap-1 sm:col-span-2">
+              <span className="text-[10.5px] text-[var(--text-muted)]">Для кого</span>
+              <select value={rateDraft.contractor ?? ''}
+                      onChange={(e) => setRateDraft({ ...rateDraft, contractor: e.target.value || undefined })}
+                      className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[12px] text-[var(--text)]">
+                <option value="">Для всех подрядчиков</option>
+                {[...new Set([...contractors, ...(rateDraft.contractor ? [rateDraft.contractor] : [])])]
+                  .map((c) => <option key={c} value={c}>Только {c}</option>)}
+              </select>
+            </label>
+          </div>
+          {rateError && <div className="text-[11px] text-[var(--danger)]">{rateError}</div>}
+          <div className="flex gap-1.5">
+            <button type="button" className="btn btn-primary text-[11.5px]" onClick={saveRate}>
+              Сохранить
+            </button>
+            <button type="button" className="btn btn-ghost text-[11.5px]"
+                    onClick={() => { setRateDraft(null); setRateError(''); }}>
+              {t('Отмена')}
+            </button>
+          </div>
+          <div className="text-[10.5px] text-[var(--text-muted)]">
+            Смены до этой даты считаются по прежней расценке: договор меняют с
+            какого-то числа, и пересчитывать по нему старые смены нельзя.
+          </div>
+        </div>
+      )}
+
       {/* Расценки */}
       <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-3 space-y-1">
         <div className="text-[12.5px] font-semibold text-[var(--text)]">Расценки</div>
+        {broken.length > 0 && (
+          <div className="flex items-start gap-1.5 text-[11px] text-[var(--warn)]">
+            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+            <span>
+              У {broken.length === 1 ? 'расценки' : `${broken.length} расценок`} не читается дата
+              начала — в расчёт {broken.length === 1 ? 'она не идёт' : 'они не идут'}.
+              Нажмите карандаш и выберите дату в календаре.
+            </span>
+          </div>
+        )}
         {journal.rates.length === 0 ? (
           <div className="text-[11.5px] text-[var(--text-muted)]">
             Расценок нет — начисления считать не из чего.
           </div>
-        ) : journal.rates
-          .sort((a, b) => (b.from || '').localeCompare(a.from || ''))
+        ) : [...journal.rates]
+          .sort((a, b) => (rateStart(b) ?? '').localeCompare(rateStart(a) ?? ''))
           .map((r) => {
-            const spec = PAYABLE_WORKS.find((w) => w.key === r.work);
+            const start = rateStart(r);
             const active = rateFor(journal.rates, r.work, to ?? new Date().toISOString().slice(0, 10),
               r.contractor)?.id === r.id;
             return (
               <div key={r.id} className="flex items-center gap-2 text-[11.5px]">
                 <span className="min-w-0 flex-1 truncate">
                   <span className={active ? 'text-[var(--text)]' : 'text-[var(--text-muted)]'}>
-                    {spec?.label ?? r.work}
+                    {payableOption(r.work)}
                   </span>
-                  <span className="text-[10px] text-[var(--text-muted)]">
-                    {' · с '}{new Date(`${r.from}T00:00:00Z`).toLocaleDateString('ru')}
+                  <span className={`text-[10px] ${start ? 'text-[var(--text-muted)]' : 'text-[var(--warn)]'}`}>
+                    {start
+                      ? ` · с ${new Date(`${start}T00:00:00Z`).toLocaleDateString('ru')}`
+                      : ` · дата «${r.from || 'пусто'}» не читается`}
                     {r.contractor ? ` · ${r.contractor}` : ' · для всех'}
-                    {!active && ' · не действует'}
+                    {start && !active && ' · не действует'}
                   </span>
                 </span>
                 <span className="font-mono tabular-nums text-[var(--text)]">
                   {money(r.price)}/{r.unit}
                 </span>
+                <button type="button" className="btn btn-ghost btn-icon"
+                        title="Исправить расценку" onClick={() => openRate(r)}>
+                  <Pencil size={13} />
+                </button>
                 <button type="button" className="btn btn-ghost btn-icon text-[var(--danger)]"
                         title="Удалить расценку" onClick={() => onRemoveRate(r.id)}>
                   <Trash2 size={13} />

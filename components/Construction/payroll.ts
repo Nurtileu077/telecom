@@ -27,6 +27,50 @@ export const PAYABLE_WORKS: { key: string; label: string; unit: 'м' | 'шт' }[
 
 export const PAYABLE_LABEL = new Map(PAYABLE_WORKS.map((w) => [w.key, w.label]));
 
+/** Вид работ в списке: название и единица — «Переходы ГНБ / ГНП, м». */
+export function payableOption(key: string): string {
+  const w = PAYABLE_WORKS.find((x) => x.key === key);
+  return w ? `${w.label}, ${w.unit}` : key;
+}
+
+/**
+ * Дата начала расценки — как её пишут люди.
+ *
+ * Дату вводили строкой «ГГГГ-ММ-ДД», а люди пишут «01.09.2026». Такая
+ * строка при сравнении оказывалась «раньше» любой даты, и расценка с
+ * сентября ложилась на все смены с начала работ — молча. Принимаем оба
+ * вида, а несуществующий день («31.02.2026») не принимаем вовсе.
+ */
+export function parseRateDate(raw: string | undefined): string | null {
+  const s = (raw ?? '').trim();
+  let y: number; let m: number; let d: number;
+  const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
+  const ru = /^(\d{1,2})[./](\d{1,2})[./](\d{4})$/.exec(s);
+  if (iso) { y = +iso[1]; m = +iso[2]; d = +iso[3]; }
+  else if (ru) { y = +ru[3]; m = +ru[2]; d = +ru[1]; }
+  else return null;
+  if (y < 2000 || y > 2100 || m < 1 || m > 12 || d < 1) return null;
+  const days = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  if (d > days) return null;
+  return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
+/** С какого дня расценка действует; null — дату прочитать нельзя. */
+export function rateStart(r: Pick<WorkRate, 'from'>): string | null {
+  return parseRateDate(r.from);
+}
+
+/**
+ * Расценки, у которых дата не читается.
+ *
+ * В расчёт они не идут: применить такую «с начала времён» — значит
+ * выдумать, с какого числа подрядчику платят по новой цене. Вместо
+ * этого их показываем, чтобы дату поправили.
+ */
+export function brokenRates(rates: WorkRate[]): WorkRate[] {
+  return rates.filter((r) => rateStart(r) === null);
+}
+
 /**
  * Расценка на этот день.
  *
@@ -39,15 +83,61 @@ export function rateFor(
   date: string,
   contractor?: string,
 ): WorkRate | null {
-  const fits = rates.filter((r) => r.work === work
-    && (r.from || '') <= (date || '')
-    && (!r.contractor || r.contractor === contractor));
+  const fits = rates.filter((r) => {
+    const start = rateStart(r);
+    return r.work === work
+      && start !== null && start <= (date || '')
+      && (!r.contractor || r.contractor === contractor);
+  });
   if (fits.length === 0) return null;
   return fits.sort((a, b) => {
     // Своя расценка бьёт общую при любой дате.
     const own = Number(!!b.contractor) - Number(!!a.contractor);
-    return own !== 0 ? own : (b.from || '').localeCompare(a.from || '');
+    return own !== 0 ? own : (rateStart(b) ?? '').localeCompare(rateStart(a) ?? '');
   })[0];
+}
+
+export interface RateDraft {
+  id?: string;
+  work: string;
+  price: string;
+  from: string;
+  /** Пусто — расценка для всех подрядчиков. */
+  contractor?: string;
+}
+
+/**
+ * Проверка расценки перед записью.
+ *
+ * Вид работ выбирают из списка, а не набирают: служебное «drillM» никто
+ * не знает, а «гнб» программа не узнавала и отвечала «такого вида работ
+ * нет». Цена и дата — с ответом, что не так, а не молчаливым «ничего не
+ * произошло».
+ */
+export function checkRate(
+  draft: RateDraft,
+  now: string,
+  newId: () => string,
+): { rate: WorkRate } | { error: string } {
+  const spec = PAYABLE_WORKS.find((w) => w.key === draft.work);
+  if (!spec) return { error: 'Выберите вид работ из списка' };
+  const price = Number(draft.price.replace(/\s|\u00a0/g, '').replace(',', '.'));
+  if (!draft.price.trim() || !Number.isFinite(price) || price <= 0) {
+    return { error: 'Цена — число больше нуля' };
+  }
+  const from = parseRateDate(draft.from);
+  if (!from) return { error: 'Дата не читается — выберите её в календаре' };
+  return {
+    rate: {
+      id: draft.id || newId(),
+      contractor: draft.contractor?.trim() || undefined,
+      work: spec.key,
+      price,
+      unit: spec.unit,
+      from,
+      updatedAt: now,
+    },
+  };
 }
 
 /** Сколько единиц этой работы в смене. */

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   rateFor, workQuantity, payroll, costPerMeter, compareContractors,
+  parseRateDate, rateStart, brokenRates, checkRate, payableOption,
   payrollSummary, paymentLines, PAYABLE_WORKS, moneyBehind,
 } from './payroll';
 import type { DailyWorkEntry, WorkRate, Payment } from '@/types/construction';
@@ -254,5 +255,82 @@ describe('объём вне расценки', () => {
     const manual = [e({ id: 'a', date: '2026-07-28', byMethod: { 'вручную': 100 } })];
     const r = payroll('Дозер', manual, LATE, []);
     expect(r.unpriced).toEqual(['Ручным способом']);
+  });
+});
+
+describe('дата начала расценки', () => {
+  it('«01.09.2026» читается как первое сентября, а не как начало времён', () => {
+    expect(parseRateDate('01.09.2026')).toBe('2026-09-01');
+    expect(parseRateDate('1.9.2026')).toBe('2026-09-01');
+    expect(parseRateDate('2026-09-01')).toBe('2026-09-01');
+  });
+
+  it('несуществующий день и мусор не принимаются', () => {
+    expect(parseRateDate('31.02.2026')).toBeNull();
+    expect(parseRateDate('2026-13-01')).toBeNull();
+    expect(parseRateDate('с сентября')).toBeNull();
+    expect(parseRateDate('')).toBeNull();
+  });
+
+  it('расценка, записанная как «01.09.2026», не ложится на августовские смены', () => {
+    const rates: WorkRate[] = [
+      { id: 'a', work: 'бар', price: 300, unit: 'м', from: '2026-01-01', updatedAt: '' },
+      { id: 'b', work: 'бар', price: 350, unit: 'м', from: '01.09.2026', updatedAt: '' },
+    ];
+    expect(rateFor(rates, 'бар', '2026-08-20')?.id).toBe('a');
+    expect(rateFor(rates, 'бар', '2026-09-02')?.id).toBe('b');
+  });
+
+  it('расценка с нечитаемой датой в расчёт не идёт и называется', () => {
+    const rates: WorkRate[] = [
+      { id: 'x', work: 'бар', price: 350, unit: 'м', from: 'сентябрь', updatedAt: '' },
+    ];
+    expect(rateFor(rates, 'бар', '2026-09-02')).toBeNull();
+    expect(brokenRates(rates).map((r) => r.id)).toEqual(['x']);
+    expect(rateStart(rates[0])).toBeNull();
+  });
+});
+
+describe('расценка из формы', () => {
+  const ok = { work: 'drillM', price: '6 500', from: '2026-09-01', contractor: 'TERRA TECH' };
+  const make = (d: Partial<typeof ok> & { id?: string } = {}) =>
+    checkRate({ ...ok, ...d }, 'T', () => 'new-id');
+
+  it('ГНБ выбирается по названию, служебное имя набирать не нужно', () => {
+    expect(PAYABLE_WORKS.map((w) => payableOption(w.key))).toContain('Переходы ГНБ / ГНП, м');
+    expect(make()).toEqual({
+      rate: {
+        id: 'new-id', contractor: 'TERRA TECH', work: 'drillM', price: 6500,
+        unit: 'м', from: '2026-09-01', updatedAt: 'T',
+      },
+    });
+  });
+
+  it('пустой подрядчик — расценка для всех', () => {
+    const res = make({ contractor: '' });
+    expect('rate' in res && res.rate.contractor).toBeUndefined();
+  });
+
+  it('исправление сохраняет ту же расценку, а не заводит вторую', () => {
+    const res = make({ id: 'r7' });
+    expect('rate' in res && res.rate.id).toBe('r7');
+  });
+
+  it('на ошибку отвечает словами, а не молчанием', () => {
+    expect(make({ work: 'гнб' })).toEqual({ error: 'Выберите вид работ из списка' });
+    expect(make({ price: '0' })).toEqual({ error: 'Цена — число больше нуля' });
+    expect(make({ price: '' })).toEqual({ error: 'Цена — число больше нуля' });
+    expect(make({ from: '31.02.2026' }))
+      .toEqual({ error: 'Дата не читается — выберите её в календаре' });
+  });
+
+  it('дату, набранную по-русски, переводит в общий вид', () => {
+    const res = make({ from: '01.09.2026' });
+    expect('rate' in res && res.rate.from).toBe('2026-09-01');
+  });
+
+  it('цену с запятой и неразрывным пробелом понимает', () => {
+    const res = make({ price: '1\u00a0200,5' });
+    expect('rate' in res && res.rate.price).toBe(1200.5);
   });
 });
