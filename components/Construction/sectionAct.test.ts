@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeSectionAct, entriesOfSection, deviationsOfSection, actKm,
+  unmarkedActFields, DEFAULT_ACT_MANUAL,
 } from './sectionAct';
 import type { DailyWorkEntry, Deviation } from '@/types/construction';
 
@@ -203,5 +204,14 @@ describe('формат объёмов для акта', () => {
     expect(actKm(11100)).toBe('11,100');
     expect(actKm(0)).toBe('0,000');
     expect(actKm(250)).toBe('0,250');
+  });
+});
+
+describe('что в бланке не отмечено', () => {
+  it('рекультивацию и покрытия называет, пока их не выбрали', () => {
+    expect(unmarkedActFields(DEFAULT_ACT_MANUAL))
+      .toEqual(['рекультивация', 'восстановление покрытий']);
+    expect(unmarkedActFields({ recultivation: 'не выполнена', pavement: 'не требуется' }))
+      .toEqual([]);
   });
 });

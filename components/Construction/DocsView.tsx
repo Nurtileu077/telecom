@@ -15,6 +15,7 @@ import {
 } from './periodReports';
 import { actDocHtml, actFileName, ACT_DOC_CSS, esc, type ActKind } from './actDocument';
 import { prepareSectionAct, sectionActDocInput, actFieldsOf } from './actInput';
+import { unmarkedActFields } from './sectionAct';
 import { effectiveProgress } from './stageDerive';
 import {
   hiddenWorksPage, hiddenWorksFile, remarksFromDeviations, remarksPage,
@@ -296,6 +297,9 @@ export default function DocsView({
     try {
       const JSZip = (await import('jszip')).default;
       const zip = new JSZip();
+      // Что в актах осталось неотмеченным: архив уходит в почту целиком, и
+      // пустую графу рекультивации там заметят уже у заказчика.
+      const unmarked: string[] = [];
       // В пакет кладём то же, что и по одному: переключатель формата
       // общий, иначе в архиве окажется не то, что человек выбрал.
       // В архив кладём Word, даже когда по одному сохраняют в PDF: снимок
@@ -330,6 +334,8 @@ export default function DocsView({
         const prep = prepareSectionAct(journal, uchastok);
         if (prep.entries.length === 0 || prep.totals.variants.length === 0) continue;
         const fields = prep.fields;
+        const gaps = unmarkedActFields(fields);
+        if (gaps.length) unmarked.push(`${uchastok} — ${gaps.join(', ')}`);
         // Область / район / участок — так их и ищут потом в почте.
         const where = [prep.oblast, prep.rayon, uchastok]
           .filter(Boolean)
@@ -368,7 +374,9 @@ export default function DocsView({
 
       const blob = await zip.generateAsync({ type: 'blob' });
       downloadBlob(`Пакет документов ${from}—${to}.zip`, blob);
-      onFlash?.('Пакет собран');
+      onFlash?.(unmarked.length
+        ? `Пакет собран. В актах не отмечено: ${unmarked.join('; ')}`
+        : 'Пакет собран');
     } catch (err) {
       onFlash?.(errorLine(err, 'собрать пакет'));
     } finally {

@@ -85,9 +85,23 @@ describe('таблица акта — ровно по бланку', () => {
   });
 
   it('рекультивация и покрытия пишутся с заглавной, как в бланке', () => {
-    const rows = actRows(t, main, DEFAULT_ACT_MANUAL);
+    const rows = actRows(t, main, {
+      ...DEFAULT_ACT_MANUAL, recultivation: 'выполнена', pavement: 'не предусмотрено проектом',
+    });
     expect(row(rows, 'recult').value).toBe('Выполнена');
     expect(row(rows, 'pavement').value).toBe('Не предусмотрено проектом');
+  });
+
+  it('рекультивация без отметки не становится «выполнена»', () => {
+    const rows = actRows(t, main, DEFAULT_ACT_MANUAL);
+    expect(row(rows, 'recult').value).toBe('');
+    expect(row(rows, 'pavement').value).toBe('');
+    const doc = actDocHtml({
+      kind: 'OSR', uchastok: 'Еленовка', totals: t, variants: t.variants,
+      fields: DEFAULT_ACT_MANUAL,
+    });
+    expect(doc).not.toContain('Выполнена');
+    expect(doc).not.toContain('Не предусмотрено проектом');
   });
 });
 

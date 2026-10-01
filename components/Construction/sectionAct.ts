@@ -115,13 +115,34 @@ export const ACT_NEXT_WORKS_DEFAULT = 'Задувка волоконно-опт�
 
 export const ACT_GEN_CONTRACTOR_DEFAULT = 'АО «Транстелеком»';
 
+/**
+ * Постоянные строки бланка — и только они.
+ *
+ * Рекультивации и покрытий здесь нет намеренно. Раньше акт выходил с
+ * «Рекультивация: выполнена», хотя этого никто не отмечал: подставлялось
+ * по умолчанию. Заказчик подписывает акт, а потом приезжает на
+ * неразровненную траншею — и спрашивает, кто это написал. Пока человек
+ * не выбрал, графа остаётся пустой и видна как незаполненная.
+ */
 export const DEFAULT_ACT_MANUAL: SectionActManual = {
-  recultivation: 'выполнена',
-  pavement: 'не предусмотрено проектом',
   genContractor: ACT_GEN_CONTRACTOR_DEFAULT,
   materials: ACT_MATERIALS_DEFAULT,
   nextWorks: ACT_NEXT_WORKS_DEFAULT,
 };
+
+/**
+ * Что в бланке ещё не отмечено человеком.
+ *
+ * Рекультивацию и покрытия система знать не может — их видят на месте.
+ * Пустую графу в акте легко не заметить, поэтому называем её вслух
+ * перед тем, как акт уйдёт на подпись.
+ */
+export function unmarkedActFields(fields: SectionActManual): string[] {
+  const out: string[] = [];
+  if (!fields.recultivation) out.push('рекультивация');
+  if (!fields.pavement) out.push('восстановление покрытий');
+  return out;
+}
 
 /** Считается из журнала. */
 export interface SectionActTotals {

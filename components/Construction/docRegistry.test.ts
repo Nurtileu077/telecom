@@ -8,6 +8,7 @@ const FIELDS: Record<string, SectionActManual> = {
   'Зеренда — Серафимовка': {
     actNumber: 'АСР-2026-0012', actDate: '2026-07-25', city: 'Кокшетау',
     objectName: 'ВОЛС до с. Серафимовка',
+    recultivation: 'выполнена', pavement: 'не требуется',
   },
   'Щучинск — Бурабай': { actNumber: 'АСР-2026-0007', actDate: '2026-07-20' },
   'Аккол — Урюпинка': { actNumber: 'ОСР-2026-0003' },
@@ -76,6 +77,16 @@ describe('actRegistry', () => {
     expect(full?.missing).toEqual([]);
     const partial = rows.find((r) => r.uchastok === 'Щучинск — Бурабай');
     expect(partial?.missing).toContain('город');
+  });
+
+  it('акт без отметки о рекультивации не считается оформленным', () => {
+    const rows = actRegistry({
+      'Еленовка': {
+        actNumber: 'АСР-2026-0001', actDate: '2026-09-20', city: 'Астана',
+        objectName: 'ВОЛС до с. Еленовка', pavement: 'не требуется',
+      },
+    });
+    expect(rows[0].missing).toEqual(['рекультивация']);
   });
 
   it('свежие акты сверху', () => {

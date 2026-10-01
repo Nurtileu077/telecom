@@ -95,3 +95,20 @@ describe('акт по участку — один для «Закрытия» и
     expect(p.totals.totalM).toBe(3000);
   });
 });
+
+describe('рекультивация в пакете и в «Закрытии»', () => {
+  it('без отметки графа пустая в обоих местах, а не «выполнена» в одном из них', () => {
+    const p = prepareSectionAct(journal, 'Еленовка');
+    expect(p.fields.recultivation).toBeUndefined();
+    const html = actDocHtml(sectionActDocInput(p, 'OSR'));
+    expect(html).not.toMatch(/Выполнена/);
+  });
+
+  it('отмеченная рекультивация уходит в акт как отмечена', () => {
+    const p = prepareSectionAct({
+      ...journal,
+      actFields: { 'Еленовка': { actNumber: 'АСР-2026-0001', recultivation: 'не выполнена' } },
+    }, 'Еленовка');
+    expect(actDocHtml(sectionActDocInput(p, 'OSR'))).toContain('Не выполнена');
+  });
+});

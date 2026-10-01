@@ -2,7 +2,9 @@
 import { useState, useMemo } from 'react';
 import { Printer, AlertTriangle, FileCheck2, FileDown } from 'lucide-react';
 import { JournalState } from './journalStore';
-import { SectionActManual, Recultivation, PavementRestore } from './sectionAct';
+import {
+  SectionActManual, Recultivation, PavementRestore, unmarkedActFields,
+} from './sectionAct';
 import {
   actDocBody, actDocHtml, actFileName, ACT_DOC_CSS,
   ActKind, ACT_KIND_SPECS, DOC_MIME, ActDocInput,
@@ -200,6 +202,18 @@ export default function SectionClosing({ journal, onChangeFields }: Props) {
         </div>
       )}
 
+      {/* Пустая графа в подписанном акте — та же неправда, что и выдуманная:
+          заказчик решит, что её забыли, или впишет своё. Называем вслух. */}
+      {!nothingToSign && unmarkedActFields(fields).length > 0 && (
+        <div className="no-print flex items-start gap-2 p-2.5 rounded-lg border border-[var(--warn)]/50 bg-[var(--warn)]/10 text-[12px] text-[var(--text)]">
+          <AlertTriangle size={15} className="shrink-0 mt-0.5" style={{ color: 'var(--warn)' }} />
+          <span>
+            Не отмечено: {unmarkedActFields(fields).join(', ')}. В акте эти графы
+            останутся пустыми — система их не знает, отметьте в полях бланка ниже.
+          </span>
+        </div>
+      )}
+
       {/* Ручные поля — их нет в дневном отчёте */}
       <details className="no-print rounded-lg border border-[var(--border)] bg-[var(--bg-surface)]">
         <summary className="px-3 py-2 text-[11.5px] text-[var(--text-muted)] cursor-pointer hover:text-[var(--text)]">
@@ -237,15 +251,19 @@ export default function SectionClosing({ journal, onChangeFields }: Props) {
             <Num label="Шаровых маркеров, шт" value={fields.ballMarkers} onChange={(v) => setField('ballMarkers', v)} />
             <label className="flex flex-col gap-1">
               <span className="text-[10.5px] text-[var(--text-muted)]">Рекультивация</span>
-              <select value={fields.recultivation} onChange={(e) => setField('recultivation', e.target.value as Recultivation)}
+              <select value={fields.recultivation ?? ''}
+                      onChange={(e) => setField('recultivation', (e.target.value || undefined) as Recultivation | undefined)}
                       className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1 text-[11px] text-[var(--text)]">
+                <option value="">— не отмечено —</option>
                 {RECULT.map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
             </label>
             <label className="flex flex-col gap-1">
               <span className="text-[10.5px] text-[var(--text-muted)]">А/бетонные покрытия</span>
-              <select value={fields.pavement} onChange={(e) => setField('pavement', e.target.value as PavementRestore)}
+              <select value={fields.pavement ?? ''}
+                      onChange={(e) => setField('pavement', (e.target.value || undefined) as PavementRestore | undefined)}
                       className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1 text-[11px] text-[var(--text)]">
+                <option value="">— не отмечено —</option>
                 {PAVEMENT.map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
             </label>
