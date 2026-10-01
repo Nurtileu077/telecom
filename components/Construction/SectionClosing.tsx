@@ -1,16 +1,14 @@
 'use client';
 import { useState, useMemo } from 'react';
 import { Printer, AlertTriangle, FileCheck2, FileDown } from 'lucide-react';
-import { JournalState, documentContractor } from './journalStore';
-import {
-  computeSectionAct, entriesOfSection, deviationsOfSection,
-  SectionActManual, DEFAULT_ACT_MANUAL, Recultivation, PavementRestore,
-} from './sectionAct';
+import { JournalState } from './journalStore';
+import { SectionActManual, Recultivation, PavementRestore } from './sectionAct';
 import {
   actDocBody, actDocHtml, actFileName, ACT_DOC_CSS,
   ActKind, ACT_KIND_SPECS, DOC_MIME, ActDocInput,
   fixationDocHtml, fixationFileName,
 } from './actDocument';
+import { prepareSectionAct, sectionActDocInput } from './actInput';
 import { supervisionDocHtml, supervisionFileName } from './supervisionLog';
 
 /**
@@ -46,35 +44,25 @@ export default function SectionClosing({ journal, onChangeFields }: Props) {
   const [uchastok, setUchastok] = useState(sections[0] ?? '');
   const [kind, setKind] = useState<ActKind>('OSR');
 
-  const entries = useMemo(() => entriesOfSection(journal.ground, uchastok), [journal.ground, uchastok]);
-  const devs = useMemo(() => deviationsOfSection(journal.deviations, uchastok), [journal.deviations, uchastok]);
-  const totals = useMemo(() => computeSectionAct(entries, devs), [entries, devs]);
-
-  const fields: SectionActManual = { ...DEFAULT_ACT_MANUAL, ...(journal.actFields?.[uchastok] ?? {}) };
+  // Участок собирается тем же кодом, что и в пакете документов: иначе
+  // заказчик получает два разных акта на одно село.
+  const prep = useMemo(
+    () => prepareSectionAct(journal, uchastok),
+    [journal, uchastok],
+  );
+  const { entries, deviations: devs, totals, fields } = prep;
   const setField = <K extends keyof SectionActManual>(k: K, v: SectionActManual[K]) => {
     onChangeFields(uchastok, { ...fields, [k]: v });
   };
 
   const first = entries[0];
-  const performerName = totals.performers[0] ?? first?.contractor ?? '';
-  const docContractor = performerName
-    ? documentContractor(journal.contractors, performerName)
-    : undefined;
+  const performerName = prep.performer;
+  const docContractorName = prep.contractor;
 
   // Пустой акт хуже отсутствующего: его подпишут не глядя.
   const nothingToSign = totals.variants.length === 0;
 
-  const docInput = (k: ActKind): ActDocInput => ({
-    kind: k,
-    uchastok,
-    oblast: first?.oblast,
-    rayon: first?.rayon,
-    contractor: docContractor?.fullName ?? docContractor?.name,
-    performer: performerName,
-    dateFrom: totals.dateFrom,
-    dateTo: totals.dateTo,
-    totals, variants: totals.variants, fields,
-  });
+  const docInput = (k: ActKind): ActDocInput => sectionActDocInput(prep, k);
 
   /**
    * Акт файлом. Word-совместимый HTML: открывается как документ, правится
@@ -112,7 +100,7 @@ export default function SectionClosing({ journal, onChangeFields }: Props) {
       uchastok,
       oblast: first?.oblast,
       rayon: first?.rayon,
-      contractor: docContractor?.fullName ?? docContractor?.name,
+      contractor: docContractorName,
       performer: performerName,
       fromPoint: fields.volsFrom,
       toPoint: fields.volsTo,
@@ -132,7 +120,7 @@ export default function SectionClosing({ journal, onChangeFields }: Props) {
       deviations: devs,
       from: totals.dateFrom,
       to: totals.dateTo,
-      contractor: docContractor?.fullName ?? docContractor?.name,
+      contractor: docContractorName,
       oblast: first?.oblast,
       rayon: first?.rayon,
       uchastok,

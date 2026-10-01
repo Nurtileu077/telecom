@@ -14,7 +14,7 @@ import {
   snpReadiness, readinessDocHtml, weekRange,
 } from './periodReports';
 import { actDocHtml, actFileName, ACT_DOC_CSS, esc, type ActKind } from './actDocument';
-import { computeSectionAct } from './sectionAct';
+import { prepareSectionAct, sectionActDocInput, actFieldsOf } from './actInput';
 import { effectiveProgress } from './stageDerive';
 import {
   hiddenWorksPage, hiddenWorksFile, remarksFromDeviations, remarksPage,
@@ -322,16 +322,16 @@ export default function DocsView({
       // заполненных полей в пакет не кладём: пустой бланк в архиве
       // выглядит готовым документом, а он не готов.
       for (const uchastok of report.sections.map((s) => s.uchastok)) {
-        const fields = journal.actFields?.[uchastok];
-        if (!fields?.actNumber) continue;
-        const rows = journal.ground.filter(
-          (x) => x.uchastok.trim().toLowerCase() === uchastok.trim().toLowerCase(),
-        );
-        if (rows.length === 0) continue;
-        const totals = computeSectionAct(rows, journal.deviations);
-        const sample = rows[0];
+        if (!actFieldsOf(journal.actFields, uchastok)?.actNumber) continue;
+        // Акт собирается тем же кодом, что и в «Закрытии»: со своими
+        // отклонениями, своим исполнителем и теми же полями бланка.
+        // Раньше сюда шли отклонения всего журнала, и участок худел на
+        // чужую скалу, а исполнитель оставался прочерком.
+        const prep = prepareSectionAct(journal, uchastok);
+        if (prep.entries.length === 0 || prep.totals.variants.length === 0) continue;
+        const fields = prep.fields;
         // Область / район / участок — так их и ищут потом в почте.
-        const where = [sample.oblast, sample.rayon, uchastok]
+        const where = [prep.oblast, prep.rayon, uchastok]
           .filter(Boolean)
           .map((x) => String(x).replace(/[\\/:*?"<>|]+/g, ' ').trim())
           .join('/');
@@ -353,18 +353,7 @@ export default function DocsView({
           : null;
 
         for (const kind of ['ASR', 'OSR'] as ActKind[]) {
-          const body = actDocHtml({
-            kind,
-            uchastok,
-            fields,
-            totals,
-            variants: totals.variants,
-            oblast: sample.oblast,
-            rayon: sample.rayon,
-            contractor,
-            dateFrom: totals.dateFrom,
-            dateTo: totals.dateTo,
-          });
+          const body = actDocHtml(sectionActDocInput(prep, kind));
           await put(
             folder,
             actFileName(kind, uchastok, fields.actDate),
