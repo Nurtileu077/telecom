@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildScheme, schemeSvg, schemeDocHtml, schemeDocPage, schemeFileName,
   schemeAttachmentHtml, withSchemeAttached, schemeObjectsFor, displacedMarks,
-  spanMismatches, spanTolerance,
+  spanMismatches, spanTolerance, unassignedNote,
 } from './asBuilt';
 import type { SiteObject, PlanRoute } from '@/types/construction';
 import { formatMeters } from './mapDecor';
@@ -439,23 +439,25 @@ describe('schemeObjectsFor', () => {
     obj({ lat: 0, lon: 0.006, name: 'Муфта Карабулак', uchastok: 'Карабулак' }),
     obj({ lat: 0, lon: 0.008, name: 'ККС без участка', kind: 'kks' }),
   ];
+  // Трасса, у которой участок записан в папке KML.
+  const inFolder = (uchastok: string) => ({ name: 'Трасса 1', uchastok });
 
   it('участок без своих объектов не получает чужие', () => {
-    expect(schemeObjectsFor(objects, 'Жанатурмыс').own).toEqual([]);
+    expect(schemeObjectsFor(objects, inFolder('Жанатурмыс')).own).toEqual([]);
   });
 
   it('своё узнаёт по названию, как бы его ни записали', () => {
-    const { own } = schemeObjectsFor(objects, 'АКСУ');
+    const { own } = schemeObjectsFor(objects, inFolder('АКСУ'));
     expect(own.map((o) => o.name)).toEqual(['Муфта Аксу']);
   });
 
-  it('участок без названия не забирает ничьи объекты', () => {
-    expect(schemeObjectsFor(objects, '').own).toEqual([]);
+  it('трасса без названия и без трассы не забирает ничьи объекты', () => {
+    expect(schemeObjectsFor(objects, { name: '' }).own).toEqual([]);
     expect(schemeObjectsFor(objects, undefined).own).toEqual([]);
   });
 
   it('объекты без участка в схему не берёт, но называет те, что у линии', () => {
-    const { own, unassigned } = schemeObjectsFor(objects, 'Аксу');
+    const { own, unassigned } = schemeObjectsFor(objects, inFolder('Аксу'));
     const s = buildScheme(route(), own, { unassigned });
     expect(s.marks.map((m) => m.label)).not.toContain('ККС без участка');
     expect(s.unassigned).toEqual(['ККС без участка']);
@@ -571,5 +573,61 @@ describe('пролёт по замеру в схеме', () => {
   it('пустой или нулевой замер не считается замером', () => {
     const s = buildScheme(route(), [obj({ lat: 0, lon: 0.005, name: 'М', spanM: 0 })]);
     expect(s.spans.some((x) => x.measured)).toBe(false);
+  });
+});
+
+/**
+ * Трасса в KML без папки — ключом схемы становилось её имя, «ОМ —
+ * Акбеит». Человек делал, что просила оговорка, ставил муфте участок
+ * «Акбеит» из подсказки — и муфта пропадала из схемы совсем: ни в
+ * своих, ни в «без участка», а лист писал «Объектов участка нет».
+ */
+describe('объекты трассы без папки', () => {
+  const plain: PlanRoute = { ...route(), name: 'ОМ — Акбеит', uchastok: undefined, folder: undefined };
+  const mufta = (uchastok?: string) => obj({ lat: 0, lon: 0.005, name: 'Муфта №1', uchastok });
+
+  it('муфта с участком «Акбеит» попадает в схему трассы «ОМ — Акбеит»', () => {
+    const { own } = schemeObjectsFor([mufta('Акбеит')], plain);
+    const s = buildScheme(plain, own);
+    expect(s.marks.map((m) => m.label)).toContain('Муфта №1');
+    expect(schemeDocHtml({ scheme: s })).not.toContain('Объектов участка в журнале нет');
+  });
+
+  it('участок, как его пишут в сменах, — «сущ. ОМ - Акбеит» — тоже свой', () => {
+    expect(schemeObjectsFor([mufta('сущ. ОМ - Акбеит')], plain).own).toHaveLength(1);
+    expect(schemeObjectsFor([mufta('с. Акбеит')], plain).own).toHaveLength(1);
+  });
+
+  it('похожее название соседа своим не становится', () => {
+    const { own, others } = schemeObjectsFor([mufta('Акбеиттау')], plain);
+    expect(own).toEqual([]);
+    expect(others).toHaveLength(1);
+  });
+
+  it('объект чужого участка на самой линии не пропадает молча — его называют на экране', () => {
+    const { own, others } = schemeObjectsFor([mufta('Акбейт')], plain);
+    const s = buildScheme(plain, own, { others });
+    expect(s.marks.map((m) => m.label)).not.toContain('Муфта №1');
+    expect(s.foreign).toEqual(['Муфта №1 (участок «Акбейт»)']);
+    // В лист заказчику это не идёт: там только то, что к схеме относится.
+    expect(schemeDocHtml({ scheme: s })).not.toContain('Акбейт');
+  });
+
+  it('чужой объект в стороне от линии не перечисляется — это соседняя трасса', () => {
+    const far = obj({ lat: 0.001, lon: 0.005, name: 'Муфта соседей', uchastok: 'Кенжеколь' });
+    const { own, others } = schemeObjectsFor([far], plain);
+    expect(buildScheme(plain, own, { others }).foreign).toEqual([]);
+  });
+
+  it('оговорка называет участок, который надо поставить', () => {
+    const { own, unassigned } = schemeObjectsFor([mufta()], plain);
+    const s = buildScheme(plain, own, { unassigned, section: 'сущ. ОМ - Акбеит' });
+    expect(unassignedNote(s)).toBe(
+      'У линии есть объекты без участка: Муфта №1. В схему не взяты — '
+      + 'укажите у них участок «сущ. ОМ - Акбеит».',
+    );
+    expect(schemeDocHtml({ scheme: s })).toContain('укажите у них участок «сущ. ОМ - Акбеит»');
+    // И с этим участком объект действительно попадает в схему.
+    expect(schemeObjectsFor([mufta('сущ. ОМ - Акбеит')], plain).own).toHaveLength(1);
   });
 });

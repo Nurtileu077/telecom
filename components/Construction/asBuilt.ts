@@ -5,8 +5,8 @@ import { nearestOnRoute } from './measureTool';
 import { routeLengthM } from './routeProgress';
 import { formatMeters } from './mapDecor';
 import { term, type Bilingual, type TermPair } from './bilingual';
-import { normName } from './areaImport';
-import { routeEnds } from './routeStyle';
+import { routeEnds, placeTokens } from './routeStyle';
+import { sectionMatchesRoute } from './routeSection';
 
 /**
  * Исполнительная схема.
@@ -109,6 +109,15 @@ export interface Scheme {
    * потерять свою. Называем и просим указать участок.
    */
   unassigned: string[];
+  /** Какой участок им указать — тот, с которым они попадут в эту схему. */
+  section?: string;
+  /**
+   * Объекты других участков, стоящие на самой линии: «Муфта 7 (участок
+   * «Акбейт»)». В схему не идут — это может быть стык с соседом, — но и
+   * пропадать молча не должны: опечатка в участке иначе выглядит как
+   * «объектов нет». Только для экрана, в лист заказчику не пишутся.
+   */
+  foreign: string[];
 }
 
 export interface SchemeOptions {
@@ -118,6 +127,10 @@ export interface SchemeOptions {
   to?: string;
   /** Объекты без участка: в схему не берём, но называем те, что у линии. */
   unassigned?: SiteObject[];
+  /** Участок, который подсказать объектам без участка (`sectionForRoute`). */
+  section?: string;
+  /** Объекты других участков: называем те, что стоят на самой линии. */
+  others?: SiteObject[];
   /**
    * Сёла журнала (`placeNames`): по ним узнаём концы в названии трассы.
    * Те же, что у карты, — иначе одно название разберётся по-разному.
@@ -126,20 +139,32 @@ export interface SchemeOptions {
 }
 
 /**
- * Какие объекты идут в схему участка.
+ * Какие объекты идут в схему трассы.
  *
- * Только свои. Раньше участок без своих объектов получал в схему все
- * объекты журнала, и чужие муфты вставали на его трассу с правдоподобным
- * метражом — заказчик подписывал схему с отметками соседнего села.
+ * Только своего участка, и узнаём его тем же правилом, по которому смены
+ * участка находят свою трассу: участок объекта сверяется с участком,
+ * папкой и именем трассы (`sectionMatchesRoute`). Раньше сверяли точным
+ * совпадением с участком или именем, и муфта «Акбеит» на трассе «ОМ —
+ * Акбеит» без папки не попадала ни в свои, ни в «без участка» — молча
+ * пропадала из схемы, а лист писал «Объектов участка в журнале нет».
+ *
+ * Чужие по-прежнему не берём: участок без своих объектов когда-то
+ * получал в схему все объекты журнала, и заказчик подписывал отметки
+ * соседнего села.
  */
 export function schemeObjectsFor(
   objects: SiteObject[],
-  uchastok: string | undefined,
-): { own: SiteObject[]; unassigned: SiteObject[] } {
-  const key = normName(uchastok ?? '');
-  const own = key ? objects.filter((o) => normName(o.uchastok ?? '') === key) : [];
-  const unassigned = objects.filter((o) => !normName(o.uchastok ?? ''));
-  return { own, unassigned };
+  route: Pick<PlanRoute, 'name' | 'uchastok' | 'folder'> | null | undefined,
+): { own: SiteObject[]; unassigned: SiteObject[]; others: SiteObject[] } {
+  const own: SiteObject[] = [];
+  const unassigned: SiteObject[] = [];
+  const others: SiteObject[] = [];
+  for (const o of objects) {
+    if (placeTokens(o.uchastok).length === 0) unassigned.push(o);
+    else if (route && sectionMatchesRoute(o.uchastok, route)) own.push(o);
+    else others.push(o);
+  }
+  return { own, unassigned, others };
 }
 
 /**
@@ -185,6 +210,16 @@ export function buildScheme(
     const hit = nearestOnRoute({ lat: o.lat, lon: o.lon }, route.coords);
     if (!hit || hit.deviationM > maxOffset) continue;
     unassigned.push(o.name || SITE_OBJECT_SPECS[o.kind].label);
+  }
+
+  // Чужие — только те, что на самой линии, в пределах погрешности
+  // телефона: дальше это соседняя трасса, и перечислять её муфты — шум.
+  const foreign: string[] = [];
+  for (const o of opts.others ?? []) {
+    if (!Number.isFinite(o.lat) || !Number.isFinite(o.lon)) continue;
+    const hit = nearestOnRoute({ lat: o.lat, lon: o.lon }, route.coords);
+    if (!hit || hit.deviationM > OFFSET_NOTE_M) continue;
+    foreign.push(`${o.name || SITE_OBJECT_SPECS[o.kind].label} (участок «${(o.uchastok ?? '').trim()}»)`);
   }
 
   // Концы трассы — всегда отметки: с них схему и читают. Подписи — те
@@ -241,7 +276,21 @@ export function buildScheme(
   }
 
   const chainTotalM = marks.length ? marks[marks.length - 1].chainM : 0;
-  return { route: route.name, totalM, marks, spans, chainTotalM, skipped, unassigned };
+  return {
+    route: route.name, totalM, marks, spans, chainTotalM, skipped, unassigned, foreign,
+    section: opts.section?.trim() || undefined,
+  };
+}
+
+/**
+ * Оговорка про объекты без участка — с тем участком, который им указать.
+ *
+ * «Укажите у них участок» без названия отправляло человека гадать, и
+ * угаданное («Акбеит» вместо имени трассы) объект в схему не возвращало.
+ */
+export function unassignedNote(s: Pick<Scheme, 'unassigned' | 'section'>): string {
+  return `У линии есть объекты без участка: ${s.unassigned.join('; ')}. В схему не взяты — `
+    + `укажите у них участок${s.section ? ` «${s.section}»` : ''}.`;
 }
 
 /** Пролёты по замеру, которые спорят с координатами. */
@@ -305,8 +354,7 @@ function schemeNotes(s: Scheme, full: boolean): string {
       + (full ? ' Проверьте координаты — на схему они не попали.' : '') + '</p>');
   }
   if (s.unassigned.length) {
-    out.push(`<p class="warn">У линии есть объекты без участка: ${esc(s.unassigned.join('; '))}. `
-      + 'В схему не взяты — укажите у них участок.</p>');
+    out.push(`<p class="warn">${esc(unassignedNote(s))}</p>`);
   }
   const mismatched = spanMismatches(s);
   if (mismatched.length) {

@@ -13,8 +13,8 @@ import {
 } from './journalStore';
 import PhotoAttach from './PhotoAttach';
 import { photosOf } from './photoStore';
-import { advanceAlong, routeForSection } from './routeProgress';
-import { normName } from './areaImport';
+import { advanceAlong } from './routeProgress';
+import { routeOfSection } from './routeSection';
 import { checkEntry } from './entryChecks';
 import type { LatLon } from './measureTool';
 import { measureShift, describeShiftMeasure } from './shiftMeasure';
@@ -281,14 +281,13 @@ export default function DailyEntryForm({
    * сдвинулись по линии на столько-то. Система считает и спрашивает,
    * человек подтверждает или поправляет.
    */
-  const sectionRoute = useMemo(() => {
-    const key = normName(uchastok);
-    if (!key) return null;
-    return routeForSection(journal.planRoutes, (r) => {
-      const fields = [r.uchastok, r.folder, r.name].filter(Boolean) as string[];
-      return fields.some((f) => normName(f) === key || normName(f).includes(key));
-    });
-  }, [journal.planRoutes, uchastok]);
+  // Правило одно с исполнительной схемой и приложением к акту: метры
+  // участка и его схема должны лечь на одну и ту же линию. Подстрокой
+  // больше не сверяем — «Аксу» сидит внутри «Аксуат».
+  const sectionRoute = useMemo(
+    () => routeOfSection(journal.planRoutes, uchastok),
+    [journal.planRoutes, uchastok],
+  );
 
   /**
    * Замер с карты: по трассе участка, если клики на ней, иначе по любой

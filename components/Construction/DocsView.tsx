@@ -36,8 +36,9 @@ import type { FieldPhoto, SpliceRecord } from '@/types/construction';
 import type { SectionActManual } from './sectionAct';
 import {
   buildScheme, schemeDocPage, schemeFileName, withSchemeAttached,
-  schemeObjectsFor, displacedMarks, spanMismatches,
+  schemeObjectsFor, displacedMarks, spanMismatches, unassignedNote,
 } from './asBuilt';
+import { routeOfSection, sectionForRoute, sectionMatchesRoute } from './routeSection';
 import { withDefaults, missingForPayment, binLooksWrong } from './requisites';
 import { normName } from './areaImport';
 import { placeNames, routeViews, directionHint } from './routeStyle';
@@ -238,8 +239,10 @@ export default function DocsView({
   const schemeRoute = useMemo(() => {
     const byId = journal.planRoutes.find((r) => r.id === schemeRouteId);
     if (byId) return byId;
-    const uchastok = report.sections[0]?.uchastok;
-    return journal.planRoutes.find((r) => r.uchastok === uchastok) ?? journal.planRoutes[0];
+    // Трассу участка ищем тем же правилом, что форма смены и пакет:
+    // участок «Акбеит» и трасса «ОМ — Акбеит» без папки — одно и то же.
+    return routeOfSection(journal.planRoutes, report.sections[0]?.uchastok)
+      ?? journal.planRoutes[0];
   }, [journal.planRoutes, schemeRouteId, report.sections]);
 
   // Объекты берём только своего участка: на соседнем стоят свои муфты, и
@@ -247,17 +250,27 @@ export default function DocsView({
   // Своих нет — схема остаётся с одними концами и так и говорит, а не
   // добирает чужие.
   const schemeObjects = useMemo(
-    () => (schemeRoute
-      ? schemeObjectsFor(journal.objects, schemeRoute.uchastok || schemeRoute.name)
-      : { own: [], unassigned: [] }),
+    () => schemeObjectsFor(journal.objects, schemeRoute),
     [journal.objects, schemeRoute],
+  );
+
+  // Какой участок назвать объектам без участка: тот, под которым по этой
+  // трассе пишут смены, — с ним объект попадёт и в схему, и в протоколы.
+  const schemeSection = useMemo(
+    () => (schemeRoute ? sectionForRoute(schemeRoute, journal.ground.map((e) => e.uchastok)) : undefined),
+    [schemeRoute, journal.ground],
   );
 
   const scheme = useMemo(
     () => (schemeRoute
-      ? buildScheme(schemeRoute, schemeObjects.own, { unassigned: schemeObjects.unassigned, places })
+      ? buildScheme(schemeRoute, schemeObjects.own, {
+        unassigned: schemeObjects.unassigned,
+        others: schemeObjects.others,
+        section: schemeSection,
+        places,
+      })
       : null),
-    [schemeRoute, schemeObjects, places],
+    [schemeRoute, schemeObjects, schemeSection, places],
   );
 
   // Та же трасса глазами карты: по обводкам сёл видно, не начинается ли
@@ -456,13 +469,18 @@ export default function DocsView({
          * Отдельный файл по дороге теряется: акт дошёл, схема осталась
          * в папке «Загрузки». Берём трассу этого же участка; если её
          * нет — акт уходит как есть, без выдуманной схемы.
+         *
+         * Трассу и её объекты ищем теми же правилами, что и схема на
+         * экране: иначе приложение к акту и файл «Схема» по одной трассе
+         * расходились — одно брало муфту, другое теряло.
          */
-        const own = journal.planRoutes.find((r) => normLoose(r.uchastok) === normLoose(uchastok))
-          ?? journal.planRoutes.find((r) => normLoose(r.name) === normLoose(uchastok));
+        const own = routeOfSection(journal.planRoutes, uchastok);
         const attachment = own
           ? (() => {
-            const objs = schemeObjectsFor(journal.objects, uchastok);
-            return buildScheme(own, objs.own, { unassigned: objs.unassigned, places });
+            const objs = schemeObjectsFor(journal.objects, own);
+            return buildScheme(own, objs.own, {
+              unassigned: objs.unassigned, section: uchastok, places,
+            });
           })()
           : null;
 
@@ -1153,7 +1171,11 @@ export default function DocsView({
                           scheme,
                           lang,
                           terms: docTerms,
-                          number: registry.find((r) => r.uchastok === schemeRoute?.uchastok)?.number,
+                          // Номер акта того участка, к которому относится
+                          // трасса, — по тому же правилу, что и объекты.
+                          number: schemeRoute
+                            ? registry.find((r) => sectionMatchesRoute(r.uchastok, schemeRoute))?.number
+                            : undefined,
                           date: to,
                           contractor,
                           customer: partyNames.customer,
@@ -1229,9 +1251,16 @@ export default function DocsView({
               </div>
             )}
             {scheme && scheme.unassigned.length > 0 && (
+              <div className="text-[11px] text-[var(--warn)]">{unassignedNote(scheme)}</div>
+            )}
+            {/* Объект с участком, который к этой трассе не подошёл, раньше
+                пропадал молча: ни в своих, ни в «без участка». Если он
+                стоит на самой линии — называем, с его участком. */}
+            {scheme && scheme.foreign.length > 0 && (
               <div className="text-[11px] text-[var(--warn)]">
-                У линии объекты без участка: {scheme.unassigned.join('; ')}. В схему не взяты —
-                укажите у них участок.
+                На самой линии стоят объекты других участков: {scheme.foreign.join('; ')}.
+                В схему не взяты — если они этой трассы, поставьте им участок
+                {scheme.section ? ` «${scheme.section}»` : ' трассы'}.
               </div>
             )}
             {scheme && scheme.marks.length <= 2 && scheme.skipped.length === 0 && (
