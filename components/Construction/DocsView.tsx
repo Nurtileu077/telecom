@@ -66,6 +66,12 @@ interface Props {
   onFlash?: (text: string) => void;
   onOpenSection?: (uchastok: string) => void;
   onSetActNumber?: (uchastok: string, number: string) => void;
+  /**
+   * Развернуть трассу: схема начнётся с другого конца. Это та же правка,
+   * что и на карте, — метры смен и колонна развернутся вместе со схемой,
+   * иначе схема спорила бы с журналом.
+   */
+  onReverseRoute?: (routeId: string) => void;
 }
 
 const DOC_MIME = 'application/msword;charset=utf-8';
@@ -113,6 +119,7 @@ ${ACT_DOC_CSS}</style></head><body class="act-doc">${body}</body></html>`;
 
 export default function DocsView({
   journal, from, to, contractor, author, onFlash, onOpenSection, onSetActNumber,
+  onReverseRoute,
 }: Props) {
   const [busy, setBusy] = useState(false);
   const [prices, setPrices] = useState<WorkPrices>({});
@@ -870,6 +877,31 @@ export default function DocsView({
                 <FileDown size={14} />Схема
               </button>
             </div>
+            {/* С какого конца начинается лист — спрашивают первым делом:
+                схема, начатая от села, когда бригада шла от магистрали,
+                читается задом наперёд, и все метры в ней перевёрнуты. */}
+            {scheme && schemeRoute && (
+              <div className="flex items-center gap-2 flex-wrap text-[11px]">
+                <span className="text-[var(--text)]">
+                  Схема идёт от «{scheme.marks.find((m) => m.kind === 'start')?.label}»
+                  {' '}к «{scheme.marks.find((m) => m.kind === 'end')?.label}»
+                  {schemeRoute.reversed ? ' — счёт развёрнут против файла' : ''}
+                </span>
+                {onReverseRoute && (
+                  <button type="button" className="btn btn-ghost text-[11px]"
+                          onClick={() => {
+                            if (!window.confirm(
+                              'Начать схему с другого конца?\n\nВместе со схемой с другого '
+                              + 'конца пойдут метры смен, стрелки на карте и точка колонны. '
+                              + 'Вернуть можно в журнале изменений.',
+                            )) return;
+                            onReverseRoute(schemeRoute.id);
+                          }}>
+                    ⇄ С другого конца
+                  </button>
+                )}
+              </div>
+            )}
             {scheme && (
               <div className="text-[11px] text-[var(--text-muted)]">
                 Отметок: {scheme.marks.length}, пролётов: {scheme.spans.length}

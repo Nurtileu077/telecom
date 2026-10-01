@@ -28,6 +28,8 @@ const CHANGE_TEXT: Record<string, string> = {
   entry_bulk: 'правка нескольких смен',
   entry_dispute: 'пометка «спорно»',
   route_join: 'трассы склеены',
+  route_reverse: 'счёт трассы развёрнут',
+  route_ends: 'подписи концов поменяны',
   area_add: 'обводка нарисована',
   area_edit: 'обводка изменена',
   area_rename: 'обводка переименована',

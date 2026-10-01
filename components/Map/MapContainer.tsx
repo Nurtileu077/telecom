@@ -17,7 +17,7 @@ import { areaColor, visibleAtZoom } from '@/components/Construction/areaProgress
 import {
   SITE_OBJECT_SPECS, MUFTA_STATES, siteObjectColor,
 } from '@/types/construction';
-import { routeTitle, PLAN_LINE_COLOR } from '@/components/Construction/routeStyle';
+import { routeTitle, countFromText, PLAN_LINE_COLOR } from '@/components/Construction/routeStyle';
 import { moveToBounds } from './smoothMove';
 import { GLYPH_FALLBACK, isGlyphName } from '@/lib/glyphs';
 import {
@@ -280,6 +280,10 @@ interface Props {
   onSplitRoute?: (id: string, atM: number) => void;
   /** Свести эту трассу с ближайшей к ней по концам. */
   onJoinRoute?: (id: string) => void;
+  /** Считать трассу с другого конца: бригада идёт не оттуда, откуда рисовали. */
+  onReverseRoute?: (id: string) => void;
+  /** Подписи концов наоборот: название написано против хода работ. */
+  onSwapRouteEnds?: (id: string) => void;
   /** Отклонения от проекта — глубина и трасса — как контекст на карте. */
   deviations?: import('@/components/Construction/journalStore').DeviationMapItem[];
   /** Колонны на карте: где стоит бригада, чем занята, каким составом. */
@@ -1818,6 +1822,21 @@ export default function LeafletMap(props: Props) {
           // линии на каждой перерисовке слишком дорого.
           + `<br/><span id="slack-${esc(r.id)}" style="font-size:11px;color:#38bdf8">кабеля с запасом…</span>`
           + `<br/><span style="color:#64748b;font-size:10px">${esc(r.source)}</span>`
+          // С какого конца считаются метры — до первой смены, пока
+          // закрашивать нечего и стрелок на проектной линии ещё нет.
+          + `<div style="margin-top:4px;font-size:11px;color:#cbd5e1">${esc(countFromText(r))}</div>`
+          + (propsRef.current.onReverseRoute
+            ? `<div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap">
+                 <button onclick="window.__optiqReverseRoute__('${esc(r.id)}')"
+                   style="padding:3px 8px;background:transparent;color:#fbbf24;border:1px solid #fbbf24;border-radius:3px;font-size:10px;cursor:pointer">
+                   ⇄ Считать с другого конца</button>
+                 ${r.from || r.to
+                   ? `<button onclick="window.__optiqSwapRouteEnds__('${esc(r.id)}')"
+                   style="padding:3px 8px;background:transparent;color:#94a3b8;border:1px solid #475569;border-radius:3px;font-size:10px;cursor:pointer">
+                   Подписи концов наоборот</button>`
+                   : ''}
+               </div>`
+            : '')
           + (propsRef.current.onEditRoute
             ? `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
                  <button onclick="window.__optiqEditRoute__('${esc(r.id)}')"
@@ -1876,7 +1895,9 @@ export default function LeafletMap(props: Props) {
           try { return view.intersects(L.latLngBounds(r.coords as any)); } catch { return true; }
         })();
 
-        if (zoom >= 10 && onScreen && arrowBudget > 0 && !r.dashed) {
+        // На проектной линии стрелки тоже нужны, но только вблизи: до
+        // первой смены по ним и решают, с того ли конца пойдёт счёт.
+        if ((r.dashed ? zoom >= 13 : zoom >= 10) && onScreen && arrowBudget > 0) {
           const mpp = metersPerPixel(r.coords[0][0], zoom);
           const arrows = arrowsAlong(r.coords, { everyM: mpp * 130, max: Math.min(12, arrowBudget) });
           arrowBudget -= arrows.length;
@@ -3276,6 +3297,14 @@ export default function LeafletMap(props: Props) {
       mapRef.current?.closePopup?.();
       propsRef.current.onJoinRoute?.(id);
     };
+    (window as any).__optiqReverseRoute__ = (id: string) => {
+      mapRef.current?.closePopup?.();
+      propsRef.current.onReverseRoute?.(id);
+    };
+    (window as any).__optiqSwapRouteEnds__ = (id: string) => {
+      mapRef.current?.closePopup?.();
+      propsRef.current.onSwapRouteEnds?.(id);
+    };
     return () => {
       delete (window as any).__deleteSub__;
       delete (window as any).__showBranchSub__;
@@ -3283,6 +3312,8 @@ export default function LeafletMap(props: Props) {
       delete (window as any).__optiqDeleteRoute__;
       delete (window as any).__optiqSplitRoute__;
       delete (window as any).__optiqJoinRoute__;
+      delete (window as any).__optiqReverseRoute__;
+      delete (window as any).__optiqSwapRouteEnds__;
       delete (window as any).__optiqOpenPhoto__;
       delete (window as any).__optiqEditObject__;
     };

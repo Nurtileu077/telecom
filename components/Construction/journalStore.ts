@@ -8,6 +8,7 @@ import {
 } from '@/types/construction';
 import { haversineM } from '@/components/Network/KMeans';
 import { splitRoute, joinRoutes, joinedName, splitNames } from './routeEdit';
+import { pointAtDistanceM, type SectionProgress } from './routeProgress';
 
 /** Состояние журнала стройки — Слой 2. */
 export interface JournalState {
@@ -925,11 +926,125 @@ export function removePhoto(base: JournalState, id: string): JournalState {
 
 // ── Плановые трассы ──────────────────────────────────────────────────────────
 
-/** Загрузка плана: трассы с теми же id заменяются, остальные добавляются. */
+/**
+ * Загрузка плана: трассы с теми же id заменяются, остальные добавляются.
+ *
+ * Направление счёта переживает повторную загрузку. Файл приходит в
+ * порядке проектировщика, и без этого исправленный файл с одной
+ * сдвинутой вершиной молча развернул бы счёт обратно — метры, колонна и
+ * схема снова пошли бы от села.
+ */
 export function addPlanRoutes(base: JournalState, routes: PlanRoute[]): JournalState {
   const byId = new Map(base.planRoutes.map((r) => [r.id, r]));
-  for (const r of routes) byId.set(r.id, r);
+  for (const r of routes) {
+    const old = byId.get(r.id);
+    // Пришедшая уже с отметкой — это не файл, а журнал: её координаты
+    // уже развёрнуты, второй раз разворачивать нельзя.
+    const keepTurn = !!old?.reversed && r.reversed === undefined;
+    byId.set(r.id, {
+      ...r,
+      coords: keepTurn ? [...r.coords].reverse() : r.coords,
+      reversed: keepTurn ? true : r.reversed,
+      endsSwapped: r.endsSwapped ?? old?.endsSwapped,
+    });
+  }
   return { ...base, planRoutes: [...byId.values()], updatedAt: new Date().toISOString() };
+}
+
+/**
+ * Точки «остановились здесь» после разворота трассы.
+ *
+ * Пройденные метры — это сумма смен, они от направления не зависят, а
+ * точка, посчитанная по ним, зависит: те же три километра от другого
+ * конца — другое место. Пересчитываем только посчитанные; поставленную
+ * человеком точку не трогаем — она стоит там, где колонна на самом деле.
+ */
+export function realignProgress(
+  progress: Record<string, SectionProgress>,
+  routeId: string,
+  coords: [number, number][],
+): Record<string, SectionProgress> {
+  let changed = false;
+  const out: Record<string, SectionProgress> = {};
+  for (const [kato, p] of Object.entries(progress ?? {})) {
+    if (p.routeId !== routeId || p.manual) { out[kato] = p; continue; }
+    const at = pointAtDistanceM(coords, p.doneM);
+    if (!at) { out[kato] = p; continue; }
+    out[kato] = { ...p, lat: at.lat, lon: at.lon };
+    changed = true;
+  }
+  return changed ? out : progress;
+}
+
+/**
+ * Считать трассу с другого конца.
+ *
+ * Проектировщик нарисовал линию от села к магистрали, а бригада идёт от
+ * магистрали: метры смен закрашивали линию от села, стрелки смотрели
+ * против хода, исполнительная схема начиналась не с того конца. Сам
+ * порядок точек переставляем — тогда всё, что считает «от начала»,
+ * считает правильно, без оговорок в каждом месте. Правка с записью в
+ * журнал изменений: вернуть можно оттуда же.
+ */
+export function reversePlanRoute(
+  base: JournalState,
+  id: string,
+  author: string,
+): JournalState {
+  const prev = base.planRoutes.find((r) => r.id === id);
+  if (!prev || prev.coords.length < 2) return base;
+  const now = new Date().toISOString();
+  const coords = [...prev.coords].reverse();
+  const next: JournalState = {
+    ...base,
+    planRoutes: base.planRoutes.map((r) => (
+      r.id === id ? { ...r, coords, reversed: prev.reversed ? undefined : true, updatedAt: now } : r
+    )),
+    sectionProgress: realignProgress(base.sectionProgress, id, coords),
+    updatedAt: now,
+  };
+  return logChange(next, {
+    at: now,
+    author,
+    kind: 'route_reverse',
+    target: prev.name || prev.uchastok || 'трасса',
+    detail: prev.reversed ? 'счёт снова от начала, как в файле' : 'счёт метров с другого конца',
+    routeId: id,
+    before: prev.coords,
+    reversedBefore: !!prev.reversed,
+  });
+}
+
+/**
+ * Поменять местами подписи концов.
+ *
+ * Название трассы иногда написано против хода работ, и тогда «откуда»
+ * встаёт на тот конец, куда идут. Переименовывать трассу ради этого
+ * нельзя: по названию её находят участок и село.
+ */
+export function swapRouteEnds(
+  base: JournalState,
+  id: string,
+  author: string,
+): JournalState {
+  const prev = base.planRoutes.find((r) => r.id === id);
+  if (!prev) return base;
+  const now = new Date().toISOString();
+  const next: JournalState = {
+    ...base,
+    planRoutes: base.planRoutes.map((r) => (
+      r.id === id ? { ...r, endsSwapped: prev.endsSwapped ? undefined : true, updatedAt: now } : r
+    )),
+    updatedAt: now,
+  };
+  return logChange(next, {
+    at: now,
+    author,
+    kind: 'route_ends',
+    target: prev.name || prev.uchastok || 'трасса',
+    detail: prev.endsSwapped ? 'как в названии' : 'наоборот названию',
+    routeId: id,
+  });
 }
 
 /** Убрать все трассы, пришедшие из одного файла. */
@@ -1001,6 +1116,7 @@ export function updateRouteCoords(
     routeId: id,
     kato: ctx.kato,
     before: prev.coords,
+    reversedBefore: !!prev.reversed,
   });
 }
 
@@ -1057,6 +1173,7 @@ export function splitPlanRoute(
     detail: `${changeKm(cut.headM)} и ${changeKm(cut.tailM)}`,
     routeId: id,
     before: prev.coords,
+    reversedBefore: !!prev.reversed,
   });
 }
 
@@ -1109,6 +1226,7 @@ export function joinPlanRoutes(
       : `${changeKm(merged.lengthM)}, разрыв в стыке ${Math.round(joined.gapM)} м`,
     routeId: idA,
     before: a.coords,
+    reversedBefore: !!a.reversed,
   });
 }
 
@@ -1134,6 +1252,7 @@ export function deleteRoute(
     detail: `удалена, была ${changeKm(prev.lengthM)}`,
     routeId: id,
     before: prev.coords,
+    reversedBefore: !!prev.reversed,
   });
 }
 
@@ -1155,10 +1274,13 @@ export function restoreShape(
   const now = new Date().toISOString();
   const lengthM = Math.round(coordsLengthM(ch.before));
   const exists = base.planRoutes.find((r) => r.id === ch.routeId);
+  // Записи, сделанные до разворотов, отметки не несут — тогда трасса и
+  // не могла быть развёрнута.
+  const reversed = ch.reversedBefore ? true : undefined;
 
   const planRoutes = exists
     ? base.planRoutes.map((r) => (
-      r.id === ch.routeId ? { ...r, coords: ch.before!, lengthM, updatedAt: now } : r
+      r.id === ch.routeId ? { ...r, coords: ch.before!, lengthM, reversed, updatedAt: now } : r
     ))
     : [...base.planRoutes, {
       id: ch.routeId,
@@ -1166,11 +1288,18 @@ export function restoreShape(
       coords: ch.before,
       lengthM,
       source: 'восстановлено',
+      reversed,
       createdAt: now,
       updatedAt: now,
     }];
 
-  return logChange({ ...base, planRoutes, updatedAt: now }, {
+  // Направление вернулось другое — посчитанные точки колонн вслед за ним.
+  const turned = !!exists && !!exists.reversed !== !!reversed;
+  const sectionProgress = turned
+    ? realignProgress(base.sectionProgress, ch.routeId, ch.before)
+    : base.sectionProgress;
+
+  return logChange({ ...base, planRoutes, sectionProgress, updatedAt: now }, {
     at: now,
     author,
     kind: 'route_edit',
@@ -1178,6 +1307,7 @@ export function restoreShape(
     detail: `возвращено как было на ${new Date(ch.at).toLocaleString('ru')}`,
     routeId: ch.routeId,
     before: exists?.coords,
+    reversedBefore: exists ? !!exists.reversed : undefined,
   });
 }
 

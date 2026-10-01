@@ -19,6 +19,7 @@ import {
   addDeviation, removeDeviation, openDeviations, isDeviationClosed,
   upsertCrew, removeCrew, upsertDelivery, removeDelivery,
   addPlanRoutes, removePlanSource, planSources, plural, setProgress, setStage,
+  reversePlanRoute,
   addAreas, removeAreaSource, areaSources, setMaterialPrice, upsertDrill,
   upsertObject, removeObject, setSectionProgress, scopeJournal, scopeToContractor,
   smuList, deleteRoute,
@@ -269,22 +270,24 @@ export default function ConstructionPanel({
     if (text) window.setTimeout(() => setFlashRaw(null), 2200);
   }, []);
 
-  const write = useCallback((next: JournalState) => {
+  const write = useCallback((next: JournalState): boolean => {
     setJournal(next);
     // В показе не сохраняем: выдуманные смены не должны попасть в
     // настоящий журнал ни при каких обстоятельствах.
-    if (demoOnRef.current) return;
+    if (demoOnRef.current) return true;
     if (!saveJournal(next)) {
       setError('Данные показаны, но не сохранены: переполнено хранилище браузера. Выгрузите журнал в Excel и очистите старые проекты.');
-    } else {
-      setError('');
+      return false;
     }
+    setError('');
+    return true;
   }, []);
 
-  const persist = useCallback((next: JournalState) => {
+  /** Записать с возможностью отмены. Ответ — записалось ли на самом деле. */
+  const persist = useCallback((next: JournalState): boolean => {
     historyRef.current = [...historyRef.current, loadJournal()].slice(-20);
     setCanUndo(true);
-    write(next);
+    return write(next);
   }, [write]);
 
   const undo = useCallback(() => {
@@ -1379,6 +1382,13 @@ export default function ConstructionPanel({
                 },
                 updatedAt: new Date().toISOString(),
               });
+            }}
+            onReverseRoute={(routeId) => {
+              // Победное сообщение — только если записалось: иначе схема
+              // развернётся на экране и вернётся обратно при следующем входе.
+              if (persist(reversePlanRoute(loadJournal(), routeId, actor))) {
+                setFlash('Счёт трассы развёрнут');
+              }
             }}
           />
         ) : view === 'timesheet' ? (

@@ -181,9 +181,15 @@ export function buildScheme(
     unassigned.push(o.name || SITE_OBJECT_SPECS[o.kind].label);
   }
 
-  // Концы трассы — всегда отметки: с них схему и читают.
-  const startLabel = opts.from || route.name.split(/[—–-]/)[0]?.trim() || 'Начало';
-  const endLabel = opts.to || route.name.split(/[—–-]/).pop()?.trim() || 'Конец';
+  // Концы трассы — всегда отметки: с них схему и читают. Название
+  // пишут «откуда — куда»; если его написали против хода работ, подписи
+  // меняют местами в карточке трассы, и схема следует за ней.
+  const parts = route.name.split(/[—–-]/);
+  const first = parts[0]?.trim();
+  const last = parts[parts.length - 1]?.trim();
+  const [nameFrom, nameTo] = route.endsSwapped ? [last, first] : [first, last];
+  const startLabel = opts.from || nameFrom || 'Начало';
+  const endLabel = opts.to || nameTo || 'Конец';
   marks.push({ atM: 0, chainM: 0, label: startLabel, kind: 'start' });
   marks.push({ atM: totalM, chainM: totalM, label: endLabel, kind: 'end' });
 

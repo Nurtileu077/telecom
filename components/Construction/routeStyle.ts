@@ -54,6 +54,10 @@ export interface RouteView {
   color: string;
   /** true — проект: тонкая синяя. false — построено: толстая цветная. */
   dashed: boolean;
+  /** Счёт с другого конца, чем в файле. */
+  reversed?: boolean;
+  /** Подписи концов поставлены наоборот названию. */
+  endsSwapped?: boolean;
 }
 
 /**
@@ -140,7 +144,9 @@ export function routeViews(routes: PlanRoute[], ctx: RouteStyleContext): RouteVi
 
   return routes.map((r) => {
     const label = r.name || r.uchastok || r.folder || '';
-    const ends = parseEndpoints(label, known);
+    const parsed = parseEndpoints(label, known);
+    // Название написано против хода работ — подписи концов наоборот.
+    const ends = r.endsSwapped ? { from: parsed.to, to: parsed.from } : parsed;
 
     // Село ищем по обоим концам: трасса принадлежит тому, куда её ведут.
     const candidates = [ends.to, ends.from, r.uchastok, r.folder]
@@ -165,14 +171,32 @@ export function routeViews(routes: PlanRoute[], ctx: RouteStyleContext): RouteVi
       stage,
       color: stage ? STAGE_LINE_COLOR[stage] : PLAN_LINE_COLOR,
       dashed: stage === null,
+      reversed: r.reversed,
+      endsSwapped: r.endsSwapped,
     };
   });
 }
 
 /** Подпись «Шортанды → Камышенка» или просто название. */
-export function routeTitle(v: RouteView): string {
+export function routeTitle(v: Pick<RouteView, 'from' | 'to' | 'name'>): string {
   if (v.from && v.to) return `${v.from} → ${v.to}`;
   if (v.to) return `→ ${v.to}`;
   if (v.from) return `${v.from} →`;
   return v.name;
+}
+
+/**
+ * Откуда идёт счёт — словами, для карточки трассы.
+ *
+ * Стрелки на проектной линии не рисуются, и до первой смены не видно,
+ * с какого конца система начнёт закрашивать метры. Спрашивать «с того
+ * ли конца» надо до первой смены, а не после десятой.
+ */
+export function countFromText(v: Pick<RouteView, 'from' | 'to' | 'reversed'>): string {
+  const base = v.from
+    ? `Счёт метров от «${v.from}»${v.to ? ` к «${v.to}»` : ''}`
+    : v.to
+      ? `Счёт метров к «${v.to}»`
+      : 'Счёт метров от первой точки линии';
+  return v.reversed ? `${base} — развёрнут против файла` : base;
 }

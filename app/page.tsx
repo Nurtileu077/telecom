@@ -60,6 +60,7 @@ import {
   addPlanRoutes, addDeviation, updateRouteCoords, deleteRoute,
   removePlanSource, removeAreaSource, updateAreaCoords, renameArea, removeArea,
   addDrawnArea, upsertObject, splitPlanRoute, joinPlanRoutes,
+  reversePlanRoute, swapRouteEnds,
 } from '@/components/Construction/journalStore';
 import { polylineLengthM } from '@/components/Construction/planImport';
 import {
@@ -400,6 +401,35 @@ export default function HomePage() {
     setEditingRouteId(null);
     refreshJournalLayers();
     if (ok) say('Трасса разрезана');
+  }, [refreshJournalLayers]);
+
+  /**
+   * Считать с другого конца.
+   *
+   * Подтверждение с последствиями: разворот сдвигает не только стрелки,
+   * но и закраску сделанного, и точку колонны, и начало исполнительной
+   * схемы. Человек должен понимать это до нажатия, а не искать потом,
+   * почему колонна «переехала».
+   */
+  const handleReverseRoute = useCallback((id: string) => {
+    const j = loadJournal();
+    const r = j.planRoutes.find((x) => x.id === id);
+    if (!r) return;
+    if (!confirm(
+      `Считать «${r.name || 'трассу'}» с другого конца?\n\n`
+      + 'Метры смен, стрелки, точка колонны и начало исполнительной схемы '
+      + 'пойдут от другого конца линии. Вернуть можно в журнале изменений.',
+    )) return;
+    const ok = persist(reversePlanRoute(j, id, getActorName() || 'Без имени'));
+    setEditingRouteId(null);
+    refreshJournalLayers();
+    if (ok) say('Счёт трассы развёрнут');
+  }, [refreshJournalLayers]);
+
+  const handleSwapRouteEnds = useCallback((id: string) => {
+    const ok = persist(swapRouteEnds(loadJournal(), id, getActorName() || 'Без имени'));
+    refreshJournalLayers();
+    if (ok) say('Подписи концов поменяны');
   }, [refreshJournalLayers]);
 
   /**
@@ -1605,6 +1635,8 @@ export default function HomePage() {
             }}
             onSplitRoute={building ? handleSplitRoute : undefined}
             onJoinRoute={building ? handleJoinRoute : undefined}
+            onReverseRoute={building ? handleReverseRoute : undefined}
+            onSwapRouteEnds={building ? handleSwapRouteEnds : undefined}
             siteObjects={conLayers.objects ? siteObjects : EMPTY_LAYER}
             incidents={conLayers.incidents ? incidents : EMPTY_LAYER}
             showFlow={building && conLayers.flow}
