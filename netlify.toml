@@ -1,6 +1,10 @@
 [build]
   command = "npm run build"
   publish = ".next"
+  # Собираем только боевую ветку. Рабочую ветку пушат часто — ради
+  # сохранности, а не ради выкладки, — и каждая её сборка съедала бы
+  # кредиты Netlify, которых мало. Выход 0 — «эту сборку пропустить».
+  ignore = "[ \"$CONTEXT\" != \"production\" ]"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
