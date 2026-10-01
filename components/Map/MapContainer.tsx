@@ -17,7 +17,9 @@ import { areaColor, visibleAtZoom } from '@/components/Construction/areaProgress
 import {
   SITE_OBJECT_SPECS, MUFTA_STATES, siteObjectColor,
 } from '@/types/construction';
-import { routeTitle, countFromText, PLAN_LINE_COLOR } from '@/components/Construction/routeStyle';
+import {
+  routeTitle, countFromText, directionHint, PLAN_LINE_COLOR,
+} from '@/components/Construction/routeStyle';
 import { moveToBounds } from './smoothMove';
 import { GLYPH_FALLBACK, isGlyphName } from '@/lib/glyphs';
 import {
@@ -1825,6 +1827,11 @@ export default function LeafletMap(props: Props) {
           // С какого конца считаются метры — до первой смены, пока
           // закрашивать нечего и стрелок на проектной линии ещё нет.
           + `<div style="margin-top:4px;font-size:11px;color:#cbd5e1">${esc(countFromText(r))}</div>`
+          // Подписи — из названия, а село на начале линии — из обводки:
+          // если они спорят, линию рисовали не с того конца.
+          + (directionHint(r)
+            ? `<div style="margin-top:4px;font-size:11px;color:#fbbf24;max-width:260px">${esc(directionHint(r)!)}</div>`
+            : '')
           + (propsRef.current.onReverseRoute
             ? `<div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap">
                  <button onclick="window.__optiqReverseRoute__('${esc(r.id)}')"

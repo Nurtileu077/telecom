@@ -19,7 +19,7 @@ import {
   addDeviation, removeDeviation, openDeviations, isDeviationClosed,
   upsertCrew, removeCrew, upsertDelivery, removeDelivery,
   addPlanRoutes, removePlanSource, planSources, plural, setProgress, setStage,
-  reversePlanRoute,
+  reversePlanRoute, swapRouteEnds,
   addAreas, removeAreaSource, areaSources, setMaterialPrice, upsertDrill,
   upsertObject, removeObject, setSectionProgress, scopeJournal, scopeToContractor,
   smuList, deleteRoute,
@@ -1438,6 +1438,11 @@ export default function ConstructionPanel({
               // развернётся на экране и вернётся обратно при следующем входе.
               if (persist(reversePlanRoute(loadJournal(), routeId, actor))) {
                 setFlash('Счёт трассы развёрнут');
+              }
+            }}
+            onSwapRouteEnds={(routeId) => {
+              if (persist(swapRouteEnds(loadJournal(), routeId, actor))) {
+                setFlash('Подписи концов поменяны');
               }
             }}
           />

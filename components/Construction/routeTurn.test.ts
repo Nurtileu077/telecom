@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import type { PlanRoute, SiteObject, SnpProgress } from '@/types/construction';
+import type { MapArea, PlanRoute, SiteObject, SnpProgress } from '@/types/construction';
 import {
   emptyJournal, addPlanRoutes, reversePlanRoute, swapRouteEnds, restoreShape,
   updateRouteCoords, realignProgress, type JournalState,
 } from './journalStore';
-import { routeViews, countFromText } from './routeStyle';
+import {
+  routeViews, countFromText, placeNames, directionHint, routeEnds, samePlace,
+} from './routeStyle';
 import { buildScheme } from './asBuilt';
 import { advanceAlong } from './routeProgress';
 import { changeFeed } from './changeLog';
@@ -205,5 +207,149 @@ describe('исполнительная схема после разворота'
     const sp = s.spans.find((x) => x.to === 'ККС у магистрали')!;
     expect(sp.from).toBe('ОМ');
     expect(sp.meters).toBe(120);
+  });
+});
+
+/**
+ * Карта брала концы из названия одним разбором, схема — другим. На
+ * «ОМ — Акбеит» с Акбеитом в журнале карта ставила «Акбеит» на начало
+ * линии, схема — «ОМ», и ни разворот, ни смена подписей не делали
+ * правильными обе сразу: в подписываемом листе «Акбеит» вставал на
+ * конец ОМ.
+ */
+describe('карта и схема называют одни и те же концы', () => {
+  // Акбеит есть в журнале — его узнают в названии как село.
+  const progress: SnpProgress[] = [{ kato: '1', snp: 'Акбеит', stages: {}, updatedAt: now }];
+  const places = placeNames(progress);
+  // Трасса без папки: участок в KML не указан.
+  const plain = (over: Partial<PlanRoute> = {}) => withRoute({ uchastok: undefined, ...over });
+
+  function ends(j: JournalState) {
+    const r = j.planRoutes[0];
+    const [v] = routeViews([r], { progress });
+    const s = buildScheme(r, [], { places });
+    return {
+      v,
+      map: [v.from, v.to],
+      scheme: [s.marks[0].label, s.marks[s.marks.length - 1].label],
+      // Какая точка линии стоит под подписью «откуда».
+      startAt: r.coords[0],
+    };
+  }
+
+  it('как в файле: и на карте, и в схеме начало счёта подписано «ОМ»', () => {
+    const e = ends(plain());
+    expect(e.map).toEqual(['ОМ', 'Акбеит']);
+    expect(e.scheme).toEqual(e.map);
+  });
+
+  it('после разворота подписи те же, а линия под ними перевёрнута — «ОМ» встал на магистраль', () => {
+    const e = ends(reversePlanRoute(plain(), 'r1', 'И'));
+    expect(e.map).toEqual(['ОМ', 'Акбеит']);
+    expect(e.scheme).toEqual(e.map);
+    // Магистраль — последняя точка файла.
+    expect(e.startAt).toEqual(FILE_COORDS[FILE_COORDS.length - 1]);
+  });
+
+  it('после смены подписей карта и схема вместе ставят «Акбеит» на начало', () => {
+    const e = ends(swapRouteEnds(reversePlanRoute(plain(), 'r1', 'И'), 'r1', 'И'));
+    expect(e.map).toEqual(['Акбеит', 'ОМ']);
+    expect(e.scheme).toEqual(e.map);
+  });
+
+  it('карточка на карте пишет тот же конец, с которого начинается лист', () => {
+    const e = ends(plain());
+    expect(countFromText(e.v)).toBe(`Счёт метров от «${e.scheme[0]}» к «${e.scheme[1]}»`);
+  });
+
+  it('дефис внутри названия села — не разделитель: конец «Кызыл-Жар», а не «Жар»', () => {
+    const kzh: SnpProgress[] = [{ kato: '2', snp: 'Кызыл-Жар', stages: {}, updatedAt: now }];
+    for (const known of [placeNames(kzh), new Set<string>()]) {
+      const r = route({ name: 'ОМ — Кызыл-Жар', uchastok: undefined });
+      expect(routeEnds(r, known)).toEqual({ from: 'ОМ', to: 'Кызыл-Жар' });
+      const s = buildScheme(r, [], { places: known });
+      expect(s.marks[s.marks.length - 1].label).toBe('Кызыл-Жар');
+    }
+  });
+
+  it('«ОМ-Акбеит» без пробелов — это два конца: магистраль и село', () => {
+    expect(routeEnds(route({ name: 'ОМ-Акбеит' }), places)).toEqual({ from: 'ОМ', to: 'Акбеит' });
+  });
+
+  it('«сущ. ОМ - Акбеит» и «ОМ Акбеит» без тире называют те же концы', () => {
+    expect(routeEnds(route({ name: 'сущ. ОМ - Акбеит' }), places)).toEqual({ from: 'ОМ', to: 'Акбеит' });
+    expect(routeEnds(route({ name: 'ОМ Акбеит' }), places)).toEqual({ from: 'ОМ', to: 'Акбеит' });
+    expect(routeEnds(route({ name: 'ОМ Акбеит' }), new Set())).toEqual({ from: 'ОМ', to: 'Акбеит' });
+  });
+
+  it('без сёл в журнале концы читаются по тире, и карта их тоже подписывает', () => {
+    const r = route({ name: 'Акбеит — Кенжеколь' });
+    const [v] = routeViews([r], { progress: [] });
+    expect([v.from, v.to]).toEqual(['Акбеит', 'Кенжеколь']);
+    const s = buildScheme(r, []);
+    expect([s.marks[0].label, s.marks[1].label]).toEqual(['Акбеит', 'Кенжеколь']);
+  });
+
+  it('название без мест не превращается в подпись обоих концов', () => {
+    const s = buildScheme(route({ name: 'Трасса 3' }), [], { places });
+    expect([s.marks[0].label, s.marks[1].label]).toEqual(['Начало', 'Конец']);
+  });
+});
+
+/**
+ * Подписи берутся из названия, и карточка «Счёт метров от ОМ» сама по
+ * себе не показывала, что линию нарисовали от села, — хотя ради этого
+ * её и делали. Обводки сёл из KML знают, где село на самом деле.
+ */
+describe('линия нарисована от села', () => {
+  // Обводка Акбеита вокруг первой точки файла.
+  const akbeit: MapArea = {
+    id: 'a1', kind: 'snp', name: 'с. Акбеит',
+    coords: [[-0.001, -0.001], [-0.001, 0.002], [0.001, 0.002], [0.001, -0.001]],
+    source: 'plan.kml', createdAt: now, updatedAt: now,
+  };
+  const view = (j: JournalState, areas: MapArea[] = [akbeit]) => routeViews(j.planRoutes, { progress: [], areas })[0];
+
+  it('по обводке видно, что счёт начинается в селе, куда трасса ведёт', () => {
+    const v = view(withRoute());
+    expect(v.startIn).toBe('с. Акбеит');
+    expect(v.endIn).toBeUndefined();
+    const hint = directionHint(v)!;
+    expect(hint).toContain('Счёт начинается в селе «с. Акбеит»');
+    expect(hint).toContain('от «ОМ»');
+    expect(hint).toContain('⇄ Считать с другого конца');
+  });
+
+  it('после разворота село в конце линии, и предупреждения нет', () => {
+    const v = view(reversePlanRoute(withRoute(), 'r1', 'И'));
+    expect(v.endIn).toBe('с. Акбеит');
+    expect(directionHint(v)).toBeNull();
+  });
+
+  it('подписи перепутаны, а линия верная — тоже видно: конец в селе, откуда по подписям начало', () => {
+    const turned = reversePlanRoute(withRoute(), 'r1', 'И');
+    const v = view(swapRouteEnds(turned, 'r1', 'И'));
+    expect(directionHint(v)).toContain('Линия кончается в селе «с. Акбеит»');
+  });
+
+  it('без обводок ничего не утверждает: где село, по названию не угадать', () => {
+    const v = view(withRoute(), []);
+    expect(v.startIn).toBeUndefined();
+    expect(directionHint(v)).toBeNull();
+  });
+
+  it('трасса целиком внутри села предупреждения не получает', () => {
+    const big: MapArea = { ...akbeit, coords: [[-1, -1], [-1, 1], [1, 1], [1, -1]] };
+    const v = view(withRoute(), [big]);
+    expect(v.startIn).toBe('с. Акбеит');
+    expect(v.endIn).toBe('с. Акбеит');
+    expect(directionHint(v)).toBeNull();
+  });
+
+  it('одно место узнаётся как бы его ни записали, а похожее — нет', () => {
+    expect(samePlace('с. Акбеит', 'Акбеит')).toBe(true);
+    expect(samePlace('сущ. ОМ - Акбеит', 'АКБЕИТ')).toBe(true);
+    expect(samePlace('Аксу', 'Аксуат')).toBe(false);
+    expect(samePlace('Трасса 2', 'СМУ 2')).toBe(false);
   });
 });

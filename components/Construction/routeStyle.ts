@@ -1,8 +1,8 @@
 import {
-  PlanRoute, SnpProgress, SnpStage, SNP_STAGES,
+  PlanRoute, SnpProgress, SnpStage, SNP_STAGES, MapArea,
 } from '@/types/construction';
 import { stageStatus } from './stageTasks';
-import { normName } from './areaImport';
+import { normName, PLACE_PREFIX } from './areaImport';
 
 /**
  * Как выглядит трасса на карте.
@@ -58,6 +58,10 @@ export interface RouteView {
   reversed?: boolean;
   /** Подписи концов поставлены наоборот названию. */
   endsSwapped?: boolean;
+  /** Село, в обводке которого лежит первая точка линии, — по контурам из KML. */
+  startIn?: string;
+  /** То же для последней точки. */
+  endIn?: string;
 }
 
 /**
@@ -79,15 +83,53 @@ export function furthestStage(p: SnpProgress): SnpStage | null {
 const STOP_WORDS = new Set([
   'путь', 'дорога', 'до', 'от', 'к', 'по', 'как', 'на', 'акте', 'акту',
   'альтернативный', 'альтернатива', 'связи', 'с', 'в', 'и', 'без', 'названия',
-  'существующий', 'сущ', 'ом', 'трасса', 'участок', 'новый', 'новая',
+  'существующий', 'сущ', 'трасса', 'участок', 'новый', 'новая',
 ]);
+
+/**
+ * Концы, которые не село, но тоже место.
+ *
+ * «ОМ» — магистраль, от которой отходит линия к селу: «сущ. ОМ - Акбеит».
+ * Пока это слово считалось служебным, карта по названию «ОМ — Акбеит»
+ * ставила подпись «Акбеит» на начало линии, а схема — «ОМ», и после
+ * разворота одна из них всегда называла конец неправильно.
+ */
+const LINE_END_WORDS = new Set(['ом']);
+
+function isLineEnd(word: string): boolean {
+  return LINE_END_WORDS.has(normName(word));
+}
+
+const HAS_LETTER = /[a-zA-Zа-яА-ЯёЁ0-9]/;
+
+/**
+ * Слова названия.
+ *
+ * Дефис остаётся внутри слова: «Кызыл-Жар» — одно село, и резать его по
+ * дефису значило бы подписать конец трассы «Жар». Но «ОМ-Акбеит» без
+ * пробелов — это два конца. Отличаем по тому, что узнаём: слово целиком
+ * не село, а часть до или после дефиса — магистраль или известное село.
+ */
+function nameWords(s: string, known: Set<string>): string[] {
+  const out: string[] = [];
+  for (const w of s.split(/[^a-zA-Zа-яА-ЯёЁ0-9-]+/)) {
+    if (!HAS_LETTER.test(w)) continue;
+    const parts = w.split('-').filter((p) => HAS_LETTER.test(p));
+    const twoEnds = parts.length > 1 && !known.has(normName(w))
+      && parts.some((p) => isLineEnd(p) || known.has(normName(p)));
+    if (twoEnds) out.push(...parts);
+    else out.push(w.replace(/^-+|-+$/g, ''));
+  }
+  return out;
+}
 
 /**
  * Разбор названия на «откуда — куда».
  *
  * Сначала ищем известные сёла: «Шортанды Камышенка» — это два села, и
- * порядок в названии и есть направление. Если нашлось одно и рядом стоит
- * «до», это конец пути; иначе — начало.
+ * порядок в названии и есть направление. Магистраль («ОМ») — тоже
+ * конец, хоть и не село. Если нашлось одно и рядом стоит «до», это
+ * конец пути; иначе — начало.
  */
 export function parseEndpoints(
   name: string,
@@ -96,9 +138,10 @@ export function parseEndpoints(
   const raw = name.trim();
   if (!raw) return {};
 
-  const words = raw.split(/[^a-zA-Zа-яА-ЯёЁ0-9-]+/).filter(Boolean);
+  const words = nameWords(raw, known);
   const hits: { word: string; index: number }[] = [];
   words.forEach((w, i) => {
+    if (isLineEnd(w)) { hits.push({ word: w, index: i }); return; }
     const key = normName(w);
     if (!key || STOP_WORDS.has(w.toLowerCase())) return;
     if (known.has(key)) hits.push({ word: w, index: i });
@@ -127,8 +170,162 @@ export function parseEndpoints(
   return {};
 }
 
+/**
+ * Явный разделитель «откуда — куда»: тире, стрелка, косая черта между
+ * пробелами. Дефис без пробелов сюда не входит — он внутри названий.
+ */
+const END_SEPARATOR = /\s*[—–]\s*|\s+-+\s+|\s*(?:→|->)\s*|\s+\/\s+/;
+
+/**
+ * Конец из части названия: «сущ. ОМ» → «ОМ», «Путь до Акбеит» → «Акбеит».
+ * Узнали в части ровно одно место — оно и есть конец; иначе часть идёт
+ * как написана, а не обрезается наугад.
+ */
+function endName(part: string, known: Set<string>): string {
+  const named = nameWords(part, known).filter((w) => isLineEnd(w)
+    || (!STOP_WORDS.has(w.toLowerCase()) && known.has(normName(w))));
+  return named.length === 1 ? named[0] : part;
+}
+
+/**
+ * «Откуда — куда» из любой подписи: названия трассы или участка смены.
+ *
+ * Тире — прямое слово автора, оно важнее догадок: «Акбеит — Кенжеколь»
+ * читается и тогда, когда ни одного из сёл в журнале ещё нет. Без тире
+ * разбираем по узнанным сёлам.
+ */
+export function labelEnds(label: string, known: Set<string>): { from?: string; to?: string } {
+  const raw = label.trim();
+  if (!raw) return {};
+  const parts = raw.split(END_SEPARATOR).map((p) => p.trim()).filter((p) => HAS_LETTER.test(p));
+  if (parts.length >= 2) {
+    return { from: endName(parts[0], known), to: endName(parts[parts.length - 1], known) };
+  }
+  return parseEndpoints(raw, known);
+}
+
+/**
+ * Концы трассы — одни на карту, карточку и исполнительную схему.
+ *
+ * Раньше схема резала название по тире сама, а карта разбирала его по
+ * сёлам. На «ОМ — Акбеит» они расходились: карта ставила «Акбеит» на
+ * начало линии, схема — «ОМ», и ни разворот, ни смена подписей не делали
+ * правильными обе сразу. В подписываемом листе «Акбеит» вставал на
+ * конец ОМ. Теперь концы считаются здесь, и обе стороны берут их отсюда.
+ *
+ * Подпись «откуда» стоит на первой точке линии — там, откуда идёт счёт
+ * метров. Название написано против хода работ — подписи меняют местами
+ * (`endsSwapped`), а не переименовывают трассу.
+ */
+export function routeEnds(
+  route: Pick<PlanRoute, 'name' | 'uchastok' | 'folder' | 'endsSwapped'>,
+  known: Set<string>,
+): { from?: string; to?: string } {
+  const parsed = labelEnds(route.name || route.uchastok || route.folder || '', known);
+  return route.endsSwapped ? { from: parsed.to, to: parsed.from } : parsed;
+}
+
+/**
+ * Сёла, которые узнаём в названиях: те, что есть в журнале.
+ *
+ * Карта и схема должны узнавать одни и те же — иначе одно и то же
+ * название разберётся у них по-разному.
+ */
+export function placeNames(progress: SnpProgress[]): Set<string> {
+  const out = new Set<string>();
+  for (const p of progress) {
+    const key = normName(p.snp);
+    if (key) out.add(key);
+  }
+  return out;
+}
+
+/**
+ * Слова, по которым узнают место: без служебных, без «с.» и без «ОМ».
+ *
+ * Сравнивать названия целиком нельзя: «сущ. ОМ - Акбеит», «Акбеит» и
+ * «ОМ — Акбеит» — одно и то же место. Сравнивать подстрокой — тоже:
+ * «Аксу» сидит внутри «Аксуат», а это разные сёла.
+ */
+export function placeTokens(s: string | undefined): string[] {
+  if (!s) return [];
+  return s.split(/[^a-zA-Zа-яА-ЯёЁ0-9-]+/)
+    .map((w) => normName(w))
+    .filter((t) => !!t && !STOP_WORDS.has(t) && !LINE_END_WORDS.has(t) && !PLACE_PREFIX.has(t));
+}
+
+/**
+ * Слова одного названия идут подряд внутри другого.
+ *
+ * Одни цифры места не называют: «Трасса 2» и «СМУ 2» — не одно и то же.
+ */
+export function containsRun(hay: string[], needle: string[]): boolean {
+  if (needle.length === 0 || needle.length > hay.length) return false;
+  if (!needle.some((t) => /[a-zа-я]/.test(t))) return false;
+  for (let i = 0; i + needle.length <= hay.length; i += 1) {
+    if (needle.every((t, k) => hay[i + k] === t)) return true;
+  }
+  return false;
+}
+
+/** Одно ли место названо: «с. Акбеит» и «Акбеит» — да, «Аксу» и «Аксуат» — нет. */
+export function samePlace(a: string | undefined, b: string | undefined): boolean {
+  const x = placeTokens(a);
+  const y = placeTokens(b);
+  return containsRun(x, y) || containsRun(y, x);
+}
+
+interface Outline {
+  name: string;
+  ring: [number, number][];
+  minLat: number; maxLat: number; minLon: number; maxLon: number;
+}
+
+function villageOutlines(areas: MapArea[]): Outline[] {
+  const out: Outline[] = [];
+  for (const a of areas) {
+    if (a.kind !== 'snp' || a.coords.length < 3) continue;
+    // Рамка контура: точку проверяем по многоугольнику, только если она
+    // в рамке, — иначе сотня трасс на сотню сёл тормозит каждую перерисовку.
+    let minLat = Infinity; let maxLat = -Infinity; let minLon = Infinity; let maxLon = -Infinity;
+    for (const [lat, lon] of a.coords) {
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+      if (lon < minLon) minLon = lon;
+      if (lon > maxLon) maxLon = lon;
+    }
+    out.push({ name: a.name, ring: a.coords, minLat, maxLat, minLon, maxLon });
+  }
+  return out;
+}
+
+/** Внутри ли контура точка: луч на восток пересекает границу нечётное число раз. */
+function insideRing(lat: number, lon: number, ring: [number, number][]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
+    const [yi, xi] = ring[i];
+    const [yj, xj] = ring[j];
+    if ((yi > lat) !== (yj > lat) && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function villageAt(list: Outline[], at: [number, number] | undefined): string | undefined {
+  if (!at) return undefined;
+  const [lat, lon] = at;
+  for (const o of list) {
+    if (lat < o.minLat || lat > o.maxLat || lon < o.minLon || lon > o.maxLon) continue;
+    if (insideRing(lat, lon, o.ring)) return o.name;
+  }
+  return undefined;
+}
+
 export interface RouteStyleContext {
   progress: SnpProgress[];
+  /** Обводки сёл из KML: по ним видно, в каком селе лежит каждый конец линии. */
+  areas?: MapArea[];
 }
 
 export function routeViews(routes: PlanRoute[], ctx: RouteStyleContext): RouteView[] {
@@ -140,13 +337,12 @@ export function routeViews(routes: PlanRoute[], ctx: RouteStyleContext): RouteVi
     // стройке хуже, чем оставить её серой.
     byName.set(key, byName.has(key) ? null : p);
   }
-  const known = new Set(byName.keys());
+  const known = placeNames(ctx.progress);
+  const villages = villageOutlines(ctx.areas ?? []);
 
   return routes.map((r) => {
     const label = r.name || r.uchastok || r.folder || '';
-    const parsed = parseEndpoints(label, known);
-    // Название написано против хода работ — подписи концов наоборот.
-    const ends = r.endsSwapped ? { from: parsed.to, to: parsed.from } : parsed;
+    const ends = routeEnds(r, known);
 
     // Село ищем по обоим концам: трасса принадлежит тому, куда её ведут.
     const candidates = [ends.to, ends.from, r.uchastok, r.folder]
@@ -173,6 +369,8 @@ export function routeViews(routes: PlanRoute[], ctx: RouteStyleContext): RouteVi
       dashed: stage === null,
       reversed: r.reversed,
       endsSwapped: r.endsSwapped,
+      startIn: villageAt(villages, r.coords[0]),
+      endIn: r.coords.length > 1 ? villageAt(villages, r.coords[r.coords.length - 1]) : undefined,
     };
   });
 }
@@ -199,4 +397,34 @@ export function countFromText(v: Pick<RouteView, 'from' | 'to' | 'reversed'>): s
       ? `Счёт метров к «${v.to}»`
       : 'Счёт метров от первой точки линии';
   return v.reversed ? `${base} — развёрнут против файла` : base;
+}
+
+/**
+ * Не нарисована ли линия от села.
+ *
+ * Подписи концов берутся из названия, а не из самой линии: название
+ * говорит «ОМ — Акбеит», и карточка пишет «от ОМ», даже когда первая
+ * точка лежит посреди села. Ради этого вопроса карточку и делали, а
+ * ответить на него по названию нельзя. Обводки сёл из того же KML знают,
+ * где село на самом деле: если начало счёта лежит в селе, куда трасса по
+ * подписям ведёт, — линию, скорее всего, рисовали от села.
+ *
+ * Обводок нет — молчим: угадывать, где село, по названию нельзя. Оба
+ * конца в одном селе — тоже молчим: это трасса внутри села, и где у неё
+ * «начало», обводка не скажет.
+ */
+export function directionHint(
+  v: Pick<RouteView, 'from' | 'to' | 'startIn' | 'endIn'>,
+): string | null {
+  const startAtEnd = !!v.startIn && samePlace(v.startIn, v.to)
+    && !(v.endIn && samePlace(v.endIn, v.to));
+  const endAtStart = !!v.endIn && samePlace(v.endIn, v.from)
+    && !(v.startIn && samePlace(v.startIn, v.from));
+  if (!startAtEnd && !endAtStart) return null;
+  const where = startAtEnd
+    ? `Счёт начинается в селе «${v.startIn}», а по подписям трасса туда ведёт`
+    : `Линия кончается в селе «${v.endIn}», а по подписям трасса оттуда начинается`;
+  return `${where}. Похоже, линию рисовали с другого конца: если бригада идёт`
+    + `${v.from ? ` от «${v.from}»` : ''}, нужен «⇄ Считать с другого конца»; если перепутано`
+    + ' название — «Подписи концов наоборот».';
 }

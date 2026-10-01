@@ -37,7 +37,7 @@ export function areaKindOf(name: string, path: string[] = []): AreaKind {
  * «аул» или «станция» могут быть его частью («Красный Аул»), и вырезать
  * их означало бы склеить разные сёла.
  */
-const PLACE_PREFIX = new Set([
+export const PLACE_PREFIX = new Set([
   'с', 'село', 'аул', 'ауыл', 'ст', 'станция', 'пос', 'поселок', 'п',
   'г', 'город', 'разъезд', 'зимовка',
 ]);

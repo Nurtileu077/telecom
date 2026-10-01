@@ -6,6 +6,7 @@ import { routeLengthM } from './routeProgress';
 import { formatMeters } from './mapDecor';
 import { term, type Bilingual, type TermPair } from './bilingual';
 import { normName } from './areaImport';
+import { routeEnds } from './routeStyle';
 
 /**
  * Исполнительная схема.
@@ -117,6 +118,11 @@ export interface SchemeOptions {
   to?: string;
   /** Объекты без участка: в схему не берём, но называем те, что у линии. */
   unassigned?: SiteObject[];
+  /**
+   * Сёла журнала (`placeNames`): по ним узнаём концы в названии трассы.
+   * Те же, что у карты, — иначе одно название разберётся по-разному.
+   */
+  places?: Set<string>;
 }
 
 /**
@@ -181,15 +187,13 @@ export function buildScheme(
     unassigned.push(o.name || SITE_OBJECT_SPECS[o.kind].label);
   }
 
-  // Концы трассы — всегда отметки: с них схему и читают. Название
-  // пишут «откуда — куда»; если его написали против хода работ, подписи
-  // меняют местами в карточке трассы, и схема следует за ней.
-  const parts = route.name.split(/[—–-]/);
-  const first = parts[0]?.trim();
-  const last = parts[parts.length - 1]?.trim();
-  const [nameFrom, nameTo] = route.endsSwapped ? [last, first] : [first, last];
-  const startLabel = opts.from || nameFrom || 'Начало';
-  const endLabel = opts.to || nameTo || 'Конец';
+  // Концы трассы — всегда отметки: с них схему и читают. Подписи — те
+  // же, что у концов линии на карте. Раньше схема резала название по
+  // тире сама: карта и лист называли концы «ОМ — Акбеит» по-разному, а
+  // «Кызыл-Жар» превращался в конец «Жар».
+  const ends = routeEnds(route, opts.places ?? new Set());
+  const startLabel = opts.from || ends.from || 'Начало';
+  const endLabel = opts.to || ends.to || 'Конец';
   marks.push({ atM: 0, chainM: 0, label: startLabel, kind: 'start' });
   marks.push({ atM: totalM, chainM: totalM, label: endLabel, kind: 'end' });
 

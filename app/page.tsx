@@ -227,8 +227,9 @@ export default function HomePage() {
     setSnpPoints(snpMapPoints(progress, { drills: j.drills, planRoutes: j.planRoutes }));
     setAreas(areaMapItems(j.areas, progress));
     // Цвет трассы — от того, как далеко по ней зашли: считаем здесь, чтобы
-    // карта получала готовый вид, а не лезла в журнал сама.
-    const views = routeViews(j.planRoutes, { progress });
+    // карта получала готовый вид, а не лезла в журнал сама. Обводки сёл —
+    // чтобы карточка видела, не лежит ли начало счёта посреди села.
+    const views = routeViews(j.planRoutes, { progress, areas: j.areas });
     setPlanRoutes(views);
     // Отрезки по способам: считаются из дневных метров и порядка дней.
     setRouteSegs(allRouteSegments(

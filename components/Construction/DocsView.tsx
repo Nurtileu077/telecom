@@ -40,6 +40,7 @@ import {
 } from './asBuilt';
 import { withDefaults, missingForPayment, binLooksWrong } from './requisites';
 import { normName } from './areaImport';
+import { placeNames, routeViews, directionHint } from './routeStyle';
 import {
   loadBilingual, saveBilingual, loadTerms, BILINGUAL_LABEL, type Bilingual,
 } from './bilingual';
@@ -88,6 +89,11 @@ interface Props {
    * иначе схема спорила бы с журналом.
    */
   onReverseRoute?: (routeId: string) => void;
+  /**
+   * Подписи концов наоборот названию — та же правка, что в карточке
+   * трассы на карте: концы на карте и на листе меняются вместе.
+   */
+  onSwapRouteEnds?: (routeId: string) => void;
 }
 
 const DOC_MIME = 'application/msword;charset=utf-8';
@@ -169,7 +175,7 @@ type ZipFolder = { file: (name: string, data: string | Blob) => unknown };
 
 export default function DocsView({
   journal, from, to, contractor, author, onFlash, onOpenSection, onSetActNumber,
-  onChangeActFields, onReverseRoute,
+  onChangeActFields, onReverseRoute, onSwapRouteEnds,
 }: Props) {
   const [busy, setBusy] = useState(false);
   const [prices, setPrices] = useState<WorkPrices>({});
@@ -210,10 +216,11 @@ export default function DocsView({
     () => paceChange(journal.ground, { from, to, contractor }),
     [journal.ground, from, to, contractor],
   );
-  const readiness = useMemo(
-    () => snpReadiness(effectiveProgress(journal.progress, journal)),
-    [journal],
-  );
+  const progressNow = useMemo(() => effectiveProgress(journal.progress, journal), [journal]);
+  const readiness = useMemo(() => snpReadiness(progressNow), [progressNow]);
+  // Сёла, по которым узнаём концы в названии трассы, — те же, что у карты:
+  // схема и подписи на линии должны называть концы одинаково.
+  const places = useMemo(() => placeNames(progressNow), [progressNow]);
 
   const contractors = useMemo(
     () => [...new Set(journal.ground.map((e) => e.contractor).filter((v): v is string => !!v))]
@@ -248,10 +255,18 @@ export default function DocsView({
 
   const scheme = useMemo(
     () => (schemeRoute
-      ? buildScheme(schemeRoute, schemeObjects.own, { unassigned: schemeObjects.unassigned })
+      ? buildScheme(schemeRoute, schemeObjects.own, { unassigned: schemeObjects.unassigned, places })
       : null),
-    [schemeRoute, schemeObjects],
+    [schemeRoute, schemeObjects, places],
   );
+
+  // Та же трасса глазами карты: по обводкам сёл видно, не начинается ли
+  // счёт посреди села, куда трасса ведёт, — до подписи листа, а не после.
+  const schemeHint = useMemo(() => {
+    if (!schemeRoute) return null;
+    const [v] = routeViews([schemeRoute], { progress: progressNow, areas: journal.areas });
+    return v ? directionHint(v) : null;
+  }, [schemeRoute, progressNow, journal.areas]);
 
   /**
    * Сохранить документ.
@@ -447,7 +462,7 @@ export default function DocsView({
         const attachment = own
           ? (() => {
             const objs = schemeObjectsFor(journal.objects, uchastok);
-            return buildScheme(own, objs.own, { unassigned: objs.unassigned });
+            return buildScheme(own, objs.own, { unassigned: objs.unassigned, places });
           })()
           : null;
 
@@ -1170,10 +1185,22 @@ export default function DocsView({
                             )) return;
                             onReverseRoute(schemeRoute.id);
                           }}>
-                    ⇄ С другого конца
+                    ⇄ Считать с другого конца
+                  </button>
+                )}
+                {/* Линия верная, а название написано против хода работ:
+                    меняем подписи, а не переворачиваем метры. Та же
+                    кнопка, что в карточке трассы на карте. */}
+                {onSwapRouteEnds && (
+                  <button type="button" className="btn btn-ghost text-[11px]"
+                          onClick={() => onSwapRouteEnds(schemeRoute.id)}>
+                    Подписи концов наоборот
                   </button>
                 )}
               </div>
+            )}
+            {schemeHint && (
+              <div className="text-[11px] text-[var(--warn)]">{schemeHint}</div>
             )}
             {scheme && (
               <div className="text-[11px] text-[var(--text-muted)]">
