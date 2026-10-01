@@ -26,7 +26,7 @@ export interface RatingRow {
   snpDone: number;
   /** Дней с простоем. */
   stalls: number;
-  /** Доля смен без простоя. */
+  /** Доля дней на объекте без простоя. */
   reliability: number;
   lastDate: string;
 }
@@ -90,6 +90,11 @@ export function rating(input: RatingInput): RatingRow[] {
     .map(([name, r]) => {
       const shifts = r.days.size;
       const stalls = r.stallDays.size;
+      // Доля дней без простоя — из всех дней на объекте. День, когда
+      // простояли целиком, метров не дал и в «смены» не входит, но день
+      // это был: считать его только в срывах значит уводить долю в ноль у
+      // того, кто честно записал дождь.
+      const onSite = new Set([...r.days, ...r.stallDays]).size;
       return {
         name,
         meters: r.meters,
@@ -97,7 +102,7 @@ export function rating(input: RatingInput): RatingRow[] {
         perShift: shifts ? Math.round(r.meters / shifts) : 0,
         snpDone: [...r.katos].filter((k) => doneKatos.has(k)).length,
         stalls,
-        reliability: shifts ? Math.round(((shifts - Math.min(stalls, shifts)) / shifts) * 100) / 100 : 0,
+        reliability: onSite ? Math.round(((onSite - stalls) / onSite) * 100) / 100 : 0,
         lastDate: r.lastDate,
       };
     })

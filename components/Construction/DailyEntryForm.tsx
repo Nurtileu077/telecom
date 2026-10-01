@@ -15,7 +15,9 @@ import PhotoAttach from './PhotoAttach';
 import { photosOf } from './photoStore';
 import { advanceAlong } from './routeProgress';
 import { routeOfSection } from './routeSection';
-import { checkEntry } from './entryChecks';
+import { checkEntry, saveBlocker } from './entryChecks';
+import { isIdleShift, entryHasWork } from './entriesTable';
+import { downtimeReasons } from './dayPlan';
 import type { LatLon } from './measureTool';
 import { measureShift, describeShiftMeasure } from './shiftMeasure';
 import { parseMeters, metersHint } from './units';
@@ -48,6 +50,8 @@ interface DraftShape {
   blowingM: string;
   materials: Partial<Record<MaterialKind, string>>;
   note: string;
+  /** Причина простоя: в дождь это единственное, что набрали. */
+  downtime?: string;
 }
 
 /**
@@ -210,7 +214,7 @@ export default function DailyEntryForm({
   const [totalMkt, setTotalMkt] = useState(numToStr(initial?.totalMktM));
   const [totalUchastok, setTotalUchastok] = useState(numToStr(initial?.totalUchastokM));
   const [reserveMkt, setReserveMkt] = useState(numToStr(initial?.reserveMktM));
-  const [downtime, setDowntime] = useState(initial?.downtime ?? '');
+  const [downtime, setDowntime] = useState(initial?.downtime ?? prefill?.downtime ?? '');
   const [tomorrow, setTomorrow] = useState(initial?.tomorrow ?? '');
 
   useEffect(() => {
@@ -339,30 +343,26 @@ export default function DailyEntryForm({
     [journal.contractors, oblast, rayon],
   );
 
-  const anyOperation = useMemo(
-    () => OPERATION_KINDS.some((k) => numOf(operations[k]) > 0),
-    [operations],
-  );
-  const hasWork = totalMeters > 0 || numOf(drillM) > 0 || numOf(blowingM) > 0
-    || numOf(totalMkt) > 0 || anyOperation;
-  // Исправление без причины не уходит: проверяющему нужно понимать, что чинят.
-  const canSave = !!date && !!uchastok.trim() && hasWork && (!correcting || !!reason.trim());
-
   /**
-   * Что стоит проверить до сохранения.
+   * Смена такой, какой она уйдёт в журнал, — без материалов и подробностей.
    *
-   * Считаем по той же записи, которая уйдёт в журнал, а не по
-   * отдельному набору правил: иначе проверка и запись рано или поздно
-   * начнут расходиться.
+   * По ней и проверки, и решение «можно ли сохранять»: два отдельных
+   * набора правил рано или поздно начинают расходиться. Так и вышло:
+   * проверка просила назвать причину простоя, а сохранение без метров
+   * не пускало вовсе — и день дождя пропадал из отчёта.
    */
-  const warnings = useMemo(() => {
-    if (!date || !uchastok.trim()) return [];
+  const candidate = useMemo<DailyWorkEntry>(() => {
     const methods: Partial<Record<LayMethod, number>> = {};
     for (const m of LAY_METHODS) {
       const v = Math.round(numOf(byMethod[m]));
       if (v > 0) methods[m] = v;
     }
-    return checkEntry({
+    const ops: Partial<Record<OperationKind, number>> = {};
+    for (const k of OPERATION_KINDS) {
+      const v = numOf(operations[k]);
+      if (v > 0) ops[k] = v;
+    }
+    return {
       kind: 'ground', id: entryId, date,
       smu: smu.trim(), contractor: contractor.trim() || undefined,
       column: column.trim() || undefined,
@@ -370,20 +370,47 @@ export default function DailyEntryForm({
       byMethod: methods,
       drillM: Math.round(numOf(drillM)) || undefined,
       drillCount: numOf(drillCount) || undefined,
+      openCrossings: numOf(openCrossings) || undefined,
       blowingM: Math.round(numOf(blowingM)) || undefined,
+      totalMktM: Math.round(numOf(totalMkt)) || undefined,
+      operations: Object.keys(ops).length ? ops : undefined,
       materials: {},
       downtime: downtime.trim() || undefined,
       createdAt: '', updatedAt: '',
-    }, journal.ground);
-  }, [date, uchastok, smu, contractor, column, oblast, kato, byMethod,
-    drillM, drillCount, blowingM, downtime, entryId, journal.ground]);
+    };
+  }, [date, uchastok, smu, contractor, column, oblast, kato, byMethod, drillM, drillCount,
+    openCrossings, blowingM, totalMkt, operations, downtime, entryId]);
+
+  // Исправление без причины не уходит: проверяющему нужно понимать, что чинят.
+  const blocker = saveBlocker(candidate, { correcting, reason });
+  const canSave = blocker === null;
+  const idle = isIdleShift(candidate);
+  /** Ни работы, ни причины — такую смену не сохраняем и подсвечиваем причину. */
+  const empty = !entryHasWork(candidate) && !downtime.trim();
+
+  /** Что стоит проверить до сохранения — по той же записи. */
+  const warnings = useMemo(
+    () => (!date || !uchastok.trim() ? [] : checkEntry(candidate, journal.ground)),
+    [candidate, date, uchastok, journal.ground],
+  );
+
+  /**
+   * Причины, которые на этой стройке уже называли, — нажать проще, чем
+   * набрать в перчатках. Свои, а не из справочника: одинаково названная
+   * причина складывается в отчёте в одну строку, а «дождь» и «дождь,
+   * грунт поплыл», набранные заново, — в две.
+   */
+  const usualReasons = useMemo(
+    () => downtimeReasons(journal.ground).slice(0, 4).map((r) => r.text),
+    [journal.ground],
+  );
 
   /** Снимок того, что человек набрал руками. */
   const draftNow = useMemo<DraftShape>(() => ({
     date, smu, contractor, column, oblast, rayon, uchastok, kato, tech,
-    byMethod, drillM, drillCount, openCrossings, blowingM, materials, note,
+    byMethod, drillM, drillCount, openCrossings, blowingM, materials, note, downtime,
   }), [date, smu, contractor, column, oblast, rayon, uchastok, kato, tech,
-    byMethod, drillM, drillCount, openCrossings, blowingM, materials, note]);
+    byMethod, drillM, drillCount, openCrossings, blowingM, materials, note, downtime]);
 
   useEffect(() => {
     // Исправление чужой записи в черновик не пишем: там своя судьба —
@@ -404,6 +431,7 @@ export default function DailyEntryForm({
     setDrillM(d.drillM ?? ''); setDrillCount(d.drillCount ?? '');
     setOpenCrossings(d.openCrossings ?? ''); setBlowingM(d.blowingM ?? '');
     setMaterials(d.materials ?? {}); setNote(d.note ?? '');
+    setDowntime(d.downtime ?? '');
     setDraft(null);
   }
 
@@ -790,6 +818,35 @@ export default function DailyEntryForm({
             )}
           </Group>
 
+          {/* Причина простоя — на виду, а не в подробном отчёте: в дождь
+              это единственное, что бригадиру есть написать, и пока поле
+              пряталось, смену с нулём метров было не сохранить вовсе. */}
+          <section className={`flex flex-col gap-1.5 rounded-lg ${
+            empty && uchastok.trim() ? 'border border-[var(--warn)]/50 p-2' : ''}`}>
+            <label htmlFor="ce-downtime" className="text-[11px] text-[var(--text-muted)]">
+              Причина простоя / невыполнения
+            </label>
+            <input id="ce-downtime" value={downtime} onChange={(e) => setDowntime(e.target.value)}
+                   placeholder="дождь, ждём разрешения, поломка техники" className="inp" />
+            {usualReasons.length > 0 && !downtime.trim() && (
+              <div className="flex flex-wrap gap-1">
+                {usualReasons.map((r) => (
+                  <button key={r} type="button" onClick={() => setDowntime(r)}
+                          className="px-1.5 py-0.5 rounded border border-[var(--border)] text-[10.5px]
+                                     text-[var(--text-muted)] hover:text-[var(--text)] max-w-full truncate">
+                    {r}
+                  </button>
+                ))}
+              </div>
+            )}
+            {idle && (
+              <span className="text-[10.5px] text-[var(--text-muted)]">
+                Сохранится сменой простоя: в отчёте за период она встанет отдельной
+                строкой с этой причиной, а средние метры за смену не испортит.
+              </span>
+            )}
+          </section>
+
           {/* Переходы */}
           <Group title="Переходы и задувка">
             <div className="grid grid-cols-2 gap-2">
@@ -983,11 +1040,6 @@ export default function DailyEntryForm({
                 />
               </Group>
 
-              <Field label="Причины простоя / невыполнения">
-                <textarea id="ce-downtime" value={downtime} onChange={(e) => setDowntime(e.target.value)} rows={2}
-                          placeholder="Ждали согласование, скальный грунт, поломка техники" className="inp resize-none" />
-              </Field>
-
               <Field label="План работы на завтра">
                 <textarea id="ce-tomorrow" value={tomorrow} onChange={(e) => setTomorrow(e.target.value)} rows={2}
                           placeholder="Продолжение протяжки МКТ в сторону п. Кызылегис" className="inp resize-none" />
@@ -1025,16 +1077,10 @@ export default function DailyEntryForm({
             </div>
           ))}
 
-          {touched && !canSave && (
+          {touched && blocker && (
             <div className="flex items-start gap-2 p-2.5 rounded-lg border border-[var(--warn)]/40 bg-[var(--warn)]/10 text-[11.5px] text-[var(--warn)]">
               <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-              <span>
-                {!uchastok.trim()
-                  ? 'Укажите участок.'
-                  : !hasWork
-                    ? 'Впишите хотя бы одну цифру выработки — метры, ГНБ или задувку.'
-                    : 'Укажите причину исправления.'}
-              </span>
+              <span>{blocker}</span>
             </div>
           )}
         </div>
@@ -1043,8 +1089,13 @@ export default function DailyEntryForm({
         <div className="flex gap-2 px-4 py-3 border-t border-[var(--border)] shrink-0"
              style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}>
           <button type="button" className="btn btn-ghost flex-1" onClick={onClose}>{t('Отмена')}</button>
-          <button type="button" className="btn btn-primary flex-1" onClick={submit} disabled={!canSave}>
-            <Check size={15} />{correcting ? 'Отправить на согласование' : 'Сохранить день'}
+          {/* Кнопка не гаснет намертво: нажали — и видно, чего не хватает.
+              Погашенная молча, она не объясняла, почему день дождя не
+              сохраняется. */}
+          <button type="button" className={`btn btn-primary flex-1 ${canSave ? '' : 'opacity-60'}`}
+                  onClick={submit} aria-disabled={!canSave}>
+            <Check size={15} />
+            {correcting ? 'Отправить на согласование' : idle ? 'Сохранить день простоя' : 'Сохранить день'}
           </button>
         </div>
       </div>

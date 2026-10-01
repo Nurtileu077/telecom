@@ -5,7 +5,7 @@ import type { DailyWorkEntry } from '@/types/construction';
 import type { JournalState } from './journalStore';
 import { parseQuickEntry, quickEntryReady, type QuickParse } from './quickEntry';
 import { checkEntry, hasBlocking } from './entryChecks';
-import { entryMeters } from './entriesTable';
+import { entryMeters, isIdleShift } from './entriesTable';
 
 /**
  * Смена одной строкой.
@@ -102,6 +102,7 @@ export default function QuickEntryBar({ journal, author, onSubmit, onOpenForm }:
       blowingM: parsed.blowingM,
       materials: {},
       note: parsed.note,
+      downtime: parsed.downtime,
       author,
       createdAt: now,
       updatedAt: now,
@@ -177,7 +178,7 @@ export default function QuickEntryBar({ journal, author, onSubmit, onOpenForm }:
           onClick={submit}
           disabled={!ready || blocked}
           className="btn btn-primary text-[11.5px] disabled:opacity-40"
-          title={ready ? 'Записать смену' : 'Нужны хотя бы участок и метры'}
+          title={ready ? 'Записать смену' : 'Нужны участок и метры — или причина простоя'}
         >
           <CornerDownLeft size={14} />
           <span className="hidden sm:inline">Записать</span>
@@ -229,8 +230,12 @@ export default function QuickEntryBar({ journal, author, onSubmit, onOpenForm }:
 
       {draftEntry && !blocked && (
         <div className="text-[11px] text-[var(--text-muted)]">
-          Запишем {Math.round(entryMeters(draftEntry)).toLocaleString('ru')} м
-          {draftEntry.drillM ? ` и ГНБ ${draftEntry.drillM} м` : ''}
+          {/* Простой называем простоем, а не «0 м»: ноль выглядит как
+              забытые метры, а это день, когда не работали, и почему. */}
+          {isIdleShift(draftEntry)
+            ? `Запишем простой (${draftEntry.downtime})`
+            : `Запишем ${Math.round(entryMeters(draftEntry)).toLocaleString('ru')} м`
+              + (draftEntry.drillM ? ` и ГНБ ${draftEntry.drillM} м` : '')}
           {' по участку «'}{draftEntry.uchastok}{'» за '}
           {new Date(`${draftEntry.date}T00:00:00Z`).toLocaleDateString('ru')}.
         </div>

@@ -1,7 +1,7 @@
 import type { DailyWorkEntry, LayMethod } from '@/types/construction';
 import { LAY_METHOD_LABEL } from '@/types/construction';
 import { normName } from './areaImport';
-import { entryMeters } from './entriesTable';
+import { entryMeters, entryHasWork } from './entriesTable';
 
 /**
  * Проверки перед сохранением смены.
@@ -113,11 +113,11 @@ export function checkEntry(
     });
   }
 
-  if (total === 0 && !entry.drillM && !entry.blowingM && !entry.downtime) {
+  if (!entryHasWork(entry) && !entry.downtime?.trim()) {
     out.push({
       level: 'check',
       text: 'В смене нет ни метров, ни причины простоя.',
-      hint: 'Пустая смена в сводке выглядит как потерянный день.',
+      hint: 'Не работали — напишите почему в «Причине простоя»: день попадёт в отчёт простоем, а не пропадёт.',
     });
   }
 
@@ -127,4 +127,26 @@ export function checkEntry(
 /** Есть ли то, из-за чего сохранять не стоит. */
 export function hasBlocking(list: EntryWarning[]): boolean {
   return list.some((w) => w.level === 'stop');
+}
+
+/**
+ * Чего не хватает, чтобы сохранить смену; null — сохранять можно.
+ *
+ * Смена без работ сохраняется, если названа причина простоя. Дождь или
+ * ждём разрешения — это тоже день стройки: пока такую смену нельзя было
+ * сохранить, день пропадал из отчёта за период, хотя проверка сама
+ * просила указать причину. Пустую смену без причины не берём: через
+ * месяц никто не скажет, что в тот день было.
+ */
+export function saveBlocker(
+  entry: DailyWorkEntry,
+  opts: { correcting?: boolean; reason?: string } = {},
+): string | null {
+  if (!entry.date) return 'Укажите дату.';
+  if (!entry.uchastok?.trim()) return 'Укажите участок.';
+  if (!entryHasWork(entry) && !entry.downtime?.trim()) {
+    return 'Впишите выработку — метры, ГНБ или задувку, — а если не работали, причину простоя.';
+  }
+  if (opts.correcting && !opts.reason?.trim()) return 'Укажите причину исправления.';
+  return null;
 }

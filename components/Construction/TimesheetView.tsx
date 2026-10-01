@@ -36,6 +36,7 @@ const TIMESHEET_COLUMNS: ExportColumn<TimesheetRow>[] = [
   { header: 'Колонна', value: (r) => r.crew },
   { header: 'Подрядчик', value: (r) => r.contractor ?? '' },
   { header: 'Смен', value: (r) => r.shifts },
+  { header: 'Из них простой', value: (r) => r.idleShifts },
   { header: 'Дней', value: (r) => r.days },
   { header: 'Метры колонны', value: (r) => Math.round(r.crewMeters) },
 ];
@@ -79,7 +80,8 @@ export default function TimesheetView({ rows, crews, from, to, onCopied }: Props
     <div className="p-3 space-y-3">
       <div className="flex items-baseline gap-2 flex-wrap">
         <span className="text-[13px] text-[var(--text)]">
-          {totals.people} человек · {totals.shifts} человеко-смен ·{' '}
+          {totals.people} человек · {totals.shifts} человеко-смен
+          {totals.idleShifts > 0 && `, из них простой ${totals.idleShifts}`} ·{' '}
           <span className="font-mono tabular-nums">
             {Math.round(totals.meters).toLocaleString('ru')} м
           </span>
@@ -95,6 +97,7 @@ export default function TimesheetView({ rows, crews, from, to, onCopied }: Props
             footer={{
               'Фамилия': 'Итого',
               'Смен': totals.shifts,
+              'Из них простой': totals.idleShifts,
               'Метры колонны': Math.round(totals.meters),
             }}
           />
@@ -169,6 +172,12 @@ export default function TimesheetView({ rows, crews, from, to, onCopied }: Props
                   </td>
                   <td className="px-2 py-1.5 text-right font-mono tabular-nums text-[12.5px] text-[var(--text)]">
                     {r.shifts}
+                    {/* Простой не прячем в смены: платить ли за него — решает расчёт. */}
+                    {r.idleShifts > 0 && (
+                      <span className="block text-[10px] text-[var(--warn)] font-sans">
+                        простой {r.idleShifts}
+                      </span>
+                    )}
                   </td>
                   <td className="px-2 py-1.5 text-right font-mono tabular-nums text-[12.5px] text-[var(--text-muted)]">
                     {r.days}

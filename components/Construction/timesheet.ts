@@ -1,6 +1,6 @@
 import type { DailyWorkEntry, Crew } from '@/types/construction';
 import { normName } from './areaImport';
-import { entryMeters } from './entriesTable';
+import { entryMeters, isIdleShift } from './entriesTable';
 
 /**
  * Табель: кто сколько отработал.
@@ -24,6 +24,12 @@ export interface TimesheetRow {
   contractor?: string;
   /** Сколько смен: строк журнала, где работала эта колонна. */
   shifts: number;
+  /**
+   * Из них смен простоя: колонна стояла на объекте, работ не было.
+   * Платить ли за такой день и сколько — решает расчёт, а табель только
+   * не смешивает его с рабочим молча.
+   */
+  idleShifts: number;
   /** Сколько дней — две смены в сутки это один день. */
   days: number;
   /** Метры колонны за период: на человека они не делятся. */
@@ -35,6 +41,8 @@ export interface TimesheetRow {
 export interface TimesheetTotals {
   people: number;
   shifts: number;
+  /** Из человеко-смен — простой. */
+  idleShifts: number;
   meters: number;
 }
 
@@ -88,12 +96,16 @@ export function timesheet(
   });
 
   const shared = sharedNames(crews);
-  const byCrew = new Map<string, { shifts: number; meters: number; dates: Set<string> }>();
+  const byCrew = new Map<string, {
+    shifts: number; idleShifts: number; meters: number; dates: Set<string>;
+  }>();
   for (const e of inPeriod) {
     if (!crewKey(e.column)) continue;
     const key = bucketKey(e.column, e.contractor, shared);
-    const acc = byCrew.get(key) ?? { shifts: 0, meters: 0, dates: new Set<string>() };
+    const acc = byCrew.get(key)
+      ?? { shifts: 0, idleShifts: 0, meters: 0, dates: new Set<string>() };
     acc.shifts += 1;
+    if (isIdleShift(e)) acc.idleShifts += 1;
     acc.meters += entryMeters(e);
     if (e.date) acc.dates.add(e.date);
     byCrew.set(key, acc);
@@ -112,6 +124,7 @@ export function timesheet(
         crew: crew.name,
         contractor: crew.contractor,
         shifts: acc.shifts,
+        idleShifts: acc.idleShifts,
         days: acc.dates.size,
         crewMeters: acc.meters,
         dates: [...acc.dates].sort(),
@@ -250,6 +263,7 @@ export function timesheetTotals(rows: TimesheetRow[]): TimesheetTotals {
     // Человеко-смены: у колонны из трёх человек десять смен дают
     // тридцать. Так это и считают при расчёте.
     shifts: rows.reduce((s, r) => s + r.shifts, 0),
+    idleShifts: rows.reduce((s, r) => s + r.idleShifts, 0),
     // Метры считаем по колоннам, а не по строкам табеля: иначе одна и
     // та же выработка сложится столько раз, сколько в колонне людей.
     meters: [...crews.values()].reduce((s, v) => s + v, 0),
@@ -258,10 +272,12 @@ export function timesheetTotals(rows: TimesheetRow[]): TimesheetTotals {
 
 /** Табель текстом — его вставляют в письмо и в расчёт. */
 export function timesheetToText(rows: TimesheetRow[]): string {
-  const head = ['ФИО', 'Должность', 'Колонна', 'Подрядчик', 'Смен', 'Дней', 'Метры колонны'];
+  const head = [
+    'ФИО', 'Должность', 'Колонна', 'Подрядчик', 'Смен', 'Из них простой', 'Дней', 'Метры колонны',
+  ];
   const body = rows.map((r) => [
     r.name, r.role ?? '', r.crew, r.contractor ?? '',
-    String(r.shifts), String(r.days), String(Math.round(r.crewMeters)),
+    String(r.shifts), String(r.idleShifts), String(r.days), String(Math.round(r.crewMeters)),
   ].join('\t'));
   return [head.join('\t'), ...body].join('\n');
 }

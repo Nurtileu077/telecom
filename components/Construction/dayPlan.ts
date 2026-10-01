@@ -1,4 +1,5 @@
 import { DailyWorkEntry } from '@/types/construction';
+import { isIdleShift } from './entriesTable';
 
 /**
  * План на завтра и причины простоя — то, что уже пишут, но никто не читает.
@@ -107,6 +108,26 @@ export function downtimeReasons(entries: DailyWorkEntry[]): DowntimeReason[] {
   }
   return [...acc.values()]
     .sort((a, b) => b.count - a.count || b.lastDate.localeCompare(a.lastDate));
+}
+
+/**
+ * Почему в этот день стояли — по сменам простоя.
+ *
+ * Утром спрашивают «что вчера», и «0 км» на это — неправда наполовину:
+ * метров нет, потому что лил дождь, и это и есть ответ.
+ */
+export function idleReasonsOn(entries: DailyWorkEntry[], date: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const e of entries) {
+    if (e.date !== date || !isIdleShift(e)) continue;
+    const text = e.downtime!.trim();
+    const k = reasonKey(text);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(text);
+  }
+  return out;
 }
 
 /**

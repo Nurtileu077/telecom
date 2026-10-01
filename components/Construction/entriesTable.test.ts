@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   entryMeters, filterEntries, sortEntries, weekStart, groupByWeek,
-  tableTotals, rowsToText, planFact,
+  tableTotals, rowsToText, planFact, entryHasWork, isIdleShift,
 } from './entriesTable';
 import type { DailyWorkEntry, PlanRoute } from '@/types/construction';
 
@@ -209,5 +209,52 @@ describe('planFact и разное написание участка', () => {
       e({ id: 'b', uchastok: 'исаковка', byMethod: { 'бар': 1000 } }),
     ], routes);
     expect(rows[0].uchastok).toBe('Исаковка');
+  });
+});
+
+/**
+ * Дождь или ждём разрешения: бригада на объекте, метров ноль, причина
+ * названа. Это смена простоя — не ошибка ввода и не пустая строка.
+ */
+describe('смена простоя', () => {
+  it('без работ и с причиной — простой', () => {
+    expect(isIdleShift(e({ byMethod: {}, downtime: 'дождь' }))).toBe(true);
+  });
+
+  it('без причины — не простой, а пустая строка', () => {
+    expect(isIdleShift(e({ byMethod: {} }))).toBe(false);
+    expect(isIdleShift(e({ byMethod: {}, downtime: '   ' }))).toBe(false);
+  });
+
+  it('работали полдня и записали причину — это рабочая смена', () => {
+    expect(isIdleShift(e({ byMethod: { 'бар': 200 }, downtime: 'после обеда дождь' }))).toBe(false);
+  });
+
+  it('задувка без укладки — работа, а не простой', () => {
+    expect(entryHasWork(e({ byMethod: {}, blowingM: 2400 }))).toBe(true);
+    expect(isIdleShift(e({ byMethod: {}, blowingM: 2400, downtime: 'ждали кабель' }))).toBe(false);
+  });
+
+  it('ГНБ, открытый переход и операции инженера — тоже работа', () => {
+    expect(entryHasWork(e({ byMethod: {}, drillM: 72 }))).toBe(true);
+    expect(entryHasWork(e({ byMethod: {}, openCrossings: 2 }))).toBe(true);
+    expect(entryHasWork(e({ byMethod: {}, operations: { proporka: 600 } }))).toBe(true);
+    expect(entryHasWork(e({ byMethod: {}, totalMktM: 900 }))).toBe(true);
+  });
+
+  it('в итогах таблицы простой считается отдельно и не размазывает средние', () => {
+    const t = tableTotals([
+      e({ id: '1', date: '2026-07-20', byMethod: { 'бар': 600 } }),
+      e({ id: '2', date: '2026-07-21', byMethod: { 'бар': 400 } }),
+      e({ id: '3', date: '2026-07-22', byMethod: {}, downtime: 'дождь' }),
+    ]);
+    expect(t.shifts).toBe(3);
+    expect(t.idle).toBe(1);
+    expect(t.days).toBe(3);
+    expect(t.perShift).toBe(500);
+  });
+
+  it('одни простои — средняя ноль, а не деление на ноль', () => {
+    expect(tableTotals([e({ byMethod: {}, downtime: 'дождь' })]).perShift).toBe(0);
   });
 });

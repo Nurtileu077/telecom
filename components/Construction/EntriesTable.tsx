@@ -10,7 +10,7 @@ import { hasPendingCorrection } from './journalStore';
 import ExportButton, { type ExportColumn } from '@/components/Layout/ExportButton';
 import { useT } from '@/components/Layout/LangProvider';
 import {
-  entryMeters, filterEntries, sortEntries, groupByWeek, tableTotals, rowsToText,
+  entryMeters, isIdleShift, filterEntries, sortEntries, groupByWeek, tableTotals, rowsToText,
   SORT_LABEL, type SortKey, type SortDir,
 } from './entriesTable';
 
@@ -216,6 +216,9 @@ export default function EntriesTable({
           <div className="text-[11px] text-[var(--text-muted)] truncate md:hidden">
             {[e.contractor, e.column, e.smu].filter(Boolean).join(' · ')}
           </div>
+          {e.downtime && (
+            <div className="text-[11px] text-[var(--warn)] truncate">Простой: {e.downtime}</div>
+          )}
           {e.note && (
             <div className="text-[11px] text-[var(--text-muted)] truncate">{e.note}</div>
           )}
@@ -228,7 +231,12 @@ export default function EntriesTable({
           {e.smu || '—'}
         </td>
         <td className="px-2 py-1.5 align-top text-right">
-          <div className="font-mono tabular-nums text-[13px] text-[var(--text)]">{fmtM(meters)}</div>
+          {/* «0 м» в смене простоя читается как забытые метры. */}
+          {isIdleShift(e) ? (
+            <div className="text-[12px] text-[var(--warn)]">простой</div>
+          ) : (
+            <div className="font-mono tabular-nums text-[13px] text-[var(--text)]">{fmtM(meters)}</div>
+          )}
           {!!e.drillM && (
             <div className="text-[10px] text-[var(--text-muted)]">ГНБ {Math.round(e.drillM)} м</div>
           )}
@@ -409,12 +417,16 @@ export default function EntriesTable({
             <tr className="border-t-2 border-[var(--border)]">
               <td colSpan={2} className="px-2 py-1.5 text-[11px] text-[var(--text-muted)]">
                 {totals.shifts} смен · {totals.days} дней
+                {totals.idle > 0 && (
+                  <span className="text-[var(--warn)]"> · простой {totals.idle}</span>
+                )}
                 {totals.disputed > 0 && (
                   <span className="text-[var(--warn)]"> · спорных {totals.disputed}</span>
                 )}
               </td>
               <td colSpan={3} className="px-2 py-1.5 text-[11px] text-[var(--text-muted)]">
-                в среднем <span className="font-mono tabular-nums">{fmtM(totals.perShift)}</span> за смену
+                в среднем <span className="font-mono tabular-nums">{fmtM(totals.perShift)}</span>
+                {totals.idle > 0 ? ' за рабочую смену' : ' за смену'}
                 {totals.drillM > 0 && (
                   <span> · ГНБ <span className="font-mono tabular-nums">{fmtM(totals.drillM)}</span></span>
                 )}

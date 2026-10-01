@@ -191,6 +191,7 @@ export default function PayrollView({
           <span className="text-[13px] font-semibold text-[var(--text)]">{current}</span>
           <span className="text-[11px] text-[var(--text-muted)]">
             {result.shifts} смен · {Math.round(result.meters).toLocaleString('ru')} м
+            {result.idleShifts > 0 && ` · простой — ${result.idleShifts} смен`}
           </span>
           <span className="ml-auto inline-flex gap-1">
             <button type="button" onClick={copySummary} className="btn btn-ghost btn-icon"

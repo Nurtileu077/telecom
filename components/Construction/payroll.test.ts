@@ -149,6 +149,28 @@ describe('compareContractors', () => {
   it('пустой журнал — пустое сравнение', () => {
     expect(compareContractors([], RATES, [], new Map())).toEqual([]);
   });
+
+  it('дождливые дни не делают подрядчика медленнее в сравнении', () => {
+    const list = compareContractors([
+      e({ id: 'a', byMethod: { 'бар': 1000 } }),
+      e({ id: 'b', date: '2026-07-26', byMethod: {}, downtime: 'дождь' }),
+      e({ id: 'c', date: '2026-07-27', byMethod: {}, downtime: 'дождь' }),
+    ], RATES, [], new Map());
+    expect(list[0].perShift).toBe(1000);
+    expect(list[0].shifts).toBe(1);
+  });
+});
+
+describe('простой в расчёте', () => {
+  it('смены простоя названы отдельно, за них по метрам не начислено', () => {
+    const r = payroll('Дозер', [
+      e({ id: 'a', byMethod: { 'бар': 400 } }),
+      e({ id: 'b', date: '2026-07-26', byMethod: {}, downtime: 'ждём разрешения' }),
+    ], RATES, []);
+    expect(r.shifts).toBe(1);
+    expect(r.idleShifts).toBe(1);
+    expect(r.accrued).toBe(400 * 300);
+  });
 });
 
 describe('moneyBehind', () => {

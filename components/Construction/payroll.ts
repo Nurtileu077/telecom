@@ -2,7 +2,7 @@ import {
   DailyWorkEntry, LayMethod, LAY_METHODS, LAY_METHOD_LABEL,
   WorkRate, Payment, PAYMENT_KIND_LABEL,
 } from '@/types/construction';
-import { entryMeters } from './entriesTable';
+import { entryMeters, isIdleShift } from './entriesTable';
 
 /**
  * Расчёт с подрядчиками.
@@ -184,7 +184,13 @@ export interface PayrollResult {
   paid: number;
   /** Сколько осталось заплатить: начислено минус аванс, удержания и оплаты. */
   due: number;
+  /** Смены с работой — по ним «метров за смену» в сравнении подрядчиков. */
   shifts: number;
+  /**
+   * Смены простоя: за них по метрам не начисляется, но и потерять их
+   * нельзя — спор «почему так мало» начинается именно с них.
+   */
+  idleShifts: number;
   meters: number;
 }
 
@@ -283,7 +289,10 @@ export function payroll(
     deductions,
     paid,
     due: accrued - advances - deductions - paid,
-    shifts: mine.length,
+    // Дождливая неделя не должна делать подрядчика «медленнее» в
+    // сравнении: средние — по сменам, в которые работали.
+    shifts: mine.filter((e) => !isIdleShift(e)).length,
+    idleShifts: mine.filter(isIdleShift).length,
     meters: mine.reduce((s, e) => s + entryMeters(e), 0),
   };
 }

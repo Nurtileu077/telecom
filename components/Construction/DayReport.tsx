@@ -7,6 +7,7 @@ import {
 } from '@/types/construction';
 import { JournalState, fmtKm, fmtMeters, MATERIAL_LABEL, plural } from './journalStore';
 import { getPhotoBlob, GEO_SOURCE_LABEL } from './photoStore';
+import { isIdleShift } from './entriesTable';
 import type { FieldPhoto } from '@/types/construction';
 
 /**
@@ -248,10 +249,21 @@ export default function DayReport({ journal, date, oblast, onClose, onPlay }: Pr
                   <span className="text-[10.5px] text-[var(--text-muted)] truncate">
                     {e.contractor || e.smu || ''}{e.column ? ` · ${e.column}` : ''}
                   </span>
-                  <span className="ml-auto font-mono text-[var(--text-muted)] shrink-0">
-                    {e.kind === 'ground' ? fmtKm(entryMeters(e.byMethod)) : fmtKm(e.totalM ?? 0)} км
-                  </span>
+                  {/* Простой — не «0,00 км»: в этот день стояли, и
+                      ниже сказано почему. */}
+                  {e.kind === 'ground' && isIdleShift(e) ? (
+                    <span className="ml-auto text-[var(--warn)] shrink-0">простой</span>
+                  ) : (
+                    <span className="ml-auto font-mono text-[var(--text-muted)] shrink-0">
+                      {e.kind === 'ground' ? fmtKm(entryMeters(e.byMethod)) : fmtKm(e.totalM ?? 0)} км
+                    </span>
+                  )}
                 </div>
+                {e.kind === 'ground' && e.downtime?.trim() && (
+                  <div className="text-[10.5px] text-[var(--warn)] mt-0.5">
+                    Простой: {e.downtime.trim()}
+                  </div>
+                )}
                 {/* Кто закрыл день: спрашивать «чья это запись» не должно
                     приходиться — у дня есть автор, и он тут написан. */}
                 {(e.author || e.editedBy) && (

@@ -96,14 +96,14 @@ describe('timesheetTotals', () => {
   });
 
   it('пустой табель — нули', () => {
-    expect(timesheetTotals([])).toEqual({ people: 0, shifts: 0, meters: 0 });
+    expect(timesheetTotals([])).toEqual({ people: 0, shifts: 0, idleShifts: 0, meters: 0 });
   });
 });
 
 describe('timesheetToText', () => {
   it('колонки через табуляцию — вставится в расчёт', () => {
     const text = timesheetToText(timesheet(ROWS, CREWS));
-    expect(text.split('\n')[0].split('\t')).toHaveLength(7);
+    expect(text.split('\n')[0].split('\t')).toHaveLength(8);
     expect(text).toContain('Ахметов А.');
   });
 });
@@ -311,5 +311,35 @@ describe('итог по одноимённым колоннам', () => {
     const t = timesheet([e({ id: 'a', column: 'Большая', contractor: 'Дозер', byMethod: { 'бар': 900 } })], big);
     expect(t).toHaveLength(3);
     expect(timesheetTotals(t).meters).toBe(900);
+  });
+});
+
+/**
+ * Колонна простояла день под дождём — это смена в табеле, но не такая,
+ * как рабочая: платить ли за неё и сколько, решает расчёт. Табель её не
+ * прячет и не смешивает с рабочими молча.
+ */
+describe('простой в табеле', () => {
+  const rows = [
+    e({ id: 'a', date: '2026-07-25', byMethod: { 'бар': 400 } }),
+    e({ id: 'b', date: '2026-07-26', byMethod: {}, downtime: 'дождь' }),
+  ];
+
+  it('виден отдельно от рабочих смен', () => {
+    const t = timesheet(rows, CREWS);
+    expect(t[0].shifts).toBe(2);
+    expect(t[0].idleShifts).toBe(1);
+    expect(t[0].crewMeters).toBe(400);
+  });
+
+  it('в итоге — человеко-сменами простоя', () => {
+    // Два человека, один день простоя у каждого.
+    expect(timesheetTotals(timesheet(rows, CREWS)).idleShifts).toBe(2);
+  });
+
+  it('и в тексте для расчёта — своей колонкой', () => {
+    const [head, row] = timesheetToText(timesheet(rows, CREWS)).split('\n');
+    expect(head.split('\t')[5]).toBe('Из них простой');
+    expect(row.split('\t')[5]).toBe('1');
   });
 });

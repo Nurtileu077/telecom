@@ -2,7 +2,7 @@ import {
   DailyWorkEntry, SnpProgress, SNP_STAGES, SNP_STAGE_SPECS,
 } from '@/types/construction';
 import { esc, ACT_DOC_CSS, fmtDate } from './actDocument';
-import { entryMeters, groupByWeek, weekStart } from './entriesTable';
+import { entryMeters, groupByWeek, weekStart, isIdleShift } from './entriesTable';
 import { stageStatus } from './stageTasks';
 import { normName } from './areaImport';
 
@@ -31,7 +31,10 @@ function inPeriod(e: DailyWorkEntry, f: PeriodFilter): boolean {
 export interface SectionLine {
   uchastok: string;
   meters: number;
+  /** Смены с работой. */
   shifts: number;
+  /** Смены простоя на участке: участок, где весь период лил дождь, тоже в отчёте. */
+  idleShifts: number;
   contractors: string[];
 }
 
@@ -39,7 +42,15 @@ export interface PeriodReport {
   from: string;
   to: string;
   meters: number;
+  /** Смены, в которые работали. По ним — средние. */
   shifts: number;
+  /**
+   * Смены простоя: работ не было, причина названа. Это не пропуск и не
+   * пустая строка — бригада стояла на объекте, и заказчик должен видеть
+   * почему.
+   */
+  idleShifts: number;
+  /** Дни, в которые работали. */
   days: number;
   perShift: number;
   perDay: number;
@@ -48,13 +59,16 @@ export interface PeriodReport {
   /** Метры по неделям: по ним видно, где провал. */
   weeks: { week: string; label: string; meters: number }[];
   /**
-   * Дни без единой смены внутри периода.
+   * Дни без единой записи внутри периода.
    *
-   * С днями простоя не пересекаются: простой записывают в смену, а
-   * смена — это работа. Поэтому и в отчёте это две разные строки.
+   * День простоя сюда не входит: о нём есть запись — смена простоя с
+   * причиной, — и в отчёте он идёт своей строкой. «Не было записи» и
+   * «стояли из-за дождя» — разные вещи, и сшивать их нельзя.
    */
   idleDays: string[];
-  /** Что мешало в рабочие дни: причины простоя из смен. */
+  /** Причины смен простоя и сколько дней по каждой. */
+  idleReasons: { reason: string; days: number }[];
+  /** Что мешало в рабочие дни: причины, записанные в сменах с работой. */
   downtime: { reason: string; days: number }[];
 }
 
@@ -81,7 +95,17 @@ export function periodReport(rows: DailyWorkEntry[], filter: PeriodFilter = {}):
 
   const bySection = new Map<string, SectionLine>();
   const worked = new Set<string>();
+  const recorded = new Set<string>();
   const downtime = new Map<string, Set<string>>();
+  const idleReasons = new Map<string, Set<string>>();
+  let shifts = 0;
+  let idleShifts = 0;
+
+  const note = (acc: Map<string, Set<string>>, reason: string, date: string) => {
+    const set = acc.get(reason) ?? new Set<string>();
+    set.add(date);
+    acc.set(reason, set);
+  };
 
   for (const e of list) {
     // Ключ — нормализованное имя: «Исаковка» и «исаковка » это один
@@ -89,41 +113,51 @@ export function periodReport(rows: DailyWorkEntry[], filter: PeriodFilter = {}):
     const shown = e.uchastok?.trim() || '—';
     const key = normName(shown) || '—';
     const line = bySection.get(key)
-      ?? { uchastok: shown, meters: 0, shifts: 0, contractors: [] as string[] };
+      ?? { uchastok: shown, meters: 0, shifts: 0, idleShifts: 0, contractors: [] as string[] };
+    const idle = isIdleShift(e);
     line.meters += entryMeters(e);
-    line.shifts += 1;
+    if (idle) line.idleShifts += 1; else line.shifts += 1;
     if (e.contractor && !line.contractors.includes(e.contractor)) {
       line.contractors.push(e.contractor);
     }
     bySection.set(key, line);
-    if (e.date) worked.add(e.date);
+    if (e.date) recorded.add(e.date);
     const reason = e.downtime?.trim();
-    if (reason && e.date) {
-      const set = downtime.get(reason) ?? new Set<string>();
-      set.add(e.date);
-      downtime.set(reason, set);
+    if (idle) {
+      idleShifts += 1;
+      if (reason && e.date) note(idleReasons, reason, e.date);
+      continue;
     }
+    shifts += 1;
+    if (e.date) worked.add(e.date);
+    if (reason && e.date) note(downtime, reason, e.date);
   }
 
   const meters = list.reduce((s, e) => s + entryMeters(e), 0);
   const weeks = groupByWeek(list).map((w) => ({
     week: w.week, label: w.label, meters: w.meters,
   }));
+  const byDays = (acc: Map<string, Set<string>>) => [...acc.entries()]
+    .map(([reason, days]) => ({ reason, days: days.size }))
+    .sort((a, b) => b.days - a.days);
 
   return {
     from,
     to,
     meters,
-    shifts: list.length,
+    shifts,
+    idleShifts,
     days: worked.size,
-    perShift: list.length ? meters / list.length : 0,
+    // Средние — по сменам и дням с работой: неделя дождя не делает
+    // бригаду медленнее, она делает неделю короче, и это видно в
+    // строке простоя.
+    perShift: shifts ? meters / shifts : 0,
     perDay: worked.size ? meters / worked.size : 0,
     sections: [...bySection.values()].sort((a, b) => b.meters - a.meters),
     weeks,
-    idleDays: daysBetween(from, to).filter((d) => !worked.has(d)),
-    downtime: [...downtime.entries()]
-      .map(([reason, days]) => ({ reason, days: days.size }))
-      .sort((a, b) => b.days - a.days),
+    idleDays: daysBetween(from, to).filter((d) => !recorded.has(d)),
+    idleReasons: byDays(idleReasons),
+    downtime: byDays(downtime),
   };
 }
 
@@ -177,12 +211,16 @@ export interface PeriodDocInput {
 export function periodDocHtml(input: PeriodDocInput): string {
   const r = input.report;
   const title = input.title || 'ОТЧЁТ О ВЫПОЛНЕННЫХ РАБОТАХ';
+  // Графа простоя — только когда он был: пустая колонка нулей в каждом
+  // отчёте читается как «простоев не бывает», а это не так.
+  const withIdle = r.idleShifts > 0;
 
   const sections = r.sections.map((s, i) => '<tr>'
     + `<td class="val">${i + 1}</td>`
     + `<td class="lbl">${esc(s.uchastok)}</td>`
     + `<td class="val">${esc(s.contractors.join(', ') || '—')}</td>`
     + `<td class="val">${s.shifts}</td>`
+    + (withIdle ? `<td class="val">${s.idleShifts || ''}</td>` : '')
     + `<td class="val">${Math.round(s.meters).toLocaleString('ru')}</td>`
     + '</tr>').join('');
 
@@ -202,33 +240,51 @@ export function periodDocHtml(input: PeriodDocInput): string {
       + `(было ${m(input.pace.previousM)}, стало ${m(input.pace.currentM)}).</p>`
     : '';
 
-  // Две разные вещи, и сшивать их в одну фразу нельзя: простой пишут в
-  // смену, а смена — это работа, и в дни без работ она не попадает.
+  // Три разные вещи, и сшивать их в одну фразу нельзя. Смена простоя —
+  // бригада стояла весь день, и известно почему. Простой в рабочий день —
+  // работали, но не в полную силу. День без единой записи — о нём не
+  // известно ничего, и выдавать его за дождь нельзя.
+  const reasons = (list: { reason: string; days: number }[]) => esc(
+    list.map((d) => `${d.reason} — ${d.days} дн`).join('; '),
+  );
+  const idleShifts = r.idleShifts
+    ? `<p>Смен простоя: <span class="b">${r.idleShifts}</span>`
+      + (r.idleReasons.length ? ` (${reasons(r.idleReasons)})` : '')
+      + '.</p>'
+    : '';
   const idle = r.idleDays.length
     ? `<p>Дней без единой смены: <span class="b">${r.idleDays.length}</span>.</p>`
     : '';
   const downtime = r.downtime.length
-    ? '<p>Простои в рабочие дни: '
-      + `${esc(r.downtime.map((d) => `${d.reason} — ${d.days} дн`).join('; '))}.</p>`
+    ? `<p>Простои в рабочие дни: ${reasons(r.downtime)}.</p>`
     : '';
+  // Период, когда стояли целиком, — тоже отчёт: «за 0 смен в 0 рабочих
+  // дней» и «в среднем 0 м» вместо этого читаются как сломанный расчёт.
+  const done = r.shifts > 0
+    ? `<p>Выполнено: <span class="b">${esc(km(r.meters))}</span> (${esc(m(r.meters))}) `
+      + `за ${r.shifts} смен в ${r.days} рабочих дней.</p>`
+      + `<p>В среднем ${esc(m(r.perShift))} за смену, ${esc(m(r.perDay))} за рабочий день.</p>`
+    : '<p>Работы в период не велись.</p>';
 
   return `<h1>${esc(title)}</h1>`
     + `<p class="center">за период ${esc(fmtDate(r.from))} — ${esc(fmtDate(r.to))}</p>`
     + (input.contractor ? `<p>Подрядчик: <span class="b">${esc(input.contractor)}</span></p>` : '')
-    + `<p>Выполнено: <span class="b">${esc(km(r.meters))}</span> (${esc(m(r.meters))}) `
-    + `за ${r.shifts} смен в ${r.days} рабочих дней.</p>`
-    + `<p>В среднем ${esc(m(r.perShift))} за смену, ${esc(m(r.perDay))} за рабочий день.</p>`
+    + done
     + pace
+    + idleShifts
     + idle
     + downtime
     + '<p class="mt b">По участкам</p>'
     + '<table class="act"><tr>'
     + '<td class="val b">№</td><td class="lbl b">Участок</td>'
-    + '<td class="val b">Подрядчик</td><td class="val b">Смен</td><td class="val b">Метры</td>'
+    + '<td class="val b">Подрядчик</td><td class="val b">Смен</td>'
+    + (withIdle ? '<td class="val b">Простой, смен</td>' : '')
+    + '<td class="val b">Метры</td>'
     + '</tr>'
     + sections
     + '<tr><td class="val"></td><td class="lbl b">Итого</td><td class="val"></td>'
     + `<td class="val b">${r.shifts}</td>`
+    + (withIdle ? `<td class="val b">${r.idleShifts}</td>` : '')
     + `<td class="val b">${Math.round(r.meters).toLocaleString('ru')}</td></tr>`
     + '</table>'
     + weeks

@@ -48,6 +48,20 @@ describe('рейтинг', () => {
     expect(rows[0].reliability).toBe(0.5);
   });
 
+  it('день простоя без метров — срыв, и доля считается от всех дней на объекте', () => {
+    const rows = rating({ ground: [
+      g({ date: '2026-09-14' }),
+      g({ date: '2026-09-15' }),
+      g({ date: '2026-09-16', byMethod: {}, downtime: 'дождь' }),
+    ] });
+    // Два рабочих дня и день дождя: смены — две, метры за смену не
+    // падают, а без простоя прошли два дня из трёх.
+    expect(rows[0].shifts).toBe(2);
+    expect(rows[0].perShift).toBe(2000);
+    expect(rows[0].stalls).toBe(1);
+    expect(rows[0].reliability).toBe(0.67);
+  });
+
   it('без имени в рейтинг не попадают', () => {
     expect(rating({ ground: [g({ contractor: undefined })] })).toHaveLength(0);
   });

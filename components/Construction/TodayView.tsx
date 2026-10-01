@@ -14,7 +14,7 @@ import { materialForecast, lowStock, daysLeftText } from './materialForecast';
 import { MATERIAL_LABEL } from './journalStore';
 import { placeCrews } from './crewPlace';
 import { crewsFromJournal } from './crewDerive';
-import { lastPlans, lastEquipment } from './dayPlan';
+import { lastPlans, lastEquipment, idleReasonsOn } from './dayPlan';
 import Glyph from '@/components/Layout/Glyph';
 import { useT } from '@/components/Layout/LangProvider';
 
@@ -62,6 +62,7 @@ export default function TodayView({ journal, onOpenView, onSetStage, onAddEntry 
     const day = metersByDay(journal.ground).find((d) => d.date === last);
     return day?.meters ?? 0;
   }, [journal.ground, last]);
+  const lastIdle = useMemo(() => idleReasonsOn(journal.ground, last), [journal.ground, last]);
 
   const auto = crews.filter((c) => c.derived).length;
   const working = crews.filter((c) => c.status === 'working');
@@ -79,6 +80,12 @@ export default function TodayView({ journal, onOpenView, onSetStage, onAddEntry 
           <span className="text-[12.5px] text-[var(--text)]">
             Последний отчёт — {new Date(`${last}T00:00:00Z`).toLocaleDateString('ru')}:
             {' '}<b>{fmtKm(lastMeters)} км</b>
+            {/* Ноль без объяснения выглядит как забытый отчёт, а это дождь. */}
+            {lastIdle.length > 0 && (
+              <span className="text-[var(--warn)]">
+                {lastMeters > 0 ? ', у части бригад простой' : ', простой'}: {lastIdle.join('; ')}
+              </span>
+            )}
           </span>
         ) : (
           <span className="text-[12.5px] text-[var(--text-muted)]">{t('Отчётов ещё нет')}</span>

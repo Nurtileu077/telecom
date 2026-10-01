@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { lastPlans, downtimeReasons, lastEquipment } from './dayPlan';
+import { lastPlans, downtimeReasons, lastEquipment, idleReasonsOn } from './dayPlan';
 import type { DailyWorkEntry } from '@/types/construction';
 
 const now = '2026-09-18T00:00:00.000Z';
@@ -78,5 +78,22 @@ describe('техника последней смены', () => {
 
   it('без записей о технике — пусто', () => {
     expect(lastEquipment([g({})])).toHaveLength(0);
+  });
+});
+
+describe('почему в этот день стояли', () => {
+  it('причины смен простоя этого дня — без повторов', () => {
+    const rows = [
+      g({ date: '2026-09-17', downtime: 'Дождь' }),
+      g({ date: '2026-09-17', column: '2-колонна', downtime: 'дождь.' }),
+      g({ date: '2026-09-17', column: '3-колонна', downtime: 'ждём разрешения' }),
+      g({ date: '2026-09-16', downtime: 'снег' }),
+    ];
+    expect(idleReasonsOn(rows, '2026-09-17')).toEqual(['Дождь', 'ждём разрешения']);
+  });
+
+  it('причина в смене с метрами — не простой дня', () => {
+    const rows = [g({ date: '2026-09-17', byMethod: { 'бар': 300 }, downtime: 'после обеда дождь' })];
+    expect(idleReasonsOn(rows, '2026-09-17')).toEqual([]);
   });
 });

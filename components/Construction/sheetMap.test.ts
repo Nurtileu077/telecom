@@ -98,6 +98,25 @@ describe('rowsToEntries', () => {
     expect(res.skipped[0].why).toBe('нет метров');
   });
 
+  it('строку без метров, но с причиной простоя загружает сменой простоя', () => {
+    const rows: unknown[][] = [
+      ['Дата', 'Участок', 'Метры', 'Причины простоя / невыполнения'],
+      ['25.07.2026', 'У1', 0, 'дождь'],
+      ['26.07.2026', 'У1', 0, ''],
+    ];
+    const res = rowsToEntries(rows, 0, guessMapping(rows[0]));
+    expect(res.entries).toHaveLength(1);
+    expect(res.entries[0].downtime).toBe('дождь');
+    expect(res.entries[0].byMethod).toEqual({});
+    expect(res.skipped).toEqual([{ row: 3, why: 'нет метров' }]);
+  });
+
+  it('графа «невыполнения» не уходит в метры', () => {
+    const m = guessMapping(['Дата', 'Участок', 'Причины простоя / невыполнения', 'Выполнено, м']);
+    expect(m.downtime).toBe(2);
+    expect(m.meters).toBe(3);
+  });
+
   it('читает дату и числом Excel, и текстом', () => {
     const rows: unknown[][] = [
       ['Дата', 'Участок', 'Метры'],

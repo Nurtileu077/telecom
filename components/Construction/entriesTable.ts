@@ -31,6 +31,34 @@ export function entryMeters(e: DailyWorkEntry): number {
   return m;
 }
 
+/**
+ * Была ли в смене работа — хоть что-то, что меряют.
+ *
+ * Не одни метры по способам: ГНБ, открытый переход, задувка, операции из
+ * отчёта инженера и тотал МКТ — тоже работа. Смена задувки без укладки —
+ * рабочий день, а не простой.
+ */
+export function entryHasWork(e: DailyWorkEntry): boolean {
+  if (entryMeters(e) > 0) return true;
+  if ((e.drillM ?? 0) > 0 || (e.drillCount ?? 0) > 0) return true;
+  if ((e.openCrossings ?? 0) > 0 || (e.blowingM ?? 0) > 0) return true;
+  if ((e.totalMktM ?? 0) > 0) return true;
+  return Object.values(e.operations ?? {}).some((v) => (v ?? 0) > 0);
+}
+
+/**
+ * Смена простоя: работ не было, а причина названа.
+ *
+ * Дождь, ждём разрешения, стоит техника — бригада на объекте, день
+ * прошёл, метров ноль. Это не пустая строка и не ошибка ввода, а ответ на
+ * вопрос «почему отстаём». Средние «метров за смену» её не учитывают:
+ * они про то, сколько выходит, когда работают, — а простой в отчётах идёт
+ * своей строкой.
+ */
+export function isIdleShift(e: DailyWorkEntry): boolean {
+  return !entryHasWork(e) && !!e.downtime?.trim();
+}
+
 function hay(e: DailyWorkEntry): string {
   return [
     e.date, e.uchastok, e.contractor, e.column, e.smu, e.oblast, e.rayon,
@@ -137,9 +165,15 @@ export interface TableTotals {
   meters: number;
   /** Сколько смен — то есть строк. */
   shifts: number;
+  /** Из них смен простоя: работ нет, причина названа. */
+  idle: number;
   /** Сколько разных дней. */
   days: number;
-  /** Средние метры за смену. */
+  /**
+   * Средние метры за смену — по сменам, где работали. Три дня дождя в
+   * неделе не делают бригаду вдвое медленнее: они делают её неделю
+   * короче, и это видно в числе смен простоя.
+   */
   perShift: number;
   drillM: number;
   disputed: number;
@@ -148,11 +182,14 @@ export interface TableTotals {
 export function tableTotals(rows: DailyWorkEntry[]): TableTotals {
   const meters = rows.reduce((s, e) => s + entryMeters(e), 0);
   const days = new Set(rows.map((e) => e.date).filter(Boolean)).size;
+  const idle = rows.filter(isIdleShift).length;
+  const working = rows.length - idle;
   return {
     meters,
     shifts: rows.length,
+    idle,
     days,
-    perShift: rows.length > 0 ? meters / rows.length : 0,
+    perShift: working > 0 ? meters / working : 0,
     drillM: rows.reduce((s, e) => s + (e.drillM ?? 0), 0),
     disputed: rows.filter((e) => e.disputed).length,
   };

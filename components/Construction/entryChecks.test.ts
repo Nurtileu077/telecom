@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  findDuplicate, typicalPerShift, checkEntry, hasBlocking, HARD_METERS_LIMIT,
+  findDuplicate, typicalPerShift, checkEntry, hasBlocking, HARD_METERS_LIMIT, saveBlocker,
 } from './entryChecks';
 import type { DailyWorkEntry } from '@/types/construction';
 
@@ -101,5 +101,45 @@ describe('checkEntry', () => {
       history,
     );
     expect(warns.some((w) => w.text.includes('300 м'))).toBe(true);
+  });
+});
+
+/**
+ * Дождь — смену с нулём метров было не сохранить, и день простоя
+ * пропадал из отчёта за период, хотя проверка сама просила указать
+ * причину простоя.
+ */
+describe('saveBlocker', () => {
+  it('смена простоя с причиной сохраняется', () => {
+    expect(saveBlocker(e({ byMethod: {}, downtime: 'дождь' }))).toBeNull();
+  });
+
+  it('пустую смену без причины не сохраняет и говорит, что вписать', () => {
+    const why = saveBlocker(e({ byMethod: {} }));
+    expect(why).toContain('причину простоя');
+  });
+
+  it('пробелы вместо причины — не причина', () => {
+    expect(saveBlocker(e({ byMethod: {}, downtime: '  ' }))).not.toBeNull();
+  });
+
+  it('задувка без метров укладки — работа, сохраняется', () => {
+    expect(saveBlocker(e({ byMethod: {}, blowingM: 2400 }))).toBeNull();
+  });
+
+  it('без участка не сохраняет даже с метрами', () => {
+    expect(saveBlocker(e({ uchastok: '  ' }))).toBe('Укажите участок.');
+  });
+
+  it('исправление без причины исправления не уходит', () => {
+    expect(saveBlocker(e({}), { correcting: true, reason: '' }))
+      .toBe('Укажите причину исправления.');
+    expect(saveBlocker(e({}), { correcting: true, reason: 'ошиблись в метраже' })).toBeNull();
+  });
+
+  it('проверка и сохранение говорят одно: с причиной вопроса нет', () => {
+    const idle = e({ id: 'new', date: '2026-08-01', byMethod: {}, downtime: 'ждём разрешения' });
+    expect(checkEntry(idle, [])).toEqual([]);
+    expect(saveBlocker(idle)).toBeNull();
   });
 });

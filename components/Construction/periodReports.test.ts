@@ -196,3 +196,79 @@ describe('участок с разным написанием в отчёте', 
     expect(r.sections[0].shifts).toBe(2);
   });
 });
+
+/**
+ * Дождь или ждём разрешения — смену с нулём метров было не сохранить, и
+ * день простоя пропадал из отчёта за период. Теперь он в отчёте своей
+ * строкой и не портит средние.
+ */
+describe('смена простоя в отчёте за период', () => {
+  const rows = [
+    e({ id: 'a', date: '2026-07-20', byMethod: { 'бар': 600 } }),
+    e({ id: 'b', date: '2026-07-21', byMethod: { 'бар': 400 } }),
+    e({ id: 'c', date: '2026-07-22', byMethod: {}, downtime: 'дождь' }),
+    e({ id: 'd', date: '2026-07-23', byMethod: {}, downtime: 'ждём разрешения' }),
+    e({ id: 'f', date: '2026-07-24', byMethod: {}, downtime: 'дождь' }),
+  ];
+  const report = () => periodReport(rows, { from: '2026-07-20', to: '2026-07-26' });
+
+  it('попадает в отчёт со своей причиной', () => {
+    const r = report();
+    expect(r.idleShifts).toBe(3);
+    expect(r.idleReasons).toEqual([
+      { reason: 'дождь', days: 2 },
+      { reason: 'ждём разрешения', days: 1 },
+    ]);
+  });
+
+  it('средние — по сменам, в которые работали', () => {
+    const r = report();
+    expect(r.shifts).toBe(2);
+    expect(r.days).toBe(2);
+    expect(r.perShift).toBe(500);
+    expect(r.perDay).toBe(500);
+  });
+
+  it('день простоя — не «день без единой смены»', () => {
+    // 22–24 стояли, 25 и 26 записей нет вовсе.
+    expect(report().idleDays).toEqual(['2026-07-25', '2026-07-26']);
+  });
+
+  it('и не «простой в рабочий день»: там работали, здесь стояли', () => {
+    expect(report().downtime).toEqual([]);
+  });
+
+  it('участок, где весь период стояли, в разрезе остаётся', () => {
+    const r = periodReport([
+      e({ id: 'a', uchastok: 'Исаковка', byMethod: { 'бар': 400 } }),
+      e({ id: 'b', uchastok: 'Бурабай', byMethod: {}, downtime: 'дождь' }),
+    ], { from: '2026-07-20', to: '2026-07-20' });
+    const burabay = r.sections.find((s) => s.uchastok === 'Бурабай');
+    expect(burabay).toMatchObject({ meters: 0, shifts: 0, idleShifts: 1 });
+  });
+
+  it('в документе — отдельной строкой и графой', () => {
+    const html = periodDocHtml({ report: report() });
+    expect(html).toContain('Смен простоя: <span class="b">3</span> (дождь — 2 дн; ждём разрешения — 1 дн).');
+    expect(html).toContain('Простой, смен');
+    expect(html).toContain('за 2 смен в 2 рабочих дней');
+  });
+
+  it('без простоя графы простоя в документе нет', () => {
+    const html = periodDocHtml({ report: periodReport(ROWS, { from: '2026-07-20', to: '2026-07-26' }) });
+    expect(html).not.toContain('Простой, смен');
+    expect(html).not.toContain('Смен простоя');
+  });
+
+  it('неделя сплошного дождя — отчёт, а не «0 смен» и деление на ноль', () => {
+    const r = periodReport(
+      [e({ id: 'a', date: '2026-07-20', byMethod: {}, downtime: 'дождь' })],
+      { from: '2026-07-20', to: '2026-07-20' },
+    );
+    expect(r.perShift).toBe(0);
+    const html = periodDocHtml({ report: r });
+    expect(html).toContain('Работы в период не велись.');
+    expect(html).toContain('Смен простоя: <span class="b">1</span> (дождь — 1 дн).');
+    expect(html).not.toContain('за 0 смен');
+  });
+});

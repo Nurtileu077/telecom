@@ -217,6 +217,9 @@ export default function DocsView({
     () => paceChange(journal.ground, { from, to, contractor }),
     [journal.ground, from, to, contractor],
   );
+  // Неделя сплошного дождя — тоже отчёт: смены простоя в него входят, и
+  // кнопка не должна гаснуть только потому, что метров ноль.
+  const anyShift = report.shifts + report.idleShifts > 0;
   const progressNow = useMemo(() => effectiveProgress(journal.progress, journal), [journal]);
   const readiness = useMemo(() => snpReadiness(progressNow), [progressNow]);
   // Сёла, по которым узнаём концы в названии трассы, — те же, что у карты:
@@ -786,6 +789,9 @@ export default function DocsView({
           {contractor ? ` · ${contractor}` : ''}
           {' · '}
           {Math.round(report.meters).toLocaleString('ru')} м за {report.shifts} смен
+          {/* Простой называем, а не прячем: заказчик спросит, почему метров
+              мало, и ответ должен быть в том же отчёте. */}
+          {report.idleShifts > 0 && ` · простой — ${report.idleShifts} смен`}
         </div>
         <div className="flex gap-1.5 flex-wrap">
           <button type="button" className="btn btn-primary text-[11.5px]"
@@ -799,7 +805,7 @@ export default function DocsView({
             <FileDown size={14} />Ведомость объёмов
           </button>
           <button type="button" className="btn btn-ghost text-[11.5px]"
-                  disabled={report.shifts === 0}
+                  disabled={!anyShift}
                   onClick={() => save(
                     periodDocFile({ report, contractor }),
                     periodDocPage({ report, pace, contractor, author }),
@@ -808,7 +814,7 @@ export default function DocsView({
           </button>
           {cloudReady && (
             <button type="button" className="btn btn-ghost text-[11.5px]"
-                    disabled={busy || report.shifts === 0}
+                    disabled={busy || !anyShift}
                     title="Отдать ссылкой: заказчик всегда открывает текущую версию"
                     onClick={() => share(
                       'отчёт за период',
@@ -849,7 +855,7 @@ export default function DocsView({
               key={dialect}
               type="button"
               className="btn btn-ghost text-[11.5px]"
-              disabled={report.shifts === 0}
+              disabled={!anyShift}
               title={dialect === 'excel-ru'
                 ? 'CSV для 1С и русского Excel: точка с запятой, запятая в дробях'
                 : 'CSV для Google Таблиц: запятая, точка в дробях'}

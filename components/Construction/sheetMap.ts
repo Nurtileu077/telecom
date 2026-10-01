@@ -17,7 +17,7 @@ import { parseMeters } from './units';
 
 export type SheetField =
   | 'date' | 'uchastok' | 'kato' | 'oblast' | 'rayon'
-  | 'contractor' | 'column' | 'smu' | 'note'
+  | 'contractor' | 'column' | 'smu' | 'note' | 'downtime'
   | 'meters' | 'drillM' | 'blowingM'
   | LayMethod;
 
@@ -49,6 +49,13 @@ export const SHEET_FIELDS: Record<SheetField, FieldSpec> = {
   column: { label: 'Колонна', hints: ['колонн', 'бригад', 'звено'], kind: 'text' },
   smu: { label: 'СМУ', hints: ['сму'], kind: 'text' },
   note: { label: 'Примечание', hints: ['примечан', 'коммент', 'заметк'], kind: 'text' },
+  // «Причины простоя / невыполнения» — так графа зовётся в отчёте
+  // заказчика. Без неё строка дождливого дня без метров пропускалась.
+  downtime: {
+    label: 'Причина простоя',
+    hints: ['простой', 'простоя', 'простои', 'невыполнен'],
+    kind: 'text',
+  },
   meters: {
     label: 'Метры (общие)',
     hints: ['проложено', 'выполнен', 'метр', 'итого', 'всего', 'объем', 'м/п', 'пог'],
@@ -122,7 +129,9 @@ export function guessMapping(headers: unknown[]): SheetMapping {
   const order: SheetField[] = [
     ...LAY_METHODS, 'drillM', 'blowingM',
     'date', 'kato', 'smu', 'column', 'contractor', 'oblast', 'rayon',
-    'uchastok', 'note', 'meters',
+    // Простой — раньше метров: в «невыполнения» сидит «выполнен», и
+    // графа причин доставалась общим метрам.
+    'downtime', 'uchastok', 'note', 'meters',
   ];
 
   for (const field of order) {
@@ -249,8 +258,11 @@ export function rowsToEntries(
 
     const drillM = Math.round(cellMeters(at(row, 'drillM')));
     const blowingM = Math.round(cellMeters(at(row, 'blowingM')));
+    const downtime = cellText(at(row, 'downtime'));
     const total = Object.values(byMethod).reduce((s, v) => s + (v ?? 0), 0);
-    if (total === 0 && drillM === 0 && blowingM === 0) {
+    // Строка без метров, но с причиной — смена простоя: день дождя из
+    // чужой таблицы не должен пропадать при загрузке.
+    if (total === 0 && drillM === 0 && blowingM === 0 && !downtime) {
       skipped.push({ row: r + 1, why: 'нет метров' });
       continue;
     }
@@ -272,6 +284,7 @@ export function rowsToEntries(
       blowingM: blowingM || undefined,
       materials: {},
       note: cellText(at(row, 'note')) || undefined,
+      downtime: downtime || undefined,
       author: opts.author,
       createdAt: now,
       updatedAt: now,
