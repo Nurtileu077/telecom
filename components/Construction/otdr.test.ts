@@ -1,0 +1,146 @@
+import { describe, it, expect } from 'vitest';
+import {
+  otdrKey, otdrAttached, otdrFileName, otdrLines, measuredObjects, measureInput,
+  measuredInPeriod, uploadPendingOtdr,
+} from './otdr';
+import type { SiteObject, SpliceRecord } from '@/types/construction';
+
+function rec(over: Partial<SpliceRecord> = {}): SpliceRecord {
+  return {
+    id: 's1', objectId: 'm1', date: '2026-09-10',
+    fibers: [{ fiber: 1, lossDb: 0.05 }],
+    createdAt: '', updatedAt: '', ...over,
+  };
+}
+
+function mufta(over: Partial<SiteObject> = {}): SiteObject {
+  return {
+    id: 'm1', kind: 'mufta', name: 'Муфта №1', lat: 51, lon: 71,
+    uchastok: 'Еленовка', ...over,
+  } as SiteObject;
+}
+
+describe('рефлектограмма протокола сварки', () => {
+  it('файл есть, если он лежит на устройстве или уже в облаке', () => {
+    expect(otdrAttached(rec({ otdrPending: true }))).toBe(true);
+    expect(otdrAttached(rec({ otdrUrl: 'https://x/otdr.sor' }))).toBe(true);
+    expect(otdrAttached(rec({ otdrName: 'OTDR.sor' }))).toBe(false);
+  });
+
+  it('ключ файла не путается с ключом снимка', () => {
+    expect(otdrKey('s1')).toBe('otdr-s1');
+  });
+
+  it('имя файла — исходное, а без него — по муфте и дате', () => {
+    expect(otdrFileName(rec({ otdrName: 'trace/1550.sor' }))).toBe('trace 1550.sor');
+    expect(otdrFileName(rec(), 'Муфта №1')).toBe('Рефлектограмма Муфта №1 2026-09-10');
+  });
+
+  it('в протоколе без архива файл «в журнале», а не «прилагается»', () => {
+    const lines = otdrLines([rec({ otdrName: 'a.sor', otdrPending: true })]);
+    expect(lines[0].status).toBe('файл в журнале, выдаётся по запросу');
+  });
+
+  it('в пакете легшая в архив рефлектограмма прилагается, а не легшая — так и названа', () => {
+    const records = [
+      rec({ id: 's1', otdrName: 'a.sor', otdrPending: true }),
+      rec({ id: 's2', otdrName: 'b.sor', otdrUrl: 'https://x/b.sor' }),
+    ];
+    const lines = otdrLines(records, 'Муфта №1', new Map([['s1', 'Муфта №1 a.sor']]));
+    expect(lines[0].name).toBe('Муфта №1 a.sor');
+    expect(lines[0].status).toContain('прилагается');
+    expect(lines[1].status).toContain('в архив не попала');
+  });
+
+  it('записанное только имя не выдаётся за приложенный файл', () => {
+    const lines = otdrLines([rec({ otdrName: 'OTDR_m3.sor' })]);
+    expect(lines).toEqual([{ name: 'OTDR_m3.sor', status: 'файл не загружен — записано только имя' }]);
+  });
+
+  it('протокол без всякой рефлектограммы не получает пустых строк приложения', () => {
+    expect(otdrLines([rec()])).toEqual([]);
+  });
+});
+
+describe('муфты для протокола измерений', () => {
+  const objects = [
+    mufta(),
+    mufta({ id: 'm2', name: 'Муфта №2' }),
+    mufta({ id: 'm3', name: 'Муфта №10', uchastok: 'Обалы' }),
+  ];
+  const splices = [
+    rec({ id: 'a', objectId: 'm3' }),
+    rec({ id: 'b', objectId: 'm2', date: '2026-09-12' }),
+    rec({ id: 'c', objectId: 'm1' }),
+    rec({ id: 'd', objectId: 'm2', date: '2026-09-01' }),
+    rec({ id: 'e', objectId: 'gone' }),
+  ];
+
+  it('выбирается любая муфта, а не всегда первая записанная', () => {
+    const list = measuredObjects(objects, splices);
+    expect(list.map((m) => m.name)).toEqual([
+      'Муфта без названия', 'Муфта №1', 'Муфта №2', 'Муфта №10',
+    ]);
+  });
+
+  it('муфты участка отбираются по участку, нестрого к написанию', () => {
+    const list = measuredObjects(objects, splices, 'с. Еленовка');
+    expect(list.map((m) => m.objectId)).toEqual(['m1', 'm2']);
+  });
+
+  it('протоколы сварки муфты идут по дате', () => {
+    const m2 = measuredObjects(objects, splices).find((m) => m.objectId === 'm2')!;
+    expect(m2.records.map((r) => r.id)).toEqual(['d', 'b']);
+  });
+
+  it('в пакет идёт муфта, по которой мерили в периоде', () => {
+    const m2 = measuredObjects(objects, splices).find((m) => m.objectId === 'm2')!;
+    expect(measuredInPeriod(m2, '2026-09-10', '2026-09-30')).toBe(true);
+    expect(measuredInPeriod(m2, '2026-09-13', '2026-09-30')).toBe(false);
+  });
+
+  it('измерения подписывает тот, кто варил, а не пустой фильтр', () => {
+    const m = measuredObjects(objects, [rec({ contractor: 'TERRA TECH' })])[0];
+    expect(measureInput(m, {}).contractor).toBe('TERRA TECH');
+    expect(measureInput(measuredObjects(objects, [rec()])[0], { contractor: 'Фаворит' }).contractor)
+      .toBe('Фаворит');
+  });
+});
+
+describe('отправка рефлектограмм', () => {
+  it('отправленная получает ссылку, а локальная копия удаляется', async () => {
+    const deleted: string[] = [];
+    const res = await uploadPendingOtdr([rec({ otdrPending: true, otdrName: 'a.sor' })], {
+      get: async () => new Blob(['x']),
+      del: async (k) => { deleted.push(k); },
+      upload: async (id, name) => ({ url: `https://x/${id}/${name}`, storagePath: `p/${id}` }),
+    }, () => 'T');
+    expect(res.sent).toBe(1);
+    expect(res.splices[0]).toMatchObject({
+      otdrUrl: 'https://x/s1/a.sor', otdrStoragePath: 'p/s1', otdrPending: false, updatedAt: 'T',
+    });
+    expect(deleted).toEqual(['otdr-s1']);
+  });
+
+  it('при обрыве связи файл остаётся ждать и не теряется', async () => {
+    const deleted: string[] = [];
+    const res = await uploadPendingOtdr([rec({ otdrPending: true })], {
+      get: async () => new Blob(['x']),
+      del: async (k) => { deleted.push(k); },
+      upload: async () => { throw new Error('нет сети'); },
+    });
+    expect(res.failed).toBe(1);
+    expect(res.splices[0].otdrPending).toBe(true);
+    expect(deleted).toEqual([]);
+  });
+
+  it('файл, приложенный на другом телефоне, не считается ошибкой здесь', async () => {
+    const res = await uploadPendingOtdr([rec({ otdrPending: true })], {
+      get: async () => null,
+      del: async () => {},
+      upload: async () => ({ url: '', storagePath: '' }),
+    });
+    expect(res).toMatchObject({ sent: 0, failed: 0, elsewhere: 1 });
+    expect(res.splices[0].otdrPending).toBe(true);
+  });
+});

@@ -1,12 +1,15 @@
 'use client';
 import { useMemo, useState } from 'react';
-import { Network, Flame, AlertTriangle, Plus, Trash2 } from 'lucide-react';
+import { Network, Flame, AlertTriangle, Plus, Trash2, Paperclip } from 'lucide-react';
 import {
   SiteObject, SpliceRecord, FiberSplice, SPLICE_LOSS_LIMIT_DB,
   SITE_OBJECT_SPECS, MUFTA_STATES,
 } from '@/types/construction';
 import { JournalState } from './journalStore';
 import { passports, passportSummary } from './passport';
+import { otdrKey } from './otdr';
+import { putPhotoBlob, getPhotoBlob, fmtBytes } from './photoStore';
+import { downloadBlob } from '@/lib/download';
 import Glyph from '@/components/Layout/Glyph';
 import { useT } from '@/components/Layout/LangProvider';
 
@@ -145,10 +148,24 @@ export default function PassportView({
                     {p.splice.device ? ` · ${p.splice.device}` : ''}
                     {p.splice.waveNm ? ` · ${p.splice.waveNm} нм` : ''}
                   </span>
-                  {p.splice.otdrUrl && (
+                  {p.splice.otdrUrl ? (
                     <a href={p.splice.otdrUrl} target="_blank" rel="noreferrer"
                        className="text-[var(--accent)] hover:underline">рефлектограмма</a>
-                  )}
+                  ) : p.splice.otdrPending ? (
+                    // Файл ещё на этом телефоне — открываем из локальной копии,
+                    // в поле ждать связи, чтобы показать его технадзору, нельзя.
+                    <button type="button" className="text-[var(--accent)] hover:underline"
+                            onClick={async () => {
+                              const blob = await getPhotoBlob(otdrKey(p.splice!.id));
+                              if (blob) downloadBlob(p.splice!.otdrName || 'рефлектограмма', blob);
+                            }}>
+                      рефлектограмма (не отправлена)
+                    </button>
+                  ) : p.splice.otdrName ? (
+                    <span className="text-[var(--warn)]" title="Записано только имя файла — сам файл не загружен">
+                      {p.splice.otdrName} — файла нет
+                    </span>
+                  ) : null}
                   <button type="button" onClick={() => onRemoveSplice(p.splice!.id)}
                           title="Удалить протокол"
                           className="ml-auto text-[var(--text-muted)] hover:text-[var(--danger)]">
@@ -216,6 +233,11 @@ function SpliceForm({ object, initial, author, onSave, onClose }: {
   const [device, setDevice] = useState(initial?.device ?? '');
   const [wave, setWave] = useState(initial?.waveNm ? String(initial.waveNm) : '1550');
   const [otdrName, setOtdrName] = useState(initial?.otdrName ?? '');
+  // id нужен до сохранения: под ним ложится файл рефлектограммы.
+  const [id] = useState(() => initial?.id ?? `sp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
+  const [otdrFile, setOtdrFile] = useState<File | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
   const [note, setNote] = useState(initial?.note ?? '');
   const [fibers, setFibers] = useState<{ fiber: string; lossDb: string; to: string }[]>(
     () => (initial?.fibers ?? []).map((f) => ({
@@ -239,21 +261,39 @@ function SpliceForm({ object, initial, author, onSave, onClose }: {
     return Number.isFinite(n) ? n : undefined;
   };
 
-  const submit = () => {
+  const submit = async () => {
     const list: FiberSplice[] = fibers
       .map((f) => ({ fiber: Number(f.fiber), lossDb: num(f.lossDb), to: f.to.trim() || undefined }))
       .filter((f) => Number.isFinite(f.fiber) && f.fiber > 0);
     const now = new Date().toISOString();
+    // Новый файл заменяет прежнюю рефлектограмму: ссылка на старую
+    // больше не про этот протокол.
+    let otdr: Pick<SpliceRecord, 'otdrUrl' | 'otdrStoragePath' | 'otdrPending' | 'otdrBytes'> = {
+      otdrUrl: initial?.otdrUrl,
+      otdrStoragePath: initial?.otdrStoragePath,
+      otdrPending: initial?.otdrPending,
+      otdrBytes: initial?.otdrBytes,
+    };
+    if (otdrFile) {
+      setSaving(true);
+      const ok = await putPhotoBlob(otdrKey(id), otdrFile);
+      setSaving(false);
+      if (!ok) {
+        setError('Файл не сохранился: хранилище телефона недоступно или переполнено.');
+        return;
+      }
+      otdr = { otdrPending: true, otdrBytes: otdrFile.size };
+    }
     onSave({
-      id: initial?.id ?? `sp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      id,
       objectId: object.id,
       date,
       crew: crew.trim() || undefined,
       device: device.trim() || undefined,
       waveNm: num(wave),
       fibers: list,
-      otdrName: otdrName.trim() || undefined,
-      otdrUrl: initial?.otdrUrl,
+      otdrName: (otdrFile?.name ?? otdrName).trim() || undefined,
+      ...otdr,
       note: note.trim() || undefined,
       author: initial?.author ?? author,
       createdAt: initial?.createdAt ?? now,
@@ -344,16 +384,42 @@ function SpliceForm({ object, initial, author, onSave, onClose }: {
             })}
           </div>
 
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] text-[var(--text-muted)]">Рефлектограмма — имя файла</span>
-            <input value={otdrName} onChange={(e) => setOtdrName(e.target.value)}
-                   placeholder="OTDR_муфта3_1550.sor"
-                   className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[13px] text-[var(--text)]" />
+          <div className="flex flex-col gap-1">
+            <span className="text-[11px] text-[var(--text-muted)]">Рефлектограмма</span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <label className="btn btn-ghost text-[11.5px] cursor-pointer">
+                <Paperclip size={13} />
+                {otdrFile || initial?.otdrUrl || initial?.otdrPending ? 'Заменить файл' : 'Приложить файл'}
+                <input type="file" className="hidden"
+                       accept=".sor,.SOR,.trc,.msor,.pdf,image/*"
+                       onChange={(e) => {
+                         const f = e.target.files?.[0] ?? null;
+                         setOtdrFile(f);
+                         if (f) setOtdrName(f.name);
+                         setError('');
+                       }} />
+              </label>
+              <span className="text-[11px] text-[var(--text)] min-w-0 truncate">
+                {otdrFile
+                  ? `${otdrFile.name} · ${fmtBytes(otdrFile.size)}`
+                  : initial?.otdrUrl ? `${initial.otdrName ?? 'файл'} · в облаке`
+                    : initial?.otdrPending ? `${initial.otdrName ?? 'файл'} · ждёт отправки`
+                      : 'файла нет'}
+              </span>
+            </div>
+            {!otdrFile && !initial?.otdrUrl && !initial?.otdrPending && (
+              <input value={otdrName} onChange={(e) => setOtdrName(e.target.value)}
+                     placeholder="или только имя: OTDR_муфта3_1550.sor"
+                     aria-label="Имя файла рефлектограммы"
+                     className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[13px] text-[var(--text)]" />
+            )}
             <span className="text-[10.5px] text-[var(--text-muted)]">
-              Сам файл прикладывается к письму: здесь он нужен как ссылка на
-              то, чем подтверждено измерение.
+              Файл ложится в журнал и уходит в облако при обмене, а в протокол
+              измерений и в пакет документов попадает приложением. Без файла
+              протокол прямо скажет, что рефлектограммы нет.
             </span>
-          </label>
+            {error && <span className="text-[11px] text-[var(--danger)]">{error}</span>}
+          </div>
 
           <label className="flex flex-col gap-1">
             <span className="text-[11px] text-[var(--text-muted)]">{t('Примечание')}</span>
@@ -363,7 +429,8 @@ function SpliceForm({ object, initial, author, onSave, onClose }: {
         </div>
         <div className="flex gap-2 px-4 py-3 border-t border-[var(--border)] sticky bottom-0 bg-[var(--bg-surface)]">
           <button type="button" className="btn btn-ghost flex-1" onClick={onClose}>{t('Отмена')}</button>
-          <button type="button" className="btn btn-primary flex-1" onClick={submit}>
+          <button type="button" className="btn btn-primary flex-1" disabled={saving}
+                  onClick={() => { void submit(); }}>
             Сохранить протокол
           </button>
         </div>

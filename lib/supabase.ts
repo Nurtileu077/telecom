@@ -258,6 +258,37 @@ export async function storageUploadJournalPhoto(
   return { url: data.publicUrl, storagePath };
 }
 
+/**
+ * Рефлектограмма к протоколу сварки.
+ *
+ * Тот же склад, что у снимков, своя ветка. Расширение сохраняем: .sor
+ * открывают программой рефлектометра, и без расширения она его не узнает.
+ *
+ * Имя каждый раз новое, без замены поверх: правила склада снимков дают
+ * класть и удалять, но не переписывать, — так снимок-доказательство
+ * нельзя тихо подменить. Рефлектограмма — такое же доказательство.
+ */
+export async function storageUploadOtdr(
+  spliceId: string,
+  fileName: string,
+  blob: Blob,
+): Promise<{ url: string; storagePath: string }> {
+  if (!supabase) throw new Error('Supabase не настроен');
+  await assertSupabaseAccess();
+  const safeId = spliceId.replace(/[^\w.-]/g, '_');
+  const ext = (/\.([A-Za-z0-9]{1,8})$/.exec(fileName)?.[1] ?? 'bin').toLowerCase();
+  const storagePath = `journal/otdr/${safeId}-${Date.now().toString(36)}.${ext}`;
+  const { error } = await supabase.storage
+    .from(FIELD_PHOTOS_BUCKET)
+    .upload(storagePath, blob, {
+      contentType: blob.type || 'application/octet-stream',
+      upsert: false,
+    });
+  if (error) throw error;
+  const { data } = supabase.storage.from(FIELD_PHOTOS_BUCKET).getPublicUrl(storagePath);
+  return { url: data.publicUrl, storagePath };
+}
+
 export async function storageDeleteFieldPhoto(storagePath: string): Promise<void> {
   if (!supabase || !storagePath) return;
   const { error } = await supabase.storage.from(FIELD_PHOTOS_BUCKET).remove([storagePath]);

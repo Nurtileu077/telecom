@@ -268,6 +268,8 @@ export default function SectionClosing({ journal, onChangeFields }: Props) {
               </select>
             </label>
             <Txt label="Обваловка" value={fields.obvalovka} onChange={(v) => setField('obvalovka', v)} />
+            <Txt label="Подсыпка песком" value={fields.bedding} onChange={(v) => setField('bedding', v)} />
+            <Txt label="Обратная засыпка" value={fields.backfill} onChange={(v) => setField('backfill', v)} />
           </Group>
 
           <Wide label="Наименование объекта (АСР)" value={fields.objectName}

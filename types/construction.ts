@@ -614,6 +614,12 @@ export interface SpliceRecord {
   /** Рефлектограмма файлом — ссылка после обмена. */
   otdrUrl?: string;
   otdrName?: string;
+  /** Путь в хранилище — чтобы можно было удалить вместе с протоколом. */
+  otdrStoragePath?: string;
+  /** Файл лежит на этом устройстве и ещё не ушёл в облако. */
+  otdrPending?: boolean;
+  /** Размер файла, байты. */
+  otdrBytes?: number;
   note?: string;
   author?: string;
   createdAt: string;

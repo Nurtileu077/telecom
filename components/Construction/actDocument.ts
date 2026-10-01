@@ -319,6 +319,21 @@ export function objectTitle(input: ActDocInput): string {
 
 const CAP_FIO = '(фамилия, имя, отчество (при наличии), организация, должность)';
 
+/**
+ * Песок и обратная засыпка — строками под таблицей, и только когда их
+ * вписали.
+ *
+ * В самом бланке этих строк нет, а технадзор о них спрашивает: песок
+ * видно один раз, в открытой траншее. Пустыми их не печатаем — бланк
+ * без них остаётся слово в слово тем, что прислал заказчик.
+ */
+export function sandLines(f: SectionActManual): string {
+  const bedding = (f.bedding ?? '').trim();
+  const backfill = (f.backfill ?? '').trim();
+  return (bedding ? `<p>Подсыпка и присыпка песком: ${esc(bedding)};</p>` : '')
+    + (backfill ? `<p>Обратная засыпка: ${esc(backfill)};</p>` : '');
+}
+
 function asrSheet(input: ActDocInput, v: SectionActVariant): string {
   const f = input.fields;
   const spec = ACT_KIND_SPECS.ASR;
@@ -353,6 +368,7 @@ function asrSheet(input: ActDocInput, v: SectionActVariant): string {
       <p>и составила настоящий акт о нижеследующим:</p>
       <p>К освидетельствованию предъявлены следующие работы</p>
       ${actTable(actRows(input.totals, v, f, 'ASR'))}
+      ${sandLines(f)}
       <p class="cap">(наименование скрытых работ)</p>
       <p>2. Работы выполнены по проектно-сметной документации ${or(f.psd, 39)}</p>
       <p class="cap">(наименование проектной организации, № чертежей и дата их составления или
@@ -406,6 +422,7 @@ function osrSheet(input: ActDocInput, v: SectionActVariant): string {
       ${actTable(actRows(input.totals, v, f, 'OSR'))}
       <p>Глубина прокладки защитной полиэтиленовой трубы составляет по проекту ${
         esc(fmtDepth(v.designDepthM))} м, фактически ${esc(fmtDepth(v.actualDepthM))} м;</p>
+      ${sandLines(f)}
       <p>Обваловка (выполнено, не выполнено, предусмотрено / не предусмотрено) ${
         or(f.obvalovka, 12)};</p>
       <p>Восстановление, а/бетонных покрытий (выполнено, не выполнено, выполнено частично,

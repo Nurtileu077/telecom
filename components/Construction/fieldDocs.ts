@@ -37,10 +37,21 @@ export interface HiddenWorksInput {
   oblast?: string;
   rayon?: string;
   rows: DailyWorkEntry[];
-  /** Фактическая глубина, если она отличается от проектной. */
+  /** Фактическая глубина, если на всём участке она одна. */
   depthM?: number;
-  /** Чем подсыпали и укрыли — по умолчанию как в проекте. */
+  /** Глубина по проекту — из отклонений участка, иначе типовая. */
+  designDepthM?: number;
+  /**
+   * Глубины участка так же, как они делятся в АСР: основная часть и по
+   * строке на каждую фактическую глубину отклонения. Берутся из того же
+   * свода, что и АСР, — иначе акт скрытых работ и АСР по одному селу
+   * покажут разную глубину.
+   */
+  depths?: HiddenDepth[];
+  /** Подсыпка и присыпка песком — как сделали на месте. */
   bedding?: string;
+  /** Обратная засыпка — следующая работа, её способ пишут в разрешении. */
+  backfill?: string;
   /** Подписанты. */
   contractor?: string;
   customer?: string;
@@ -50,9 +61,48 @@ export interface HiddenWorksInput {
   city?: string;
 }
 
+export interface HiddenDepth {
+  actualDepthM: number;
+  lengthM: number;
+  /** «№17 от 12.09.2026» — протокол мобильной группы по отклонению. */
+  protocol?: string;
+}
+
+/**
+ * Типовая подсыпка — подсказка, а не значение.
+ *
+ * Раньше она стояла в акте сама, и акт утверждал «песок 100 мм» там,
+ * где его могли и не сыпать. Теперь её подставляет человек одной
+ * кнопкой — то есть подтверждает, что так и было.
+ */
 export const HIDDEN_BEDDING_DEFAULT =
-  'подсыпка песком 100 мм, засыпка песком 100 мм над трубой, '
-  + 'лента ЛСС на 400 мм выше трубы, обратная засыпка грунтом с уплотнением';
+  'подсыпка песком 100 мм, присыпка песком 100 мм над трубой, '
+  + 'лента ЛСС на 400 мм выше трубы';
+
+export const HIDDEN_BACKFILL_DEFAULT = 'грунтом с послойным уплотнением';
+
+const m2 = (v: number) => v.toFixed(2).replace('.', ',');
+
+/**
+ * Фактическая глубина: одна цифра или разбивка по протяжённости.
+ *
+ * `single` — глубина на всём участке одна, и её пишут числом в графе с
+ * единицей. Иначе — строкой: «1,20 м — на 11 050 м; 0,50 м — на 50 м
+ * (протокол МГ №17 от 12.09.2026)».
+ */
+export function hiddenDepth(
+  i: Pick<HiddenWorksInput, 'depthM' | 'designDepthM' | 'depths'>,
+): { text: string; single: boolean } {
+  const design = i.designDepthM ?? DESIGN_DEPTH_M;
+  const list = (i.depths ?? []).filter((d) => d.lengthM > 0);
+  if (list.length === 0) return { text: m2(i.depthM ?? design), single: true };
+  if (list.length === 1 && !list[0].protocol) return { text: m2(list[0].actualDepthM), single: true };
+  return {
+    text: list.map((d) => `${m2(d.actualDepthM)} м — на ${Math.round(d.lengthM).toLocaleString('ru')} м`
+      + (d.protocol ? ` (протокол МГ ${d.protocol})` : '')).join('; '),
+    single: false,
+  };
+}
 
 /**
  * Акт скрытых работ.
@@ -64,8 +114,11 @@ export const HIDDEN_BEDDING_DEFAULT =
 export function hiddenWorksHtml(i: HiddenWorksInput): string {
   const meters = i.rows.reduce((s, e) => s + entryMeters(e), 0);
   const dates = i.rows.map((e) => e.date).filter(Boolean).sort();
-  const depth = i.depthM ?? DESIGN_DEPTH_M;
+  const design = i.designDepthM ?? DESIGN_DEPTH_M;
+  const depth = hiddenDepth(i);
   const weather = i.rows.find((e) => e.weather)?.weather;
+  const bedding = (i.bedding ?? '').trim();
+  const backfill = (i.backfill ?? '').trim();
 
   return '<h1>АКТ<br/>освидетельствования скрытых работ</h1>'
     + (i.number ? `<p class="center">№ ${esc(i.number)}</p>` : '')
@@ -85,10 +138,16 @@ export function hiddenWorksHtml(i: HiddenWorksInput): string {
     + `${esc(fmtDate(dates[0]))} — ${esc(fmtDate(dates[dates.length - 1]))}</td><td class="unit"></td></tr>`
     + `<tr><td class="lbl">Протяжённость освидетельствуемого участка</td>`
     + `<td class="val">${Math.round(meters).toLocaleString('ru')}</td><td class="unit">м</td></tr>`
-    + `<tr><td class="lbl">Глубина заложения</td>`
-    + `<td class="val">${depth.toFixed(2).replace('.', ',')}</td><td class="unit">м</td></tr>`
-    + `<tr><td class="lbl">Устройство постели и защиты</td>`
-    + `<td class="val" colspan="2">${esc(i.bedding || HIDDEN_BEDDING_DEFAULT)}</td></tr>`
+    + `<tr><td class="lbl">Глубина заложения по проекту</td>`
+    + `<td class="val">${m2(design)}</td><td class="unit">м</td></tr>`
+    + `<tr><td class="lbl">Глубина заложения фактическая</td>`
+    + (depth.single
+      ? `<td class="val">${esc(depth.text)}</td><td class="unit">м</td></tr>`
+      : `<td class="val" colspan="2" style="white-space:normal">${esc(depth.text)}</td></tr>`)
+    // Песок видно ровно один раз — в открытой траншее. Чего не вписали,
+    // того акт не утверждает: графа остаётся под руку.
+    + `<tr><td class="lbl">Подсыпка и присыпка песком, защита трубы</td>`
+    + `<td class="val" colspan="2" style="white-space:normal">${bedding ? esc(bedding) : '_'.repeat(30)}</td></tr>`
     + (weather
       ? `<tr><td class="lbl">Погодные условия</td><td class="val" colspan="2">`
         + `${esc(formatWeather({ date: dates[0] ?? '', ...weather }))}</td></tr>`
@@ -96,7 +155,7 @@ export function hiddenWorksHtml(i: HiddenWorksInput): string {
     + '</table>'
     + '<p class="ind b">Работы выполнены в соответствии с проектной документацией '
     + 'и действующими нормами. Разрешается производство последующих работ '
-    + 'по обратной засыпке траншеи.</p>'
+    + `по обратной засыпке траншеи${backfill ? ` ${esc(backfill)}` : ''}.</p>`
     + '<table class="sign"><tr>'
     + `<td class="s">Подрядчик<br/>_______________ / ${esc(i.contractor || '')}</td>`
     + `<td class="s">Заказчик<br/>_______________ / ${esc(i.customer || '')}</td>`
@@ -130,7 +189,15 @@ export interface PhotoReportInput {
   uchastok?: string;
   from?: string;
   to?: string;
-  items: PhotoReportItem[];
+  /** Снимки подряд — когда раскладывать не по чему. */
+  items?: PhotoReportItem[];
+  /**
+   * Снимки по участкам и этапам. Заказчик листает отчёт, чтобы найти
+   * «ГНБ под трассой у Еленовки», а не все 150 снимков за месяц подряд.
+   */
+  groups?: { title: string; items: PhotoReportItem[] }[];
+  /** Часть большого отчёта: «часть 2 из 3». */
+  part?: { index: number; of: number; total: number };
 }
 
 /** Подпись под снимком: место, время и откуда взялись координаты. */
@@ -147,6 +214,16 @@ export function photoCaption(p: FieldPhoto): string {
   return parts.join(' · ');
 }
 
+function photoCells(items: PhotoReportItem[]): string {
+  // Подпись — абзац, а не вложенный блок: вложенные <div> обрывают
+  // разбор при сборке .docx, и подпись под снимком теряется. А подпись
+  // под фотографией в акте — это где и когда снято.
+  return items.map((it) => '<div class="ph">'
+    + (it.dataUrl ? `<img src="${it.dataUrl}" alt=""/>` : '<p class="cap">[снимок не вложен]</p>')
+    + `<p class="cap">${esc(photoCaption(it.photo))}</p>`
+    + '</div>').join('');
+}
+
 /**
  * Фотоотчёт.
  *
@@ -155,21 +232,24 @@ export function photoCaption(p: FieldPhoto): string {
  * нему нельзя сказать, что это тот самый участок.
  */
 export function photoReportHtml(i: PhotoReportInput): string {
-  // Подпись — абзац, а не вложенный блок: вложенные <div> обрывают
-  // разбор при сборке .docx, и подпись под снимком теряется. А подпись
-  // под фотографией в акте — это где и когда снято.
-  const body = i.items.map((it) => '<div class="ph">'
-    + (it.dataUrl ? `<img src="${it.dataUrl}" alt=""/>` : '<p class="cap">[снимок не вложен]</p>')
-    + `<p class="cap">${esc(photoCaption(it.photo))}</p>`
-    + '</div>').join('');
+  const groups = i.groups ?? [{ title: '', items: i.items ?? [] }];
+  const count = groups.reduce((s, g) => s + g.items.length, 0);
+  const title = i.part && i.part.of > 1
+    ? `${i.title} (часть ${i.part.index} из ${i.part.of})`
+    : i.title;
 
-  return `<h1>${esc(i.title)}</h1>`
+  return `<h1>${esc(title)}</h1>`
     + (i.uchastok ? `<p class="obj">${esc(i.uchastok)}</p>` : '')
     + (i.from
       ? `<p class="center">${esc(fmtDate(i.from))}${i.to && i.to !== i.from ? ` — ${esc(fmtDate(i.to))}` : ''}</p>`
       : '')
-    + `<p>Снимков: ${i.items.length}.</p>`
-    + `<div class="photos">${body}</div>`;
+    // Сколько снимков всего и сколько здесь — чтобы по части было видно,
+    // что она часть, а не весь отчёт.
+    + (i.part && i.part.of > 1
+      ? `<p>Снимков в этой части: ${count}, всего в отчёте: ${i.part.total}.</p>`
+      : `<p>Снимков: ${count}.</p>`)
+    + groups.map((g) => (g.title ? `<p class="b">${esc(g.title)}</p>` : '')
+      + `<div class="photos">${photoCells(g.items)}</div>`).join('');
 }
 
 export function photoReportPage(i: PhotoReportInput): string {
@@ -281,6 +361,17 @@ export interface MeasureProtocolInput {
   number?: string;
   date?: string;
   city?: string;
+  /**
+   * Рефлектограммы — приложения к протоколу. Протокол без них — цифры,
+   * переписанные с экрана; с ними — измерение, которое можно открыть.
+   */
+  otdr?: OtdrLine[];
+}
+
+/** Строка приложения: имя файла и где он лежит. */
+export interface OtdrLine {
+  name: string;
+  status: string;
 }
 
 /**
@@ -307,7 +398,7 @@ export function measureProtocolHtml(i: MeasureProtocolInput): string {
       rows.push('<tr>'
         + `<td class="val">${f.fiber}</td>`
         + `<td class="lbl">${esc(f.to ?? '')}</td>`
-        + `<td class="val"${over ? ' class="b"' : ''}>`
+        + `<td class="val${over ? ' b' : ''}">`
         + `${f.lossDb !== undefined ? f.lossDb.toFixed(2).replace('.', ',') : '—'}</td>`
         + `<td class="val">${over ? 'выше нормы' : f.lossDb === undefined ? 'не измерено' : 'норма'}</td>`
         + `<td class="val">${esc(fmtDate(r.date))}</td>`
@@ -343,6 +434,14 @@ export function measureProtocolHtml(i: MeasureProtocolInput): string {
     + (bad > 0
       ? `<p class="warn">Стыков выше нормы: ${bad}. Подлежат переварке.</p>`
       : '<p class="ind b">Все измеренные соединения в пределах нормы.</p>')
+    + (i.otdr?.length
+      ? '<p class="b">Приложения — рефлектограммы:</p><table class="act">'
+        + i.otdr.map((o, n) => `<tr><td class="val">${n + 1}</td><td class="lbl">${esc(o.name)}</td>`
+          + `<td class="lbl">${esc(o.status)}</td></tr>`).join('')
+        + '</table>'
+      // Молчать о том, что рефлектограмм нет, нельзя: заказчик решит, что
+      // их забыли вложить, и вернёт протокол.
+      : '<p>Рефлектограммы к протоколу не приложены.</p>')
     + '<table class="sign"><tr>'
     + `<td class="s">Измерения выполнил<br/>_______________ / ${esc(i.contractor || '')}</td>`
     + `<td class="s">Принял<br/>_______________ / ${esc(i.customer || '')}</td>`
@@ -351,6 +450,18 @@ export function measureProtocolHtml(i: MeasureProtocolInput): string {
 
 export function measureProtocolPage(i: MeasureProtocolInput): string {
   return page(`Протокол измерений — ${i.objectName}`, measureProtocolHtml(i));
+}
+
+/**
+ * Протоколы по всем муфтам участка — одним документом.
+ *
+ * На участке их пять-шесть, и сдают их вместе. Пять файлов с одинаковым
+ * началом имени в почте путают; одна пачка листов — нет.
+ */
+export function measureProtocolsPage(list: MeasureProtocolInput[], title: string): string {
+  return page(title, list.map((i, n) => (n > 0
+    ? `<p style="page-break-before:always"></p>${measureProtocolHtml(i)}`
+    : measureProtocolHtml(i))).join(''));
 }
 
 export function measureProtocolFile(i: MeasureProtocolInput): string {

@@ -70,6 +70,13 @@ export interface SectionActManual {
   pavement?: PavementRestore;
   /** Обваловка — строка ОСР под таблицей. */
   obvalovka?: string;
+  /**
+   * Подсыпка и присыпка песком — как сделали на месте. Общая для акта
+   * скрытых работ и АСР/ОСР участка: вписали один раз — стоит везде.
+   */
+  bedding?: string;
+  /** Обратная засыпка: чем и как. */
+  backfill?: string;
   /** Идентификационные столбики и шаровые маркеры, штуки. */
   markerPosts?: number;
   ballMarkers?: number;

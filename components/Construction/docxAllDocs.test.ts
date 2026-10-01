@@ -7,7 +7,7 @@ import {
 } from './periodReports';
 import {
   hiddenWorksPage, remarksPage, letterPage, measureProtocolPage,
-  photoReportPage, remarksFromDeviations,
+  photoReportPage, remarksFromDeviations, measureProtocolsPage,
 } from './fieldDocs';
 import type { DailyWorkEntry, PlanRoute } from '@/types/construction';
 
@@ -77,6 +77,37 @@ const DOCS: { name: string; html: string; tables: number }[] = [
   {
     name: 'фотоотчёт',
     html: photoReportPage({ title: 'ФОТООТЧЁТ', ...period, items: [] }),
+    tables: 0,
+  },
+  {
+    name: 'акт скрытых работ с отклонением и песком',
+    html: hiddenWorksPage({
+      uchastok: 'Зеренда', rows, designDepthM: 1.2, bedding: 'песок 100 мм', backfill: 'грунтом',
+      depths: [
+        { actualDepthM: 1.2, lengthM: 2170 },
+        { actualDepthM: 0.5, lengthM: 50, protocol: '№17 от 12.09.2026' },
+      ],
+    }),
+    tables: 1,
+  },
+  {
+    name: 'протоколы измерений по муфтам участка',
+    html: measureProtocolsPage([
+      {
+        objectName: 'Муфта №1', records: [],
+        otdr: [{ name: 'OTDR_1.sor', status: 'прилагается — папка «Рефлектограммы»' }],
+      },
+      { objectName: 'Муфта №2', records: [] },
+    ], 'Протоколы измерений — Зеренда'),
+    tables: 2,
+  },
+  {
+    name: 'фотоотчёт по этапам, часть отчёта',
+    html: photoReportPage({
+      title: 'ФОТООТЧЁТ', ...period,
+      groups: [{ title: 'Зеренда — Прокладка МКТ', items: [] }],
+      part: { index: 1, of: 2, total: 75 },
+    }),
     tables: 0,
   },
 ];

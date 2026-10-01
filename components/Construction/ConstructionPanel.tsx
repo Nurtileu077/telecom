@@ -70,8 +70,9 @@ import { downloadText } from '@/lib/download';
 import ChangeLogView from './ChangeLogView';
 import PassportView from './PassportView';
 import IncidentsView from './IncidentsView';
-import { uploadPending } from './photoStore';
-import { storageUploadJournalPhoto } from '@/lib/supabase';
+import { uploadPending, getPhotoBlob, deletePhotoBlob } from './photoStore';
+import { storageUploadJournalPhoto, storageUploadOtdr } from '@/lib/supabase';
+import { uploadPendingOtdr } from './otdr';
 import DeviationForm from './DeviationForm';
 import CrewForm from './CrewForm';
 import SectionClosing from './SectionClosing';
@@ -388,6 +389,23 @@ export default function ConstructionPanel({
   }, []);
 
   /**
+   * Рефлектограммы — тем же шагом, что и снимки: протокол со ссылкой на
+   * файл должен уйти в том же обмене, иначе у соседа протокол есть, а
+   * рефлектограммы «нет», хотя её приложили.
+   */
+  const uploadPendingOtdrFiles = useCallback(async (base: JournalState) => {
+    if (!journalCloudEnabled() || base.splices.every((r) => !r.otdrPending)) {
+      return { state: base, sent: 0, failed: 0, changed: false };
+    }
+    const { splices, sent, failed } = await uploadPendingOtdr(base.splices, {
+      get: (key) => getPhotoBlob(key),
+      del: (key) => deletePhotoBlob(key),
+      upload: (id, name, blob) => storageUploadOtdr(id, name, blob),
+    });
+    return { state: { ...base, splices }, sent, failed, changed: sent > 0 };
+  }, []);
+
+  /**
    * Обмен с облаком. Слитое состояние обязательно сохраняем локально —
    * иначе при следующем обмене чужие правки придут заново.
    */
@@ -399,6 +417,17 @@ export default function ConstructionPanel({
       // обмене, и у соседа фото откроется сразу, а не «в следующий раз».
       const withPhotos = await uploadPendingPhotos(loadJournal());
       if (withPhotos.changed) saveJournal(withPhotos.state);
+      const withOtdr = await uploadPendingOtdrFiles(loadJournal());
+      // Ссылку на отправленный файл обязательно записать: иначе файл уже
+      // удалён с телефона, а журнал о ссылке не знает — и рефлектограмма
+      // потеряна для всех.
+      if (withOtdr.changed && !saveJournal(withOtdr.state)) {
+        setSyncNote({
+          tone: 'warn',
+          text: 'Рефлектограммы отправлены, но журнал не сохранился: переполнено хранилище браузера.',
+        });
+        return;
+      }
 
       const res = await syncJournal(loadJournal(), actor);
       if (!res.ok) {
@@ -422,17 +451,21 @@ export default function ConstructionPanel({
       const photoWarn = withPhotos.failed
         ? ` Не ушло фото: ${withPhotos.failed} — попробуйте при связи получше.`
         : '';
+      const otdrNote = withOtdr.sent ? ` Рефлектограмм отправлено: ${withOtdr.sent}.` : '';
+      const otdrWarn = withOtdr.failed
+        ? ` Не ушло рефлектограмм: ${withOtdr.failed} — попробуйте при связи получше.`
+        : '';
       setSyncNote({
-        tone: withPhotos.failed ? 'warn' : 'ok',
+        tone: withPhotos.failed || withOtdr.failed ? 'warn' : 'ok',
         text: (res.firstPush
           ? 'Журнал впервые выгружен в облако.'
           : parts.length ? `Синхронизировано: ${parts.join(', ')}.` : 'Всё уже совпадало.')
-          + photoNote + photoWarn,
+          + photoNote + photoWarn + otdrNote + otdrWarn,
       });
     } finally {
       setSyncing(false);
     }
-  }, [actor]);
+  }, [actor, uploadPendingPhotos, uploadPendingOtdrFiles]);
 
   /**
    * Загрузка KML: и проектные трассы, и обводки районов с сёлами.
@@ -1293,6 +1326,8 @@ export default function ConstructionPanel({
             onSaveSplice={(r) => persist(upsertSplice(loadJournal(), r))}
             onRemoveSplice={(id) => {
               if (!confirm('Удалить протокол сварки?')) return;
+              // Локальный файл рефлектограммы не трогаем: удаление можно
+              // отменить, и вернувшийся протокол должен вернуться с файлом.
               persist(removeSplice(loadJournal(), id));
             }}
             onEditObject={(id) => { onDoneEditObject?.(); setView('objects'); void id; }}
@@ -1379,6 +1414,21 @@ export default function ConstructionPanel({
                 actFields: {
                   ...base.actFields,
                   [uchastok]: { ...(base.actFields?.[uchastok] ?? {}), actNumber: number },
+                },
+                updatedAt: new Date().toISOString(),
+              });
+            }}
+            onChangeActFields={(uchastok, patch) => {
+              const base = loadJournal();
+              // Поля могли быть заведены под тем же участком в другом
+              // регистре — пишем туда же, а не заводим второй бланк.
+              const key = Object.keys(base.actFields ?? {})
+                .find((k) => k.trim().toLowerCase() === uchastok.trim().toLowerCase()) ?? uchastok;
+              persist({
+                ...base,
+                actFields: {
+                  ...base.actFields,
+                  [key]: { ...(base.actFields?.[key] ?? {}), ...patch },
                 },
                 updatedAt: new Date().toISOString(),
               });

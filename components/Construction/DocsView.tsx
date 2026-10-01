@@ -14,13 +14,26 @@ import {
   snpReadiness, readinessDocHtml, weekRange,
 } from './periodReports';
 import { actDocHtml, actFileName, ACT_DOC_CSS, esc, type ActKind } from './actDocument';
-import { prepareSectionAct, sectionActDocInput, actFieldsOf } from './actInput';
+import {
+  prepareSectionAct, sectionActDocInput, actFieldsOf, hiddenWorksInputFor, sectionsOf,
+} from './actInput';
 import { unmarkedActFields } from './sectionAct';
 import { effectiveProgress } from './stageDerive';
 import {
   hiddenWorksPage, hiddenWorksFile, remarksFromDeviations, remarksPage,
   photoReportPage, letterPage, measureProtocolPage, measureProtocolFile,
+  measureProtocolsPage, HIDDEN_BEDDING_DEFAULT, HIDDEN_BACKFILL_DEFAULT, hiddenDepth,
+  type PhotoReportItem,
 } from './fieldDocs';
+import {
+  measuredObjects, measuredInPeriod, measureInput, otdrAttached, otdrFileName, otdrKey,
+  type MeasuredObject,
+} from './otdr';
+import {
+  groupPhotos, splitPhotoReport, photosInRange, photoReportFileName, PHOTOS_PER_PART,
+} from './photoReport';
+import type { FieldPhoto, SpliceRecord } from '@/types/construction';
+import type { SectionActManual } from './sectionAct';
 import {
   buildScheme, schemeDocPage, schemeFileName, withSchemeAttached,
   schemeObjectsFor, displacedMarks, spanMismatches,
@@ -67,6 +80,8 @@ interface Props {
   onFlash?: (text: string) => void;
   onOpenSection?: (uchastok: string) => void;
   onSetActNumber?: (uchastok: string, number: string) => void;
+  /** Поля бланка участка — песок, засыпка: их вписывают у акта скрытых работ. */
+  onChangeActFields?: (uchastok: string, patch: Partial<SectionActManual>) => void;
   /**
    * Развернуть трассу: схема начнётся с другого конца. Это та же правка,
    * что и на карте, — метры смен и колонна развернутся вместе со схемой,
@@ -118,9 +133,43 @@ function wordPage(title: string, body: string): string {
 ${ACT_DOC_CSS}</style></head><body class="act-doc">${body}</body></html>`;
 }
 
+/**
+ * Файл снимка или рефлектограммы — с устройства, а если он уже ушёл в
+ * облако, то по ссылке.
+ *
+ * После отправки локальная копия удаляется, и раньше фотоотчёт по уже
+ * отправленным снимкам выходил сплошь из «[снимок не вложен]».
+ */
+async function fileOf(localKey: string, url?: string): Promise<Blob | null> {
+  const local = await getPhotoBlob(localKey);
+  if (local) return local;
+  if (!url) return null;
+  try {
+    const res = await fetch(url);
+    return res.ok ? await res.blob() : null;
+  } catch {
+    return null;
+  }
+}
+
+function dataUrlOf(blob: Blob): Promise<string | undefined> {
+  return new Promise((res) => {
+    const fr = new FileReader();
+    fr.onload = () => res(String(fr.result));
+    fr.onerror = () => res(undefined);
+    fr.readAsDataURL(blob);
+  });
+}
+
+const otdrBlob = (r: SpliceRecord) => fileOf(otdrKey(r.id), r.otdrUrl);
+const photoBlob = (p: FieldPhoto) => fileOf(p.id, p.url);
+
+/** Куда в архиве класть документ: всё, у чего есть метод file. */
+type ZipFolder = { file: (name: string, data: string | Blob) => unknown };
+
 export default function DocsView({
   journal, from, to, contractor, author, onFlash, onOpenSection, onSetActNumber,
-  onReverseRoute,
+  onChangeActFields, onReverseRoute,
 }: Props) {
   const [busy, setBusy] = useState(false);
   const [prices, setPrices] = useState<WorkPrices>({});
@@ -287,6 +336,18 @@ export default function DocsView({
   }
 
   /**
+   * Документ в архив.
+   *
+   * В архив кладём Word, даже когда по одному сохраняют в PDF: снимок
+   * каждой страницы — это минуты на пакет из двадцати документов, а
+   * пакет собирают, чтобы отправить его сейчас.
+   */
+  async function putDoc(folder: ZipFolder, name: string, html: string) {
+    if (format === 'doc') folder.file(name, html);
+    else folder.file(docxFileName(name), await buildDocx(html));
+  }
+
+  /**
    * Пакет за период.
    *
    * «Пришлите за неделю» — это не один файл, а четыре, и собирают их
@@ -302,13 +363,8 @@ export default function DocsView({
       const unmarked: string[] = [];
       // В пакет кладём то же, что и по одному: переключатель формата
       // общий, иначе в архиве окажется не то, что человек выбрал.
-      // В архив кладём Word, даже когда по одному сохраняют в PDF: снимок
-      // каждой страницы — это минуты на пакет из двадцати документов, а
-      // пакет собирают, чтобы отправить его сейчас.
-      const put = async (folder: InstanceType<typeof JSZip>, name: string, html: string) => {
-        if (format === 'doc') folder.file(name, html);
-        else folder.file(docxFileName(name), await buildDocx(html));
-      };
+      const put = putDoc;
+      let protocols = 0;
 
       // Раскладываем по папкам: в почте архив из двадцати файлов вперемешку
       // открывают один раз, а потом просят «пришлите нормально».
@@ -326,22 +382,59 @@ export default function DocsView({
       // заполненных полей в пакет не кладём: пустой бланк в архиве
       // выглядит готовым документом, а он не готов.
       for (const uchastok of report.sections.map((s) => s.uchastok)) {
-        if (!actFieldsOf(journal.actFields, uchastok)?.actNumber) continue;
         // Акт собирается тем же кодом, что и в «Закрытии»: со своими
         // отклонениями, своим исполнителем и теми же полями бланка.
         // Раньше сюда шли отклонения всего журнала, и участок худел на
         // чужую скалу, а исполнитель оставался прочерком.
         const prep = prepareSectionAct(journal, uchastok);
-        if (prep.entries.length === 0 || prep.totals.variants.length === 0) continue;
-        const fields = prep.fields;
-        const gaps = unmarkedActFields(fields);
-        if (gaps.length) unmarked.push(`${uchastok} — ${gaps.join(', ')}`);
         // Область / район / участок — так их и ищут потом в почте.
         const where = [prep.oblast, prep.rayon, uchastok]
           .filter(Boolean)
           .map((x) => String(x).replace(/[\\/:*?"<>|]+/g, ' ').trim())
           .join('/');
-        const folder = zip.folder(where || 'Участки') ?? zip;
+        // Папку заводим, только когда в неё есть что положить: пустая
+        // папка участка в архиве читается как «документы потеряли».
+        const folderOf = () => zip.folder(where || 'Участки') ?? zip;
+
+        /**
+         * Протоколы измерений — к актам участка, с рефлектограммами.
+         *
+         * Раньше протокол в пакет не попадал вовсе, и его досылали
+         * отдельным письмом. Берём муфты участка, по которым мерили в
+         * этом периоде; рефлектограмма ложится рядом, а протокол честно
+         * пишет, какая легла, а какой не нашлось.
+         */
+        // Рефлектометр называет файлы одинаково («1550.sor») у всех муфт:
+        // одноимённый файл второй муфты затёр бы первый в общей папке.
+        const usedOtdr = new Set<string>();
+        for (const m of measuredObjects(journal.objects, journal.splices, uchastok)
+          .filter((x) => measuredInPeriod(x, from, to))) {
+          const folder = folderOf();
+          const packed = new Map<string, string>();
+          for (const r of m.records) {
+            if (!otdrAttached(r)) continue;
+            const blob = await otdrBlob(r);
+            if (!blob) continue;
+            let name = otdrFileName(r, m.name);
+            if (usedOtdr.has(name)) name = otdrFileName({ ...r, otdrName: `${m.name} ${r.date} ${name}` });
+            usedOtdr.add(name);
+            const sub = folder.folder('Рефлектограммы') ?? folder;
+            sub.file(name, blob);
+            packed.set(r.id, name);
+          }
+          const input = measureInput(m, {
+            customer: partyNames.customer, date: to, contractor, packed,
+          });
+          await put(folder, measureProtocolFile(input), measureProtocolPage(input));
+          protocols += 1;
+        }
+
+        if (!actFieldsOf(journal.actFields, uchastok)?.actNumber) continue;
+        if (prep.entries.length === 0 || prep.totals.variants.length === 0) continue;
+        const fields = prep.fields;
+        const gaps = unmarkedActFields(fields);
+        if (gaps.length) unmarked.push(`${uchastok} — ${gaps.join(', ')}`);
+        const folder = folderOf();
         /**
          * Схема — приложением к акту, а не отдельным файлом.
          *
@@ -374,9 +467,10 @@ export default function DocsView({
 
       const blob = await zip.generateAsync({ type: 'blob' });
       downloadBlob(`Пакет документов ${from}—${to}.zip`, blob);
+      const head = protocols ? `Пакет собран, протоколов измерений: ${protocols}` : 'Пакет собран';
       onFlash?.(unmarked.length
-        ? `Пакет собран. В актах не отмечено: ${unmarked.join('; ')}`
-        : 'Пакет собран');
+        ? `${head}. В актах не отмечено: ${unmarked.join('; ')}`
+        : head);
     } catch (err) {
       onFlash?.(errorLine(err, 'собрать пакет'));
     } finally {
@@ -384,15 +478,130 @@ export default function DocsView({
     }
   }
 
+  // День снимка — по местному времени: ночной снимок по UTC вчерашний.
   const photosInPeriod = useMemo(
-    () => journal.photos.filter((p) => {
-      const day = (p.exifAt || p.takenAt || p.createdAt || '').slice(0, 10);
-      if (from && day < from) return false;
-      if (to && day > to) return false;
-      return true;
-    }),
+    () => photosInRange(journal.photos, from, to),
     [journal.photos, from, to],
   );
+
+  // ── Документ по выбранному участку ───────────────────────────────────
+  //
+  // Акт скрытых работ собирался только по участку с наибольшим метражом
+  // за период, протокол — только по первой муфте журнала. Сдают же их по
+  // тому участку, который закрывают, и его надо уметь выбрать.
+  const sections = useMemo(() => sectionsOf(journal.ground), [journal.ground]);
+  const [docSection, setDocSection] = useState('');
+  // По умолчанию — участок с наибольшим метражом за период: его чаще всего
+  // и закрывают. Это подсказка, а не приговор.
+  const section = sections.find((x) => x === docSection)
+    ?? report.sections[0]?.uchastok ?? sections[0] ?? '';
+  const sectionFields = actFieldsOf(journal.actFields, section) ?? {};
+  const hiddenInput = useMemo(
+    () => (section
+      ? hiddenWorksInputFor(journal, section, { customer: partyNames.customer, date: to, contractor })
+      : null),
+    [journal, section, partyNames.customer, to, contractor],
+  );
+
+  const measured = useMemo(
+    () => measuredObjects(journal.objects, journal.splices),
+    [journal.objects, journal.splices],
+  );
+  const measuredHere = useMemo(
+    () => measured.filter((m) => normLoose(m.uchastok) === normLoose(section)),
+    [measured, section],
+  );
+  // '*' — все муфты участка; иначе id муфты. Пусто — выбор по умолчанию.
+  const [muftaChoice, setMuftaChoice] = useState('');
+  const protocolSet: MeasuredObject[] = useMemo(() => {
+    if (muftaChoice !== '*') {
+      const one = measured.find((m) => m.objectId === muftaChoice);
+      if (one) return [one];
+    }
+    if (measuredHere.length) return measuredHere;
+    return measured.slice(0, 1);
+  }, [measured, measuredHere, muftaChoice]);
+  const muftaValue = protocolSet.length === 1 && (muftaChoice === protocolSet[0].objectId
+    || measuredHere.length === 0)
+    ? protocolSet[0].objectId
+    : '*';
+
+  // Фотоотчёт: по выбранному участку или за период целиком.
+  const [photoScope, setPhotoScope] = useState<'section' | 'period'>('section');
+  const photoParts = useMemo(() => {
+    const groups = groupPhotos(photosInPeriod, journal, photoScope === 'section' ? section : undefined);
+    return splitPhotoReport(groups, PHOTOS_PER_PART, photoScope === 'period');
+  }, [photosInPeriod, journal, photoScope, section]);
+  const photoTotal = photoParts[0]?.total ?? 0;
+
+  /**
+   * Фотоотчёт файлами.
+   *
+   * Больше шестидесяти снимков — несколько частей в одном архиве, а не
+   * обрезка: раньше всё сверх шестидесяти молча отбрасывалось, и в отчёт
+   * за месяц попадала его первая неделя.
+   */
+  async function photoReport() {
+    setBusy(true);
+    try {
+      let missing = 0;
+      const docs: { name: string; html: string }[] = [];
+      for (const part of photoParts) {
+        const groups: { title: string; items: PhotoReportItem[] }[] = [];
+        for (const g of part.groups) {
+          const items = await Promise.all(g.photos.map(async (photo) => {
+            const blob = await photoBlob(photo);
+            if (!blob) { missing += 1; return { photo }; }
+            return { photo, dataUrl: await dataUrlOf(blob) };
+          }));
+          groups.push({ title: g.title, items });
+        }
+        const uchastok = photoScope === 'section' ? section : undefined;
+        docs.push({
+          name: photoReportFileName({ uchastok, from, to, part }),
+          html: photoReportPage({
+            title: 'ФОТООТЧЁТ О ВЫПОЛНЕННЫХ РАБОТАХ',
+            uchastok, from, to, groups, part,
+          }),
+        });
+      }
+      if (docs.length === 1) {
+        await save(docs[0].name, docs[0].html);
+      } else if (docs.length > 1) {
+        const JSZip = (await import('jszip')).default;
+        const zip = new JSZip();
+        for (const d of docs) await putDoc(zip, d.name, d.html);
+        const blob = await zip.generateAsync({ type: 'blob' });
+        downloadBlob(photoReportFileName({
+          uchastok: photoScope === 'section' ? section : undefined, from, to,
+        }).replace(/\.doc$/, '.zip'), blob);
+        onFlash?.(`Фотоотчёт: ${docs.length} части по ${PHOTOS_PER_PART} снимков`);
+      }
+      if (missing > 0) {
+        onFlash?.(`Не вложено снимков: ${missing} — файла нет ни на устройстве, ни в облаке`);
+      }
+    } catch (err) {
+      onFlash?.(errorLine(err, 'собрать фотоотчёт'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Протокол измерений: одна муфта — один протокол, все муфты — пачкой. */
+  function protocolDoc(): { name: string; html: string } | null {
+    if (protocolSet.length === 0) return null;
+    const inputs = protocolSet.map((m) => measureInput(m, {
+      customer: partyNames.customer, date: to, contractor,
+    }));
+    if (inputs.length === 1) {
+      return { name: measureProtocolFile(inputs[0]), html: measureProtocolPage(inputs[0]) };
+    }
+    const safe = section.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 50) || 'участок';
+    return {
+      name: `Протоколы измерений ${safe} ${to || new Date().toISOString().slice(0, 10)}.doc`,
+      html: measureProtocolsPage(inputs, `Протоколы измерений — ${section}`),
+    };
+  }
 
   const cost = costSheet(sheet, prices);
 
@@ -708,96 +917,10 @@ export default function DocsView({
         <div className="text-[13px] font-semibold text-[var(--text)]">Документы объекта</div>
         <div className="flex gap-1.5 flex-wrap">
           <button type="button" className="btn btn-ghost text-[11.5px]"
-                  disabled={report.sections.length === 0}
-                  onClick={() => {
-                    // Акт скрытых работ подписывают до засыпки — по тому
-                    // участку, который сейчас закрывают.
-                    const uchastok = report.sections[0].uchastok;
-                    const rows = journal.ground.filter((x) => x.uchastok === uchastok);
-                    const input = {
-                      uchastok, rows, contractor,
-                      customer: partyNames.customer,
-                      oblast: rows[0]?.oblast, rayon: rows[0]?.rayon,
-                      date: to,
-                    };
-                    save(hiddenWorksFile(input), hiddenWorksPage(input));
-                  }}>
-            <FileDown size={14} />Акт скрытых работ
-          </button>
-          {cloudReady && (
-            <button type="button" className="btn btn-ghost text-[11.5px]"
-                    disabled={busy || report.sections.length === 0}
-                    title="Отдать ссылкой: заказчик всегда открывает текущую версию"
-                    onClick={() => {
-                      const uchastok = report.sections[0].uchastok;
-                      const rows = journal.ground.filter((x) => x.uchastok === uchastok);
-                      share('акт скрытых работ', `Акт скрытых работ, ${uchastok}`,
-                        hiddenWorksPage({
-                          uchastok, rows, contractor,
-                          customer: partyNames.customer,
-                          oblast: rows[0]?.oblast, rayon: rows[0]?.rayon,
-                          date: to,
-                        }));
-                    }}>
-              <LinkIcon size={14} />Ссылкой
-            </button>
-          )}
-          <button type="button" className="btn btn-ghost text-[11.5px]"
                   disabled={journal.deviations.length === 0}
                   onClick={() => save('Реестр замечаний.doc',
                     remarksPage(remarksFromDeviations(journal.deviations)))}>
             <FileDown size={14} />Реестр замечаний
-          </button>
-          <button type="button" className="btn btn-ghost text-[11.5px]"
-                  disabled={busy || photosInPeriod.length === 0}
-                  onClick={async () => {
-                    setBusy(true);
-                    try {
-                      // Снимки лежат на устройстве: вкладываем их в
-                      // документ целиком, иначе отчёт придёт без картинок.
-                      const items = await Promise.all(photosInPeriod.slice(0, 60).map(
-                        async (photo) => {
-                          const blob = await getPhotoBlob(photo.id);
-                          if (!blob) return { photo };
-                          const dataUrl = await new Promise<string | undefined>((res) => {
-                            const fr = new FileReader();
-                            fr.onload = () => res(String(fr.result));
-                            fr.onerror = () => res(undefined);
-                            fr.readAsDataURL(blob);
-                          });
-                          return { photo, dataUrl };
-                        },
-                      ));
-                      save('Фотоотчёт.doc', photoReportPage({
-                        title: 'ФОТООТЧЁТ О ВЫПОЛНЕННЫХ РАБОТАХ',
-                        from, to, items,
-                      }));
-                    } finally { setBusy(false); }
-                  }}>
-            <FileDown size={14} />Фотоотчёт ({photosInPeriod.length})
-          </button>
-          <button type="button" className="btn btn-ghost text-[11.5px]"
-                  disabled={journal.splices.length === 0}
-                  onClick={() => {
-                    // Рефлектограмму снимают на объекте, цифры переписывают
-                    // в тетрадь, потом в Word — и на каждом переписывании
-                    // теряется волокно. Все они уже в журнале сварки.
-                    const first = journal.splices[0];
-                    const obj = journal.objects.find((o) => o.id === first.objectId);
-                    const records = journal.splices.filter(
-                      (sp) => sp.objectId === first.objectId,
-                    );
-                    const input = {
-                      objectName: obj?.name || 'Муфта',
-                      uchastok: obj?.uchastok,
-                      records,
-                      contractor,
-                      customer: partyNames.customer,
-                      date: to,
-                    };
-                    save(measureProtocolFile(input), measureProtocolPage(input));
-                  }}>
-            <FileDown size={14} />Протокол измерений
           </button>
           <button type="button" className="btn btn-ghost text-[11.5px]"
                   disabled={registry.length === 0}
@@ -828,6 +951,159 @@ export default function DocsView({
         <div className="text-[10.5px] text-[var(--text-muted)]">
           Цифры в письмо подставляются из журнала: перенесённые руками, они
           через неделю перестают сходиться с актом.
+        </div>
+
+        {/* По выбранному участку: акт скрытых работ, протокол, фотоотчёт */}
+        <div className="rounded-md border border-[var(--border)] p-2.5 space-y-3">
+          <label className="flex items-center gap-2 flex-wrap">
+            <span className="text-[11.5px] text-[var(--text-muted)]">Участок</span>
+            <select
+              value={section}
+              onChange={(e) => { setDocSection(e.target.value); setMuftaChoice(''); }}
+              disabled={sections.length === 0}
+              aria-label="Участок для документов"
+              className="min-w-0 flex-1 bg-[var(--bg-canvas)] border border-[var(--border)]
+                         rounded px-2 py-1 text-[11.5px] text-[var(--text)]"
+            >
+              {sections.length === 0 && <option value="">участков нет</option>}
+              {sections.map((x) => <option key={x} value={x}>{x}</option>)}
+            </select>
+          </label>
+          {!docSection && report.sections[0] && (
+            <div className="text-[10.5px] text-[var(--text-muted)]">
+              Выбран участок с наибольшим метражом за период — переключите, если
+              закрываете другой.
+            </div>
+          )}
+
+          {/* Акт скрытых работ */}
+          <div className="space-y-1.5">
+            <div className="text-[12px] font-medium text-[var(--text)]">Акт скрытых работ</div>
+            {hiddenInput && (
+              <div className="text-[11px] text-[var(--text-muted)]">
+                Глубина по проекту {(hiddenInput.designDepthM ?? 1.2).toFixed(2).replace('.', ',')} м,
+                фактически {hiddenDepth(hiddenInput).text}
+                {hiddenDepth(hiddenInput).single ? ' м' : ''} — из отклонений участка, как в АСР.
+              </div>
+            )}
+            <SandField
+              key={`bed-${section}`}
+              label="Подсыпка и присыпка песком"
+              value={sectionFields.bedding}
+              typical={HIDDEN_BEDDING_DEFAULT}
+              disabled={!section || !onChangeActFields}
+              onCommit={(v) => onChangeActFields?.(section, { bedding: v })}
+            />
+            <SandField
+              key={`back-${section}`}
+              label="Обратная засыпка"
+              value={sectionFields.backfill}
+              typical={HIDDEN_BACKFILL_DEFAULT}
+              disabled={!section || !onChangeActFields}
+              onCommit={(v) => onChangeActFields?.(section, { backfill: v })}
+            />
+            <div className="text-[10.5px] text-[var(--text-muted)]">
+              Песок видно один раз — в открытой траншее. Что не вписано, акт не
+              утверждает: строка остаётся под руку. Вписанное попадает и в АСР/ОСР
+              участка.
+            </div>
+            <div className="flex gap-1.5 flex-wrap">
+              <button type="button" className="btn btn-ghost text-[11.5px]"
+                      disabled={!hiddenInput || hiddenInput.rows.length === 0}
+                      onClick={() => hiddenInput
+                        && save(hiddenWorksFile(hiddenInput), hiddenWorksPage(hiddenInput))}>
+                <FileDown size={14} />Акт скрытых работ
+              </button>
+              {cloudReady && (
+                <button type="button" className="btn btn-ghost text-[11.5px]"
+                        disabled={busy || !hiddenInput || hiddenInput.rows.length === 0}
+                        title="Отдать ссылкой: заказчик всегда открывает текущую версию"
+                        onClick={() => hiddenInput && share(
+                          'акт скрытых работ', `Акт скрытых работ, ${section}`,
+                          hiddenWorksPage(hiddenInput),
+                        )}>
+                  <LinkIcon size={14} />Ссылкой
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Протокол измерений */}
+          <div className="space-y-1.5">
+            <div className="text-[12px] font-medium text-[var(--text)]">Протокол измерений</div>
+            {measured.length === 0 ? (
+              <div className="text-[11px] text-[var(--text-muted)]">
+                Протоколов сварки нет — их вносят в «Паспорте сети», кнопкой «Сварка» у муфты.
+              </div>
+            ) : (
+              <>
+                <select
+                  value={muftaValue}
+                  onChange={(e) => setMuftaChoice(e.target.value)}
+                  aria-label="Муфта для протокола"
+                  className="w-full bg-[var(--bg-canvas)] border border-[var(--border)]
+                             rounded px-2 py-1 text-[11.5px] text-[var(--text)]"
+                >
+                  {measuredHere.length > 0 && (
+                    <option value="*">Все муфты участка ({measuredHere.length})</option>
+                  )}
+                  {measured.map((m) => (
+                    <option key={m.objectId} value={m.objectId}>
+                      {m.name} · {m.uchastok || 'участок не указан'}
+                    </option>
+                  ))}
+                </select>
+                {(() => {
+                  const recs = protocolSet.flatMap((m) => m.records);
+                  const withFile = recs.filter(otdrAttached).length;
+                  return (
+                    <div className={`text-[11px] ${withFile < recs.length
+                      ? 'text-[var(--warn)]' : 'text-[var(--text-muted)]'}`}>
+                      Рефлектограмм с файлом: {withFile} из {recs.length}.
+                      {withFile < recs.length && ' Протокол прямо скажет, каких нет; приложить файл — «Паспорт сети» → «Сварка».'}
+                    </div>
+                  );
+                })()}
+                <button type="button" className="btn btn-ghost text-[11.5px]"
+                        disabled={protocolSet.length === 0}
+                        onClick={() => {
+                          // Рефлектограмму снимают на объекте, цифры переписывают
+                          // в тетрадь, потом в Word — и на каждом переписывании
+                          // теряется волокно. Все они уже в журнале сварки.
+                          const doc = protocolDoc();
+                          if (doc) save(doc.name, doc.html);
+                        }}>
+                  <FileDown size={14} />Протокол измерений
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* Фотоотчёт */}
+          <div className="space-y-1.5">
+            <div className="text-[12px] font-medium text-[var(--text)]">Фотоотчёт</div>
+            <div className="flex gap-1.5 flex-wrap items-center">
+              {(['section', 'period'] as const).map((sc) => (
+                <button key={sc} type="button"
+                        onClick={() => setPhotoScope(sc)}
+                        className={`chip ${photoScope === sc ? 'chip-on' : ''}`}>
+                  {sc === 'section' ? 'По участку' : 'Все участки за период'}
+                </button>
+              ))}
+            </div>
+            <div className="text-[11px] text-[var(--text-muted)]">
+              Снимков: {photoTotal}
+              {photoParts.length > 1
+                ? ` — выйдет ${photoParts.length} части по ${PHOTOS_PER_PART}, архивом. Ни один снимок не отбрасывается.`
+                : ''}
+              {' '}Внутри — по участкам и этапам: прокладка, ГНБ, задувка, подвес, сварка.
+            </div>
+            <button type="button" className="btn btn-ghost text-[11.5px]"
+                    disabled={busy || photoTotal === 0}
+                    onClick={() => { void photoReport(); }}>
+              <FileDown size={14} />Фотоотчёт ({photoTotal})
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1001,5 +1277,48 @@ export default function DocsView({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Поле «песок» или «засыпка».
+ *
+ * Пишем в журнал по уходу с поля, а не на каждую букву: каждое сохранение
+ * — это шаг отмены, и двадцать шагов отмены на одно слово «песок» делают
+ * отмену бесполезной. Кнопка «типовое» подставляет строку проекта — то
+ * есть человек подтверждает её сам, а не программа за него.
+ */
+function SandField({ label, value, typical, disabled, onCommit }: {
+  label: string;
+  value?: string;
+  typical: string;
+  disabled?: boolean;
+  onCommit: (v: string | undefined) => void;
+}) {
+  const [draft, setDraft] = useState(value ?? '');
+  const commit = (v: string) => {
+    if (v.trim() !== (value ?? '').trim()) onCommit(v.trim() || undefined);
+  };
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-[10.5px] text-[var(--text-muted)]">{label}</span>
+      <span className="flex gap-1.5">
+        <input
+          value={draft}
+          disabled={disabled}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => commit(draft)}
+          placeholder="не вписано — в акте строка под руку"
+          className="min-w-0 flex-1 bg-[var(--bg-canvas)] border border-[var(--border)] rounded
+                     px-2 py-1 text-[11.5px] text-[var(--text)]"
+        />
+        {!draft.trim() && !disabled && (
+          <button type="button" className="chip" title={typical}
+                  onClick={() => { setDraft(typical); commit(typical); }}>
+            типовое
+          </button>
+        )}
+      </span>
+    </label>
   );
 }

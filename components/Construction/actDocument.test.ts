@@ -410,3 +410,25 @@ describe('акт фиксации участка', () => {
     expect(fixationFileName('Еленовка', '2026-09-18')).toBe('Акт фиксации Еленовка 2026-09-18.doc');
   });
 });
+
+describe('песок и обратная засыпка в АСР и ОСР', () => {
+  const t = computeSectionAct([entry()]);
+  const base = { uchastok: 'Еленовка', totals: t, variants: t.variants };
+
+  it('пока не вписаны, бланк остаётся слово в слово', () => {
+    for (const kind of ['ASR', 'OSR'] as const) {
+      const doc = actDocHtml({ ...base, kind, fields: DEFAULT_ACT_MANUAL });
+      expect(doc).not.toContain('Подсыпка и присыпка песком');
+      expect(doc).not.toContain('Обратная засыпка:');
+    }
+  });
+
+  it('вписанные попадают в оба акта', () => {
+    const fields = { ...DEFAULT_ACT_MANUAL, bedding: 'песок 100 мм', backfill: 'грунтом' };
+    for (const kind of ['ASR', 'OSR'] as const) {
+      const doc = actDocHtml({ ...base, kind, fields });
+      expect(doc).toContain('Подсыпка и присыпка песком: песок 100 мм;');
+      expect(doc).toContain('Обратная засыпка: грунтом;');
+    }
+  });
+});

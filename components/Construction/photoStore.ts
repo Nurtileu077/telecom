@@ -57,8 +57,15 @@ function tx<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBReque
   });
 }
 
+/**
+ * Положить файл. Ответ — легло ли на самом деле.
+ *
+ * Раньше здесь всегда был «да»: и в приватном окне, и при запрете
+ * хранилища карточка снимка или рефлектограммы появлялась, а файла за
+ * ней не было — и узнавали об этом при сдаче, когда переснять уже нельзя.
+ */
 export function putPhotoBlob(id: string, blob: Blob): Promise<boolean> {
-  return tx('readwrite', (s) => s.put(blob, id) as IDBRequest<unknown>).then((r) => r !== null || true)
+  return tx('readwrite', (s) => s.put(blob, id) as IDBRequest<unknown>).then((r) => r !== null)
     .catch(() => false);
 }
 

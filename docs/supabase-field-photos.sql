@@ -32,6 +32,12 @@ create policy "field_photos_auth_delete"
          and public.optiq_current_org() is not null
          and public.optiq_current_role() <> 'sub');
 
+-- Рефлектограммы к протоколам сварки лежат здесь же, веткой journal/otdr/
+-- (см. storageUploadOtdr в lib/supabase.ts). Схема не меняется: склад без
+-- ограничения типов файлов, а .sor — такое же доказательство к акту, как
+-- снимок. Имя каждый раз новое, без перезаписи: правила выше дают класть
+-- и удалять, но не переписывать, и доказательство нельзя тихо подменить.
+
 -- NEXT_PUBLIC_SUPABASE_URL=
 -- NEXT_PUBLIC_SUPABASE_ANON_KEY=
 -- NEXT_PUBLIC_OPTIQ_REQUIRE_AUTH=1  (рекомендуется в проде)

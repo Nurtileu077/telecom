@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { prepareSectionAct, sectionActDocInput, actFieldsOf } from './actInput';
+import {
+  prepareSectionAct, sectionActDocInput, actFieldsOf, hiddenWorksInputFor, sectionsOf,
+} from './actInput';
+import { hiddenWorksHtml } from './fieldDocs';
 import { actDocHtml } from './actDocument';
 import type { Contractor, DailyWorkEntry, Deviation } from '@/types/construction';
 
@@ -110,5 +113,48 @@ describe('рекультивация в пакете и в «Закрытии»'
       actFields: { 'Еленовка': { actNumber: 'АСР-2026-0001', recultivation: 'не выполнена' } },
     }, 'Еленовка');
     expect(actDocHtml(sectionActDocInput(p, 'OSR'))).toContain('Не выполнена');
+  });
+});
+
+describe('акт скрытых работ по выбранному участку', () => {
+  it('собирается по любому участку, а не только по самому длинному', () => {
+    const input = hiddenWorksInputFor(journal, 'Обалы', { date: '2026-09-20' });
+    expect(input.rows.map((e) => e.id)).toEqual(['g2']);
+    expect(hiddenWorksHtml(input)).toContain('3\u00a0000');
+  });
+
+  it('глубина берётся из отклонений участка, как в АСР', () => {
+    const input = hiddenWorksInputFor(
+      { ...journal, deviations: [...journal.deviations, deviation()] },
+      'Еленовка',
+    );
+    expect(input.depths).toEqual([
+      { actualDepthM: 1.2, lengthM: 11050, protocol: undefined },
+      { actualDepthM: 0.5, lengthM: 50, protocol: '№17 от 12.09.2026' },
+    ]);
+    expect(hiddenWorksHtml(input)).toContain('0,50 м — на 50 м (протокол МГ №17 от 12.09.2026)');
+  });
+
+  it('чужое отклонение глубину участка не меняет', () => {
+    const html = hiddenWorksHtml(hiddenWorksInputFor(journal, 'Еленовка'));
+    expect(html).not.toContain('0,60');
+  });
+
+  it('песок и засыпка берутся из полей участка, общих с АСР', () => {
+    const input = hiddenWorksInputFor({
+      ...journal,
+      actFields: { 'Еленовка': { bedding: 'песок 100 мм', backfill: 'грунтом' } },
+    }, 'Еленовка');
+    expect(input.bedding).toBe('песок 100 мм');
+    expect(input.backfill).toBe('грунтом');
+  });
+
+  it('подрядчик — тот же, что в АСР, а не прочерк', () => {
+    expect(hiddenWorksInputFor(journal, 'Еленовка').contractor).toBe('ТОО «СК Фаворит инжиниринг»');
+  });
+
+  it('участки для выбора — без повторов из-за регистра', () => {
+    expect(sectionsOf([entry(), entry({ uchastok: 'еленовка' }), entry({ uchastok: 'Обалы' })]))
+      .toEqual(['Еленовка', 'Обалы']);
   });
 });

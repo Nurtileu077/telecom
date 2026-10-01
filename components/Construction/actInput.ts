@@ -4,7 +4,8 @@ import {
   computeSectionAct, entriesOfSection, deviationsOfSection, DEFAULT_ACT_MANUAL,
   type SectionActManual, type SectionActTotals,
 } from './sectionAct';
-import type { ActDocInput, ActKind } from './actDocument';
+import { protocolRef, type ActDocInput, type ActKind } from './actDocument';
+import type { HiddenWorksInput } from './fieldDocs';
 
 /**
  * Что входит в акт по участку — одно на все места, где акт собирают.
@@ -101,4 +102,54 @@ export function sectionActDocInput(p: SectionActPrep, kind: ActKind): ActDocInpu
     variants: p.totals.variants,
     fields: p.fields,
   };
+}
+
+/**
+ * Акт скрытых работ по выбранному участку.
+ *
+ * Раньше он собирался только по участку с наибольшим метражом за период
+ * и всегда с проектной глубиной: отклонения в него не попадали, и акт
+ * скрытых работ спорил с АСР того же села. Теперь участок выбирают, а
+ * глубины берутся из того же свода, что и АСР: основная часть и каждая
+ * фактическая глубина со своим протоколом мобильной группы.
+ *
+ * Подрядчик — тот же, что в АСР: от чьего имени сдаются работы, а не
+ * фильтр на экране, который почти всегда пуст.
+ */
+export function hiddenWorksInputFor(
+  src: SectionActSource,
+  uchastok: string,
+  extra: { customer?: string; date?: string; contractor?: string } = {},
+): HiddenWorksInput {
+  const p = prepareSectionAct(src, uchastok);
+  return {
+    uchastok,
+    oblast: p.oblast,
+    rayon: p.rayon,
+    rows: p.entries,
+    designDepthM: p.totals.designDepthM,
+    depths: p.totals.variants.map((v) => ({
+      actualDepthM: v.actualDepthM,
+      lengthM: v.lengthM,
+      protocol: v.isMain ? undefined : protocolRef(v),
+    })),
+    bedding: p.fields.bedding,
+    backfill: p.fields.backfill,
+    contractor: p.contractor || extra.contractor || p.performer || undefined,
+    customer: extra.customer,
+    date: extra.date,
+    city: p.fields.city,
+  };
+}
+
+/** Участки журнала — для выбора, по какому собирать документ. */
+export function sectionsOf(ground: DailyWorkEntry[]): string[] {
+  const seen = new Map<string, string>();
+  for (const e of ground) {
+    const name = e.uchastok?.trim();
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (!seen.has(key)) seen.set(key, name);
+  }
+  return [...seen.values()].sort((a, b) => a.localeCompare(b, 'ru'));
 }

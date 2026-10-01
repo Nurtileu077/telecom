@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { photoMeta, photosOf, pendingPhotos, fmtBytes, GEO_SOURCE_LABEL } from './photoStore';
+import {
+  photoMeta, photosOf, pendingPhotos, fmtBytes, GEO_SOURCE_LABEL, putPhotoBlob,
+} from './photoStore';
 import type { FieldPhoto } from '@/types/construction';
 
 const now = '2026-09-18T00:00:00.000Z';
@@ -82,5 +84,13 @@ describe('отправка фото в облако', () => {
     expect(res.photos[0]).toBe(sentPhoto);
     expect(res.sent).toBe(0);
     expect(res.failed).toBe(0);
+  });
+});
+
+describe('сохранение файла', () => {
+  it('без хранилища файл не считается сохранённым', async () => {
+    // В среде тестов IndexedDB нет — как в приватном окне или при запрете
+    // хранилища. Карточка без файла хуже, чем отказ: её примут за снимок.
+    expect(await putPhotoBlob('p1', new Blob(['x']))).toBe(false);
   });
 });
