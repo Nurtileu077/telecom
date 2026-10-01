@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildScheme, schemeSvg, schemeDocHtml, schemeDocPage, schemeFileName,
   schemeAttachmentHtml, withSchemeAttached, schemeObjectsFor, displacedMarks,
+  spanMismatches, spanTolerance,
 } from './asBuilt';
 import type { SiteObject, PlanRoute } from '@/types/construction';
 import { formatMeters } from './mapDecor';
@@ -469,5 +470,106 @@ describe('schemeObjectsFor', () => {
   it('схема без своих объектов так и говорит, а не выглядит законченной', () => {
     const html = schemeDocHtml({ scheme: buildScheme(route(), []) });
     expect(html).toContain('Объектов участка в журнале нет');
+  });
+});
+
+/**
+ * В карточке муфты записан пролёт по меткам трубы, а в схему уходило
+ * расстояние между двумя точками телефона, каждая из которых ±25 м.
+ */
+describe('пролёт по замеру в схеме', () => {
+  // Трасса ≈ 1 113 м. Муфта №1 на ≈ 334 м, ККС 12 на ≈ 779 м по координатам.
+  const measured = (spanM?: number, spanBy?: string) => buildScheme(route(), [
+    obj({ lat: 0, lon: 0.003, name: 'Муфта №1' }),
+    obj({ lat: 0, lon: 0.007, kind: 'kks', name: 'ККС 12', spanM, spanBy }),
+  ]);
+
+  it('в ведомость идёт пролёт из карточки, а не разница точек телефона', () => {
+    const s = measured(460, 'метки трубы');
+    const sp = s.spans.find((x) => x.to === 'ККС 12')!;
+    expect(sp.meters).toBe(460);
+    expect(sp.measured!.by).toBe('метки трубы');
+    expect(sp.measured!.mapM).toBeGreaterThan(440);
+    expect(sp.measured!.mapM).toBeLessThan(450);
+  });
+
+  it('пролёт меряется от предыдущей отметки схемы, а не от прошлой муфты', () => {
+    // Перед ККС стоит муфта: её пролёт и закрывается замером ККС.
+    const s = measured(460);
+    expect(s.spans.find((x) => x.measured)!.from).toBe('Муфта №1');
+  });
+
+  it('строка ведомости говорит, что это замер и чем мерили', () => {
+    const html = schemeDocHtml({ scheme: measured(460, 'метки трубы') });
+    expect(html).toContain('Муфта №1 — ККС 12 <span class="cap">(замер: метки трубы)</span>');
+    expect(html).toContain('<td class="val">460</td>');
+    expect(html).toContain('«Замер» — пролёт по записи в карточке объекта');
+  });
+
+  it('без замеров ведомость остаётся по координатам и без сносок', () => {
+    const html = schemeDocHtml({ scheme: measured() });
+    expect(html).not.toContain('замер');
+    expect(html).not.toContain('Замер');
+  });
+
+  it('метры под отметками идут по замеру, и лист не спорит сам с собой', () => {
+    const s = measured(460);
+    const kks = s.marks.find((m) => m.label === 'ККС 12')!;
+    const muf = s.marks.find((m) => m.label === 'Муфта №1')!;
+    expect(kks.chainM - muf.chainM).toBeCloseTo(460, 6);
+    const svg = schemeSvg(s);
+    expect(svg).toContain(`>${formatMeters(kks.chainM)}</text>`);
+    expect(svg).toContain(`>${formatMeters(460)} (замер)</text>`);
+  });
+
+  it('протяжённость пишет оба числа: по трассе и по пролётам с замерами', () => {
+    const s = measured(600);
+    expect(s.chainTotalM).toBeGreaterThan(s.totalM + 100);
+    const html = schemeDocHtml({ scheme: s });
+    expect(html).toContain('по трассе');
+    expect(html).toContain('по пролётам с замерами');
+  });
+
+  it('замер, который спорит с координатами, называется до подписи', () => {
+    // 2 000 м по меткам против ≈ 445 м между точками — так не бывает.
+    const s = measured(2000, 'метки трубы');
+    expect(s.spans.find((x) => x.measured)!.mismatch).toBe(true);
+    expect(spanMismatches(s)[0]).toContain('ККС 12');
+    const html = schemeDocHtml({ scheme: s });
+    expect(html).toContain('Замер и координаты расходятся');
+    expect(html.indexOf('расходятся')).toBeLessThan(html.indexOf('Составил'));
+  });
+
+  it('расхождение в пределах двух точек телефона вопросов не вызывает', () => {
+    const s = measured(480);
+    expect(s.spans.find((x) => x.measured)!.mismatch).toBeUndefined();
+    expect(spanTolerance(480)).toBe(50);
+    expect(spanTolerance(4000)).toBe(200);
+  });
+
+  it('замер к муфте в стороне не помечается «≈»: его меряли на земле', () => {
+    const s = buildScheme(route(), [
+      obj({ lat: 0.00081, lon: 0.005, name: 'Муфта №3', spanM: 560 }),
+    ]);
+    const into = s.spans.find((x) => x.to === 'Муфта №3')!;
+    expect(into.approx).toBeUndefined();
+    expect(into.meters).toBe(560);
+    // А следующий пролёт — по координатам, и он приблизительный.
+    expect(s.spans.find((x) => x.from === 'Муфта №3')!.approx).toBe(true);
+  });
+
+  it('замер есть, а точки совпали — пролёт не теряется, а спорит', () => {
+    const s = buildScheme(route(), [
+      obj({ lat: 0, lon: 0.003, name: 'Муфта №1' }),
+      obj({ lat: 0, lon: 0.003, name: 'Муфта №2', spanM: 1500 }),
+    ]);
+    const sp = s.spans.find((x) => x.to === 'Муфта №2')!;
+    expect(sp.meters).toBe(1500);
+    expect(sp.mismatch).toBe(true);
+  });
+
+  it('пустой или нулевой замер не считается замером', () => {
+    const s = buildScheme(route(), [obj({ lat: 0, lon: 0.005, name: 'М', spanM: 0 })]);
+    expect(s.spans.some((x) => x.measured)).toBe(false);
   });
 });

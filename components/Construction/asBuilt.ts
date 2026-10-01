@@ -31,6 +31,30 @@ export interface SchemeMark {
    * надо показать на листе.
    */
   offsetM?: number;
+  /**
+   * Метры по схеме: сумма пролётов до этой отметки.
+   *
+   * Совпадает с `atM`, пока пролёты считаются по координатам. Где пролёт
+   * померили на объекте, отметка встаёт по замеру: иначе под муфтой
+   * стояло бы «1,66 км», а под пролётом к ней — «2 000 м», и лист спорил
+   * бы сам с собой.
+   */
+  chainM: number;
+  /** Пролёт от предыдущей отметки по замеру на объекте — из карточки. */
+  spanM?: number;
+  /** Чем мерили этот пролёт. */
+  spanBy?: string;
+}
+
+/**
+ * Насколько замер может разойтись с координатами без вопросов.
+ *
+ * Две точки телефона дают до 50 м, а кабель по метке длиннее линии на
+ * изгибы и запасы — на несколько процентов. Сверх этого расхождение
+ * значит, что неверна запись или точка, и это надо увидеть до подписи.
+ */
+export function spanTolerance(measuredM: number): number {
+  return Math.max(50, measuredM * 0.05);
 }
 
 /**
@@ -64,7 +88,16 @@ export interface Scheme {
      * такой пролёт идёт со знаком «≈», а не с точностью до метра.
      */
     approx?: boolean;
+    /**
+     * Пролёт померили на объекте: длина взята из карточки, а не из
+     * координат. Координатная длина остаётся рядом для сверки.
+     */
+    measured?: { by?: string; mapM: number };
+    /** Замер и координаты расходятся больше, чем объясняет погрешность. */
+    mismatch?: boolean;
   }[];
+  /** Сумма пролётов: с замерами она может отличаться от длины линии. */
+  chainTotalM: number;
   /** Объекты, которые к трассе не отнеслись: слишком далеко. */
   skipped: string[];
   /**
@@ -131,9 +164,12 @@ export function buildScheme(
     }
     marks.push({
       atM: hit.atM,
+      chainM: hit.atM,
       label: o.name || SITE_OBJECT_SPECS[o.kind].label,
       kind: o.kind,
       offsetM: hit.deviationM > OFFSET_NOTE_M ? hit.deviationM : undefined,
+      spanM: o.spanM !== undefined && Number.isFinite(o.spanM) && o.spanM > 0 ? o.spanM : undefined,
+      spanBy: o.spanM ? o.spanBy?.trim() || undefined : undefined,
     });
   }
 
@@ -148,27 +184,83 @@ export function buildScheme(
   // Концы трассы — всегда отметки: с них схему и читают.
   const startLabel = opts.from || route.name.split(/[—–-]/)[0]?.trim() || 'Начало';
   const endLabel = opts.to || route.name.split(/[—–-]/).pop()?.trim() || 'Конец';
-  marks.push({ atM: 0, label: startLabel, kind: 'start' });
-  marks.push({ atM: totalM, label: endLabel, kind: 'end' });
+  marks.push({ atM: 0, chainM: 0, label: startLabel, kind: 'start' });
+  marks.push({ atM: totalM, chainM: totalM, label: endLabel, kind: 'end' });
 
   marks.sort((a, b) => a.atM - b.atM);
 
+  /**
+   * Пролёты.
+   *
+   * Записанный в карточке пролёт — это «от предыдущей отметки схемы до
+   * этого объекта»: от соседней муфты, ККС или начала трассы, считая в
+   * ту сторону, куда идёт трасса. Такой пролёт меряли на земле — метками
+   * трубы или кабеля, — и он точнее разницы двух точек телефона, каждая
+   * из которых ±25 м. Поэтому в ведомость идёт он, а координатная длина
+   * остаётся рядом — для сверки.
+   */
   const spans: Scheme['spans'] = [];
   for (let i = 1; i < marks.length; i += 1) {
-    const meters = marks[i].atM - marks[i - 1].atM;
-    if (meters < 1) continue;
-    spans.push({
-      from: marks[i - 1].label,
-      to: marks[i].label,
-      meters,
-      fromIndex: i - 1,
-      toIndex: i,
-      approx: marks[i - 1].offsetM !== undefined || marks[i].offsetM !== undefined
-        ? true : undefined,
-    });
+    const mapM = marks[i].atM - marks[i - 1].atM;
+    const measuredM = marks[i].spanM;
+    if (measuredM !== undefined) {
+      spans.push({
+        from: marks[i - 1].label,
+        to: marks[i].label,
+        meters: measuredM,
+        fromIndex: i - 1,
+        toIndex: i,
+        measured: { by: marks[i].spanBy, mapM },
+        mismatch: Math.abs(measuredM - mapM) > spanTolerance(measuredM) ? true : undefined,
+      });
+    } else if (mapM >= 1) {
+      spans.push({
+        from: marks[i - 1].label,
+        to: marks[i].label,
+        meters: mapM,
+        fromIndex: i - 1,
+        toIndex: i,
+        approx: marks[i - 1].offsetM !== undefined || marks[i].offsetM !== undefined
+          ? true : undefined,
+      });
+    }
+    // Отметка встаёт по сумме пролётов до неё: с замером — по замеру.
+    const span = spans[spans.length - 1];
+    marks[i].chainM = marks[i - 1].chainM
+      + (span && span.toIndex === i ? span.meters : Math.max(0, mapM));
   }
 
-  return { route: route.name, totalM, marks, spans, skipped, unassigned };
+  const chainTotalM = marks.length ? marks[marks.length - 1].chainM : 0;
+  return { route: route.name, totalM, marks, spans, chainTotalM, skipped, unassigned };
+}
+
+/** Пролёты по замеру, которые спорят с координатами. */
+export function spanMismatches(s: Scheme): string[] {
+  return s.spans
+    .filter((sp) => sp.mismatch && sp.measured)
+    .map((sp) => `${sp.from} — ${sp.to}: замер ${Math.round(sp.meters).toLocaleString('ru')} м, `
+      + `по координатам ${Math.round(sp.measured!.mapM).toLocaleString('ru')} м`);
+}
+
+/** Подпись строки ведомости: откуда и куда, и чем мерили, если мерили. */
+function spanLabel(sp: Scheme['spans'][number]): string {
+  const base = `${esc(sp.from)} — ${esc(sp.to)}`;
+  if (!sp.measured) return base;
+  return `${base} <span class="cap">(замер${sp.measured.by ? `: ${esc(sp.measured.by)}` : ''})</span>`;
+}
+
+/**
+ * «Протяжённость» листа.
+ *
+ * Длина линии и сумма пролётов с замерами — разные числа, и оба верны
+ * по-своему. Пишем оба с подписью, откуда каждое, а не выбираем молча.
+ */
+function lengthLine(s: Scheme): string {
+  const base = `Протяжённость: <span class="b">${esc(formatMeters(s.totalM))}</span>`;
+  const byChain = Math.abs(s.chainTotalM - s.totalM) >= 1
+    ? ` по трассе, <span class="b">${esc(formatMeters(s.chainTotalM))}</span> по пролётам с замерами`
+    : '';
+  return `<p>${base}${byChain}, отметок на схеме: <span class="b">${s.marks.length}</span>.</p>`;
 }
 
 /** Отметки, снятые в стороне от линии: «Муфта №3 — 90 м». */
@@ -206,6 +298,15 @@ function schemeNotes(s: Scheme, full: boolean): string {
     out.push(`<p class="warn">У линии есть объекты без участка: ${esc(s.unassigned.join('; '))}. `
       + 'В схему не взяты — укажите у них участок.</p>');
   }
+  const mismatched = spanMismatches(s);
+  if (mismatched.length) {
+    out.push(`<p class="warn">Замер и координаты расходятся: ${esc(mismatched.join('; '))}. `
+      + 'Проверьте запись в карточке объекта или его точку.</p>');
+  }
+  if (s.spans.some((sp) => sp.measured)) {
+    out.push('<p class="cap">«Замер» — пролёт по записи в карточке объекта; '
+      + 'остальные длины — по координатам вдоль трассы.</p>');
+  }
   if (s.marks.length <= 2 && s.skipped.length === 0) {
     out.push('<p>Объектов участка в журнале нет: на схеме только концы трассы.</p>');
   }
@@ -234,15 +335,18 @@ export function schemeSvg(s: Scheme, width = 1000): string {
   const y = 130;
   // Округляем: доли пикселя на бумаге не видны, а «672.0000000000001»
   // в разметке — мусор, который читают глазами при разборе.
+  // Отметки стоят по метрам схемы, а не по координатам: где пролёт
+  // померили, рисунок должен сходиться с подписью под ним.
+  const scale = s.chainTotalM;
   const x = (m: number) => Math.round(
-    (pad + (s.totalM > 0 ? (m / s.totalM) * line : 0)) * 100,
+    (pad + (scale > 0 ? (m / scale) * line : 0)) * 100,
   ) / 100;
 
   // Подписи чередуем сверху и снизу: на плотном участке они иначе
   // наезжают друг на друга и не читаются.
   const marks = s.marks.map((m, i) => {
     const style = MARK_STYLE[m.kind];
-    const cx = x(m.atM);
+    const cx = x(m.chainM);
     const up = i % 2 === 0;
     const labelY = up ? y - 26 : y + 38;
     const tickY1 = up ? y - 10 : y + 10;
@@ -268,7 +372,7 @@ export function schemeSvg(s: Scheme, width = 1000): string {
       <line x1="${cx}" y1="${tickY1}" x2="${cx}" y2="${tickY2}" stroke="#94a3b8" stroke-width="1"/>
       ${glyph}
       <text x="${cx}" y="${labelY}" text-anchor="middle" font-size="12" fill="#0f172a">${esc(m.label)}</text>
-      <text x="${cx}" y="${labelY + (up ? -13 : 13)}" text-anchor="middle" font-size="10" fill="#64748b">${esc(formatMeters(m.atM))}</text>
+      <text x="${cx}" y="${labelY + (up ? -13 : 13)}" text-anchor="middle" font-size="10" fill="#64748b">${esc(formatMeters(m.chainM))}</text>
       ${offNote}
     </g>`;
   }).join('');
@@ -280,9 +384,9 @@ export function schemeSvg(s: Scheme, width = 1000): string {
     const a = s.marks[sp.fromIndex];
     const b = s.marks[sp.toIndex];
     if (!a || !b) return '';
-    const cx = (x(a.atM) + x(b.atM)) / 2;
+    const cx = (x(a.chainM) + x(b.chainM)) / 2;
     return `<text x="${cx}" y="${y + 20}" text-anchor="middle" font-size="10" fill="#334155">`
-      + `${sp.approx ? '≈ ' : ''}${esc(formatMeters(sp.meters))}</text>`;
+      + `${sp.approx ? '≈ ' : ''}${esc(formatMeters(sp.meters))}${sp.measured ? ' (замер)' : ''}</text>`;
   }).join('');
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} 230" width="${width}" height="230">
@@ -290,7 +394,9 @@ export function schemeSvg(s: Scheme, width = 1000): string {
     <line x1="${pad}" y1="${y}" x2="${width - pad}" y2="${y}" stroke="#0f172a" stroke-width="3"/>
     ${spans}
     ${marks}
-    <text x="${pad}" y="210" font-size="11" fill="#64748b">${esc(s.route)} · ${esc(formatMeters(s.totalM))}</text>
+    <text x="${pad}" y="210" font-size="11" fill="#64748b">${esc(s.route)} · ${esc(formatMeters(s.totalM))}${
+  Math.abs(s.chainTotalM - s.totalM) >= 1
+    ? ` по трассе · ${esc(formatMeters(s.chainTotalM))} по пролётам с замерами` : ''}</text>
   </svg>`;
 }
 
@@ -313,7 +419,7 @@ export function schemeDocHtml(i: SchemeDocInput): string {
   const t = (key: string) => term(key as never, i.lang ?? 'off', i.terms ?? {});
   const rows = s.spans.map((sp, n) => '<tr>'
     + `<td class="val">${n + 1}</td>`
-    + `<td class="lbl">${esc(sp.from)} — ${esc(sp.to)}</td>`
+    + `<td class="lbl">${spanLabel(sp)}</td>`
     + `<td class="val">${spanCell(sp)}</td>`
     + '</tr>').join('');
 
@@ -324,8 +430,7 @@ export function schemeDocHtml(i: SchemeDocInput): string {
       ? `<p class="cap">${esc([i.rayon, i.oblast].filter(Boolean).join(', '))}</p>` : '')
     + (i.date ? `<p class="center">${esc(fmtDate(i.date))}</p>` : '')
     + `<div style="margin:10pt 0">${schemeSvg(s)}</div>`
-    + `<p>Протяжённость: <span class="b">${esc(formatMeters(s.totalM))}</span>, `
-    + `отметок на схеме: <span class="b">${s.marks.length}</span>.</p>`
+    + lengthLine(s)
     + '<table class="act"><tr>'
     + `<td class="val b">№</td><td class="lbl b">${esc(t('uchastok'))}</td>`
     + `<td class="val b">${esc(t('length'))}</td>`
@@ -367,7 +472,7 @@ export function schemeAttachmentHtml(
   const s = i.scheme;
   const rows = s.spans.map((sp, n) => '<tr>'
     + `<td class="val">${n + 1}</td>`
-    + `<td class="lbl">${esc(sp.from)} — ${esc(sp.to)}</td>`
+    + `<td class="lbl">${spanLabel(sp)}</td>`
     + `<td class="val">${spanCell(sp)}</td>`
     + '</tr>').join('');
 
@@ -380,8 +485,7 @@ export function schemeAttachmentHtml(
     + `<h1>${esc(t('scheme'))}</h1>`
     + `<p class="obj">${esc(s.route)}</p>`
     + `<div style="margin:8pt 0">${schemeSvg(s, width)}</div>`
-    + `<p>Протяжённость: <span class="b">${esc(formatMeters(s.totalM))}</span>, `
-    + `отметок на схеме: <span class="b">${s.marks.length}</span>.</p>`
+    + lengthLine(s)
     + '<table class="act"><tr>'
     + '<td class="val b">№</td><td class="lbl b">Участок</td><td class="val b">Длина, м</td>'
     + '</tr>' + rows + '</table>'

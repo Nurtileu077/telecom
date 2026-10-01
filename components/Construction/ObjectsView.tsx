@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react';
 import { Plus, Pencil, Trash2, MapPin, Crosshair, Loader2, X, Check } from 'lucide-react';
 import {
-  SITE_OBJECT_SPECS, SITE_OBJECT_KINDS, MUFTA_STATES, ENDPOINT_KINDS,
+  SITE_OBJECT_SPECS, SITE_OBJECT_KINDS, MUFTA_STATES, ENDPOINT_KINDS, SPAN_METHODS,
   siteObjectColor,
   type SiteObject, type SiteObjectKind, type MuftaState,
 } from '@/types/construction';
@@ -198,6 +198,7 @@ function ObjectForm({ journal, initial, author, onSave, onClose, onRequestPick }
   const [duct, setDuct] = useState(initial?.duct ?? '');
   const [depthM, setDepthM] = useState(initial?.depthM ? String(initial.depthM) : '');
   const [spanM, setSpanM] = useState(initial?.spanM ? String(initial.spanM) : '');
+  const [spanBy, setSpanBy] = useState(initial?.spanBy ?? '');
 
   const [lat, setLat] = useState(initial ? String(initial.lat) : '');
   const [lon, setLon] = useState(initial ? String(initial.lon) : '');
@@ -257,6 +258,9 @@ function ObjectForm({ journal, initial, author, onSave, onClose, onRequestPick }
       duct: duct.trim() || undefined,
       depthM: numOrUndef(depthM),
       spanM: numOrUndef(spanM),
+      // Чем мерили — только вместе с самим замером: способ без числа
+      // ничего не подтверждает.
+      spanBy: numOrUndef(spanM) ? spanBy.trim() || undefined : undefined,
       author: initial?.author ?? author,
       createdAt: initial?.createdAt ?? now,
       updatedAt: now,
@@ -376,7 +380,7 @@ function ObjectForm({ journal, initial, author, onSave, onClose, onRequestPick }
           {/* Паспорт сети — вопросы аварийной бригады, а не стройки */}
           <details className="rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)]">
             <summary className="px-3 py-2 text-[11.5px] text-[var(--text-muted)] cursor-pointer hover:text-[var(--text)]">
-              Паспорт: кабель, волокна, глубина
+              Паспорт: кабель, волокна, глубина, пролёт
             </summary>
             <div className="p-3 pt-0 grid grid-cols-2 gap-2">
               <Txt label="Питается от" value={feedFrom} onChange={setFeedFrom} ph="АТС Еленовка" />
@@ -387,6 +391,23 @@ function ObjectForm({ journal, initial, author, onSave, onClose, onRequestPick }
               <Txt label="Труба" value={duct} onChange={setDuct} ph="МКТ 14/10" />
               <Txt label="Глубина, м" value={depthM} onChange={(v) => setDepthM(v.replace(/[^\d.,]/g, ''))} ph="1,2" mono />
               <Txt label="Пролёт, м" value={spanM} onChange={(v) => setSpanM(v.replace(/[^\d.,]/g, ''))} ph="2000" mono />
+              <label className="flex flex-col gap-1">
+                <span className="text-[10.5px] text-[var(--text-muted)]">Чем мерили пролёт</span>
+                <input list="obj-span-methods" value={spanBy} onChange={(e) => setSpanBy(e.target.value)}
+                       placeholder="метки трубы"
+                       className="bg-[var(--bg-surface)] border border-[var(--border)] rounded px-2 py-1.5 text-[12px] text-[var(--text)]" />
+                <datalist id="obj-span-methods">
+                  {SPAN_METHODS.map((m) => <option key={m} value={m} />)}
+                </datalist>
+              </label>
+              {/* Откуда считать пролёт — главный вопрос к этому полю: от
+                  соседней муфты или от прошлой ККС. Схема читается по
+                  соседним отметкам, так что и пролёт — до соседней. */}
+              <p className="col-span-2 text-[10.5px] text-[var(--text-muted)] leading-snug">
+                Пролёт — от предыдущей отметки схемы (муфты, ККС, столба или начала
+                трассы со стороны, откуда идёт счёт) до этого объекта. Записанный замер
+                встаёт в исполнительную схему вместо расстояния между точками телефона.
+              </p>
             </div>
           </details>
 

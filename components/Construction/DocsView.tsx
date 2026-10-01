@@ -22,7 +22,7 @@ import {
 } from './fieldDocs';
 import {
   buildScheme, schemeDocPage, schemeFileName, withSchemeAttached,
-  schemeObjectsFor, displacedMarks,
+  schemeObjectsFor, displacedMarks, spanMismatches,
 } from './asBuilt';
 import { withDefaults, missingForPayment, binLooksWrong } from './requisites';
 import { normName } from './areaImport';
@@ -872,8 +872,17 @@ export default function DocsView({
             </div>
             {scheme && (
               <div className="text-[11px] text-[var(--text-muted)]">
-                Отметок: {scheme.marks.length}, пролётов: {scheme.spans.length},
+                Отметок: {scheme.marks.length}, пролётов: {scheme.spans.length}
+                {scheme.spans.some((sp) => sp.measured)
+                  ? ` (по замеру из карточек — ${scheme.spans.filter((sp) => sp.measured).length})`
+                  : ''},
                 {' '}протяжённость {(scheme.totalM / 1000).toFixed(2).replace('.', ',')} км.
+              </div>
+            )}
+            {scheme && spanMismatches(scheme).length > 0 && (
+              <div className="text-[11px] text-[var(--warn)]">
+                Замер и координаты расходятся: {spanMismatches(scheme).join('; ')}.
+                Проверьте пролёт в карточке объекта или его точку.
               </div>
             )}
             {scheme && displacedMarks(scheme).length > 0 && (
