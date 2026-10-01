@@ -16,7 +16,8 @@ import { photosOf } from './photoStore';
 import { advanceAlong, routeForSection } from './routeProgress';
 import { normName } from './areaImport';
 import { checkEntry } from './entryChecks';
-import { haversineM } from './measureTool';
+import type { LatLon } from './measureTool';
+import { measureShift, describeShiftMeasure } from './shiftMeasure';
 import { parseMeters, metersHint } from './units';
 import {
   fetchDayWeather, formatWeather, weatherHindered, type DayWeather,
@@ -127,8 +128,15 @@ export default function DailyEntryForm({
   });
   const [note, setNote] = useState(initial?.note ?? prefill?.note ?? '');
   const [reason, setReason] = useState('');
-  /** Отрезок, снятый с карты: ждёт, в какой способ его вписать. */
-  const [picked, setPicked] = useState<number | null>(null);
+  /**
+   * Точки замера с карты: ждут, в какой способ их вписать.
+   *
+   * Храним точки, а не готовое число: к ним можно добавить ещё одну, и
+   * пересчитать по трассе или по ломаной, не начиная заново.
+   */
+  const [measurePts, setMeasurePts] = useState<LatLon[]>([]);
+  /** Человек сам выбрал «по точкам» вместо «по трассе». */
+  const [measureUse, setMeasureUse] = useState<'route' | 'points' | null>(null);
   const [touched, setTouched] = useState(false);
 
   /**
@@ -281,6 +289,19 @@ export default function DailyEntryForm({
       return fields.some((f) => normName(f) === key || normName(f).includes(key));
     });
   }, [journal.planRoutes, uchastok]);
+
+  /**
+   * Замер с карты: по трассе участка, если клики на ней, иначе по любой
+   * трассе под кликами, иначе по самим точкам — с объяснением почему.
+   */
+  const measure = useMemo(
+    () => measureShift(measurePts, journal.planRoutes, { preferRouteId: sectionRoute?.id }),
+    [measurePts, journal.planRoutes, sectionRoute],
+  );
+  const measureChoice: 'route' | 'points' = measure?.route
+    ? (measureUse ?? 'route') : 'points';
+  const measureMeters = !measure ? 0
+    : measureChoice === 'route' && measure.route ? measure.route.meters : measure.pointsM;
 
   /**
    * Погода дня.
@@ -642,7 +663,9 @@ export default function DailyEntryForm({
               ))}
             </div>
             {/* Метры по карте: на длинных перегонах их всё равно снимают
-                с карты, просто делают это в другом приложении. */}
+                с карты, просто делают это в другом приложении. Меряем
+                вдоль трассы: прямая между кликами на повороте короче пути
+                на треть, и эта треть уходила в смену и в АСР. */}
             {onRequestPick && (
               <div className="flex items-center gap-2 flex-wrap px-1 pt-1">
                 <button type="button" className="btn btn-ghost text-[10.5px]"
@@ -651,25 +674,54 @@ export default function DailyEntryForm({
                           if (!a) return;
                           const b = await onRequestPick('конец отрезка');
                           if (!b) return;
-                          setPicked(Math.round(haversineM(a, b)));
+                          setMeasurePts([a, b]);
+                          setMeasureUse(null);
                         }}>
                   <MapPin size={12} />Померить по карте
                 </button>
-                {picked !== null && (
+                {measure && (
                   <>
                     <span className="text-[11px] text-[var(--text)] font-mono tabular-nums">
-                      {picked.toLocaleString('ru')} м
+                      {Math.round(measureMeters).toLocaleString('ru')} м
                     </span>
                     <span className="text-[11px] text-[var(--text-muted)]">вписать в</span>
                     {LAY_METHODS.map((m) => (
                       <button key={m} type="button" className="btn btn-ghost text-[10.5px]"
                               onClick={() => {
-                                setByMethod((p) => ({ ...p, [m]: String(picked) }));
-                                setPicked(null);
+                                setByMethod((p) => ({ ...p, [m]: String(Math.round(measureMeters)) }));
+                                setMeasurePts([]);
+                                setMeasureUse(null);
                               }}>
                         {LAY_METHOD_LABEL[m]}
                       </button>
                     ))}
+                    <div className="basis-full flex items-center gap-2 flex-wrap text-[10.5px]">
+                      <span className={measureChoice === 'route'
+                        ? 'text-[var(--text-muted)]' : 'text-[var(--warn)]'}>
+                        {describeShiftMeasure(measure, measureChoice)}
+                      </span>
+                      {/* Обход болота или огородов по трассе не нарисован:
+                          тогда верны точки, а не линия проектировщика. */}
+                      {measure.route && (
+                        <button type="button" className="text-[var(--accent)] hover:underline"
+                                onClick={() => setMeasureUse(measureChoice === 'route' ? 'points' : 'route')}>
+                          {measureChoice === 'route'
+                            ? `взять по точкам: ${Math.round(measure.pointsM).toLocaleString('ru')} м`
+                            : `взять по трассе: ${Math.round(measure.route.meters).toLocaleString('ru')} м`}
+                        </button>
+                      )}
+                      <button type="button" className="text-[var(--accent)] hover:underline"
+                              onClick={async () => {
+                                const p = await onRequestPick('следующая точка');
+                                if (p) setMeasurePts((prev) => [...prev, p]);
+                              }}>
+                        + точка
+                      </button>
+                      <button type="button" className="text-[var(--text-muted)] hover:underline"
+                              onClick={() => { setMeasurePts([]); setMeasureUse(null); }}>
+                        сбросить
+                      </button>
+                    </div>
                   </>
                 )}
               </div>

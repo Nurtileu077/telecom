@@ -118,11 +118,16 @@ interface Props {
   onShowRoute?: (kato: string) => void;
   /** Показать на карте конкретную линию — её рамкой. */
   onShowCoords?: (coords: [number, number][]) => void;
+  /**
+   * Спрятана на время выбора точки на карте. Не закрыта: открытые формы
+   * со всем набранным должны дождаться точки.
+   */
+  hidden?: boolean;
 }
 
 export default function ConstructionPanel({
   onClose, onRequestPick, editObjectId, onDoneEditObject, onPlayDay, onShowRoute,
-  onShowCoords,
+  onShowCoords, hidden = false,
 }: Props) {
   const { t } = useT();
   const [journal, setJournal] = useState<JournalState>(emptyJournal);
@@ -518,8 +523,15 @@ export default function ConstructionPanel({
    * в поиск, N открывает новую запись. Пока их нет, каждое действие —
    * это поиск кнопки глазами.
    */
+  // Пока панель спрятана ради точки на карте, её клавиши молчат: «n» в
+  // поиске по карте не должно открывать новую смену, а Ctrl+Z — откатывать
+  // журнал, которого человек сейчас не видит.
+  const hiddenRef = useRef(hidden);
+  useEffect(() => { hiddenRef.current = hidden; }, [hidden]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (hiddenRef.current) return;
       const el = e.target as HTMLElement | null;
       const typing = el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA'
         || el?.isContentEditable;
@@ -823,7 +835,8 @@ export default function ConstructionPanel({
   ).filter(([v]) => !hiddenViews.includes(v) || v === view);
 
   return (
-    <div className="fixed inset-0 z-[9998] bg-[var(--bg-canvas)] flex flex-col journal-panel">
+    <div className="fixed inset-0 z-[9998] bg-[var(--bg-canvas)] flex flex-col journal-panel"
+         style={hidden ? { display: 'none' } : undefined}>
       {/* Короткое сообщение о том, что действие прошло. */}
       {flash && (
         <div className="fixed left-1/2 -translate-x-1/2 top-3 z-[9999] px-3 py-1.5 rounded-full

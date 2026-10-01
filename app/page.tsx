@@ -513,6 +513,11 @@ export default function HomePage() {
    * Выбор точки на карте для журнала: панель прячется, следующий клик по
    * карте возвращает координаты и панель открывается обратно. Обещание
    * разрешается null, если человек передумал (Esc).
+   *
+   * Панель именно прячется, а не закрывается. Закрытая панель уносила с
+   * собой открытую форму: замер «от сих до сих» по карте возвращался в
+   * журнал, где формы смены уже не было, и метры пропадали вместе со
+   * всем, что успели набрать.
    */
   const pickResolverRef = useRef<((p: { lat: number; lon: number } | null) => void) | null>(null);
   const [pickLabel, setPickLabel] = useState<string | null>(null);
@@ -521,7 +526,6 @@ export default function HomePage() {
     new Promise<{ lat: number; lon: number } | null>((resolve) => {
       pickResolverRef.current = resolve;
       setPickLabel(label);
-      setShowJournal(false);
     })
   ), []);
 
@@ -535,9 +539,15 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!pickLabel) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') cancelPick(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    // Перехватываем Esc раньше всех: спрятанная форма тоже закрывается по
+    // Esc, и отмена выбора точки иначе выбрасывала бы и форму.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      cancelPick();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [pickLabel, cancelPick]);
 
   /** Перетащили колонну на карте — сохраняем новое место. */
@@ -2232,6 +2242,7 @@ export default function HomePage() {
           onDoneEditObject={() => setEditObjectId(null)}
           onClose={() => { setShowJournal(false); setEditObjectId(null); refreshJournalLayers(); }}
           onRequestPick={requestPickOnMap}
+          hidden={!!pickLabel}
         />
       )}
 
