@@ -5,6 +5,7 @@ import { nearestOnRoute } from './measureTool';
 import { routeLengthM } from './routeProgress';
 import { formatMeters } from './mapDecor';
 import { term, type Bilingual, type TermPair } from './bilingual';
+import { normName } from './areaImport';
 
 /**
  * Исполнительная схема.
@@ -24,9 +25,23 @@ export interface SchemeMark {
   atM: number;
   label: string;
   kind: 'endpoint' | 'mufta' | 'kks' | 'stolb' | 'start' | 'end';
-  /** Насколько отметка отстоит от линии — её сняли не на самой трассе. */
+  /**
+   * Насколько отметка отстоит от линии — её сняли не на самой трассе.
+   * Есть только тогда, когда смещение больше погрешности телефона и его
+   * надо показать на листе.
+   */
   offsetM?: number;
 }
+
+/**
+ * С какого смещения объект называем «в стороне».
+ *
+ * Телефон в поле даёт точку с погрешностью до 25 м: ближе — это шум
+ * приёмника, и подписывать каждую муфту «в 12 м от оси» значит залить
+ * схему оговорками, которые ничего не говорят. Дальше — это уже место:
+ * муфту поставили у дороги, а не на трассе, или точку сняли не там.
+ */
+export const OFFSET_NOTE_M = 25;
 
 export interface Scheme {
   route: string;
@@ -41,9 +56,25 @@ export interface Scheme {
    * перестаёт совпадать с номером отметки. Рисунок, который считал бы
    * их равными, подписал бы длины на пролёт левее.
    */
-  spans: { from: string; to: string; meters: number; fromIndex: number; toIndex: number }[];
+  spans: {
+    from: string; to: string; meters: number; fromIndex: number; toIndex: number;
+    /**
+     * Один из концов снят в стороне от линии: длина посчитана по его
+     * проекции на трассу и верна не точнее этого смещения. В ведомости
+     * такой пролёт идёт со знаком «≈», а не с точностью до метра.
+     */
+    approx?: boolean;
+  }[];
   /** Объекты, которые к трассе не отнеслись: слишком далеко. */
   skipped: string[];
+  /**
+   * Объекты без участка, стоящие у самой линии.
+   *
+   * Чьи они — не знаем: могут быть наши, могут быть соседей. Молча
+   * взять их — значит однажды подписать чужую муфту, молча выбросить —
+   * потерять свою. Называем и просим указать участок.
+   */
+  unassigned: string[];
 }
 
 export interface SchemeOptions {
@@ -51,6 +82,25 @@ export interface SchemeOptions {
   maxOffsetM?: number;
   from?: string;
   to?: string;
+  /** Объекты без участка: в схему не берём, но называем те, что у линии. */
+  unassigned?: SiteObject[];
+}
+
+/**
+ * Какие объекты идут в схему участка.
+ *
+ * Только свои. Раньше участок без своих объектов получал в схему все
+ * объекты журнала, и чужие муфты вставали на его трассу с правдоподобным
+ * метражом — заказчик подписывал схему с отметками соседнего села.
+ */
+export function schemeObjectsFor(
+  objects: SiteObject[],
+  uchastok: string | undefined,
+): { own: SiteObject[]; unassigned: SiteObject[] } {
+  const key = normName(uchastok ?? '');
+  const own = key ? objects.filter((o) => normName(o.uchastok ?? '') === key) : [];
+  const unassigned = objects.filter((o) => !normName(o.uchastok ?? ''));
+  return { own, unassigned };
 }
 
 /**
@@ -83,8 +133,16 @@ export function buildScheme(
       atM: hit.atM,
       label: o.name || SITE_OBJECT_SPECS[o.kind].label,
       kind: o.kind,
-      offsetM: hit.deviationM > 5 ? hit.deviationM : undefined,
+      offsetM: hit.deviationM > OFFSET_NOTE_M ? hit.deviationM : undefined,
     });
+  }
+
+  const unassigned: string[] = [];
+  for (const o of opts.unassigned ?? []) {
+    if (!Number.isFinite(o.lat) || !Number.isFinite(o.lon)) continue;
+    const hit = nearestOnRoute({ lat: o.lat, lon: o.lon }, route.coords);
+    if (!hit || hit.deviationM > maxOffset) continue;
+    unassigned.push(o.name || SITE_OBJECT_SPECS[o.kind].label);
   }
 
   // Концы трассы — всегда отметки: с них схему и читают.
@@ -105,10 +163,53 @@ export function buildScheme(
       meters,
       fromIndex: i - 1,
       toIndex: i,
+      approx: marks[i - 1].offsetM !== undefined || marks[i].offsetM !== undefined
+        ? true : undefined,
     });
   }
 
-  return { route: route.name, totalM, marks, spans, skipped };
+  return { route: route.name, totalM, marks, spans, skipped, unassigned };
+}
+
+/** Отметки, снятые в стороне от линии: «Муфта №3 — 90 м». */
+export function displacedMarks(s: Scheme): string[] {
+  return s.marks
+    .filter((m) => m.offsetM !== undefined)
+    .map((m) => `${m.label} — ${Math.round(m.offsetM!)} м`);
+}
+
+/** Длина пролёта в ведомость: приблизительная — со знаком, а не до метра. */
+function spanCell(sp: Scheme['spans'][number]): string {
+  const v = Math.round(sp.meters).toLocaleString('ru');
+  return sp.approx ? `≈ ${v}` : v;
+}
+
+/**
+ * Оговорки под схемой.
+ *
+ * Всё, чего на рисунке не видно, а заказчик должен знать до подписи:
+ * что стоит не на линии, что не попало, чьё неизвестно.
+ */
+function schemeNotes(s: Scheme, full: boolean): string {
+  const out: string[] = [];
+  const displaced = displacedMarks(s);
+  if (displaced.length) {
+    out.push(`<p class="warn">Сняты в стороне от линии: ${esc(displaced.join('; '))}. `
+      + 'На схеме они стоят на трассе по проекции, и пролёты к ним (≈) верны не точнее '
+      + 'этого смещения. Проверьте координаты или переснимите точку.</p>');
+  }
+  if (s.skipped.length) {
+    out.push(`<p class="warn">Не отнесены к трассе: ${esc(s.skipped.join('; '))}.`
+      + (full ? ' Проверьте координаты — на схему они не попали.' : '') + '</p>');
+  }
+  if (s.unassigned.length) {
+    out.push(`<p class="warn">У линии есть объекты без участка: ${esc(s.unassigned.join('; '))}. `
+      + 'В схему не взяты — укажите у них участок.</p>');
+  }
+  if (s.marks.length <= 2 && s.skipped.length === 0) {
+    out.push('<p>Объектов участка в журнале нет: на схеме только концы трассы.</p>');
+  }
+  return out.join('');
 }
 
 const MARK_STYLE: Record<SchemeMark['kind'], { fill: string; shape: 'circle' | 'square' | 'house' }> = {
@@ -147,17 +248,28 @@ export function schemeSvg(s: Scheme, width = 1000): string {
     const tickY1 = up ? y - 10 : y + 10;
     const tickY2 = up ? y - 18 : y + 18;
 
+    // Снятая в стороне отметка рисуется пустой: на оси её нет, она
+    // лишь спроецирована туда, и на бумаге это должно быть видно без
+    // цвета. Рядом — на сколько она в стороне.
+    const off = m.offsetM !== undefined;
+    const fill = off ? '#ffffff' : style.fill;
+    const stroke = off ? style.fill : '#fff';
     const glyph = style.shape === 'circle'
-      ? `<circle cx="${cx}" cy="${y}" r="7" fill="${style.fill}" stroke="#fff" stroke-width="2"/>`
+      ? `<circle cx="${cx}" cy="${y}" r="7" fill="${fill}" stroke="${stroke}" stroke-width="2"/>`
       : style.shape === 'square'
-        ? `<rect x="${cx - 6}" y="${y - 6}" width="12" height="12" fill="${style.fill}" stroke="#fff" stroke-width="2"/>`
-        : `<path d="M ${cx - 8} ${y + 7} L ${cx - 8} ${y - 2} L ${cx} ${y - 10} L ${cx + 8} ${y - 2} L ${cx + 8} ${y + 7} Z" fill="${style.fill}" stroke="#fff" stroke-width="1.5"/>`;
+        ? `<rect x="${cx - 6}" y="${y - 6}" width="12" height="12" fill="${fill}" stroke="${stroke}" stroke-width="2"/>`
+        : `<path d="M ${cx - 8} ${y + 7} L ${cx - 8} ${y - 2} L ${cx} ${y - 10} L ${cx + 8} ${y - 2} L ${cx + 8} ${y + 7} Z" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>`;
+    const offNote = off
+      ? `<text x="${cx}" y="${labelY + (up ? -26 : 26)}" text-anchor="middle" font-size="10" fill="#b91c1c">`
+        + `в стороне ${Math.round(m.offsetM!)} м</text>`
+      : '';
 
     return `<g>
       <line x1="${cx}" y1="${tickY1}" x2="${cx}" y2="${tickY2}" stroke="#94a3b8" stroke-width="1"/>
       ${glyph}
       <text x="${cx}" y="${labelY}" text-anchor="middle" font-size="12" fill="#0f172a">${esc(m.label)}</text>
       <text x="${cx}" y="${labelY + (up ? -13 : 13)}" text-anchor="middle" font-size="10" fill="#64748b">${esc(formatMeters(m.atM))}</text>
+      ${offNote}
     </g>`;
   }).join('');
 
@@ -170,7 +282,7 @@ export function schemeSvg(s: Scheme, width = 1000): string {
     if (!a || !b) return '';
     const cx = (x(a.atM) + x(b.atM)) / 2;
     return `<text x="${cx}" y="${y + 20}" text-anchor="middle" font-size="10" fill="#334155">`
-      + `${esc(formatMeters(sp.meters))}</text>`;
+      + `${sp.approx ? '≈ ' : ''}${esc(formatMeters(sp.meters))}</text>`;
   }).join('');
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} 230" width="${width}" height="230">
@@ -202,7 +314,7 @@ export function schemeDocHtml(i: SchemeDocInput): string {
   const rows = s.spans.map((sp, n) => '<tr>'
     + `<td class="val">${n + 1}</td>`
     + `<td class="lbl">${esc(sp.from)} — ${esc(sp.to)}</td>`
-    + `<td class="val">${Math.round(sp.meters).toLocaleString('ru')}</td>`
+    + `<td class="val">${spanCell(sp)}</td>`
     + '</tr>').join('');
 
   return `<h1>${esc(t('scheme'))}</h1>`
@@ -218,10 +330,7 @@ export function schemeDocHtml(i: SchemeDocInput): string {
     + `<td class="val b">№</td><td class="lbl b">${esc(t('uchastok'))}</td>`
     + `<td class="val b">${esc(t('length'))}</td>`
     + '</tr>' + rows + '</table>'
-    + (s.skipped.length
-      ? `<p class="warn">Не отнесены к трассе: ${esc(s.skipped.join('; '))}. `
-        + 'Проверьте координаты — на схему они не попали.</p>'
-      : '')
+    + schemeNotes(s, true)
     + '<table class="sign"><tr>'
     + `<td class="s">${esc(t('composed'))}<br/>_______________ / ${esc(i.contractor || '')}</td>`
     + `<td class="s">${esc(t('checked'))}<br/>_______________ / ${esc(i.customer || '')}</td>`
@@ -259,7 +368,7 @@ export function schemeAttachmentHtml(
   const rows = s.spans.map((sp, n) => '<tr>'
     + `<td class="val">${n + 1}</td>`
     + `<td class="lbl">${esc(sp.from)} — ${esc(sp.to)}</td>`
-    + `<td class="val">${Math.round(sp.meters).toLocaleString('ru')}</td>`
+    + `<td class="val">${spanCell(sp)}</td>`
     + '</tr>').join('');
 
   const t = (key: string) => term(key as never, i.lang ?? 'off', i.terms ?? {});
@@ -276,9 +385,7 @@ export function schemeAttachmentHtml(
     + '<table class="act"><tr>'
     + '<td class="val b">№</td><td class="lbl b">Участок</td><td class="val b">Длина, м</td>'
     + '</tr>' + rows + '</table>'
-    + (s.skipped.length
-      ? `<p class="warn">Не отнесены к трассе: ${esc(s.skipped.join('; '))}.</p>`
-      : '')
+    + schemeNotes(s, false)
     + '</div>';
 }
 

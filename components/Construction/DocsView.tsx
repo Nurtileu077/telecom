@@ -22,6 +22,7 @@ import {
 } from './fieldDocs';
 import {
   buildScheme, schemeDocPage, schemeFileName, withSchemeAttached,
+  schemeObjectsFor, displacedMarks,
 } from './asBuilt';
 import { withDefaults, missingForPayment, binLooksWrong } from './requisites';
 import { normName } from './areaImport';
@@ -179,14 +180,19 @@ export default function DocsView({
 
   // Объекты берём только своего участка: на соседнем стоят свои муфты, и
   // на схеме они окажутся чужими отметками с правдоподобным метражом.
-  const schemeObjects = useMemo(() => {
-    if (!schemeRoute) return [];
-    const own = journal.objects.filter((o) => o.uchastok === schemeRoute.uchastok);
-    return own.length > 0 ? own : journal.objects;
-  }, [journal.objects, schemeRoute]);
+  // Своих нет — схема остаётся с одними концами и так и говорит, а не
+  // добирает чужие.
+  const schemeObjects = useMemo(
+    () => (schemeRoute
+      ? schemeObjectsFor(journal.objects, schemeRoute.uchastok || schemeRoute.name)
+      : { own: [], unassigned: [] }),
+    [journal.objects, schemeRoute],
+  );
 
   const scheme = useMemo(
-    () => (schemeRoute ? buildScheme(schemeRoute, schemeObjects) : null),
+    () => (schemeRoute
+      ? buildScheme(schemeRoute, schemeObjects.own, { unassigned: schemeObjects.unassigned })
+      : null),
     [schemeRoute, schemeObjects],
   );
 
@@ -333,7 +339,10 @@ export default function DocsView({
         const own = journal.planRoutes.find((r) => normLoose(r.uchastok) === normLoose(uchastok))
           ?? journal.planRoutes.find((r) => normLoose(r.name) === normLoose(uchastok));
         const attachment = own
-          ? buildScheme(own, journal.objects.filter((o) => normLoose(o.uchastok) === normLoose(uchastok)))
+          ? (() => {
+            const objs = schemeObjectsFor(journal.objects, uchastok);
+            return buildScheme(own, objs.own, { unassigned: objs.unassigned });
+          })()
           : null;
 
         for (const kind of ['ASR', 'OSR'] as ActKind[]) {
@@ -853,8 +862,8 @@ export default function DocsView({
                           date: to,
                           contractor,
                           customer: partyNames.customer,
-                          oblast: schemeObjects[0]?.oblast,
-                          rayon: schemeObjects[0]?.rayon,
+                          oblast: schemeObjects.own[0]?.oblast,
+                          rayon: schemeObjects.own[0]?.rayon,
                         }),
                         true,
                       )}>
@@ -867,9 +876,26 @@ export default function DocsView({
                 {' '}протяжённость {(scheme.totalM / 1000).toFixed(2).replace('.', ',')} км.
               </div>
             )}
+            {scheme && displacedMarks(scheme).length > 0 && (
+              <div className="text-[11px] text-[var(--warn)]">
+                В стороне от линии: {displacedMarks(scheme).join('; ')}. На листе они
+                отмечены пустым значком, пролёты к ним — со знаком «≈».
+              </div>
+            )}
             {scheme && scheme.skipped.length > 0 && (
               <div className="text-[11px] text-[var(--warn)]">
                 Не отнесены к трассе: {scheme.skipped.join('; ')}. Проверьте координаты.
+              </div>
+            )}
+            {scheme && scheme.unassigned.length > 0 && (
+              <div className="text-[11px] text-[var(--warn)]">
+                У линии объекты без участка: {scheme.unassigned.join('; ')}. В схему не взяты —
+                укажите у них участок.
+              </div>
+            )}
+            {scheme && scheme.marks.length <= 2 && scheme.skipped.length === 0 && (
+              <div className="text-[11px] text-[var(--text-muted)]">
+                Своих объектов у участка нет — на схеме только концы трассы.
               </div>
             )}
             <div className="text-[10.5px] text-[var(--text-muted)]">

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildScheme, schemeSvg, schemeDocHtml, schemeDocPage, schemeFileName,
-  schemeAttachmentHtml, withSchemeAttached,
+  schemeAttachmentHtml, withSchemeAttached, schemeObjectsFor, displacedMarks,
 } from './asBuilt';
 import type { SiteObject, PlanRoute } from '@/types/construction';
 import { formatMeters } from './mapDecor';
@@ -379,5 +379,95 @@ describe('подписи длин при совпавших отметках', (
     for (const sp of s.spans) {
       expect(svg).toContain(`>${formatMeters(sp.meters)}</text>`);
     }
+  });
+});
+
+/**
+ * Муфту сняли в 90 м от линии, а в схеме она молча стояла на трассе с
+ * пролётом до метра — и заказчик это подписывал.
+ */
+describe('смещённые объекты на схеме', () => {
+  // 0,00081° широты на экваторе ≈ 90 м.
+  const aside = () => buildScheme(route(), [
+    obj({ lat: 0, lon: 0.003, name: 'Муфта №1' }),
+    obj({ lat: 0.00081, lon: 0.006, name: 'Муфта №3' }),
+  ]);
+
+  it('на рисунке у муфты в стороне подписано, на сколько она в стороне', () => {
+    const svg = schemeSvg(aside());
+    expect(svg).toContain('в стороне 90 м');
+  });
+
+  it('и сама отметка пустая: на оси её нет, она туда только спроецирована', () => {
+    const svg = schemeSvg(aside());
+    expect(svg).toContain('fill="#ffffff" stroke="#b45309"');
+    // Муфта на линии остаётся залитой.
+    expect(svg).toContain('fill="#b45309" stroke="#fff"');
+  });
+
+  it('пролёты к ней идут со знаком «≈», а не с точностью до метра', () => {
+    const s = aside();
+    const near = s.spans.filter((sp) => sp.from === 'Муфта №3' || sp.to === 'Муфта №3');
+    expect(near).toHaveLength(2);
+    expect(near.every((sp) => sp.approx)).toBe(true);
+    expect(s.spans.find((sp) => sp.to === 'Муфта №1')!.approx).toBeUndefined();
+    const html = schemeDocHtml({ scheme: s });
+    expect(html).toMatch(/<td class="val">≈ \d/);
+  });
+
+  it('под ведомостью оговорка с названием и смещением — до подписи, а не после', () => {
+    const html = schemeDocHtml({ scheme: aside() });
+    expect(html).toContain('Сняты в стороне от линии: Муфта №3 — 90 м');
+    expect(html.indexOf('Сняты в стороне')).toBeLessThan(html.indexOf('Составил'));
+    expect(schemeAttachmentHtml({ scheme: aside() }, '14')).toContain('Муфта №3 — 90 м');
+  });
+
+  it('промах в пределах погрешности телефона оговорок не получает', () => {
+    // 0,00013° ≈ 14 м: столько телефон ошибается и стоя на оси.
+    const s = buildScheme(route(), [obj({ lat: 0.00013, lon: 0.005, name: 'Муфта №2' })]);
+    expect(s.marks.find((m) => m.label === 'Муфта №2')!.offsetM).toBeUndefined();
+    expect(displacedMarks(s)).toEqual([]);
+    expect(schemeDocHtml({ scheme: s })).not.toContain('≈');
+  });
+});
+
+/** Участок без своих объектов получал в схему чужие муфты. */
+describe('schemeObjectsFor', () => {
+  const objects = [
+    obj({ lat: 0, lon: 0.003, name: 'Муфта Аксу', uchastok: 'с. Аксу' }),
+    obj({ lat: 0, lon: 0.006, name: 'Муфта Карабулак', uchastok: 'Карабулак' }),
+    obj({ lat: 0, lon: 0.008, name: 'ККС без участка', kind: 'kks' }),
+  ];
+
+  it('участок без своих объектов не получает чужие', () => {
+    expect(schemeObjectsFor(objects, 'Жанатурмыс').own).toEqual([]);
+  });
+
+  it('своё узнаёт по названию, как бы его ни записали', () => {
+    const { own } = schemeObjectsFor(objects, 'АКСУ');
+    expect(own.map((o) => o.name)).toEqual(['Муфта Аксу']);
+  });
+
+  it('участок без названия не забирает ничьи объекты', () => {
+    expect(schemeObjectsFor(objects, '').own).toEqual([]);
+    expect(schemeObjectsFor(objects, undefined).own).toEqual([]);
+  });
+
+  it('объекты без участка в схему не берёт, но называет те, что у линии', () => {
+    const { own, unassigned } = schemeObjectsFor(objects, 'Аксу');
+    const s = buildScheme(route(), own, { unassigned });
+    expect(s.marks.map((m) => m.label)).not.toContain('ККС без участка');
+    expect(s.unassigned).toEqual(['ККС без участка']);
+    expect(schemeDocHtml({ scheme: s })).toContain('объекты без участка: ККС без участка');
+  });
+
+  it('объект без участка далеко от линии не упоминается вовсе', () => {
+    const far = [obj({ lat: 0.05, lon: 0.005, name: 'Где-то в степи' })];
+    expect(buildScheme(route(), [], { unassigned: far }).unassigned).toEqual([]);
+  });
+
+  it('схема без своих объектов так и говорит, а не выглядит законченной', () => {
+    const html = schemeDocHtml({ scheme: buildScheme(route(), []) });
+    expect(html).toContain('Объектов участка в журнале нет');
   });
 });
