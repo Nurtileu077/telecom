@@ -10,6 +10,8 @@ import {
   SnpProgress, MapArea, SiteObject, ChangeLogEntry, CableDrum, FieldPhoto,
   SpliceRecord, Incident, WorkRate, Payment,
 } from '@/types/construction';
+import { pointAtDistanceM, type SectionProgress } from './routeProgress';
+import { lineMatch } from './routeEdit';
 
 /**
  * Слияние двух версий журнала — своей и серверной.
@@ -205,6 +207,7 @@ export function mergeJournalStates(
 ): MergeResult {
   const stats: MergeStats = { pulled: 0, pushed: 0, conflicts: 0, removed: 0 };
   const tombs = tombstoneMap(local.deleted ?? [], remote.deleted ?? []);
+  const planRoutes = mergeCollection<PlanRoute>(local.planRoutes, remote.planRoutes, tombs, stats);
 
   const merged: JournalState = {
     orders: mergeOrders(local.orders, remote.orders),
@@ -230,12 +233,15 @@ export function mergeJournalStates(
     photos: mergeCollection<FieldPhoto>(local.photos ?? [], remote.photos ?? [], tombs, stats),
     splices: mergeCollection<SpliceRecord>(local.splices ?? [], remote.splices ?? [], tombs, stats),
     incidents: mergeCollection<Incident>(local.incidents ?? [], remote.incidents ?? [], tombs, stats),
-    planRoutes: mergeCollection<PlanRoute>(local.planRoutes, remote.planRoutes, tombs, stats),
+    planRoutes,
     areas: mergeCollection<MapArea>(local.areas, remote.areas, tombs, stats),
     objects: mergeCollection<SiteObject>(local.objects, remote.objects, tombs, stats),
     // Продвижение по участку — позже записанное вернее: это накопленный
-    // метраж, и свежая запись включает в себя прежнюю.
-    sectionProgress: mergeSectionProgress(local.sectionProgress, remote.sectionProgress),
+    // метраж, и свежая запись включает в себя прежнюю. Посчитанная точка
+    // встаёт по слитой линии: трасса могла прийти развёрнутой.
+    sectionProgress: mergeSectionProgress(local.sectionProgress, remote.sectionProgress, {
+      local: local.planRoutes, remote: remote.planRoutes, merged: planRoutes,
+    }),
     // Цены: кто правил позже, тот и прав. Сброс — тоже правка.
     ...mergePrices(local.prices, remote.prices, local.pricedAt, remote.pricedAt),
     // Расценки и деньги — общие данные, у них есть id и время правки.
@@ -326,14 +332,54 @@ function mergeProgress(local: SnpProgress[], remote: SnpProgress[], stats: Merge
   return [...byKato.values()];
 }
 
+/**
+ * Чья запись продвижения новее.
+ *
+ * Сначала дата продвижения: позже дошли — дальше прошли. При одной дате —
+ * время правки: разворот трассы переносит точку колонны, не меняя даты,
+ * и раньше при равенстве каждое устройство оставляло свою — развёрнутая
+ * трасса доходила до соседа, а точка нет. Совсем равны — своя.
+ */
+function theirsNewer(mine: SectionProgress, theirs: SectionProgress): boolean {
+  const md = mine.date ?? '';
+  const td = theirs.date ?? '';
+  if (md !== td) return td > md;
+  return (theirs.updatedAt ?? '') > (mine.updatedAt ?? '');
+}
+
+/**
+ * Продвижение по участкам.
+ *
+ * Посчитанная точка — это метры смен, отложенные по линии. Если линия
+ * пришла с другого устройства развёрнутой, а точка осталась от старого
+ * направления (её записали там, где разворота ещё не было), она стоит у
+ * другого конца. Такую точку ставим заново по слитой линии — так же,
+ * как при развороте на месте. Поставленную человеком не трогаем: она
+ * стоит там, где колонна на самом деле.
+ */
 function mergeSectionProgress(
   local: JournalState['sectionProgress'],
   remote: JournalState['sectionProgress'],
+  routes: { local: PlanRoute[]; remote: PlanRoute[]; merged: PlanRoute[] },
 ): JournalState['sectionProgress'] {
-  const out = { ...remote };
+  const picked: Record<string, { p: SectionProgress; side: PlanRoute[] }> = {};
+  for (const [kato, theirs] of Object.entries(remote ?? {})) picked[kato] = { p: theirs, side: routes.remote };
   for (const [kato, mine] of Object.entries(local ?? {})) {
-    const theirs = out[kato];
-    if (!theirs || (mine.date ?? '') >= (theirs.date ?? '')) out[kato] = mine;
+    const other = picked[kato];
+    if (!other || !theirsNewer(mine, other.p)) picked[kato] = { p: mine, side: routes.local };
+  }
+
+  const merged = new Map(routes.merged.map((r) => [r.id, r]));
+  const out: JournalState['sectionProgress'] = {};
+  for (const [kato, { p, side }] of Object.entries(picked)) {
+    out[kato] = p;
+    if (p.manual) continue;
+    // Линия, по которой точку считали, и линия после слияния.
+    const counted = side.find((r) => r.id === p.routeId);
+    const line = merged.get(p.routeId);
+    if (!counted || !line || lineMatch(counted.coords, line.coords) !== 'flipped') continue;
+    const at = pointAtDistanceM(line.coords, p.doneM);
+    if (at) out[kato] = { ...p, lat: at.lat, lon: at.lon };
   }
   return out;
 }

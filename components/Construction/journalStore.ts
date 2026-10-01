@@ -1008,7 +1008,7 @@ export function loadPlanRoutes(base: JournalState, routes: PlanRoute[]): PlanLoa
     byId.set(r.id, { ...r, coords, reversed, endsSwapped });
     // Счёт пошёл с другого конца — посчитанные точки колонн вслед за ним.
     if (lineMatch(old.coords, coords) === 'flipped') {
-      sectionProgress = realignProgress(sectionProgress, r.id, coords);
+      sectionProgress = realignProgress(sectionProgress, r.id, coords, now);
     }
   }
   return {
@@ -1046,6 +1046,7 @@ export function realignProgress(
   progress: Record<string, SectionProgress>,
   routeId: string,
   coords: [number, number][],
+  now: string = new Date().toISOString(),
 ): Record<string, SectionProgress> {
   let changed = false;
   const out: Record<string, SectionProgress> = {};
@@ -1053,7 +1054,10 @@ export function realignProgress(
     if (p.routeId !== routeId || p.manual) { out[kato] = p; continue; }
     const at = pointAtDistanceM(coords, p.doneM);
     if (!at) { out[kato] = p; continue; }
-    out[kato] = { ...p, lat: at.lat, lon: at.lon };
+    // Дата продвижения остаётся прежней — в этот день никто не шёл. Время
+    // правки новое: по нему обмен узнаёт, что точка переехала, и везёт её
+    // на другие устройства.
+    out[kato] = { ...p, lat: at.lat, lon: at.lon, updatedAt: now };
     changed = true;
   }
   return changed ? out : progress;
@@ -1083,7 +1087,7 @@ export function reversePlanRoute(
     planRoutes: base.planRoutes.map((r) => (
       r.id === id ? { ...r, coords, reversed: prev.reversed ? undefined : true, updatedAt: now } : r
     )),
-    sectionProgress: realignProgress(base.sectionProgress, id, coords),
+    sectionProgress: realignProgress(base.sectionProgress, id, coords, now),
     updatedAt: now,
   };
   return logChange(next, {
@@ -1379,7 +1383,7 @@ export function restoreShape(
   // Направление вернулось другое — посчитанные точки колонн вслед за ним.
   const turned = !!exists && !!exists.reversed !== !!reversed;
   const sectionProgress = turned
-    ? realignProgress(base.sectionProgress, ch.routeId, ch.before)
+    ? realignProgress(base.sectionProgress, ch.routeId, ch.before, now)
     : base.sectionProgress;
 
   return logChange({ ...base, planRoutes, sectionProgress, updatedAt: now }, {
@@ -1457,10 +1461,13 @@ export function setSectionProgress(
   value: import('./routeProgress').SectionProgress,
 ): JournalState {
   if (!kato) return base;
+  const now = new Date().toISOString();
   return {
     ...base,
-    sectionProgress: { ...base.sectionProgress, [kato]: value },
-    updatedAt: new Date().toISOString(),
+    // Время правки — чтобы обмен отличал свежую запись от старой и тогда,
+    // когда дата продвижения у них одна.
+    sectionProgress: { ...base.sectionProgress, [kato]: { ...value, updatedAt: now } },
+    updatedAt: now,
   };
 }
 

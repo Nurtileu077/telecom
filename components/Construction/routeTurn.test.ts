@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest';
 import type { MapArea, PlanRoute, SiteObject, SnpProgress } from '@/types/construction';
 import {
   emptyJournal, addPlanRoutes, reversePlanRoute, swapRouteEnds, restoreShape,
-  updateRouteCoords, realignProgress, loadPlanRoutes, planLoadNote, type JournalState,
+  updateRouteCoords, realignProgress, loadPlanRoutes, planLoadNote, setSectionProgress,
+  type JournalState,
 } from './journalStore';
+import { mergeJournalStates } from './journalSync';
 import {
   routeViews, countFromText, placeNames, directionHint, routeEnds, samePlace,
 } from './routeStyle';
@@ -430,5 +432,80 @@ describe('линия нарисована от села', () => {
     expect(samePlace('сущ. ОМ - Акбеит', 'АКБЕИТ')).toBe(true);
     expect(samePlace('Аксу', 'Аксуат')).toBe(false);
     expect(samePlace('Трасса 2', 'СМУ 2')).toBe(false);
+  });
+});
+
+/**
+ * Разворот переносил посчитанную точку колонны, но не менял её дату, а
+ * обмен решал спор по дате и при равенстве оставлял свою запись.
+ * Развёрнутая трасса доходила до второго устройства, точка — нет, и
+ * устройства перетягивали её каждое к себе: колонна стояла не на том
+ * конце — то самое, что разворот и должен был исправить.
+ */
+describe('точка колонны после разворота на другом устройстве', () => {
+  const shared = withRoute();
+
+  it('после разворота на одном устройстве посчитанная точка на другом переезжает', () => {
+    const turnedHere = reversePlanRoute(shared, 'r1', 'И');
+    const there = mergeJournalStates(shared, turnedHere).merged;
+    expect(there.planRoutes[0].reversed).toBe(true);
+    // 300 м от магистрали, а не от села.
+    expect(there.sectionProgress['111'].lon).toBeCloseTo(turnedHere.sectionProgress['111'].lon, 9);
+    expect(there.sectionProgress['111'].lon).toBeGreaterThan(0.0071);
+    // Дата продвижения прежняя: в день разворота никто не шёл.
+    expect(there.sectionProgress['111'].date).toBe('2026-09-01');
+  });
+
+  it('устройства больше не перетягивают точку каждое к себе', () => {
+    const a = reversePlanRoute(shared, 'r1', 'И');
+    const server1 = mergeJournalStates(a, shared).merged;
+    const b = mergeJournalStates(shared, server1).merged;
+    const aAgain = mergeJournalStates(a, b).merged;
+    const bAgain = mergeJournalStates(b, aAgain).merged;
+    expect(aAgain.sectionProgress['111']).toEqual(bAgain.sectionProgress['111']);
+    expect(bAgain.sectionProgress['111'].lon).toBeGreaterThan(0.0071);
+  });
+
+  it('смена, записанная там по старому направлению, встаёт по развёрнутой линии', () => {
+    // На втором устройстве разворота ещё нет: 500 м отложены от села.
+    const there = setSectionProgress(shared, '111', {
+      routeId: 'r1', doneM: 500, lat: 0, lon: 0.0045, date: '2026-09-02',
+    });
+    const here = reversePlanRoute(shared, 'r1', 'И');
+    for (const merged of [
+      mergeJournalStates(there, here).merged,
+      mergeJournalStates(here, there).merged,
+    ]) {
+      const p = merged.sectionProgress['111'];
+      // Метры — того, кто записал позже; место — по развёрнутой линии.
+      expect(p.doneM).toBe(500);
+      expect(p.lon).toBeCloseTo(0.01 - 500 / 111_320, 4);
+    }
+  });
+
+  it('поставленная руками точка при слиянии не переезжает', () => {
+    const merged = mergeJournalStates(shared, reversePlanRoute(shared, 'r1', 'И')).merged;
+    expect(merged.sectionProgress['222']).toEqual(shared.sectionProgress['222']);
+  });
+
+  it('при одной дате побеждает поздняя правка, а не своя', () => {
+    const mine = setSectionProgress(emptyJournal(), '111', {
+      routeId: 'r1', doneM: 300, lat: 0, lon: 0.0027, date: '2026-09-01',
+    });
+    const theirs: JournalState = {
+      ...emptyJournal(),
+      sectionProgress: {
+        111: {
+          routeId: 'r1', doneM: 300, lat: 0, lon: 0.0073, date: '2026-09-01',
+          updatedAt: '2099-01-01T00:00:00.000Z',
+        },
+      },
+    };
+    expect(mergeJournalStates(mine, theirs).merged.sectionProgress['111'].lon).toBe(0.0073);
+    // Позже дошли — дальше прошли: дата продвижения важнее времени правки.
+    const later = setSectionProgress(emptyJournal(), '111', {
+      routeId: 'r1', doneM: 800, lat: 0, lon: 0.0072, date: '2026-09-05',
+    });
+    expect(mergeJournalStates(later, theirs).merged.sectionProgress['111'].doneM).toBe(800);
   });
 });
