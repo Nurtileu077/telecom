@@ -23,12 +23,15 @@ function ground(over: Partial<DailyWorkEntry> = {}): DailyWorkEntry {
   };
 }
 
+/** «Верно» под точкой от начала линии: место смен с этого дня известно. */
+const confirmed = (routeId = 'r1') => ({ stop: { routeId, lat: 51, lon: 71 } });
+
 describe('вчерашний день в движении', () => {
-  it('отрезок за день — от накопленного до накопленного плюс дневное', () => {
+  it('отрезок за день — от места прошлой смены до него плюс дневное', () => {
     const moves = dayMoves({
       planRoutes: [route()],
       ground: [
-        ground({ date: '2026-09-09', byMethod: { 'кабелеукладчик': 500 } }),
+        ground({ date: '2026-09-09', byMethod: { 'кабелеукладчик': 500 }, ...confirmed() }),
         ground({ date: '2026-09-10', byMethod: { 'кабелеукладчик': 800 } }),
       ],
     }, '2026-09-10');
@@ -43,8 +46,8 @@ describe('вчерашний день в движении', () => {
     const moves = dayMoves({
       planRoutes: [route()],
       ground: [
-        ground({ byMethod: { 'кабелеукладчик': 300 } }),
-        ground({ byMethod: { 'экскаватор': 200 } }),
+        ground({ byMethod: { 'кабелеукладчик': 300 }, ...confirmed() }),
+        ground({ byMethod: { 'экскаватор': 200 }, createdAt: '2026-09-18T01:00:00.000Z' }),
       ],
     }, '2026-09-10');
     expect(moves).toHaveLength(1);
@@ -63,11 +66,39 @@ describe('вчерашний день в движении', () => {
     const moves = dayMoves({
       planRoutes: [route()],
       ground: [
-        ground({ date: '2026-09-10', byMethod: { 'кабелеукладчик': 400 } }),
+        ground({ date: '2026-09-10', byMethod: { 'кабелеукладчик': 400 }, ...confirmed() }),
         ground({ date: '2026-09-12', byMethod: { 'кабелеукладчик': 900 } }),
       ],
     }, '2026-09-10');
     expect(moves[0].beforeM).toBe(0);
+  });
+
+  it('бригада с середины едет по своим километрам, а не от начала линии', () => {
+    const total = routeLengthM(line);
+    const lonAt = (m: number) => 71 + (m / total) * 0.1;
+    const moves = dayMoves({
+      planRoutes: [route()],
+      ground: [
+        ground({
+          date: '2026-09-09', byMethod: { 'кабелеукладчик': 1000 },
+          stop: { routeId: 'r1', lat: 51, lon: lonAt(5000), manual: true },
+        }),
+        ground({ date: '2026-09-10', byMethod: { 'кабелеукладчик': 800 } }),
+      ],
+    }, '2026-09-10');
+    expect(moves[0].beforeM).toBeCloseTo(5000, -1);
+    expect(moves[0].to.lon).toBeCloseTo(lonAt(5800), 3);
+  });
+
+  it('смены, место которых не назвали, движения не дают — маршрут не выдумываем', () => {
+    const moves = dayMoves({
+      planRoutes: [route()],
+      ground: [
+        ground({ date: '2026-09-09', byMethod: { 'кабелеукладчик': 500 } }),
+        ground({ date: '2026-09-10', byMethod: { 'кабелеукладчик': 800 } }),
+      ],
+    }, '2026-09-10');
+    expect(moves).toHaveLength(0);
   });
 
   it('день без метров движения не даёт', () => {
@@ -82,8 +113,8 @@ describe('вчерашний день в движении', () => {
     const moves = dayMoves({
       planRoutes: [route(), route({ id: 'r2', uchastok: 'Убаган', name: 'Убаган Школа' })],
       ground: [
-        ground({ kato: '191', uchastok: 'Еленовка', byMethod: { 'кабелеукладчик': 300 } }),
-        ground({ kato: '392', uchastok: 'Убаган', byMethod: { 'кабелеукладчик': 1500 } }),
+        ground({ kato: '191', uchastok: 'Еленовка', byMethod: { 'кабелеукладчик': 300 }, ...confirmed() }),
+        ground({ kato: '392', uchastok: 'Убаган', byMethod: { 'кабелеукладчик': 1500 }, ...confirmed('r2') }),
       ],
     }, '2026-09-10');
     expect(moves[0].uchastok).toBe('Убаган');

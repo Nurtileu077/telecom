@@ -13,12 +13,13 @@ import {
 } from './journalStore';
 import PhotoAttach from './PhotoAttach';
 import { photosOf } from './photoStore';
-import { advanceAlong } from './routeProgress';
 import { routeOfSection } from './routeSection';
+import { proposeStop, shiftsOnRoute, describeStop } from './shiftPlace';
+import { routeEnds, placeNames } from './routeStyle';
 import { checkEntry, saveBlocker } from './entryChecks';
 import { isIdleShift, entryHasWork } from './entriesTable';
 import { downtimeReasons } from './dayPlan';
-import type { LatLon } from './measureTool';
+import { nearestOnRoute, type LatLon } from './measureTool';
 import { measureShift, describeShiftMeasure } from './shiftMeasure';
 import { parseMeters, metersHint } from './units';
 import {
@@ -327,14 +328,46 @@ export default function DailyEntryForm({
   }, [date, sectionRoute]);
 
 
-  const doneBefore = kato ? (journal.sectionProgress?.[kato]?.doneM ?? 0) : 0;
+  /**
+   * Где колонна окажется вечером — тем же счётом, которым красится карта.
+   *
+   * Раньше считали от суммы всех метров участка: бригада, начавшая с
+   * середины линии, раз за разом получала точку у её начала, а поправка
+   * «остановились здесь» назавтра забывалась. Теперь от места прошлой
+   * смены, а где места не называли ни разу — от начала линии, и это
+   * говорится вслух.
+   */
+  const routeShifts = useMemo(() => {
+    if (!sectionRoute) return [];
+    const live = new Set(journal.planRoutes.map((r) => r.id));
+    return shiftsOnRoute(sectionRoute.id, kato || undefined, journal.ground, live)
+      .filter((e) => e.id !== entryId);
+  }, [sectionRoute, kato, journal.ground, journal.planRoutes, entryId]);
 
   const proposedStop = useMemo(() => {
     if (correcting || !sectionRoute || totalMeters <= 0) return null;
-    return advanceAlong(sectionRoute, doneBefore, totalMeters);
-  }, [correcting, sectionRoute, doneBefore, totalMeters]);
+    return proposeStop(sectionRoute, routeShifts, totalMeters, date);
+  }, [correcting, sectionRoute, routeShifts, totalMeters, date]);
+
+  /** Поставленная рукой точка — куда она легла на линии участка. */
+  const picked = useMemo(
+    () => (stopPoint && sectionRoute ? nearestOnRoute(stopPoint, sectionRoute.coords) : null),
+    [stopPoint, sectionRoute],
+  );
 
   const stop = stopPoint ?? (proposedStop ? { lat: proposedStop.lat, lon: proposedStop.lon } : null);
+
+  const stopText = useMemo(() => {
+    if (!sectionRoute || !proposedStop) return '';
+    const ends = routeEnds(sectionRoute, placeNames(journal.progress));
+    return describeStop({
+      routeName: sectionRoute.name || sectionRoute.uchastok || 'трасса',
+      startName: ends.from,
+      proposal: proposedStop,
+      addedM: totalMeters,
+      picked: picked ? { atM: picked.atM, deviationM: picked.deviationM } : null,
+    });
+  }, [sectionRoute, proposedStop, picked, totalMeters, journal.progress]);
 
   // Подрядчик по району — подсказка, а не автозаполнение: район может вести
   // субподрядчик, и решать должен человек.
@@ -509,6 +542,16 @@ export default function DailyEntryForm({
       reserveMktM: Math.round(numOf(reserveMkt)) || undefined,
       downtime: downtime.trim() || undefined,
       tomorrow: tomorrow.trim() || undefined,
+      // Где кончилась смена — в самой смене, а не только у колонны: по
+      // ней карта красит там, где копали. Исправление места не трогает:
+      // правят цифры, а отметку ставили на месте в тот вечер. Но если
+      // смену перенесли на другой участок, отметка с чужой линии её бы
+      // там и держала — тогда место новой линии не известно.
+      stop: correcting
+        ? (initial?.stop && initial.stop.routeId === sectionRoute?.id ? initial.stop : undefined)
+        : stop && stopConfirmed && sectionRoute
+          ? { routeId: sectionRoute.id, lat: stop.lat, lon: stop.lon, manual: !!stopPoint || undefined }
+          : undefined,
       createdAt: initial?.createdAt ?? now, updatedAt: now, sync: 'local',
     },
     correcting ? reason.trim() : undefined,
@@ -518,7 +561,9 @@ export default function DailyEntryForm({
       ? {
           lat: stop.lat, lon: stop.lon,
           routeId: sectionRoute.id,
-          doneM: Math.round(doneBefore + totalMeters),
+          // Место на линии, а не сумма метров: у бригады с середины это
+          // разные числа, и по нему считается «до конца осталось».
+          doneM: Math.round(picked ? picked.atM : proposedStop?.atM ?? 0),
           manual: !!stopPoint,
         }
       : undefined);
@@ -793,10 +838,11 @@ export default function DailyEntryForm({
                     {stop.lat.toFixed(5)}, {stop.lon.toFixed(5)}
                   </span>
                 </div>
-                <div className="text-[10.5px] text-[var(--text-muted)]">
-                  По трассе «{sectionRoute?.name}»: было {Math.round(doneBefore).toLocaleString('ru')} м,
-                  за день {Math.round(totalMeters).toLocaleString('ru')} м
-                  {proposedStop?.atEnd ? ' — трасса пройдена до конца' : ''}
+                {/* Откуда счёт — словами: от начала линии считаем, только
+                    пока места не называли, и это допущение, а не знание. */}
+                <div className={`text-[10.5px] ${proposedStop?.from === 'start' && !stopPoint
+                  ? 'text-[var(--warn)]' : 'text-[var(--text-muted)]'}`}>
+                  {stopText}
                 </div>
                 <div className="flex gap-1.5">
                   {!stopConfirmed && (

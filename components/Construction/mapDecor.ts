@@ -165,34 +165,79 @@ export function lengthLabels(
     .map(({ order, ...rest }) => rest);
 }
 
-export interface RouteSplit {
-  /** Пройденная часть. */
-  done: [number, number][];
-  /** Остаток. */
-  left: [number, number][];
+export interface RoutePaint {
+  /** Куски, где копали, — уже склеенные и нарезанные по линии. */
+  done: [number, number][][];
+  /** Сколько метров линии закрашено. */
   doneM: number;
+  /** Пройдено, а где — не названо; не больше, чем осталось незакрашенным. */
+  unplacedM: number;
   totalM: number;
-  /** Доля от 0 до 1. */
-  share: number;
+  /** Пройдено всё — тогда место уже неважно, линия красится целиком. */
+  full: boolean;
+  /** Штрих доли «место не указано» для dashArray; null — штриховать нечего. */
+  hatch: string | null;
+}
+
+/** Период штриха в пикселях: короче — сливается, длиннее — читается пунктиром проекта. */
+const HATCH_PERIOD = 14;
+
+/**
+ * Доля штрихом: чем больше пройдено неизвестно где, тем гуще штрих.
+ *
+ * Края не даём ни пустыми, ни сплошными: два пикселя из четырнадцати ещё
+ * видно, а сплошной штрих уже не отличить от закраски, которая говорит
+ * «здесь».
+ */
+export function hatchDash(share: number): string {
+  const dash = Math.min(HATCH_PERIOD - 2, Math.max(2, Math.round(share * HATCH_PERIOD)));
+  return `${dash},${HATCH_PERIOD - dash}`;
 }
 
 /**
- * Где трасса кончается «сделано» и начинается «осталось».
+ * Что красить на линии: куски, где копали, и долю, место которой не
+ * названо.
  *
- * Процент в таблице отвечает «сколько», а закрашенная линия — «докуда»:
- * это разные вопросы, и второй на стройке задают чаще.
+ * Куски приходят по сменам и способам и часто стоят встык — склеиваем,
+ * чтобы линия не рисовалась сотней отрезков. Метры без места не кладём ни
+ * в начало, ни куда-либо ещё: показываем штрихом по всей линии, и густота
+ * штриха — доля от того, что ещё не закрашено.
  */
-export function progressSplit(coords: [number, number][], doneM: number): RouteSplit {
+export function routePaint(
+  coords: [number, number][],
+  pieces: { fromM: number; toM: number }[],
+  unplacedM: number,
+): RoutePaint {
   const totalM = routeLengthM(coords);
-  const done = Math.min(Math.max(0, doneM), totalM);
+  const clamp = (v: number) => Math.min(Math.max(0, v), totalM);
+  const spans = pieces
+    .map((p) => [clamp(p.fromM), clamp(p.toM)] as [number, number])
+    .filter(([a, b]) => b - a > 0.5)
+    .sort((a, b) => a[0] - b[0]);
+
+  const merged: [number, number][] = [];
+  for (const [a, b] of spans) {
+    const last = merged[merged.length - 1];
+    if (last && a <= last[1] + 1) last[1] = Math.max(last[1], b);
+    else merged.push([a, b]);
+  }
+
+  const doneM = merged.reduce((s, [a, b]) => s + (b - a), 0);
+  const freeM = Math.max(0, totalM - doneM);
+  const un = Math.min(Math.max(0, unplacedM), freeM);
+  const full = totalM > 0 && doneM + un >= totalM * 0.99;
   return {
-    done: done > 0 ? sliceByDistance(coords, 0, done) : [],
-    left: done < totalM ? sliceByDistance(coords, done, totalM) : [],
-    doneM: done,
+    done: merged.map(([a, b]) => sliceByDistance(coords, a, b)).filter((c) => c.length >= 2),
+    doneM,
+    unplacedM: un,
     totalM,
-    share: totalM > 0 ? done / totalM : 0,
+    full,
+    hatch: un > 0 && !full && freeM > 0 ? hatchDash(un / freeM) : null,
   };
 }
+
+/** Цвет штриха «место не указано», когда трасса красится способами: способ у такой доли не один. */
+export const UNPLACED_COLOR = '#cbd5e1';
 
 /**
  * Способ прокладки — ещё и рисунком линии, не только цветом.
@@ -237,6 +282,15 @@ export function mapLegend(
   if (layers.plan) {
     const items: LegendItem[] = [
       { kind: 'line', color: PLAN_LINE_COLOR, label: 'Проект', note: 'работ ещё не было' },
+      // Штрих — не способ и не этап, а «где — не знаем»: без строки в
+      // легенде его прочтут как ещё один способ прокладки.
+      {
+        kind: 'line',
+        color: colorMode === 'stage' ? STAGE_LINE_COLOR.mkt : UNPLACED_COLOR,
+        dash: hatchDash(0.3),
+        label: 'Пройдено, место не указано',
+        note: 'в сменах нет «остановились здесь»',
+      },
     ];
     if (colorMode === 'stage') {
       items.push(

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   bearingDeg, locateOnRoute, arrowsAlong, formatMeters, lengthLabels,
-  progressSplit, mapLegend, scaleBar, METHOD_DASH, clusterPoints,
+  mapLegend, scaleBar, METHOD_DASH, clusterPoints, routePaint, hatchDash,
 } from './mapDecor';
 import { routeLengthM } from './routeProgress';
 import { DEFAULT_CONSTRUCTION_LAYERS } from './mapLayers';
@@ -105,31 +105,73 @@ describe('lengthLabels', () => {
   });
 });
 
-describe('progressSplit', () => {
-  it('делит линию на пройденное и остаток', () => {
-    const total = routeLengthM(EAST);
-    const split = progressSplit(EAST, total / 4);
-    expect(split.share).toBeCloseTo(0.25, 3);
-    expect(split.done.length).toBeGreaterThanOrEqual(2);
-    expect(split.left.length).toBeGreaterThanOrEqual(2);
-    // Конец пройденного и начало остатка — одна и та же точка.
-    expect(split.done[split.done.length - 1][1]).toBeCloseTo(split.left[0][1], 6);
+describe('закраска там, где копали', () => {
+  const total = routeLengthM(EAST);
+
+  it('куски, стоящие встык, красятся одной линией', () => {
+    const p = routePaint(EAST, [{ fromM: 1000, toM: 2000 }, { fromM: 2000, toM: 3500 }], 0);
+    expect(p.done).toHaveLength(1);
+    expect(p.doneM).toBeCloseTo(2500, 3);
+    expect(p.hatch).toBeNull();
   });
 
-  it('ничего не прошли — закрашивать нечего', () => {
-    const split = progressSplit(EAST, 0);
-    expect(split.done).toEqual([]);
-    expect(split.share).toBe(0);
+  it('кусок с середины начинается там, где копали, а не у начала линии', () => {
+    const p = routePaint(EAST, [{ fromM: 6000, toM: 9000 }], 0);
+    const lonAt = (m: number) => 69 + (m / total) * 0.5;
+    expect(p.done[0][0][1]).toBeCloseTo(lonAt(6000), 4);
+    expect(p.done[0].at(-1)![1]).toBeCloseTo(lonAt(9000), 4);
   });
 
-  it('прошли больше длины — это всё равно сто процентов', () => {
-    const split = progressSplit(EAST, 10_000_000);
-    expect(split.share).toBe(1);
-    expect(split.left).toEqual([]);
+  it('метры без места — штрихом по линии, и чем их больше, тем гуще штрих', () => {
+    const few = routePaint(EAST, [], total * 0.1);
+    const many = routePaint(EAST, [], total * 0.7);
+    expect(few.done).toEqual([]);
+    expect(few.hatch).not.toBeNull();
+    const dash = (h: string | null) => Number(h!.split(',')[0]);
+    expect(dash(many.hatch)).toBeGreaterThan(dash(few.hatch));
+  });
+
+  it('доля без места считается от незакрашенного: закрашенное второй раз не штрихуем', () => {
+    const p = routePaint(EAST, [{ fromM: 0, toM: total / 2 }], total);
+    // Без места не может быть больше, чем осталось незакрашенным.
+    expect(p.unplacedM).toBeCloseTo(total / 2, 3);
+    expect(p.full).toBe(true);
+  });
+
+  it('пройдено всё — линия красится целиком: где именно, уже неважно', () => {
+    const p = routePaint(EAST, [], total);
+    expect(p.full).toBe(true);
+    expect(p.hatch).toBeNull();
+  });
+
+  it('куски за концом линии обрезаются ею: больше длины — это всё равно вся линия', () => {
+    const p = routePaint(EAST, [{ fromM: 0, toM: 10_000_000 }], 0);
+    expect(p.doneM).toBeCloseTo(total, 3);
+    expect(p.full).toBe(true);
+  });
+
+  it('работ не было — ни закраски, ни штриха', () => {
+    const p = routePaint(EAST, [], 0);
+    expect(p.done).toEqual([]);
+    expect(p.hatch).toBeNull();
+    expect(p.full).toBe(false);
+  });
+
+  it('штрих не бывает ни пустым, ни сплошным: сплошной прочли бы как «здесь»', () => {
+    expect(hatchDash(0)).toBe('2,12');
+    expect(hatchDash(1)).toBe('12,2');
   });
 });
 
 describe('mapLegend', () => {
+  it('объясняет штрих «место не указано», иначе его прочтут как способ', () => {
+    for (const mode of ['stage', 'method'] as const) {
+      const item = mapLegend(DEFAULT_CONSTRUCTION_LAYERS, mode)[0].items
+        .find((i) => i.label === 'Пройдено, место не указано');
+      expect(item?.dash).toBeTruthy();
+    }
+  });
+
   it('объясняет только включённые слои', () => {
     const groups = mapLegend({ ...DEFAULT_CONSTRUCTION_LAYERS, incidents: false }, 'stage');
     const labels = groups.flatMap((g) => g.items.map((i) => i.label));

@@ -1,15 +1,18 @@
 import {
   PlanRoute, DailyWorkEntry, LayMethod, LAY_METHODS, LAY_METHOD_LABEL,
 } from '@/types/construction';
-import { pointAtDistanceM, routeLengthM, segMeters } from './routeProgress';
+import { pointAtDistanceM, segMeters } from './routeProgress';
+import { placeShifts, shiftIndex, type PlacedShift } from './shiftPlace';
 
 /**
  * Трасса кусками: где шли баром, где кабелеукладчиком, где по колодцам.
  *
  * Отдельно эти куски никто не размечает и не будет — но они уже записаны.
- * В дневном отчёте метры разложены по способам, а порядок дней даёт
- * порядок вдоль линии: за понедельник прошли первые четыре километра,
- * за вторник — следующие три. Отсюда и получаются отрезки.
+ * В дневном отчёте метры разложены по способам, а где на линии лежит
+ * смена, говорит отметка «остановились здесь» (см. shiftPlace): за
+ * понедельник прошли четыре километра от отметки, за вторник — следующие
+ * три. Отсюда и получаются отрезки. Смены, место которых не назвали,
+ * отрезков не дают: рисовать их от начала линии значит рисовать выдумку.
  *
  * Внутри одного дня порядок способов неизвестен, поэтому они делят
  * дневной кусок по своим метрам в постоянном порядке. Это приближение, и
@@ -59,30 +62,25 @@ export function sliceByDistance(
   return out;
 }
 
-function entryMeters(e: DailyWorkEntry): number {
-  let m = 0;
-  for (const v of Object.values(e.byMethod)) m += v ?? 0;
-  return m;
-}
-
-export function routeSegments(
-  route: PlanRoute,
-  entries: DailyWorkEntry[],
+/**
+ * Отрезки по способам внутри смен с известным местом.
+ *
+ * Способ, не влезший в кусок смены, обрезается его концом: кусок у отметки
+ * бывает короче метров смены, когда отметка ближе к началу линии, чем
+ * метры смены, — и лишнего рисовать негде.
+ */
+function methodSegments(
+  route: Pick<PlanRoute, 'id' | 'coords'>,
+  placed: PlacedShift[],
 ): RouteSegment[] {
-  const days = [...entries]
-    .filter((e) => entryMeters(e) > 0)
-    .sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
-  if (days.length === 0) return [];
-
   const out: RouteSegment[] = [];
-  let cursor = 0;
-
-  for (const e of days) {
+  for (const p of placed) {
+    let cursor = p.fromM;
     for (const m of LAY_METHODS) {
-      const v = e.byMethod[m] ?? 0;
+      const v = p.byMethod[m] ?? 0;
       if (v <= 0) continue;
       const fromM = cursor;
-      const toM = cursor + v;
+      const toM = Math.min(p.toM, cursor + v);
       cursor = toM;
 
       // Соседний отрезок того же способа продолжаем, а не плодим:
@@ -91,7 +89,7 @@ export function routeSegments(
       if (prev && prev.method === m && Math.abs(prev.toM - fromM) < 1) {
         prev.toM = toM;
         prev.meters += v;
-        if (e.date && !prev.dates.includes(e.date)) prev.dates.push(e.date);
+        if (p.date && !prev.dates.includes(p.date)) prev.dates.push(p.date);
         continue;
       }
 
@@ -102,7 +100,7 @@ export function routeSegments(
         toM,
         meters: v,
         coords: [],
-        dates: e.date ? [e.date] : [],
+        dates: p.date ? [p.date] : [],
       });
     }
   }
@@ -110,6 +108,13 @@ export function routeSegments(
   // Геометрию режем в конце: так каждый отрезок нарезается один раз.
   for (const seg of out) seg.coords = sliceByDistance(route.coords, seg.fromM, seg.toM);
   return out.filter((s) => s.coords.length >= 2);
+}
+
+export function routeSegments(
+  route: PlanRoute,
+  entries: DailyWorkEntry[],
+): RouteSegment[] {
+  return methodSegments(route, placeShifts(route, entries).placed);
 }
 
 /** Цвет способа — свой у каждого, чтобы отрезки читались без легенды. */
@@ -149,32 +154,66 @@ export function kksPoints(segments: RouteSegment[]): { lat: number; lon: number;
     });
 }
 
+/** Пройдено по трассе, а где — не названо. */
+export interface RouteUnplaced {
+  routeId: string;
+  meters: number;
+  byMethod: Partial<Record<LayMethod, number>>;
+  /** Сколько таких смен. */
+  shifts: number;
+}
+
+export interface RouteWork {
+  /** Отрезки по способам — там, где копали. */
+  segments: RouteSegment[];
+  /** Метры без места: карта показывает их долей по всей линии. */
+  unplaced: RouteUnplaced[];
+}
+
 /**
- * Отрезки по всем трассам, у которых есть привязка к селу.
+ * Работа по всем трассам: где копали и сколько ещё прошли неизвестно где.
  *
- * Без привязки считать нечего: метры лежат по КАТО, и приписывать их
- * линии, о которой мы не знаем, чьё это село, значит рисовать выдумку.
+ * Трасса без привязки к селу берёт смены только по своим отметкам: метры
+ * лежат по КАТО, и приписывать их линии, о которой мы не знаем, чьё это
+ * село, значит рисовать выдумку. Но если на ней отмечали «остановились
+ * здесь», село этих смен — её село: человек сам сказал, где шёл.
  */
-export function allRouteSegments(
+export function routeWork(
   routes: PlanRoute[],
   katoByRouteId: Map<string, string>,
   ground: DailyWorkEntry[],
-): RouteSegment[] {
-  const byKato = new Map<string, DailyWorkEntry[]>();
+): RouteWork {
+  const live = new Set(routes.map((r) => r.id));
+  const onRoute = shiftIndex(ground, live);
+  const katoByStop = new Map<string, string>();
   for (const e of ground) {
-    if (!e.kato) continue;
-    const list = byKato.get(e.kato) ?? [];
-    list.push(e);
-    byKato.set(e.kato, list);
+    const own = e.stop?.routeId;
+    if (own && live.has(own) && e.kato) katoByStop.set(own, e.kato);
   }
 
-  const out: RouteSegment[] = [];
+  const segments: RouteSegment[] = [];
+  const unplaced: RouteUnplaced[] = [];
   for (const r of routes) {
-    const kato = katoByRouteId.get(r.id);
-    if (!kato) continue;
-    const entries = byKato.get(kato);
-    if (!entries?.length) continue;
-    out.push(...routeSegments(r, entries));
+    const kato = katoByRouteId.get(r.id) ?? katoByStop.get(r.id);
+    const shifts = onRoute(r.id, kato);
+    if (shifts.length === 0) continue;
+    const pl = placeShifts(r, shifts);
+    segments.push(...methodSegments(r, pl.placed));
+    if (pl.unplaced.length) {
+      const byMethod: Partial<Record<LayMethod, number>> = {};
+      for (const u of pl.unplaced) {
+        for (const m of LAY_METHODS) {
+          const v = u.byMethod[m] ?? 0;
+          if (v > 0) byMethod[m] = (byMethod[m] ?? 0) + v;
+        }
+      }
+      unplaced.push({
+        routeId: r.id,
+        meters: pl.unplaced.reduce((s, u) => s + u.meters, 0),
+        byMethod,
+        shifts: pl.unplaced.length,
+      });
+    }
   }
-  return out;
+  return { segments, unplaced };
 }

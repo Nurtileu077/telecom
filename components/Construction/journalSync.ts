@@ -11,6 +11,7 @@ import {
   SpliceRecord, Incident, WorkRate, Payment,
 } from '@/types/construction';
 import { pointAtDistanceM, type SectionProgress } from './routeProgress';
+import { shiftsOnRoute, stopPositionM } from './shiftPlace';
 import { lineMatch } from './routeEdit';
 
 /**
@@ -208,16 +209,17 @@ export function mergeJournalStates(
   const stats: MergeStats = { pulled: 0, pushed: 0, conflicts: 0, removed: 0 };
   const tombs = tombstoneMap(local.deleted ?? [], remote.deleted ?? []);
   const planRoutes = mergeCollection<PlanRoute>(local.planRoutes, remote.planRoutes, tombs, stats);
+  // Чужая сторона может быть устройством постарше, где поля ещё не
+  // было. Чиним на входе: иначе одна такая запись роняет ведомость,
+  // акт и сводку — и уже при отрисовке, а не при разборе.
+  const ground = fixList(
+    mergeCollection<DailyWorkEntry>(local.ground, remote.ground, tombs, stats),
+    fixWorkEntry,
+  );
 
   const merged: JournalState = {
     orders: mergeOrders(local.orders, remote.orders),
-    // Чужая сторона может быть устройством постарше, где поля ещё не
-    // было. Чиним на входе: иначе одна такая запись роняет ведомость,
-    // акт и сводку — и уже при отрисовке, а не при разборе.
-    ground: fixList(
-      mergeCollection<DailyWorkEntry>(local.ground, remote.ground, tombs, stats),
-      fixWorkEntry,
-    ),
+    ground,
     aerial: fixList(
       mergeCollection<AerialWorkEntry>(local.aerial, remote.aerial, tombs, stats),
       fixWorkEntry,
@@ -241,7 +243,7 @@ export function mergeJournalStates(
     // встаёт по слитой линии: трасса могла прийти развёрнутой.
     sectionProgress: mergeSectionProgress(local.sectionProgress, remote.sectionProgress, {
       local: local.planRoutes, remote: remote.planRoutes, merged: planRoutes,
-    }),
+    }, ground),
     // Цены: кто правил позже, тот и прав. Сброс — тоже правка.
     ...mergePrices(local.prices, remote.prices, local.pricedAt, remote.pricedAt),
     // Расценки и деньги — общие данные, у них есть id и время правки.
@@ -354,13 +356,15 @@ function theirsNewer(mine: SectionProgress, theirs: SectionProgress): boolean {
  * пришла с другого устройства развёрнутой, а точка осталась от старого
  * направления (её записали там, где разворота ещё не было), она стоит у
  * другого конца. Такую точку ставим заново по слитой линии — так же,
- * как при развороте на месте. Поставленную человеком не трогаем: она
- * стоит там, где колонна на самом деле.
+ * как при развороте на месте, и тем же счётом, что и закраску.
+ * Поставленную человеком не трогаем: она стоит там, где колонна на
+ * самом деле.
  */
 function mergeSectionProgress(
   local: JournalState['sectionProgress'],
   remote: JournalState['sectionProgress'],
   routes: { local: PlanRoute[]; remote: PlanRoute[]; merged: PlanRoute[] },
+  ground: DailyWorkEntry[] = [],
 ): JournalState['sectionProgress'] {
   const picked: Record<string, { p: SectionProgress; side: PlanRoute[] }> = {};
   for (const [kato, theirs] of Object.entries(remote ?? {})) picked[kato] = { p: theirs, side: routes.remote };
@@ -370,6 +374,7 @@ function mergeSectionProgress(
   }
 
   const merged = new Map(routes.merged.map((r) => [r.id, r]));
+  const live = new Set(merged.keys());
   const out: JournalState['sectionProgress'] = {};
   for (const [kato, { p, side }] of Object.entries(picked)) {
     out[kato] = p;
@@ -378,8 +383,9 @@ function mergeSectionProgress(
     const counted = side.find((r) => r.id === p.routeId);
     const line = merged.get(p.routeId);
     if (!counted || !line || lineMatch(counted.coords, line.coords) !== 'flipped') continue;
-    const at = pointAtDistanceM(line.coords, p.doneM);
-    if (at) out[kato] = { ...p, lat: at.lat, lon: at.lon };
+    const atM = stopPositionM(line, shiftsOnRoute(line.id, kato, ground, live), p);
+    const at = pointAtDistanceM(line.coords, atM);
+    if (at) out[kato] = { ...p, lat: at.lat, lon: at.lon, doneM: Math.round(atM) };
   }
   return out;
 }

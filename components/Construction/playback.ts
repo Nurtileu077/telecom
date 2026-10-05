@@ -1,6 +1,7 @@
 import { PlanRoute, DailyWorkEntry } from '@/types/construction';
-import { pointAtDistanceM, routeForSection } from './routeProgress';
-import { normName } from './areaImport';
+import { pointAtDistanceM } from './routeProgress';
+import { routeOfSection } from './routeSection';
+import { placeShifts, shiftsOnRoute } from './shiftPlace';
 
 /**
  * Вчерашний день в движении.
@@ -10,8 +11,8 @@ import { normName } from './areaImport';
  * из того, что уже записано. Метры за день вдоль трассы участка и есть
  * отрезок, который колонна прошла.
  *
- * Поэтому воспроизведение ничего не требует от бригады: она просто
- * закрывает день, как закрывала.
+ * Поэтому воспроизведение ничего не требует от бригады сверх того, что
+ * она и так делает: закрывает день и отвечает, где остановилась.
  */
 
 export interface DayMove {
@@ -24,7 +25,7 @@ export interface DayMove {
   to: { lat: number; lon: number };
   /** Сколько прошли за этот день, метры. */
   meters: number;
-  /** Сколько было пройдено до этого дня. */
+  /** Где на линии начали день, метры от её начала. */
   beforeM: number;
   /** Колонна и подрядчик — чтобы подписать, кто шёл. */
   column?: string;
@@ -37,16 +38,6 @@ function entryMeters(e: DailyWorkEntry): number {
   return m;
 }
 
-/** Трасса участка: та же логика, что и в форме закрытия дня. */
-function routeOf(routes: PlanRoute[], uchastok: string): PlanRoute | null {
-  const key = normName(uchastok);
-  if (!key) return null;
-  return routeForSection(routes, (r) => {
-    const fields = [r.uchastok, r.folder, r.name].filter(Boolean) as string[];
-    return fields.some((f) => normName(f) === key || normName(f).includes(key));
-  });
-}
-
 export interface PlaybackContext {
   ground: DailyWorkEntry[];
   planRoutes: PlanRoute[];
@@ -55,40 +46,42 @@ export interface PlaybackContext {
 /**
  * Что происходило в этот день.
  *
- * Для каждого участка берём метры, накопленные до этого дня, и метры за
- * сам день. Первое даёт точку старта, сумма — точку финиша. Участки без
- * трассы пропускаем: рисовать движение там, где нет линии, значит
+ * Движение — это кусок линии, который смены этого дня закрасили на карте:
+ * откуда колонна вышла утром и куда пришла вечером считаются тем же
+ * правилом, что и закраска (см. shiftPlace). Раньше старт брали как сумму
+ * всех прошлых метров от начала линии, и бригада с середины «ехала» по
+ * чужим километрам. Участки без трассы пропускаем, и смены, место которых
+ * не назвали, тоже: рисовать движение там, где его не было, значит
  * выдумывать маршрут.
  */
 export function dayMoves(ctx: PlaybackContext, date: string): DayMove[] {
   if (!date) return [];
 
-  const before = new Map<string, number>();
   const today = new Map<string, DailyWorkEntry[]>();
-
   for (const e of ctx.ground) {
-    if (!e.kato || !e.date) continue;
-    const m = entryMeters(e);
-    if (e.date < date) {
-      before.set(e.kato, (before.get(e.kato) ?? 0) + m);
-    } else if (e.date === date) {
-      const list = today.get(e.kato) ?? [];
-      list.push(e);
-      today.set(e.kato, list);
-    }
+    if (!e.kato || e.date !== date) continue;
+    const list = today.get(e.kato) ?? [];
+    list.push(e);
+    today.set(e.kato, list);
   }
 
+  const live = new Set(ctx.planRoutes.map((r) => r.id));
   const out: DayMove[] = [];
   for (const [kato, entries] of today) {
-    const meters = entries.reduce((s, e) => s + entryMeters(e), 0);
-    if (meters <= 0) continue;
+    if (entries.every((e) => entryMeters(e) <= 0)) continue;
     const uchastok = entries[0].uchastok;
-    const route = routeOf(ctx.planRoutes, uchastok);
+    // Та же трасса, на которой форма смены ставит «остановились здесь».
+    const route = routeOfSection(ctx.planRoutes, uchastok);
     if (!route) continue;
 
-    const beforeM = before.get(kato) ?? 0;
+    const shifts = shiftsOnRoute(route.id, kato, ctx.ground, live)
+      .filter((e) => !!e.date && e.date <= date);
+    const mine = placeShifts(route, shifts).placed.filter((p) => p.date === date);
+    if (mine.length === 0) continue;
+
+    const beforeM = mine[0].fromM;
     const from = pointAtDistanceM(route.coords, beforeM);
-    const to = pointAtDistanceM(route.coords, beforeM + meters);
+    const to = pointAtDistanceM(route.coords, mine[mine.length - 1].toM);
     if (!from || !to) continue;
 
     out.push({
@@ -97,7 +90,7 @@ export function dayMoves(ctx: PlaybackContext, date: string): DayMove[] {
       routeId: route.id,
       from: { lat: from.lat, lon: from.lon },
       to: { lat: to.lat, lon: to.lon },
-      meters,
+      meters: mine.reduce((s, p) => s + p.meters, 0),
       beforeM,
       column: entries[0].column,
       contractor: entries[0].contractor,

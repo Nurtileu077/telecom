@@ -9,6 +9,7 @@ import {
 import { haversineM } from '@/components/Network/KMeans';
 import { splitRoute, joinRoutes, joinedName, splitNames, lineMatch } from './routeEdit';
 import { pointAtDistanceM, type SectionProgress } from './routeProgress';
+import { shiftsOnRoute, stopPositionM } from './shiftPlace';
 
 /** Состояние журнала стройки — Слой 2. */
 export interface JournalState {
@@ -1026,7 +1027,9 @@ export function loadPlanRoutes(base: JournalState, routes: PlanRoute[]): PlanLoa
     byId.set(r.id, { ...r, coords, reversed, endsSwapped });
     // Счёт пошёл с другого конца — посчитанные точки колонн вслед за ним.
     if (lineMatch(old.coords, coords) === 'flipped') {
-      sectionProgress = realignProgress(sectionProgress, r.id, coords, now);
+      sectionProgress = realignProgress(
+        sectionProgress, r.id, coords, now, base.ground, new Set(byId.keys()),
+      );
     }
   }
   return {
@@ -1059,23 +1062,33 @@ export function planLoadNote(notes: string[]): string {
  * точка, посчитанная по ним, зависит: те же три километра от другого
  * конца — другое место. Пересчитываем только посчитанные; поставленную
  * человеком точку не трогаем — она стоит там, где колонна на самом деле.
+ *
+ * Считаем тем же правилом, что и закраску (см. shiftPlace): если в сменах
+ * место называли рукой, счёт идёт от него, а не от начала линии, — иначе
+ * после разворота колонна встала бы в стороне от закрашенного. Без смен
+ * с отметками — прежний счёт от начала.
  */
 export function realignProgress(
   progress: Record<string, SectionProgress>,
   routeId: string,
   coords: [number, number][],
   now: string = new Date().toISOString(),
+  ground: DailyWorkEntry[] = [],
+  liveRouteIds?: Set<string>,
 ): Record<string, SectionProgress> {
   let changed = false;
   const out: Record<string, SectionProgress> = {};
   for (const [kato, p] of Object.entries(progress ?? {})) {
     if (p.routeId !== routeId || p.manual) { out[kato] = p; continue; }
-    const at = pointAtDistanceM(coords, p.doneM);
+    const atM = stopPositionM(
+      { id: routeId, coords }, shiftsOnRoute(routeId, kato, ground, liveRouteIds), p,
+    );
+    const at = pointAtDistanceM(coords, atM);
     if (!at) { out[kato] = p; continue; }
     // Дата продвижения остаётся прежней — в этот день никто не шёл. Время
     // правки новое: по нему обмен узнаёт, что точка переехала, и везёт её
     // на другие устройства.
-    out[kato] = { ...p, lat: at.lat, lon: at.lon, updatedAt: now };
+    out[kato] = { ...p, lat: at.lat, lon: at.lon, doneM: Math.round(atM), updatedAt: now };
     changed = true;
   }
   return changed ? out : progress;
@@ -1105,7 +1118,10 @@ export function reversePlanRoute(
     planRoutes: base.planRoutes.map((r) => (
       r.id === id ? { ...r, coords, reversed: prev.reversed ? undefined : true, updatedAt: now } : r
     )),
-    sectionProgress: realignProgress(base.sectionProgress, id, coords, now),
+    sectionProgress: realignProgress(
+      base.sectionProgress, id, coords, now, base.ground,
+      new Set(base.planRoutes.map((r) => r.id)),
+    ),
     updatedAt: now,
   };
   return logChange(next, {
@@ -1401,7 +1417,10 @@ export function restoreShape(
   // Направление вернулось другое — посчитанные точки колонн вслед за ним.
   const turned = !!exists && !!exists.reversed !== !!reversed;
   const sectionProgress = turned
-    ? realignProgress(base.sectionProgress, ch.routeId, ch.before, now)
+    ? realignProgress(
+      base.sectionProgress, ch.routeId, ch.before, now, base.ground,
+      new Set(planRoutes.map((r) => r.id)),
+    )
     : base.sectionProgress;
 
   return logChange({ ...base, planRoutes, sectionProgress, updatedAt: now }, {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  routeSegments, sliceByDistance, segmentTotals, kksPoints, METHOD_COLOR,
+  routeSegments, sliceByDistance, segmentTotals, kksPoints, METHOD_COLOR, routeWork,
 } from './routeSegments';
 import { routeLengthM } from './routeProgress';
 import type { PlanRoute, DailyWorkEntry } from '@/types/construction';
@@ -25,6 +25,19 @@ function day(date: string, byMethod: DailyWorkEntry['byMethod']): DailyWorkEntry
     byMethod, materials: {},
     createdAt: now, updatedAt: now,
   };
+}
+
+/**
+ * «Верно» под точкой, посчитанной от начала линии. Без него место смены
+ * неизвестно, и отрезков она не даёт.
+ */
+function confirmed(e: DailyWorkEntry, routeId = 'r1'): DailyWorkEntry {
+  return { ...e, stop: { routeId, lat: 51, lon: 71 } };
+}
+
+/** «Остановились здесь», поставленное рукой на карте. */
+function stoppedAt(e: DailyWorkEntry, lon: number, routeId = 'r1'): DailyWorkEntry {
+  return { ...e, stop: { routeId, lat: 51, lon, manual: true } };
 }
 
 describe('кусок ломаной', () => {
@@ -52,7 +65,7 @@ describe('кусок ломаной', () => {
 describe('отрезки по способам', () => {
   it('дни ложатся вдоль линии по порядку', () => {
     const segs = routeSegments(route(), [
-      day('2026-09-10', { 'кабелеукладчик': 1000 }),
+      confirmed(day('2026-09-10', { 'кабелеукладчик': 1000 })),
       day('2026-09-11', { 'бар': 500 }),
     ]);
     expect(segs).toHaveLength(2);
@@ -65,7 +78,7 @@ describe('отрезки по способам', () => {
 
   it('соседние дни одним способом склеиваются в один отрезок', () => {
     const segs = routeSegments(route(), [
-      day('2026-09-10', { 'кабелеукладчик': 800 }),
+      confirmed(day('2026-09-10', { 'кабелеукладчик': 800 })),
       day('2026-09-11', { 'кабелеукладчик': 700 }),
     ]);
     expect(segs).toHaveLength(1);
@@ -75,7 +88,7 @@ describe('отрезки по способам', () => {
 
   it('несколько способов за день делят дневной кусок', () => {
     const segs = routeSegments(route(), [
-      day('2026-09-10', { 'кабелеукладчик': 600, 'вручную': 400 }),
+      confirmed(day('2026-09-10', { 'кабелеукладчик': 600, 'вручную': 400 })),
     ]);
     expect(segs.map((s) => s.method)).toEqual(['кабелеукладчик', 'вручную']);
     expect(segs[0].toM).toBe(600);
@@ -89,7 +102,7 @@ describe('отрезки по способам', () => {
 
   it('за конец трассы не вылезаем — геометрии там нет', () => {
     const segs = routeSegments(route(), [
-      day('2026-09-10', { 'кабелеукладчик': Math.round(TOTAL * 3) }),
+      confirmed(day('2026-09-10', { 'кабелеукладчик': Math.round(TOTAL * 3) })),
     ]);
     // Кусок обрезается концом линии, но сам отрезок остаётся видимым.
     const last = segs[segs.length - 1].coords.at(-1)!;
@@ -98,17 +111,90 @@ describe('отрезки по способам', () => {
 
   it('порядок дней важнее порядка записей в журнале', () => {
     const segs = routeSegments(route(), [
-      day('2026-09-12', { 'бар': 300 }),
+      confirmed(day('2026-09-12', { 'бар': 300 })),
       day('2026-09-10', { 'кабелеукладчик': 500 }),
     ]);
     expect(segs[0].method).toBe('кабелеукладчик');
   });
 });
 
+describe('отрезки там, где копали', () => {
+  // На этой линии 0,01° долготы ≈ 700 м: отметки ставим по долготе.
+  const lonAt = (m: number) => 71 + (m / TOTAL) * 0.1;
+
+  it('смены без отметки места отрезков не дают — от начала линии их не рисуем', () => {
+    const segs = routeSegments(route(), [
+      day('2026-09-10', { 'кабелеукладчик': 1000 }),
+      day('2026-09-11', { 'бар': 500 }),
+    ]);
+    expect(segs).toHaveLength(0);
+  });
+
+  it('бригада с середины лежит на своих километрах, а не на первых', () => {
+    const segs = routeSegments(route(), [
+      stoppedAt(day('2026-09-10', { 'кабелеукладчик': 1000 }), lonAt(4000)),
+      day('2026-09-11', { 'кабелеукладчик': 1000 }),
+    ]);
+    expect(segs).toHaveLength(1);
+    expect(segs[0].fromM).toBeCloseTo(3000, -1);
+    expect(segs[0].toM).toBeCloseTo(5000, -1);
+  });
+
+  it('ККС ставится в конце куска по колодцам там, где он лежит', () => {
+    const segs = routeSegments(route(), [
+      stoppedAt(day('2026-09-10', { 'сущ_канализация': 700 }), lonAt(5000)),
+    ]);
+    expect(kksPoints(segs)[0].atM).toBeCloseTo(5000, -1);
+  });
+});
+
+describe('работа по всем трассам', () => {
+  const branch = (): PlanRoute => route({
+    id: 'r2', name: 'Еленовка отвод', coords: [[51, 71], [51.02, 71]],
+    lengthM: routeLengthM([[51, 71], [51.02, 71]]),
+  });
+
+  it('метры без места считаются отдельно — по трассе и по способам', () => {
+    const work = routeWork([route()], new Map([['r1', '191']]), [
+      day('2026-09-10', { 'кабелеукладчик': 600, 'бар': 100 }),
+      day('2026-09-11', { 'бар': 300 }),
+    ]);
+    expect(work.segments).toHaveLength(0);
+    expect(work.unplaced).toEqual([{
+      routeId: 'r1', meters: 1000, byMethod: { 'кабелеукладчик': 600, 'бар': 400 }, shifts: 2,
+    }]);
+  });
+
+  it('смена, отмеченная на основной линии, отвод того же села не красит', () => {
+    const work = routeWork([route(), branch()], new Map([['r1', '191'], ['r2', '191']]), [
+      confirmed(day('2026-09-10', { 'кабелеукладчик': 800 })),
+    ]);
+    expect(work.segments.every((sg) => sg.routeId === 'r1')).toBe(true);
+    expect(work.unplaced).toHaveLength(0);
+  });
+
+  it('трасса, которую по названию к селу не привязали, берёт смены по своим отметкам', () => {
+    const work = routeWork([route()], new Map(), [
+      confirmed(day('2026-09-10', { 'кабелеукладчик': 800 })),
+      day('2026-09-11', { 'кабелеукладчик': 400 }),
+    ]);
+    expect(work.segments).toHaveLength(1);
+    expect(work.segments[0].toM).toBe(1200);
+  });
+
+  it('отметка на трассе, которой больше нет, смену не держит — она ищет трассу по селу', () => {
+    const work = routeWork([route()], new Map([['r1', '191']]), [
+      confirmed(day('2026-09-10', { 'кабелеукладчик': 800 }), 'разрезанная'),
+    ]);
+    expect(work.segments).toHaveLength(0);
+    expect(work.unplaced[0].meters).toBe(800);
+  });
+});
+
 describe('сводка и ККС', () => {
   it('складывает метры по способам, больший сверху', () => {
     const segs = routeSegments(route(), [
-      day('2026-09-10', { 'кабелеукладчик': 400 }),
+      confirmed(day('2026-09-10', { 'кабелеукладчик': 400 })),
       day('2026-09-11', { 'бар': 900 }),
     ]);
     const totals = segmentTotals(segs);
@@ -119,7 +205,7 @@ describe('сводка и ККС', () => {
 
   it('ККС — конец куска по существующей канализации', () => {
     const segs = routeSegments(route(), [
-      day('2026-09-10', { 'сущ_канализация': 700 }),
+      confirmed(day('2026-09-10', { 'сущ_канализация': 700 })),
       day('2026-09-11', { 'бар': 300 }),
     ]);
     const pts = kksPoints(segs);

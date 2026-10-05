@@ -30,8 +30,8 @@ import {
 } from '@/components/Construction/incidents';
 import { pointAtDistanceM } from '@/components/Construction/routeProgress';
 import {
-  arrowsAlong, lengthLabels, progressSplit, METHOD_DASH, formatMeters, bearingDeg,
-  clusterPoints, mapLegend,
+  arrowsAlong, lengthLabels, routePaint, hatchDash, METHOD_DASH, formatMeters, bearingDeg,
+  clusterPoints, mapLegend, UNPLACED_COLOR,
 } from '@/components/Construction/mapDecor';
 import type { ConstructionLayers } from '@/components/Construction/mapLayers';
 import {
@@ -315,8 +315,13 @@ interface Props {
   onRenameArea?: (id: string) => void;
   onDeleteArea?: (id: string) => void;
   onEditSiteObject?: (id: string) => void;
-  /** Отрезки трассы по способам прокладки — когда красим по способу. */
+  /** Отрезки трассы по способам прокладки — там, где копали. */
   routeSegments?: import('@/components/Construction/routeSegments').RouteSegment[];
+  /**
+   * Пройдено, а где — в сменах не названо. Такие метры не кладутся ни в
+   * начало линии, ни куда-либо ещё: показываем их долей штрихом.
+   */
+  routeUnplaced?: import('@/components/Construction/routeSegments').RouteUnplaced[];
   routeColorMode?: 'stage' | 'method';
   /** Вчерашний день в движении: откуда куда дошли колонны. */
   playbackMoves?: import('@/components/Construction/playback').DayMove[];
@@ -1768,13 +1773,19 @@ export default function LeafletMap(props: Props) {
       const segments = propsRef.current.routeSegments ?? [];
       const segmented = new Set(segments.map((sg) => sg.routeId));
 
-      // Докуда дошли по каждой трассе. Отдельной записи «дошли до такого-то
-      // километра» никто не ведёт и вести не будет, но границы отрезков по
-      // способам — это ровно она и есть.
-      const doneByRoute = new Map<string, number>();
+      // Где копали по каждой трассе. Отдельной записи «копали с такого-то
+      // километра по такой-то» никто не ведёт, но отрезки по способам
+      // лежат там, где смены отметили «остановились здесь», — это она и
+      // есть. Раньше бралась только дальняя граница и красилось всё от
+      // начала линии до неё: бригада с середины закрашивала чужие км.
+      const piecesByRoute = new Map<string, { fromM: number; toM: number }[]>();
       for (const sg of segments) {
-        doneByRoute.set(sg.routeId, Math.max(doneByRoute.get(sg.routeId) ?? 0, sg.toM));
+        const list = piecesByRoute.get(sg.routeId);
+        if (list) list.push(sg); else piecesByRoute.set(sg.routeId, [sg]);
       }
+      const unplacedByRoute = new Map(
+        (propsRef.current.routeUnplaced ?? []).map((u) => [u.routeId, u]),
+      );
 
       // Стрелки и подписи — это маркеры, а их на сотне трасс набираются
       // тысячи. Рисуем только то, что сейчас на экране, и с общим потолком:
@@ -1785,16 +1796,23 @@ export default function LeafletMap(props: Props) {
 
       for (const r of routes) {
         if (r.coords.length < 2) continue;
+        const unplaced = unplacedByRoute.get(r.id);
         // В режиме «по способу» трассу рисуют её отрезки, а сама линия
         // остаётся бледной подложкой: два смысла одним цветом не читаются.
-        const asBase = byMethod && segmented.has(r.id);
+        const asBase = byMethod && (segmented.has(r.id) || !!unplaced);
 
-        // Пройденная часть красится этапом, остаток остаётся проектом.
-        // Сплошная цветная во всю длину обещала готовность, которой нет:
-        // «докуда дошли» — вопрос, который задают глазами, а не процентом.
-        const doneM = doneByRoute.get(r.id) ?? 0;
-        const split = doneM > 0 && !asBase ? progressSplit(r.coords, doneM) : null;
-        const partial = !!split && split.share > 0.01 && split.share < 0.99;
+        // Пройденная часть красится этапом там, где копали, остаток
+        // остаётся проектом. Сплошная цветная во всю длину обещала
+        // готовность, которой нет: «где сделано» — вопрос, который задают
+        // глазами, а не процентом.
+        const paint = routePaint(r.coords, piecesByRoute.get(r.id) ?? [], unplaced?.meters ?? 0);
+        const worked = paint.doneM > 0.5 || paint.unplacedM > 0;
+        const partial = !asBase && worked && !paint.full;
+        // Штрих доли без места. По этапу пройденная целиком линия красится
+        // вся — место уже неважно; по способу — нет: где какой способ,
+        // по-прежнему не сказано, и штрих остаётся густым.
+        const hatchArr = paint.hatch
+          ?? (asBase && paint.unplacedM > 0 ? hatchDash(1) : null);
 
         const line = L.polyline(r.coords, {
           color: asBase ? '#475569' : partial ? PLAN_LINE_COLOR : r.color,
@@ -1808,8 +1826,19 @@ export default function LeafletMap(props: Props) {
         });
         const title = routeTitle(r);
         const stageLabel = r.stage ? SNP_STAGE_SPECS[r.stage].label : 'работ не было';
+        // Сколько пройдено неизвестно где — словами и с тем, как это
+        // исправить: штрих сам по себе ничего не объясняет.
+        const unplacedNote = hatchArr
+          ? `<div style="margin-top:4px;font-size:11px;color:#cbd5e1;max-width:260px">`
+            + `Ещё ${esc(formatMeters(unplaced?.meters ?? paint.unplacedM))} пройдено, но где — `
+            + 'в сменах не указано: на линии это штрих. Отметьте в смене «остановились здесь» — '
+            + 'закрасится там, где копали.</div>'
+          : '';
         line.bindTooltip(
-          `${esc(title)} · ${esc(stageLabel)}${r.lengthM ? ` · ${(r.lengthM / 1000).toFixed(2)} км` : ''}`,
+          `${esc(title)} · ${esc(stageLabel)}${r.lengthM ? ` · ${(r.lengthM / 1000).toFixed(2)} км` : ''}`
+          + (hatchArr
+            ? ` · ещё ${formatMeters(unplaced?.meters ?? paint.unplacedM)} пройдено, место не указано`
+            : ''),
           { sticky: true, className: 'text-xs' },
         );
         line.bindPopup(
@@ -1817,6 +1846,7 @@ export default function LeafletMap(props: Props) {
           + (r.name && r.name !== title
             ? `<br/><span style="color:#64748b;font-size:11px">${esc(r.name)}</span>` : '')
           + `<div style="margin-top:4px;color:${r.color};font-size:12px">${esc(stageLabel)}</div>`
+          + unplacedNote
           + (r.snp ? `<span style="font-size:11px">${esc(r.snp)}</span><br/>` : '')
           + `<span style="font-size:11px">${(r.lengthM / 1000).toFixed(3)} км</span>`
           // Длина трассы и длина кабеля — разные числа, и путают их
@@ -1882,17 +1912,36 @@ export default function LeafletMap(props: Props) {
         });
         group.addLayer(line);
 
-        // Закрашенная часть — «сделано». Остаток остался синим проектом.
-        if (partial && split) {
-          const done = L.polyline(split.done, {
-            color: r.color, weight: 4.5 * lineScale(zoom), opacity: 0.95,
-          });
-          done.bindTooltip(
-            `${esc(title)} · пройдено ${formatMeters(split.doneM)}`
-            + ` из ${formatMeters(split.totalM)} · ${Math.round(split.share * 100)}%`,
-            { sticky: true, className: 'text-xs' },
-          );
-          group.addLayer(done);
+        // Доля без места — штрихом по всей линии, под закраской: где
+        // именно прошли эти метры, не сказал никто, и класть их в начало
+        // линии значит закрасить чужие километры. Штрих лежит на всей
+        // линии и щелчков не берёт: иначе карточка трассы с разворотом и
+        // правкой перестала бы открываться. Что он значит, говорит
+        // подсказка и карточка самой линии.
+        if (hatchArr && (partial || asBase)) {
+          group.addLayer(L.polyline(r.coords, {
+            color: asBase ? UNPLACED_COLOR : r.color,
+            weight: 4 * lineScale(zoom),
+            opacity: 0.9,
+            dashArray: hatchArr,
+            interactive: false,
+          }));
+        }
+
+        // Закрашенные куски — «сделано здесь». Остаток остался синим проектом.
+        if (partial) {
+          const tip = `${esc(title)} · закрашено ${formatMeters(paint.doneM)}`
+            + ` из ${formatMeters(paint.totalM)}`
+            + (paint.unplacedM > 0
+              ? ` · ещё ${formatMeters(unplaced?.meters ?? paint.unplacedM)} — место не указано`
+              : ` · ${Math.round((paint.doneM / Math.max(1, paint.totalM)) * 100)}%`);
+          for (const piece of paint.done) {
+            const done = L.polyline(piece, {
+              color: r.color, weight: 4.5 * lineScale(zoom), opacity: 0.95,
+            });
+            done.bindTooltip(tip, { sticky: true, className: 'text-xs' });
+            group.addLayer(done);
+          }
         }
 
         // Стрелки направления и длины перегонов. Их считают маркерами, а
@@ -3076,7 +3125,8 @@ export default function LeafletMap(props: Props) {
   useEffect(() => { renderDeviations(); }, [props.deviations, mapReady]);
   useEffect(() => {
     renderPlanRoutes();
-  }, [props.planRoutes, props.drillLines, props.routeSegments, props.routeColorMode, mapReady]);
+  }, [props.planRoutes, props.drillLines, props.routeSegments, props.routeUnplaced,
+    props.routeColorMode, mapReady]);
   useEffect(() => { renderRouteEdit(); }, [props.editingRouteId, props.planRoutes, mapReady]);
   useEffect(() => { renderAreaEdit(); }, [props.editingAreaId, props.areas, mapReady]);
   // Карточка контура меняется вместе с режимом правки: кнопка должна

@@ -49,7 +49,9 @@ import { crewsFromJournal } from '@/components/Construction/crewDerive';
 import { areaMapItems, type AreaMapItem } from '@/components/Construction/areaProgress';
 import { routeViews, type RouteView } from '@/components/Construction/routeStyle';
 import { dayMoves, playableDates, type DayMove } from '@/components/Construction/playback';
-import { allRouteSegments, type RouteSegment } from '@/components/Construction/routeSegments';
+import {
+  routeWork, type RouteSegment, type RouteUnplaced,
+} from '@/components/Construction/routeSegments';
 import {
   loadRouteColorMode, saveRouteColorMode, type RouteColorMode,
   loadSourceOrder, saveSourceOrder, moveSource, orderedSources, bySourceOrder,
@@ -175,6 +177,8 @@ export default function HomePage() {
   const [snpPoints, setSnpPoints] = useState<SnpMapPoint[]>([]);
   const [areas, setAreas] = useState<AreaMapItem[]>([]);
   const [routeSegs, setRouteSegs] = useState<RouteSegment[]>([]);
+  // Пройдено, а где — в сменах не названо: на карте это доля штрихом.
+  const [routeUnplaced, setRouteUnplaced] = useState<RouteUnplaced[]>([]);
   // Чем красить трассу: пройденным этапом или способом прокладки.
   const [routeColorMode, setRouteColorMode] = useState<RouteColorMode>('stage');
   useEffect(() => { setRouteColorMode(loadRouteColorMode()); }, []);
@@ -231,12 +235,15 @@ export default function HomePage() {
     // чтобы карточка видела, не лежит ли начало счёта посреди села.
     const views = routeViews(j.planRoutes, { progress, areas: j.areas });
     setPlanRoutes(views);
-    // Отрезки по способам: считаются из дневных метров и порядка дней.
-    setRouteSegs(allRouteSegments(
+    // Отрезки по способам: из дневных метров и отметок «остановились
+    // здесь» — там, где копали, а не от начала линии.
+    const work = routeWork(
       j.planRoutes,
       new Map(views.filter((v) => v.kato).map((v) => [v.id, v.kato as string])),
       j.ground,
-    ));
+    );
+    setRouteSegs(work.segments);
+    setRouteUnplaced(work.unplaced);
     setSiteObjects(j.objects);
     // Снимки с координатами — отдельный слой: спрашивают «что тут было»,
     // показывая пальцем в место, а не называя запись, к которой они
@@ -1643,6 +1650,7 @@ export default function HomePage() {
             showFlow={building && conLayers.flow}
             offlineTiles={building}
             routeSegments={conLayers.plan ? routeSegs : EMPTY_LAYER}
+            routeUnplaced={conLayers.plan ? routeUnplaced : EMPTY_LAYER}
             routeColorMode={routeColorMode}
             playbackMoves={playbackMoves}
             playbackDate={playbackDate}
