@@ -973,6 +973,12 @@ export function loadPlanRoutes(base: JournalState, routes: PlanRoute[]): PlanLoa
     const title = r.name || old.name || 'трасса';
     // Старые координаты лежат в порядке счёта, новые — в порядке файла.
     const match = lineMatch(old.coords, r.coords);
+    // Под номером пришла другая линия и под другим названием: отметки
+    // снимаются с прежней, и назвать надо её. «Кенжеколь — Акбеит: концы
+    // не совпали» не говорит, что разворот потеряла «ОМ — Акбеит», которая
+    // в файле теперь под другим номером и снова считается от села.
+    const moved = match === 'other' && !!old.name?.trim() && !sameTitle(r.name, old.name);
+    const dropped: string[] = [];
     let coords = r.coords;
     let reversed: true | undefined;
     if (old.reversed) {
@@ -982,6 +988,8 @@ export function loadPlanRoutes(base: JournalState, routes: PlanRoute[]): PlanLoa
         reversed = true;
       } else if (match === 'same') {
         notes.push(`«${title}» пришла уже нарисованной от нужного конца — отметка разворота больше не нужна`);
+      } else if (moved) {
+        dropped.push('разворот');
       } else {
         notes.push(`«${title}»: концы не совпали с прежней линией — счёт идёт как в файле, `
           + 'проверьте, с того ли конца');
@@ -999,10 +1007,20 @@ export function loadPlanRoutes(base: JournalState, routes: PlanRoute[]): PlanLoa
     if (endsSwapped === undefined && old.endsSwapped) {
       if (match !== 'other' && sameTitle(r.name, old.name)) {
         endsSwapped = true;
+      } else if (moved) {
+        dropped.push('подписи концов наоборот');
       } else {
         notes.push(`«${title}»: подписи концов снова как в названии`);
         warn = true;
       }
+    }
+    if (dropped.length) {
+      const there = r.name?.trim() ? `«${r.name.trim()}»` : 'линия без названия';
+      const onlyTurn = dropped.length === 1 && dropped[0] === 'разворот';
+      notes.push(`«${old.name!.trim()}»: под её номером в файле теперь ${there} — `
+        + `${dropped.join(' и ')} ${onlyTurn ? 'снят' : 'сняты'}, `
+        + 'найдите её на карте и проверьте концы');
+      warn = true;
     }
 
     byId.set(r.id, { ...r, coords, reversed, endsSwapped });

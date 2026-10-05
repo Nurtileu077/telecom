@@ -181,8 +181,39 @@ describe('повторная загрузка решает по самой ли�
     expect(r.reversed).toBeUndefined();
     expect(r.endsSwapped).toBeUndefined();
     expect(load.warn).toBe(true);
-    expect(load.notes.join(' ')).toContain('концы не совпали с прежней линией');
-    expect(load.notes.join(' ')).toContain('подписи концов снова как в названии');
+    // Называют ту, что потеряла отметки: «ОМ — Акбеит» теперь под другим
+    // номером и снова считается от села — проверять надо её, а не новую.
+    expect(load.notes).toEqual([
+      '«ОМ — Акбеит»: под её номером в файле теперь «Кенжеколь — Акбеит» — '
+        + 'разворот и подписи концов наоборот сняты, найдите её на карте и проверьте концы',
+    ]);
+  });
+
+  it('потерян только разворот — так и сказано, одним словом', () => {
+    const turned = reversePlanRoute(withRoute(), 'r1', 'И');
+    const other = route({ name: 'Кенжеколь — Акбеит', coords: [[1, 1], [1, 1.01]] });
+    expect(loadPlanRoutes(turned, [other]).notes).toEqual([
+      '«ОМ — Акбеит»: под её номером в файле теперь «Кенжеколь — Акбеит» — '
+        + 'разворот снят, найдите её на карте и проверьте концы',
+    ]);
+  });
+
+  it('новая линия без названия не выдаёт себя за прежнюю', () => {
+    const turned = reversePlanRoute(withRoute(), 'r1', 'И');
+    const nameless = route({ name: '', coords: [[1, 1], [1, 1.01]] });
+    const [note] = loadPlanRoutes(turned, [nameless]).notes;
+    expect(note).toContain('«ОМ — Акбеит»: под её номером в файле теперь линия без названия');
+  });
+
+  it('то же название, а концы другие — говорят про саму линию', () => {
+    const turned = reversePlanRoute(withRoute(), 'r1', 'И');
+    const redrawn = route({ coords: [[1, 1], [1, 1.01]] });
+    const load = loadPlanRoutes(turned, [redrawn]);
+    expect(load.state.planRoutes[0].reversed).toBeUndefined();
+    expect(load.warn).toBe(true);
+    expect(load.notes).toEqual([
+      '«ОМ — Акбеит»: концы не совпали с прежней линией — счёт идёт как в файле, проверьте, с того ли конца',
+    ]);
   });
 
   it('подписи наоборот переживают загрузку той же линии под тем же названием', () => {
