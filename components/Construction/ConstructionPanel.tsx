@@ -35,7 +35,7 @@ import {
   groupPoints, endpointKindOf, POINT_GROUPS, type PointGroup,
 } from './pointKind';
 import { placeCrews } from './crewPlace';
-import { routeViews, routeTitle } from './routeStyle';
+import { routeViews, routeTitle, journalPlaces } from './routeStyle';
 import { buildKml, kmlFileName } from './kmlExport';
 import ChecksView from './ChecksView';
 import TimesheetView from './TimesheetView';
@@ -702,6 +702,11 @@ export default function ConstructionPanel({
     ...scoped,
     progress: effectiveProgress(scoped.progress, scoped),
   }), [scoped]);
+
+  // Сёла, по которым карта узнаёт концы трасс, — по всему журналу, а не
+  // по выбранной области: схема в документах подписывает концы так же,
+  // как карта, иначе лист и карта называли бы начало линии по-разному.
+  const mapPlaces = useMemo(() => journalPlaces(journal), [journal]);
 
   // Колонны, которых нет в справочнике, но которые видно по журналу:
   // заводить их руками — работа ради работы.
@@ -1409,6 +1414,7 @@ export default function ConstructionPanel({
         ) : view === 'docs' ? (
           <DocsView
             journal={scoped}
+            places={mapPlaces}
             from={filter.from ?? ''}
             to={filter.to ?? anchor ?? ''}
             author={actor}

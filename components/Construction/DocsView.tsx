@@ -95,6 +95,12 @@ interface Props {
    * трассы на карте: концы на карте и на листе меняются вместе.
    */
   onSwapRouteEnds?: (routeId: string) => void;
+  /**
+   * Сёла, по которым карта узнаёт концы трасс (`journalPlaces` всего
+   * журнала). `journal` здесь сужен выбранной областью, а карта — нет:
+   * без этого лист называл бы начало линии не тем селом, что карта.
+   */
+  places?: Set<string>;
 }
 
 const DOC_MIME = 'application/msword;charset=utf-8';
@@ -176,7 +182,7 @@ type ZipFolder = { file: (name: string, data: string | Blob) => unknown };
 
 export default function DocsView({
   journal, from, to, contractor, author, onFlash, onOpenSection, onSetActNumber,
-  onChangeActFields, onReverseRoute, onSwapRouteEnds,
+  onChangeActFields, onReverseRoute, onSwapRouteEnds, places: mapPlaces,
 }: Props) {
   const [busy, setBusy] = useState(false);
   const [prices, setPrices] = useState<WorkPrices>({});
@@ -223,8 +229,12 @@ export default function DocsView({
   const progressNow = useMemo(() => effectiveProgress(journal.progress, journal), [journal]);
   const readiness = useMemo(() => snpReadiness(progressNow), [progressNow]);
   // Сёла, по которым узнаём концы в названии трассы, — те же, что у карты:
-  // схема и подписи на линии должны называть концы одинаково.
-  const places = useMemo(() => placeNames(progressNow), [progressNow]);
+  // схема и подписи на линии должны называть концы одинаково. Журнал здесь
+  // сужен областью, поэтому сёла приходят от панели, по всему журналу.
+  const places = useMemo(
+    () => mapPlaces ?? placeNames(progressNow),
+    [mapPlaces, progressNow],
+  );
 
   const contractors = useMemo(
     () => [...new Set(journal.ground.map((e) => e.contractor).filter((v): v is string => !!v))]
@@ -280,9 +290,11 @@ export default function DocsView({
   // счёт посреди села, куда трасса ведёт, — до подписи листа, а не после.
   const schemeHint = useMemo(() => {
     if (!schemeRoute) return null;
-    const [v] = routeViews([schemeRoute], { progress: progressNow, areas: journal.areas });
+    // Подписи — по тем же сёлам, что у листа: иначе подсказка спорила бы
+    // с концами, которые лист называет строкой выше.
+    const [v] = routeViews([schemeRoute], { progress: progressNow, areas: journal.areas, places });
     return v ? directionHint(v) : null;
-  }, [schemeRoute, progressNow, journal.areas]);
+  }, [schemeRoute, progressNow, journal.areas, places]);
 
   /**
    * Сохранить документ.

@@ -3,12 +3,13 @@ import type { MapArea, PlanRoute, SiteObject, SnpProgress } from '@/types/constr
 import {
   emptyJournal, addPlanRoutes, reversePlanRoute, swapRouteEnds, restoreShape,
   updateRouteCoords, realignProgress, loadPlanRoutes, planLoadNote, setSectionProgress,
-  type JournalState,
+  scopeJournal, type JournalState,
 } from './journalStore';
 import { mergeJournalStates } from './journalSync';
 import {
-  routeViews, countFromText, placeNames, directionHint, routeEnds, samePlace,
+  routeViews, countFromText, placeNames, directionHint, routeEnds, samePlace, journalPlaces,
 } from './routeStyle';
+import { effectiveProgress } from './stageDerive';
 import { buildScheme } from './asBuilt';
 import { advanceAlong } from './routeProgress';
 import { changeFeed } from './changeLog';
@@ -379,6 +380,46 @@ describe('карта и схема называют одни и те же кон
   it('название без мест не превращается в подпись обоих концов', () => {
     const s = buildScheme(route({ name: 'Трасса 3' }), [], { places });
     expect([s.marks[0].label, s.marks[1].label]).toEqual(['Начало', 'Конец']);
+  });
+});
+
+/**
+ * Карта видит журнал целиком, а документы собираются по журналу,
+ * суженному до выбранной области. Схема узнавала сёла по суженному: при
+ * выбранной «СКО» трасса «Шортанды Камышенка» с Шортанды из Акмолинской
+ * на карте шла от Шортанды, а в листе на ту же точку линии вставала
+ * Камышенка.
+ */
+describe('схема при выбранной области называет концы как карта', () => {
+  const j: JournalState = {
+    ...emptyJournal(),
+    progress: [
+      { kato: '1', snp: 'Шортанды', oblast: 'Акмолинская', stages: {}, updatedAt: now },
+      { kato: '2', snp: 'Камышенка', oblast: 'СКО', stages: {}, updatedAt: now },
+    ],
+    planRoutes: [route({ name: 'Шортанды Камышенка', uchastok: undefined })],
+  };
+  // Карта — весь журнал с выведенными этапами, как в app/page.tsx.
+  const [map] = routeViews(j.planRoutes, { progress: effectiveProgress(j.progress, j) });
+  const scoped = scopeJournal(j, 'СКО');
+  const ends = (s: ReturnType<typeof buildScheme>) => [s.marks[0].label, s.marks[s.marks.length - 1].label];
+
+  it('по сёлам одной области лист поставил бы на начало другое село — случай настоящий', () => {
+    expect([map.from, map.to]).toEqual(['Шортанды', 'Камышенка']);
+    const narrow = placeNames(effectiveProgress(scoped.progress, scoped));
+    expect(ends(buildScheme(scoped.planRoutes[0], [], { places: narrow }))[0]).toBe('Камышенка');
+  });
+
+  it('с сёлами всего журнала лист и карта называют одно и то же начало', () => {
+    const s = buildScheme(scoped.planRoutes[0], [], { places: journalPlaces(j) });
+    expect(ends(s)).toEqual([map.from, map.to]);
+  });
+
+  it('подсказка в разделе схемы читает те же подписи, что и лист', () => {
+    const [v] = routeViews(scoped.planRoutes, {
+      progress: effectiveProgress(scoped.progress, scoped), places: journalPlaces(j),
+    });
+    expect([v.from, v.to]).toEqual([map.from, map.to]);
   });
 });
 

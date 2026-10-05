@@ -3,6 +3,7 @@ import {
 } from '@/types/construction';
 import { stageStatus } from './stageTasks';
 import { normName, PLACE_PREFIX } from './areaImport';
+import { effectiveProgress, type DeriveContext } from './stageDerive';
 
 /**
  * Как выглядит трасса на карте.
@@ -251,6 +252,21 @@ export function placeNames(progress: SnpProgress[]): Set<string> {
 }
 
 /**
+ * Сёла, по которым карта узнаёт концы трасс, — по всему журналу.
+ *
+ * Карта видит журнал целиком, а документы собираются по журналу,
+ * суженному до выбранной области. Пока схема брала сёла из суженного,
+ * при выбранной «СКО» трасса «Шортанды Камышенка» с Шортанды из
+ * Акмолинской на карте шла от Шортанды, а в листе на ту же точку линии
+ * вставала Камышенка — тот же спор концов, только через фильтр. Поэтому
+ * подписи концов в документах узнают сёла здесь: так же, как карта, по
+ * этапам всего журнала с выведенными из смен.
+ */
+export function journalPlaces(j: DeriveContext & { progress: SnpProgress[] }): Set<string> {
+  return placeNames(effectiveProgress(j.progress, j));
+}
+
+/**
  * Слова, по которым узнают место: без служебных, без «с.» и без «ОМ».
  *
  * Сравнивать названия целиком нельзя: «сущ. ОМ - Акбеит», «Акбеит» и
@@ -336,6 +352,12 @@ export interface RouteStyleContext {
   progress: SnpProgress[];
   /** Обводки сёл из KML: по ним видно, в каком селе лежит каждый конец линии. */
   areas?: MapArea[];
+  /**
+   * Сёла для подписей концов (`journalPlaces`), если `progress` сужен
+   * областью: подписи должны совпасть с картой, а она видит весь журнал.
+   * Без них сёла берутся из `progress`.
+   */
+  places?: Set<string>;
 }
 
 export function routeViews(routes: PlanRoute[], ctx: RouteStyleContext): RouteView[] {
@@ -347,7 +369,7 @@ export function routeViews(routes: PlanRoute[], ctx: RouteStyleContext): RouteVi
     // стройке хуже, чем оставить её серой.
     byName.set(key, byName.has(key) ? null : p);
   }
-  const known = placeNames(ctx.progress);
+  const known = ctx.places ?? placeNames(ctx.progress);
   const villages = villageOutlines(ctx.areas ?? []);
 
   return routes.map((r) => {
