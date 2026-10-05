@@ -18,7 +18,7 @@ import {
   SITE_OBJECT_SPECS, MUFTA_STATES, siteObjectColor,
 } from '@/types/construction';
 import {
-  routeTitle, countFromText, directionHint, PLAN_LINE_COLOR,
+  routeTitle, countFromText, directionHint, PLAN_LINE_COLOR, STAGE_LINE_COLOR,
 } from '@/components/Construction/routeStyle';
 import { moveToBounds } from './smoothMove';
 import { GLYPH_FALLBACK, isGlyphName } from '@/lib/glyphs';
@@ -1946,15 +1946,20 @@ export default function LeafletMap(props: Props) {
         // по-прежнему не сказано, и штрих остаётся густым.
         const hatchArr = paint.hatch
           ?? (asBase && paint.unplacedM > 0 ? hatchDash(1) : null);
+        // Трассу, которую с селом связала только отметка «остановились
+        // здесь», этап не красит — его у неё нет. Но работа на ней была,
+        // и рисовать её синим проекта нельзя: красим цветом трубы.
+        const workColor = r.stage ? r.color : STAGE_LINE_COLOR.mkt;
+        const planOnly = r.dashed && !worked;
 
         const line = L.polyline(r.coords, {
-          color: asBase ? '#475569' : partial ? PLAN_LINE_COLOR : r.color,
+          color: asBase ? '#475569' : partial ? PLAN_LINE_COLOR : worked ? workColor : r.color,
           // Проект — сплошная синяя, тоньше факта. Пунктир превращал её в
           // такую же штриховку, как у границ района, и трасса терялась
           // среди контуров. Тонкая и сплошная читается как трасса, а
           // толщина и цвет по-прежнему отличают проект от построенного.
-          weight: (asBase || r.dashed || partial ? (asBase ? 2 : 2.5) : 4.5) * lineScale(zoom),
-          opacity: asBase ? 0.5 : r.dashed || partial ? 0.8 : 0.95,
+          weight: (asBase || planOnly || partial ? (asBase ? 2 : 2.5) : 4.5) * lineScale(zoom),
+          opacity: asBase ? 0.5 : planOnly || partial ? 0.8 : 0.95,
           dashArray: undefined,
         });
         const title = routeTitle(r);
@@ -2053,7 +2058,7 @@ export default function LeafletMap(props: Props) {
         // подсказка и карточка самой линии.
         if (hatchArr && (partial || asBase)) {
           group.addLayer(L.polyline(r.coords, {
-            color: asBase ? UNPLACED_COLOR : r.color,
+            color: asBase ? UNPLACED_COLOR : workColor,
             weight: 4 * lineScale(zoom),
             opacity: 0.9,
             dashArray: hatchArr,
@@ -2070,7 +2075,7 @@ export default function LeafletMap(props: Props) {
               : ` · ${Math.round((paint.doneM / Math.max(1, paint.totalM)) * 100)}%`);
           for (const piece of paint.done) {
             const done = L.polyline(piece, {
-              color: r.color, weight: 4.5 * lineScale(zoom), opacity: 0.95,
+              color: workColor, weight: 4.5 * lineScale(zoom), opacity: 0.95,
             });
             done.bindTooltip(tip, { sticky: true, className: 'text-xs' });
             group.addLayer(done);
@@ -2086,7 +2091,7 @@ export default function LeafletMap(props: Props) {
 
         // На проектной линии стрелки тоже нужны, но только вблизи: до
         // первой смены по ним и решают, с того ли конца пойдёт счёт.
-        if ((r.dashed ? zoom >= 13 : zoom >= 10) && onScreen && arrowBudget > 0) {
+        if ((planOnly ? zoom >= 13 : zoom >= 10) && onScreen && arrowBudget > 0) {
           const mpp = metersPerPixel(r.coords[0][0], zoom);
           const arrows = arrowsAlong(r.coords, { everyM: mpp * 130, max: Math.min(12, arrowBudget) });
           arrowBudget -= arrows.length;
