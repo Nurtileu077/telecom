@@ -3,8 +3,11 @@ import { useEffect, useRef, useState } from 'react';
 import { CloudDownload, X, Trash2 } from 'lucide-react';
 import {
   tilesForBounds, prefetchTiles, estimateBytes, fmtSize,
-  tileCount, clearTiles, TILE_LIMIT, type Bounds,
+  tileCount, clearTiles, purgeBlankTiles, TILE_LIMIT, type Bounds, type TileCoord,
 } from '@/lib/tileCache';
+import {
+  isEsriImagery, fetchAvailability, planImagery, describeImageryPlan, countTiles, purgedNote,
+} from '@/lib/imagery';
 
 /**
  * Карта на устройство.
@@ -15,6 +18,11 @@ import {
  *
  * Сколько это весит, говорим до скачивания, а не после: «скачиваю карту»
  * без числа — способ незаметно съесть гигабайт чужого трафика.
+ *
+ * Спутник над сёлами кончается на 17-м масштабе, а глубже сервер отдаёт
+ * серые заглушки. Раньше их качали наравне со снимком, и карта на телефоне
+ * на 94 % из них и состояла. Теперь до скачивания спрашиваем сервер, где
+ * снимок есть, качаем только его и говорим, сколько заглушек пропустили.
  */
 
 interface Props {
@@ -28,29 +36,60 @@ interface Props {
 /** На сколько масштабов вглубь: четыре шага — это «видно дома». */
 const DEPTH = 3;
 
+interface Plan {
+  /** Что качать — без мест, где снимка нет. */
+  tiles: TileCoord[];
+  zooms: number[];
+  /** Ещё спрашиваем сервер, где снимок есть. */
+  checking: boolean;
+  /** Сколько серых заглушек пропустим и почему — словами. */
+  skipped: string;
+}
+
 export default function OfflineTilesButton({ getBounds, template, className }: Props) {
   const [open, setOpen] = useState(false);
-  const [plan, setPlan] = useState<{ count: number; zooms: number[] } | null>(null);
-  const [progress, setProgress] = useState<{ done: number; total: number; failed: number } | null>(null);
+  const [plan, setPlan] = useState<Plan | null>(null);
+  const [progress, setProgress] = useState<
+    { done: number; total: number; failed: number; empty: number } | null
+  >(null);
   const [have, setHave] = useState<number | null>(null);
+  /** Заглушки, скачанные раньше и убранные при открытии. */
+  const [purged, setPurged] = useState(0);
   const abortRef = useRef<{ aborted: boolean }>({ aborted: false });
+  // Рамку берём в момент открытия. Через ref, а не зависимостью: карта
+  // передаёт новую функцию на каждой перерисовке, и вопрос серверу «где
+  // есть снимок» уходил бы снова и снова.
+  const boundsRef = useRef(getBounds);
+  boundsRef.current = getBounds;
 
   useEffect(() => {
-    if (!open) return;
-    void tileCount().then(setHave);
-    const b = getBounds();
-    if (!b) { setPlan(null); return; }
+    if (!open) return undefined;
+    let alive = true;
+    void purgeBlankTiles()
+      .then((n) => { if (alive) setPurged(n); })
+      .finally(() => { void tileCount().then((c) => { if (alive) setHave(c); }); });
+    const b = boundsRef.current();
+    if (!b) { setPlan(null); return () => { alive = false; }; }
     const zooms = Array.from({ length: DEPTH + 1 }, (_, i) => Math.round(b.zoom) + i)
       .filter((z) => z >= 1 && z <= 19);
-    setPlan({ count: tilesForBounds(b, zooms).length, zooms });
-  }, [open, getBounds]);
+    const tiles = tilesForBounds(b, zooms);
+    const imagery = isEsriImagery(template);
+    setPlan({ tiles, zooms, checking: imagery, skipped: '' });
+    if (imagery) {
+      void fetchAvailability(tiles).then((avail) => {
+        if (!alive) return;
+        const ip = planImagery(tiles, avail);
+        setPlan({ tiles: ip.fetch, zooms, checking: false, skipped: describeImageryPlan(ip) });
+      });
+    }
+    return () => { alive = false; };
+  }, [open, template]);
 
   const start = async () => {
-    const b = getBounds();
-    if (!b || !plan) return;
+    if (!plan || plan.checking) return;
     abortRef.current = { aborted: false };
-    const tiles = tilesForBounds(b, plan.zooms);
-    setProgress({ done: 0, total: tiles.length, failed: 0 });
+    const { tiles } = plan;
+    setProgress({ done: 0, total: tiles.length, failed: 0, empty: 0 });
     const res = await prefetchTiles(tiles, template, setProgress, abortRef.current);
     setProgress(res);
     void tileCount().then(setHave);
@@ -78,24 +117,40 @@ export default function OfflineTilesButton({ getBounds, template, className }: P
 
             <div className="p-4 flex flex-col gap-3">
               <p className="text-[12px] text-[var(--text-muted)] leading-snug">
-                Скачается то, что сейчас на экране, и четыре масштаба вглубь.
-                Дальше карта в этом месте работает без связи.
+                Скачается то, что сейчас на экране: этот масштаб и три крупнее.
+                Дальше карта в этом месте работает без связи, а ближе
+                скачанного покажет его же, растянутым.
               </p>
 
               {plan ? (
                 <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] px-3 py-2">
-                  <div className="text-[12.5px] text-[var(--text)]">
-                    {plan.count.toLocaleString('ru')} тайлов · примерно {fmtSize(estimateBytes(plan.count))}
-                  </div>
+                  {plan.checking ? (
+                    <div className="text-[12px] text-[var(--text-muted)]">
+                      Проверяю у сервера, где есть снимок…
+                    </div>
+                  ) : (
+                    <div className="text-[12.5px] text-[var(--text)]">
+                      {countTiles(plan.tiles.length)} · примерно {fmtSize(estimateBytes(plan.tiles.length))}
+                    </div>
+                  )}
                   <div className="text-[10.5px] text-[var(--text-muted)]">
                     масштабы {plan.zooms[0]}—{plan.zooms[plan.zooms.length - 1]}
                   </div>
+                  {plan.skipped && (
+                    <div className="text-[10.5px] text-[var(--text-muted)] mt-1 leading-snug">
+                      {plan.skipped}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <p className="text-[12px] text-[var(--text-muted)]">Карта ещё не готова.</p>
               )}
 
-              {plan && plan.count > 4000 && !progress && (
+              {purged > 0 && (
+                <p className="text-[11px] text-[var(--text-muted)]">{purgedNote(purged)}</p>
+              )}
+
+              {plan && plan.tiles.length > 4000 && !progress && (
                 <p className="text-[11.5px] text-[var(--warn)]">
                   Это много. Отдалите карту к нужному участку — скачается
                   меньше и быстрее.
@@ -111,6 +166,7 @@ export default function OfflineTilesButton({ getBounds, template, className }: P
                   <div className="text-[11px] text-[var(--text-muted)]">
                     {progress.done} из {progress.total}
                     {progress.failed > 0 && ` · не скачалось ${progress.failed}`}
+                    {progress.empty > 0 && ` · без снимка ${progress.empty} — не храним`}
                     {!busy && progress.done >= progress.total && ' · готово'}
                   </div>
                 </div>
@@ -148,7 +204,8 @@ export default function OfflineTilesButton({ getBounds, template, className }: P
                     Закрыть
                   </button>
                   <button type="button" className="btn btn-primary flex-1"
-                          disabled={!plan || plan.count === 0} onClick={() => void start()}>
+                          disabled={!plan || plan.checking || plan.tiles.length === 0}
+                          onClick={() => void start()}>
                     Скачать
                   </button>
                 </>

@@ -100,7 +100,12 @@ const DRILL_COLOR: Record<'ГНБ' | 'ГНП', string> = {
 };
 import GpsLocateButton from '@/components/Map/GpsLocateButton';
 import OfflineTilesButton from '@/components/Map/OfflineTilesButton';
-import { getTile, putTile } from '@/lib/tileCache';
+import {
+  getTile, deleteTile, ancestorPiece, MAX_FALLBACK_UP,
+} from '@/lib/tileCache';
+import {
+  ESRI_TILE_URL, isEsriImagery, isBlankTile, upscaledNote, LazyAvailability,
+} from '@/lib/imagery';
 import PresenceCursors from '@/components/Map/PresenceCursors';
 import MapLegend from '@/components/Map/MapLegend';
 import MapSearch from '@/components/Map/MapSearch';
@@ -114,46 +119,149 @@ import MapCapture from '@/components/Map/MapCapture';
  * Этот сначала ищет тайл в локальном хранилище, и только если не нашёл —
  * качает и заодно кладёт себе. Ничего не скачал заранее — работает как
  * обычный: хуже не становится.
+ *
+ * Тайла нет нигде — спутник над селом кончается на 17-м масштабе, а в поле
+ * нет связи — на его место встаёт кусок ближайшего более мелкого тайла,
+ * растянутый: тот же снимок того же места, только мутнее. По нему можно
+ * поставить точку, а по серой заглушке — нет. Поэтому тайл — рамка с
+ * картинкой внутри: растянутую картинку рамка обрезает по своему краю.
  */
 function cachedTileLayer(L: any, url: string, opts: any): any {
+  const imagery = isEsriImagery(url);
+  // Где у спутника снимок есть — спрашиваем сервер, а не верим ошибке:
+  // 404 и обрыв связи браузер показывает одинаково.
+  const avail = imagery ? new LazyAvailability() : null;
+  const keyOf = (t: { z: number; x: number; y: number }) => `${t.z}/${t.x}/${t.y}`;
+  const offline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
+
   const Cached = L.TileLayer.extend({
-    createTile(coords: { x: number; y: number; z: number }, done: (e: unknown, t: HTMLImageElement) => void) {
+    onAdd(map: any) {
+      // Какие тайлы на экране показаны крупнее, чем есть снимок, и с
+      // какого масштаба: по этому карта говорит, что снимок растянут.
+      this._upscaled = new Map<string, number>();
+      this.on('tileunload tileabort', this._forgetTile, this);
+      return L.TileLayer.prototype.onAdd.call(this, map);
+    },
+    onRemove(map: any) {
+      this.off('tileunload tileabort', this._forgetTile, this);
+      return L.TileLayer.prototype.onRemove.call(this, map);
+    },
+    _forgetTile(e: any) {
+      this._upscaled?.delete(keyOf(e.coords));
+    },
+
+    /** Самый подробный масштаб снимка среди растянутых тайлов на экране; null — растянутых нет. */
+    upscaledNative(): number | null {
+      const zoom = this._tileZoom ?? Math.round(this._map?.getZoom?.() ?? 0);
+      let best: number | null = null;
+      for (const [k, native] of this._upscaled ?? new Map<string, number>()) {
+        if (Number(k.split('/')[0]) !== zoom) continue;
+        best = best === null ? native : Math.max(best, native);
+      }
+      return best;
+    },
+
+    /** Адрес любого тайла, а не только текущего масштаба: getTileUrl берёт масштаб карты. */
+    _urlFor(t: { z: number; x: number; y: number }) {
+      const subs = this.options.subdomains;
+      const list: string[] = typeof subs === 'string' ? subs.split('') : (subs ?? []);
+      const sub = list.length ? list[Math.abs(t.x + t.y) % list.length] : '';
+      return L.Util.template(this._url, L.Util.extend(
+        { r: L.Browser.retina ? '@2x' : '', s: sub }, this.options, { x: t.x, y: t.y, z: t.z },
+      ));
+    },
+
+    createTile(coords: { x: number; y: number; z: number }, done: (e: unknown, t: HTMLElement) => void) {
+      const self = this as any;
+      const tile = document.createElement('div');
+      tile.style.overflow = 'hidden';
+      // То же, что Leaflet делает для обычных тайлов: без этого между
+      // тайлами при приближении проступают тонкие швы.
+      tile.style.mixBlendMode = 'plus-lighter';
       const img = document.createElement('img');
       img.setAttribute('role', 'presentation');
       img.alt = '';
-      const src = (this as any).getTileUrl(coords);
-      // Адрес тайла помним и тогда, когда картинка взята из хранилища:
-      // снимок карты перерисовывает её заново, а ссылка на blob к тому
-      // времени уже освобождена.
-      img.dataset.tileSrc = src;
+      img.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;max-width:none;max-height:none';
+      tile.appendChild(img);
 
       let objectUrl: string | null = null;
-      const finish = (err: unknown) => {
-        if (objectUrl) {
-          // Ссылку освобождаем после отрисовки: иначе память течёт на
-          // каждом движении карты, а у телефона её и так мало.
-          const u = objectUrl;
-          setTimeout(() => URL.revokeObjectURL(u), 1000);
-        }
-        done(err, img);
+      let settled = false;
+      const release = () => {
+        if (!objectUrl) return;
+        // Ссылку освобождаем после отрисовки: иначе память течёт на
+        // каждом движении карты, а у телефона её и так мало.
+        const u = objectUrl;
+        objectUrl = null;
+        setTimeout(() => URL.revokeObjectURL(u), 1000);
       };
-      img.onload = () => finish(null);
-      img.onerror = (e) => finish(e);
-
-      void getTile(src).then((blob) => {
-        if (blob) {
-          objectUrl = URL.createObjectURL(blob);
-          img.src = objectUrl;
-          return;
+      const finish = (err: unknown, nativeZ?: number) => {
+        if (settled) return;
+        settled = true;
+        release();
+        // Тайл, который карта уже убрала (листали быстро), не считаем:
+        // иначе подпись «снимок растянут» осталась бы от чужого масштаба.
+        if (!err && nativeZ !== undefined && nativeZ < coords.z && tile.isConnected) {
+          self._upscaled?.set(keyOf(coords), nativeZ);
+        } else {
+          self._upscaled?.delete(keyOf(coords));
         }
-        // Нет в кэше — обычная загрузка. Складывать в хранилище каждый
-        // просмотренный тайл не станем: это решение человека, а не
-        // побочный эффект прокрутки карты.
-        img.crossOrigin = '';
-        img.src = src;
-      });
+        done(err, tile);
+      };
 
-      return img;
+      const attempt = (up: number) => {
+        if (up > MAX_FALLBACK_UP || up > coords.z) { finish(new Error('тайла нет')); return; }
+        const piece = up === 0 ? null : ancestorPiece(coords, up);
+        const t = piece ? piece.tile : coords;
+        // Сервер сказал, что снимка тут нет, — не спрашиваем: сразу мельче.
+        if (avail?.has(t) === false) { attempt(up + 1); return; }
+        const src = self._urlFor(t);
+        // Адрес тайла помним и тогда, когда картинка взята из хранилища:
+        // снимок карты перерисовывает её заново, а ссылка на blob к тому
+        // времени уже освобождена.
+        img.dataset.tileSrc = src;
+        img.onload = () => {
+          if (piece) {
+            img.style.width = `${piece.scale * 100}%`;
+            img.style.height = `${piece.scale * 100}%`;
+            img.style.left = `${-piece.col * 100}%`;
+            img.style.top = `${-piece.row * 100}%`;
+          }
+          finish(null, t.z);
+        };
+        img.onerror = () => {
+          release();
+          // Не пришёл — сразу показываем мельче, не дожидаясь ответа. А
+          // есть ли тут снимок вообще, спросим у сервера про весь блок:
+          // тогда соседние тайлы без снимка не будем и запрашивать. Без
+          // связи не спрашиваем.
+          if (avail && !offline()) void avail.ensure(t);
+          attempt(up + 1);
+        };
+        void getTile(src).then(async (blob) => {
+          if (settled) return;
+          if (blob && imagery && await isBlankTile(blob)) {
+            // Заглушка, скачанная раньше, чем их научились узнавать.
+            void deleteTile(src);
+            attempt(up + 1);
+            return;
+          }
+          if (blob) {
+            release();
+            objectUrl = URL.createObjectURL(blob);
+            img.src = objectUrl;
+            return;
+          }
+          // Нет в кэше — обычная загрузка. Складывать в хранилище каждый
+          // просмотренный тайл не станем: это решение человека, а не
+          // побочный эффект прокрутки карты.
+          img.crossOrigin = '';
+          img.src = src;
+        });
+      };
+      // Не сразу, а следом: карта должна успеть записать тайл к себе.
+      // Ответ раньше этого она молча теряет, и тайл остаётся невидимым.
+      void Promise.resolve().then(() => attempt(0));
+      return tile;
     },
   });
   return new Cached(url, opts);
@@ -390,12 +498,14 @@ const BASEMAPS: Record<BaseMap, { url: string; attribution: string; subdomains?:
     url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
     attribution: '©OpenStreetMap ©CartoDB', subdomains: 'abcd', maxZoom: 20,
   },
+  // Спутник просим так, чтобы вместо серой заглушки сервер отвечал 404:
+  // тогда на место недостающего тайла встаёт более мелкий, растянутый.
   satellite: {
-    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    url: ESRI_TILE_URL,
     attribution: '©Esri World Imagery', maxZoom: 19,
   },
   hybrid: {
-    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    url: ESRI_TILE_URL,
     attribution: '©Esri World Imagery', maxZoom: 19,
   },
   // Рельеф нужен там, где трасса идёт по сопкам и оврагам: по спутнику
@@ -670,6 +780,25 @@ export default function LeafletMap(props: Props) {
   };
   const [mapReady, setMapReady] = useState(false);
 
+  /**
+   * Снимок растянут — так и пишем в углу, где у карты подпись источника.
+   * Подпись меняется, когда подложка догрузила экран: приблизились туда,
+   * где снимка нет, — появилась; отдалились — ушла.
+   */
+  const imageryNoteRef = useRef<string | null>(null);
+  const setImageryNote = (nativeZ: number | null) => {
+    const ctl = mapRef.current?.attributionControl;
+    if (!ctl) return;
+    const text = nativeZ === null ? null : upscaledNote(nativeZ);
+    if (text === imageryNoteRef.current) return;
+    if (imageryNoteRef.current) ctl.removeAttribution(imageryNoteRef.current);
+    if (text) ctl.addAttribution(text);
+    imageryNoteRef.current = text;
+  };
+  const watchImagery = (tile: any) => {
+    tile.on('load', () => setImageryNote(tile.upscaledNative?.() ?? null));
+  };
+
   // Stable refs for callbacks (so we don't re-init map)
   const propsRef = useRef(props);
   propsRef.current = props;
@@ -702,6 +831,7 @@ export default function LeafletMap(props: Props) {
         maxZoom: BASEMAPS.dark.maxZoom ?? 20,
       }).addTo(map);
       tileLayerRef.current = tile;
+      watchImagery(tile);
 
       dataGroupRef.current = L.layerGroup().addTo(map);
       annoGroupRef.current = L.layerGroup().addTo(map);
@@ -983,11 +1113,14 @@ export default function LeafletMap(props: Props) {
     import('leaflet').then((L) => {
       if (tileLayerRef.current) tileLayerRef.current.remove();
       if (hybridLabelsRef.current) { hybridLabelsRef.current.remove(); hybridLabelsRef.current = null; }
+      // Подпись была про прежнюю подложку: у новой своя.
+      setImageryNote(null);
       const bm = BASEMAPS[baseMap];
       const tile = cachedTileLayer(L, bm.url, {
         attribution: bm.attribution, subdomains: (bm.subdomains ?? '') as any, maxZoom: bm.maxZoom ?? 20,
       }).addTo(mapRef.current);
       tileLayerRef.current = tile;
+      watchImagery(tile);
       // For hybrid: add CartoDB labels overlay on top of Esri satellite
       if (baseMap === 'hybrid') {
         hybridLabelsRef.current = L.tileLayer(
