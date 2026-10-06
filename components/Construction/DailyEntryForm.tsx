@@ -1,4 +1,5 @@
 'use client';
+import { localDay } from '@/lib/localDay';
 import { useState, useMemo, useEffect } from 'react';
 import { X, Check, AlertTriangle, MapPin } from 'lucide-react';
 import {
@@ -92,7 +93,7 @@ interface Props {
   onRemovePhoto?: (id: string) => void;
 }
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
+const todayIso = () => localDay();
 const numToStr = (v?: number): string => (v ? String(v) : '');
 
 export default function DailyEntryForm({

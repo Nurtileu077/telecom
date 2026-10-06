@@ -1,3 +1,4 @@
+import { localDay } from '@/lib/localDay';
 /**
  * Выгрузить то, что на экране.
  *
@@ -68,7 +69,7 @@ export function tableToTabs<T>(
 }
 
 /** Имя файла: что выгрузили и на какое число. */
-export function exportFileName(name: string, date = new Date().toISOString().slice(0, 10)): string {
+export function exportFileName(name: string, date = localDay()): string {
   const safe = name.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Таблица';
   return `${safe} ${date}.csv`;
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  groundTotals, metersBy, metersByDay, lastWorkDate, matchesFilter,
+  groundTotals, metersBy, metersByDay, lastWorkDate, periodAnchor, matchesFilter,
   mergeJournal, drillMapPoints, drillMapLines, shiftDays, fmtKm, fmtMeters,
   emptyJournal, addGroundEntry, removeEntry, type JournalState,
   restoreFromTrash, purgeTrash, bulkPatchEntries, setDisputed,
@@ -99,6 +99,18 @@ describe('разрезы', () => {
   it('находит последний рабочий день', () => {
     expect(lastWorkDate([g({ date: '2026-06-01' }), g({ date: '2026-09-16' })])).toBe('2026-09-16');
     expect(lastWorkDate([])).toBe('');
+  });
+
+  it('период считается и от замера сварки, сделанного после последней смены', () => {
+    // Проложили 16-го, сварили и померили 25-го: «последняя неделя» должна
+    // захватить замер, иначе протокол не попадёт ни в один пакет.
+    const j = {
+      ground: [g({ date: '2026-09-16' })],
+      deviations: [],
+      splices: [{ id: 's', objectId: 'm', date: '2026-09-25', fibers: [], createdAt: '', updatedAt: '' }],
+    };
+    expect(periodAnchor(j)).toBe('2026-09-25');
+    expect(periodAnchor({ ground: [], deviations: [], splices: [] })).toBe('');
   });
 });
 

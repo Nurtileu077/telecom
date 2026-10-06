@@ -1,4 +1,5 @@
 'use client';
+import { localDay } from '@/lib/localDay';
 import { useMemo, useState } from 'react';
 import {
   Siren, MapPin, Plus, Trash2, Check, AlertTriangle, History,
@@ -33,7 +34,7 @@ interface Props {
   onRequestPick?: (label: string) => Promise<{ lat: number; lon: number } | null>;
 }
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
+const todayIso = () => localDay();
 
 export default function IncidentsView({
   journal, author, onSave, onRemove, onRequestPick,

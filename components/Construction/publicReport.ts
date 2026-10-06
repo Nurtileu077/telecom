@@ -1,3 +1,4 @@
+import { localDay } from '@/lib/localDay';
 import { JournalState, fmtKm } from './journalStore';
 import { regionProgress, pace } from './management';
 import { openDeviations } from './journalStore';
@@ -39,7 +40,7 @@ export function publicReportHtml(input: PublicReportInput): string {
   };
   const regions = regionProgress(ctx).filter((r) => !input.oblast || r.name === input.oblast);
   const p = pace(ctx);
-  const asOf = input.asOf ?? new Date().toISOString().slice(0, 10);
+  const asOf = input.asOf ?? localDay();
 
   const planM = regions.reduce((s, r) => s + r.planM, 0);
   const factM = regions.reduce((s, r) => s + r.factM, 0);
@@ -140,6 +141,6 @@ export function publicReportHtml(input: PublicReportInput): string {
 
 export function publicReportFileName(oblast?: string, asOf?: string): string {
   const safe = (oblast ?? '').replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 40);
-  const d = asOf ?? new Date().toISOString().slice(0, 10);
+  const d = asOf ?? localDay();
   return `Ход строительства${safe ? ` ${safe}` : ''} ${d}.html`;
 }

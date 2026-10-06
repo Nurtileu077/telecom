@@ -1,4 +1,5 @@
 'use client';
+import { localDay } from '@/lib/localDay';
 import { useMemo, useState } from 'react';
 import { Plus, Trash2, Send, Copy, Target } from 'lucide-react';
 import type { JournalState } from './journalStore';
@@ -41,7 +42,7 @@ function weekLabel(week: string): string {
 }
 
 export default function PlanView({ journal, author, onAddPlan, onRemovePlan, onFlash }: Props) {
-  const thisWeek = weekStart(new Date().toISOString().slice(0, 10));
+  const thisWeek = weekStart(localDay());
   const [week, setWeek] = useState(thisWeek);
 
   const rows = useMemo(
@@ -107,7 +108,7 @@ export default function PlanView({ journal, author, onAddPlan, onRemovePlan, onF
     return orderText({
       plan,
       crew: journal.crews.find((c) => c.name === plan.crew),
-      date: new Date().toISOString().slice(0, 10),
+      date: localDay(),
       issuedBy: author,
     });
   }
@@ -133,7 +134,7 @@ export default function PlanView({ journal, author, onAddPlan, onRemovePlan, onF
     const text = orderText({
       plan,
       crew: journal.crews.find((c) => c.name === plan.crew),
-      date: new Date().toISOString().slice(0, 10),
+      date: localDay(),
       issuedBy: author,
     });
     try {
@@ -259,7 +260,7 @@ export default function PlanView({ journal, author, onAddPlan, onRemovePlan, onF
                 .map((p) => orderText({
                   plan: p,
                   crew: journal.crews.find((c) => c.name === p.crew),
-                  date: new Date().toISOString().slice(0, 10),
+                  date: localDay(),
                   issuedBy: author,
                 }))
                 .join('\n\n———\n\n');

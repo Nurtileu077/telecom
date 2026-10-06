@@ -1,4 +1,5 @@
 'use client';
+import { localDay } from '@/lib/localDay';
 import { useState, useMemo } from 'react';
 import { Plus, Trash2, AlertTriangle, PackageCheck, TrendingDown, Disc } from 'lucide-react';
 import {
@@ -32,7 +33,7 @@ interface Props {
   author: string;
 }
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
+const todayIso = () => localDay();
 
 export default function MaterialsView({
   journal, onAddDelivery, onRemoveDelivery, onSetPrice, onSaveDrum, onRemoveDrum, author,

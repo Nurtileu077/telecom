@@ -1,4 +1,5 @@
 'use client';
+import { localDay } from '@/lib/localDay';
 import { useEffect, useMemo, useState } from 'react';
 import { Plus, Trash2, Copy, AlertTriangle, Phone, Bell } from 'lucide-react';
 import {
@@ -55,7 +56,7 @@ export default function SiteRecordsView({ records, author, onUpsert, onRemove, o
    */
   useEffect(() => {
     if (notifyPerm !== 'granted' || soon.length === 0) return;
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDay();
     notifyOnce(soon.map((r) => ({
       id: r.record.id,
       title: r.days < 0 ? 'Просрочено' : 'Скоро истекает',

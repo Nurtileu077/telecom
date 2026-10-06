@@ -1,3 +1,4 @@
+import { localDay } from '@/lib/localDay';
 import {
   DailyWorkEntry, SnpProgress, SNP_STAGES, SNP_STAGE_SPECS,
 } from '@/types/construction';
@@ -357,7 +358,7 @@ export function readinessDocHtml(rows: SnpReadiness[], title = 'СПРАВКА �
 
   const ready = rows.filter((r) => r.done >= 1).length;
   return `<h1>${esc(title)}</h1>`
-    + `<p class="center">на ${esc(fmtDate(new Date().toISOString().slice(0, 10)))}</p>`
+    + `<p class="center">на ${esc(fmtDate(localDay()))}</p>`
     + `<p>Всего сёл: <span class="b">${rows.length}</span>, `
     + `полностью закрыто: <span class="b">${ready}</span>.</p>`
     + '<table class="act"><tr>'

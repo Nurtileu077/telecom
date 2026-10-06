@@ -1,4 +1,5 @@
 'use client';
+import { localDay } from '@/lib/localDay';
 import { useMemo, useState } from 'react';
 import { Plus, Pencil, Trash2, MapPin, Crosshair, Loader2, X, Check } from 'lucide-react';
 import {
@@ -29,7 +30,7 @@ interface Props {
   onRequestPick?: (label: string) => Promise<{ lat: number; lon: number } | null>;
 }
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
+const todayIso = () => localDay();
 
 export default function ObjectsView({
   journal, author, editingId, onSave, onDelete, onDoneEditing, onRequestPick,

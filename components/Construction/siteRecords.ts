@@ -1,3 +1,4 @@
+import { localDay } from '@/lib/localDay';
 /**
  * Что вокруг стройки: разрешения, допуски, контакты, претензии, задачи.
  *
@@ -104,14 +105,14 @@ export interface SiteRecord {
  * Просроченным запись становится сама: помечать это руками означает не
  * пометить никогда. Закрытое не протухает — у него уже есть исход.
  */
-export function effectiveStatus(r: SiteRecord, today = new Date().toISOString().slice(0, 10)): RecordStatus {
+export function effectiveStatus(r: SiteRecord, today = localDay()): RecordStatus {
   if (r.status === 'закрыто') return 'закрыто';
   if (!r.until) return r.status;
   return r.until < today ? 'просрочено' : r.status;
 }
 
 /** Сколько дней осталось. Отрицательное — уже просрочено. */
-export function daysLeft(r: SiteRecord, today = new Date().toISOString().slice(0, 10)): number | null {
+export function daysLeft(r: SiteRecord, today = localDay()): number | null {
   if (!r.until) return null;
   const a = new Date(`${today}T00:00:00Z`).getTime();
   const b = new Date(`${r.until}T00:00:00Z`).getTime();
@@ -135,7 +136,7 @@ export interface Reminder {
 export function reminders(
   list: SiteRecord[],
   aheadDays = 7,
-  today = new Date().toISOString().slice(0, 10),
+  today = localDay(),
 ): Reminder[] {
   const out: Reminder[] = [];
   for (const r of list) {

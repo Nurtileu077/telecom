@@ -1,4 +1,5 @@
 'use client';
+import { localDay } from '@/lib/localDay';
 import { useMemo, useState } from 'react';
 import { X, Crosshair, MapPin, Loader2, Check } from 'lucide-react';
 import {
@@ -29,7 +30,7 @@ interface Props {
   onRequestPick?: (label: string) => Promise<{ lat: number; lon: number } | null>;
 }
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
+const todayIso = () => localDay();
 
 function num(v: string): number {
   const n = parseFloat(v.replace(',', '.'));

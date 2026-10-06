@@ -1,4 +1,5 @@
 'use client';
+import { localDay } from '@/lib/localDay';
 import { useState, useMemo, useEffect } from 'react';
 import { X, Check, AlertTriangle, FileWarning, Crosshair, MapPin, Loader2 } from 'lucide-react';
 import { getCurrentPosition, positionErrorText } from './currentPosition';
@@ -26,7 +27,7 @@ interface Props {
   onClose: () => void;
 }
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
+const todayIso = () => localDay();
 const numToStr = (v?: number) => (v === undefined || v === null ? '' : String(v));
 
 export default function DeviationForm({ journal, initial, onSave, onRequestPick, onClose }: Props) {

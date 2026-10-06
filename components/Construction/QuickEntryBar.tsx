@@ -1,4 +1,5 @@
 'use client';
+import { localDay } from '@/lib/localDay';
 import { useMemo, useRef, useState } from 'react';
 import { Mic, MicOff, CornerDownLeft, Check, AlertTriangle } from 'lucide-react';
 import type { DailyWorkEntry } from '@/types/construction';
@@ -88,7 +89,7 @@ export default function QuickEntryBar({ journal, author, onSubmit, onOpenForm }:
     return {
       kind: 'ground',
       id: `ge-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
-      date: parsed.date ?? new Date().toISOString().slice(0, 10),
+      date: parsed.date ?? localDay(),
       smu: parsed.smu ?? '',
       contractor: parsed.contractor,
       column: parsed.column,

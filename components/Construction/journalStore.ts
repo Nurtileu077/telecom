@@ -365,6 +365,25 @@ export function lastWorkDate(list: DailyWorkEntry[]): string {
   return last;
 }
 
+/**
+ * От какого дня считать «последнюю неделю» и прочие периоды.
+ *
+ * Не от сегодня: в журнал пишут задним числом, и «вчера» по календарю
+ * чаще всего пусто. От последнего дня, по которому вообще что-то
+ * записано, — и не только выработка. Отклонения и замеры сварки идут
+ * следом за прокладкой: проложили, задули, сварили и померили, когда
+ * бригада уже ушла. Считай период только по сменам — замер, сделанный
+ * после последней смены, не попал бы ни в один пакет документов.
+ */
+export function periodAnchor(
+  j: Pick<JournalState, 'ground' | 'deviations' | 'splices'>,
+): string {
+  let last = lastWorkDate(j.ground);
+  for (const d of j.deviations) if (d.date && d.date > last) last = d.date;
+  for (const s of j.splices ?? []) if (s.date && s.date > last) last = s.date;
+  return last;
+}
+
 export function distinct<T extends Filterable>(list: T[], key: (e: T) => string): string[] {
   const s = new Set<string>();
   for (const e of list) { const v = key(e); if (v) s.add(v); }

@@ -1,3 +1,4 @@
+import { localDay } from '@/lib/localDay';
 import type { SiteObject, PlanRoute } from '@/types/construction';
 import { SITE_OBJECT_SPECS } from '@/types/construction';
 import { esc, ACT_DOC_CSS, fmtDate } from './actDocument';
@@ -570,5 +571,5 @@ export function withSchemeAttached(
 
 export function schemeFileName(route: string, date?: string): string {
   const safe = route.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 60) || 'трасса';
-  return `Исполнительная схема ${safe} ${date || new Date().toISOString().slice(0, 10)}.doc`;
+  return `Исполнительная схема ${safe} ${date || localDay()}.doc`;
 }

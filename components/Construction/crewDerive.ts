@@ -1,3 +1,4 @@
+import { localDay } from '@/lib/localDay';
 import {
   Crew, CrewKind, DailyWorkEntry, AerialWorkEntry, DrillLogEntry,
 } from '@/types/construction';
@@ -122,7 +123,7 @@ export function crewsFromJournal(ctx: CrewDeriveContext, today?: string): Derive
     ctx.crews.map((c) => `${c.kind}|${norm(c.name) || norm(c.contractor)}`),
   );
 
-  const now = today ?? new Date().toISOString().slice(0, 10);
+  const now = today ?? localDay();
   const stamp = new Date().toISOString();
 
   return [...seen.values()]

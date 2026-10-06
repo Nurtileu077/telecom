@@ -1,3 +1,4 @@
+import { localDay } from '@/lib/localDay';
 import { DrillLogEntry, CrossingKind, DrillPoint } from '@/types/construction';
 
 /**
@@ -62,7 +63,7 @@ export function plannedDrills(
   drills: DrillLogEntry[],
   opts: DrillPlanFilter = {},
 ): DrillLogEntry[] {
-  const today = opts.today ?? new Date().toISOString().slice(0, 10);
+  const today = opts.today ?? localDay();
   const horizon = opts.horizon ?? 'all';
   const weekEnd = addDays(today, 7);
 
@@ -92,7 +93,7 @@ export interface DrillSummary {
 
 export function drillSummary(
   drills: DrillLogEntry[],
-  today = new Date().toISOString().slice(0, 10),
+  today = localDay(),
 ): DrillSummary {
   const byCrossing = new Map<CrossingKind, { count: number; meters: number }>();
   let done = 0;

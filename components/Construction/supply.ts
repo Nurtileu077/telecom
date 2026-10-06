@@ -1,3 +1,4 @@
+import { localDay } from '@/lib/localDay';
 import {
   DailyWorkEntry, MaterialKind, MATERIAL_KINDS, MATERIAL_UNIT,
 } from '@/types/construction';
@@ -147,7 +148,7 @@ export interface MaterialRequest {
 /** Заявки, о которых пора напомнить: срок подошёл, а материал не отгружен. */
 export function overdueRequests(
   list: MaterialRequest[],
-  today = new Date().toISOString().slice(0, 10),
+  today = localDay(),
 ): MaterialRequest[] {
   return list
     .filter((r) => r.status === 'открыта' && !!r.needBy && r.needBy <= today)

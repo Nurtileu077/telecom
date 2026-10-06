@@ -1,3 +1,4 @@
+import { localDay } from '@/lib/localDay';
 import {
   DailyWorkEntry, AerialWorkEntry, DrillLogEntry, SettlementOrder,
   LayMethod, MaterialKind, AerialCableType, AerialMaterialKind,
@@ -207,5 +208,5 @@ function sortByDate<T extends { date: string }>(list: T[]): T[] {
 
 /** Имя файла выгрузки: с датой, чтобы версии не путались. */
 export function journalFileName(): string {
-  return `Журнал-СНП-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  return `Журнал-СНП-${localDay()}.xlsx`;
 }

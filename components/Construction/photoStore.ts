@@ -171,14 +171,20 @@ export interface PhotoUploadResult {
   photos: FieldPhoto[];
   sent: number;
   failed: number;
+  /** Чьи локальные копии можно стереть — после того, как журнал записан. */
+  sentIds: string[];
 }
 
 /**
  * Отправляем то, что лежало локально.
  *
  * По одному файлу за раз и без «всё или ничего»: в поле связь рвётся на
- * середине, и половина отправленных фото — лучше, чем ноль. Локальную
- * копию удаляем только после того, как ссылка получена.
+ * середине, и половина отправленных фото — лучше, чем ноль.
+ *
+ * Локальную копию здесь не удаляем: её id уходит в `sentIds`, и стереть
+ * её можно только после того, как журнал со ссылкой записан. Если память
+ * браузера кончилась и журнал не записался, снимок, стёртый раньше
+ * времени, пропал бы и с телефона, и из журнала.
  */
 export async function uploadPending(
   photos: FieldPhoto[],
@@ -186,6 +192,7 @@ export async function uploadPending(
 ): Promise<PhotoUploadResult> {
   let sent = 0;
   let failed = 0;
+  const sentIds: string[] = [];
   const out: FieldPhoto[] = [];
 
   for (const p of photos) {
@@ -200,12 +207,12 @@ export async function uploadPending(
     try {
       const { url, storagePath } = await upload(p.id, blob);
       out.push({ ...p, url, storagePath, pending: false, sync: 'synced', updatedAt: new Date().toISOString() });
-      await deletePhotoBlob(p.id);
+      sentIds.push(p.id);
       sent += 1;
     } catch {
       out.push(p);
       failed += 1;
     }
   }
-  return { photos: out, sent, failed };
+  return { photos: out, sent, failed, sentIds };
 }

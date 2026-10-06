@@ -1,4 +1,5 @@
 'use client';
+import { localDay } from '@/lib/localDay';
 import { useMemo, useState } from 'react';
 import {
   TrendingUp, AlertTriangle, CalendarClock, Users, MapPin, ChevronRight, Gauge, Ban,
@@ -156,7 +157,7 @@ export default function ManagementView({ journal, onOpenView }: Props) {
   // но отвечает на вопрос, который иначе решают на глаз: кто идёт с
   // запасом, а кому нужна помощь.
   const [ratingBy, setRatingBy] = useState<RatingBy>('contractor');
-  const today = p.lastDate || new Date().toISOString().slice(0, 10);
+  const today = p.lastDate || localDay();
   const week = useMemo(() => weekBounds(today), [today]);
   const month = useMemo(() => monthBounds(today), [today]);
   const board = useMemo(

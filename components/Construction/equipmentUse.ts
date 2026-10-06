@@ -1,3 +1,4 @@
+import { localDay } from '@/lib/localDay';
 import type { DailyWorkEntry, DrillLogEntry } from '@/types/construction';
 import { entryMeters } from './entriesTable';
 
@@ -190,7 +191,7 @@ function daysBetweenDates(from: string, to: string): number | null {
 export function drillQueue(
   drills: DrillLogEntry[],
   rows: DailyWorkEntry[],
-  today = new Date().toISOString().slice(0, 10),
+  today = localDay(),
 ): DrillQueue {
   const done: DrillSlot[] = drills
     .filter((d) => !!d.date)

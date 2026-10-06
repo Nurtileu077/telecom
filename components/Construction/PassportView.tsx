@@ -1,4 +1,5 @@
 'use client';
+import { localDay } from '@/lib/localDay';
 import { useMemo, useState } from 'react';
 import { Network, Flame, AlertTriangle, Plus, Trash2, Paperclip } from 'lucide-react';
 import {
@@ -228,7 +229,7 @@ function SpliceForm({ object, initial, author, onSave, onClose }: {
   onClose: () => void;
 }) {
   const { t } = useT();
-  const [date, setDate] = useState(initial?.date ?? new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(initial?.date ?? localDay());
   const [crew, setCrew] = useState(initial?.crew ?? '');
   const [device, setDevice] = useState(initial?.device ?? '');
   const [wave, setWave] = useState(initial?.waveNm ? String(initial.waveNm) : '1550');

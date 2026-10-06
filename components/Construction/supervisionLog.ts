@@ -1,3 +1,4 @@
+import { localDay } from '@/lib/localDay';
 import {
   DailyWorkEntry, Deviation, OPERATIONS, OperationKind,
   LAY_METHODS, LAY_METHOD_LABEL, DESIGN_DEPTH_M,
@@ -202,6 +203,6 @@ export function supervisionDocHtml(input: SupervisionDocInput): string {
 
 export function supervisionFileName(uchastok?: string, from?: string, to?: string): string {
   const safe = (uchastok ?? '').replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 50);
-  const period = [from, to].filter(Boolean).join('—') || new Date().toISOString().slice(0, 10);
+  const period = [from, to].filter(Boolean).join('—') || localDay();
   return `Тетрадь технадзора ${safe ? `${safe} ` : ''}${period}.doc`;
 }

@@ -1,4 +1,5 @@
 'use client';
+import { localDay } from '@/lib/localDay';
 import { useMemo, useState } from 'react';
 import { Plus, Trash2, Copy, AlertTriangle, Pencil } from 'lucide-react';
 import {
@@ -102,7 +103,7 @@ export default function PayrollView({
       }
       : {
         work: PAYABLE_WORKS[0].key, price: '',
-        from: new Date().toISOString().slice(0, 10),
+        from: localDay(),
         contractor: current || undefined,
       });
   }
@@ -406,7 +407,7 @@ export default function PayrollView({
           .sort((a, b) => (rateStart(b) ?? '').localeCompare(rateStart(a) ?? ''))
           .map((r) => {
             const start = rateStart(r);
-            const active = rateFor(journal.rates, r.work, to ?? new Date().toISOString().slice(0, 10),
+            const active = rateFor(journal.rates, r.work, to ?? localDay(),
               r.contractor)?.id === r.id;
             return (
               <div key={r.id} className="flex items-center gap-2 text-[11.5px]">

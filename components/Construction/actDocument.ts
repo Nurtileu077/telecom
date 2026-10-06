@@ -1,3 +1,4 @@
+import { localDay } from '@/lib/localDay';
 import { LayMethod, Deviation, MobileGroupProtocol } from '@/types/construction';
 import {
   SectionActTotals, SectionActVariant, SectionActManual, actKm,
@@ -506,7 +507,7 @@ ${ACT_DOC_CSS}</style></head>
 /** Имя файла: участок и вид акта — чтобы в почте было видно без открытия. */
 export function actFileName(kind: ActKind, uchastok: string, date?: string): string {
   const safe = uchastok.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 60) || 'участок';
-  const d = date || new Date().toISOString().slice(0, 10);
+  const d = date || localDay();
   return `${ACT_KIND_SPECS[kind].short} ${safe} ${d}.doc`;
 }
 
@@ -593,7 +594,7 @@ export function fixationDocHtml(i: FixationDocInput): string {
 
 export function fixationFileName(uchastok: string, date?: string): string {
   const safe = uchastok.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 60) || 'участок';
-  return `Акт фиксации ${safe} ${date || new Date().toISOString().slice(0, 10)}.doc`;
+  return `Акт фиксации ${safe} ${date || localDay()}.doc`;
 }
 
 // ── Протокол мобильной группы ────────────────────────────────────────────────
@@ -677,7 +678,7 @@ export function protocolDocHtml(input: ProtocolDocInput): string {
 
 export function protocolFileName(d: Deviation): string {
   const safe = d.uchastok.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 60) || 'участок';
-  return `Протокол МГ ${safe} ${d.date || new Date().toISOString().slice(0, 10)}.doc`;
+  return `Протокол МГ ${safe} ${d.date || localDay()}.doc`;
 }
 
 /** Word понимает HTML только с этой кодировкой в заголовке файла. */

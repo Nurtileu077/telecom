@@ -62,6 +62,41 @@ export function otdrLines(
     });
 }
 
+/**
+ * Как муфту называют в документе: название и номер, как в списке объектов.
+ *
+ * Поле «Название» в карточке подсказывает «Муфта», а номер вводят
+ * отдельно, поэтому безымянных муфт на участке бывает несколько. По одному
+ * «Муфта без названия» их не отличить ни в выборе, ни в протоколе на
+ * подпись, ни по имени файла в архиве.
+ */
+export function objectLabel(o?: Pick<SiteObject, 'name' | 'number'>): string {
+  if (!o) return 'Муфта, удалённая с карты';
+  const name = (o.name ?? '').trim();
+  const no = (o.number ?? '').trim();
+  if (!name && !no) return 'Муфта без названия';
+  return `${name || 'Муфта'}${no ? ` №${no}` : ''}`;
+}
+
+/**
+ * Имя, которого в папке архива ещё нет.
+ *
+ * Архив молча перезаписывает одноимённый файл: второй протокол затёр бы
+ * первый, а сообщение всё равно насчитало бы оба. Рефлектометр к тому же
+ * называет файлы одинаково у всех муфт — «1550.sor». Номер дописываем
+ * перед расширением, чтобы файл открывался той же программой.
+ */
+export function uniqueFileName(name: string, taken: Set<string>): string {
+  if (!taken.has(name)) { taken.add(name); return name; }
+  const dot = name.lastIndexOf('.');
+  const base = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : '';
+  for (let i = 2; ; i += 1) {
+    const candidate = `${base} (${i})${ext}`;
+    if (!taken.has(candidate)) { taken.add(candidate); return candidate; }
+  }
+}
+
 /** Муфта с протоколами сварки — то, по чему можно собрать протокол измерений. */
 export interface MeasuredObject {
   objectId: string;
@@ -89,21 +124,42 @@ export function measuredObjects(
     const list = byObject.get(r.objectId);
     if (list) list.push(r); else byObject.set(r.objectId, [r]);
   }
-  const want = uchastok ? normName(uchastok) : '';
+  // «Участок не задан» и «задан, но пустой после нормализации» — разное.
+  // Смены без участка отчёт собирает под «—»; normName('—') даёт пусто, и
+  // без этой проверки под «—» легли бы протоколы всех муфт журнала.
+  const want = uchastok === undefined ? null : normName(uchastok);
+  if (want === '') return [];
   return [...byObject.entries()]
     .map(([objectId, records]) => {
       const object = objects.find((o) => o.id === objectId);
       return {
         objectId,
-        name: object?.name || 'Муфта без названия',
+        name: objectLabel(object),
         uchastok: object?.uchastok,
         object,
         records: [...records].sort((a, b) => (a.date || '').localeCompare(b.date || '')),
       };
     })
-    .filter((m) => !want || normName(m.uchastok ?? '') === want)
+    .filter((m) => want === null || normName(m.uchastok ?? '') === want)
     .sort((a, b) => (a.uchastok ?? '').localeCompare(b.uchastok ?? '', 'ru')
       || a.name.localeCompare(b.name, 'ru', { numeric: true }));
+}
+
+/**
+ * Муфты, протоколы которых идут в пакет за период.
+ *
+ * Список строится от протоколов сварки, а не от участков, где за период
+ * были смены. Обычный порядок — проложили, задули, потом сварили и
+ * померили, когда смен на участке уже нет. Отбор по сменам терял как раз
+ * законченные участки, а муфты без участка не попадали никогда.
+ */
+export function measuredForPack(
+  objects: SiteObject[],
+  splices: SpliceRecord[],
+  from?: string,
+  to?: string,
+): MeasuredObject[] {
+  return measuredObjects(objects, splices).filter((m) => measuredInPeriod(m, from, to));
 }
 
 /** Вход протокола измерений по одной муфте. */
@@ -133,7 +189,6 @@ export function measuredInPeriod(m: MeasuredObject, from?: string, to?: string):
 
 export interface OtdrUploadDeps {
   get: (key: string) => Promise<Blob | null>;
-  del: (key: string) => Promise<void>;
   upload: (spliceId: string, name: string, blob: Blob) => Promise<{ url: string; storagePath: string }>;
 }
 
@@ -141,17 +196,26 @@ export interface OtdrUploadDeps {
  * Отправить рефлектограммы, лежащие локально.
  *
  * Как со снимками: по одной и без «всё или ничего» — связь в поле рвётся
- * на середине. Локальную копию удаляем только после того, как получили
- * ссылку, иначе файл пропадёт между телефоном и облаком.
+ * на середине.
+ *
+ * Локальную копию здесь не удаляем, а возвращаем её ключ в `sentKeys`:
+ * удалить её можно только после того, как журнал со ссылкой записан.
+ * Иначе хранилище браузера переполнено, журнал не записался — а файл уже
+ * стёрт с телефона и лежит в облаке под путём, которого никто не знает.
+ * Повторная отправка в этом случае даст лишний файл в облаке, но не
+ * потерю рефлектограммы.
  */
 export async function uploadPendingOtdr(
   splices: SpliceRecord[],
   deps: OtdrUploadDeps,
   now = () => new Date().toISOString(),
-): Promise<{ splices: SpliceRecord[]; sent: number; failed: number; elsewhere: number }> {
+): Promise<{
+  splices: SpliceRecord[]; sent: number; failed: number; elsewhere: number; sentKeys: string[];
+}> {
   let sent = 0;
   let failed = 0;
   let elsewhere = 0;
+  const sentKeys: string[] = [];
   const out: SpliceRecord[] = [];
   for (const r of splices) {
     if (!r.otdrPending) { out.push(r); continue; }
@@ -170,12 +234,12 @@ export async function uploadPendingOtdr(
         ...r, otdrUrl: url, otdrStoragePath: storagePath, otdrPending: false,
         updatedAt: now(),
       });
-      await deps.del(otdrKey(r.id));
+      sentKeys.push(otdrKey(r.id));
       sent += 1;
     } catch {
       out.push(r);
       failed += 1;
     }
   }
-  return { splices: out, sent, failed, elsewhere };
+  return { splices: out, sent, failed, elsewhere, sentKeys };
 }

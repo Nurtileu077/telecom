@@ -1,4 +1,5 @@
 'use client';
+import { localDay } from '@/lib/localDay';
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   X, Upload, Loader2, AlertTriangle, MapPin, Wrench, Boxes,
@@ -12,7 +13,7 @@ import { buildJournalWorkbook, journalFileName } from './JournalExport';
 import DailyEntryForm from './DailyEntryForm';
 import {
   JournalState, JournalFilter, emptyJournal, loadJournal, saveJournal, mergeJournal,
-  matchesFilter, groundTotals, metersBy, metersByDay, lastWorkDate, distinct,
+  matchesFilter, groundTotals, metersBy, metersByDay, periodAnchor, distinct,
   fmtKm, fmtMeters, shiftDays, MATERIAL_LABEL, addGroundEntry, removeEntry,
   submitCorrection, approveCorrection, rejectCorrection, pendingCorrections,
   hasPendingCorrection, diffEntries, loadJournalRole, saveJournalRole,
@@ -379,13 +380,13 @@ export default function ConstructionPanel({
    */
   const uploadPendingPhotos = useCallback(async (base: JournalState) => {
     if (!journalCloudEnabled() || base.photos.every((p) => !p.pending)) {
-      return { state: base, sent: 0, failed: 0, changed: false };
+      return { state: base, sent: 0, failed: 0, changed: false, sentIds: [] as string[] };
     }
-    const { photos, sent, failed } = await uploadPending(
+    const { photos, sent, failed, sentIds } = await uploadPending(
       base.photos,
       (id, blob) => storageUploadJournalPhoto(id, blob),
     );
-    return { state: { ...base, photos }, sent, failed, changed: sent > 0 || failed > 0 };
+    return { state: { ...base, photos }, sent, failed, changed: sent > 0 || failed > 0, sentIds };
   }, []);
 
   /**
@@ -395,14 +396,13 @@ export default function ConstructionPanel({
    */
   const uploadPendingOtdrFiles = useCallback(async (base: JournalState) => {
     if (!journalCloudEnabled() || base.splices.every((r) => !r.otdrPending)) {
-      return { state: base, sent: 0, failed: 0, changed: false };
+      return { state: base, sent: 0, failed: 0, changed: false, sentKeys: [] as string[] };
     }
-    const { splices, sent, failed } = await uploadPendingOtdr(base.splices, {
+    const { splices, sent, failed, sentKeys } = await uploadPendingOtdr(base.splices, {
       get: (key) => getPhotoBlob(key),
-      del: (key) => deletePhotoBlob(key),
       upload: (id, name, blob) => storageUploadOtdr(id, name, blob),
     });
-    return { state: { ...base, splices }, sent, failed, changed: sent > 0 };
+    return { state: { ...base, splices }, sent, failed, changed: sent > 0, sentKeys };
   }, []);
 
   /**
@@ -415,19 +415,30 @@ export default function ConstructionPanel({
     try {
       // Сначала файлы, потом журнал: карточка со ссылкой уйдёт в том же
       // обмене, и у соседа фото откроется сразу, а не «в следующий раз».
+      // Локальную копию файла стираем только после того, как журнал со
+      // ссылкой на него записан. Не записался (память браузера кончилась) —
+      // копия остаётся на телефоне, и следующий обмен отправит её снова:
+      // лишний файл в облаке лучше потерянного снимка или рефлектограммы.
       const withPhotos = await uploadPendingPhotos(loadJournal());
-      if (withPhotos.changed) saveJournal(withPhotos.state);
-      const withOtdr = await uploadPendingOtdrFiles(loadJournal());
-      // Ссылку на отправленный файл обязательно записать: иначе файл уже
-      // удалён с телефона, а журнал о ссылке не знает — и рефлектограмма
-      // потеряна для всех.
-      if (withOtdr.changed && !saveJournal(withOtdr.state)) {
+      if (withPhotos.changed && !saveJournal(withPhotos.state)) {
         setSyncNote({
           tone: 'warn',
-          text: 'Рефлектограммы отправлены, но журнал не сохранился: переполнено хранилище браузера.',
+          text: 'Фото отправлены, но журнал не сохранился: переполнено хранилище браузера. '
+            + 'Снимки остались на устройстве — освободите место и синхронизируйте ещё раз.',
         });
         return;
       }
+      for (const id of withPhotos.sentIds) await deletePhotoBlob(id);
+      const withOtdr = await uploadPendingOtdrFiles(loadJournal());
+      if (withOtdr.changed && !saveJournal(withOtdr.state)) {
+        setSyncNote({
+          tone: 'warn',
+          text: 'Рефлектограммы отправлены, но журнал не сохранился: переполнено хранилище браузера. '
+            + 'Файлы остались на устройстве — освободите место и синхронизируйте ещё раз.',
+        });
+        return;
+      }
+      for (const key of withOtdr.sentKeys) await deletePhotoBlob(key);
 
       const res = await syncJournal(loadJournal(), actor);
       if (!res.ok) {
@@ -651,15 +662,12 @@ export default function ConstructionPanel({
     } finally { setBusy(false); }
   }, [persist]);
 
-  // ── Период считаем от последнего дня, по которому вообще есть данные,
-  //    а не от сегодня: в журнал пишут задним числом, и «вчера» по календарю
-  //    чаще всего пусто. Отклонения учитываем наравне с выработкой — иначе
-  //    только что внесённая запись выпадает за границу окна и «пропадает».
-  const anchor = useMemo(() => {
-    const last = lastWorkDate(journal.ground);
-    const lastDev = journal.deviations.reduce((m, d) => (d.date > m ? d.date : m), '');
-    return lastDev > last ? lastDev : last;
-  }, [journal.ground, journal.deviations]);
+  // ── Период считаем от последнего дня, по которому вообще есть данные:
+  //    выработка, отклонения, замеры сварки (см. periodAnchor).
+  const anchor = useMemo(
+    () => periodAnchor({ ground: journal.ground, deviations: journal.deviations, splices: journal.splices }),
+    [journal.ground, journal.deviations, journal.splices],
+  );
   const filter: JournalFilter = useMemo(() => {
     const f: JournalFilter = { oblast: oblast || undefined, smu: smu || undefined };
     if (period !== 'all' && anchor) {
@@ -1284,7 +1292,7 @@ export default function ConstructionPanel({
             onMarkDone={(d) => {
               // Закрытие прокола — та же форма, но открытая на «сделано»:
               // метраж и координаты без неё взять неоткуда.
-              setEditingDrill({ ...d, status: 'done', date: new Date().toISOString().slice(0, 10) });
+              setEditingDrill({ ...d, status: 'done', date: localDay() });
               setDrillFormOpen(true);
             }}
             onDelete={(id) => {

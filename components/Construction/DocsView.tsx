@@ -1,4 +1,5 @@
 'use client';
+import { localDay } from '@/lib/localDay';
 import { useMemo, useState } from 'react';
 import {
   FileDown, Package, AlertTriangle, Check, Hash, Loader2, Copy,
@@ -26,8 +27,8 @@ import {
   type PhotoReportItem,
 } from './fieldDocs';
 import {
-  measuredObjects, measuredInPeriod, measureInput, otdrAttached, otdrFileName, otdrKey,
-  type MeasuredObject,
+  measuredObjects, measuredForPack, measureInput, otdrAttached, otdrFileName, otdrKey,
+  uniqueFileName, type MeasuredObject,
 } from './otdr';
 import {
   groupPhotos, splitPhotoReport, photosInRange, photoReportFileName, PHOTOS_PER_PART,
@@ -185,6 +186,10 @@ export default function DocsView({
   onChangeActFields, onReverseRoute, onSwapRouteEnds, places: mapPlaces,
 }: Props) {
   const [busy, setBusy] = useState(false);
+  // Что в последнем пакете осталось неотмеченным. Строка-вспышка гаснет за
+  // две секунды, а при нескольких участках её не успеть прочесть — акты с
+  // пустой графой уже в архиве, и заметить это должны до отправки.
+  const [packGaps, setPackGaps] = useState<string[]>([]);
   const [prices, setPrices] = useState<WorkPrices>({});
   const [schemeRouteId, setSchemeRouteId] = useState('');
   const [linkLife, setLinkLife] = useState(DEFAULT_LINK_LIFE.key);
@@ -421,56 +426,73 @@ export default function DocsView({
       await put(svod, 'Справка о готовности.doc',
         wordPage('Справка о готовности', readinessDocHtml(readiness)));
 
+      // Область / район / участок — так их и ищут потом в почте. Папку
+      // одного участка называем одинаково и для актов, и для протоколов.
+      const whereCache = new Map<string, string>();
+      const whereOf = (uchastok?: string): string => {
+        if (!uchastok || uchastok === '—') return 'Участок не указан';
+        const hit = whereCache.get(uchastok);
+        if (hit) return hit;
+        const prep = prepareSectionAct(journal, uchastok);
+        const path = [prep.oblast, prep.rayon, uchastok]
+          .filter(Boolean)
+          .map((x) => String(x).replace(/[\\/:*?"<>|]+/g, ' ').trim())
+          .join('/') || 'Участки';
+        whereCache.set(uchastok, path);
+        return path;
+      };
+      // Имена, уже занятые в каждой папке: архив молча перезаписывает
+      // одноимённый файл.
+      const takenIn = new Map<string, Set<string>>();
+      const taken = (path: string) => {
+        let s = takenIn.get(path);
+        if (!s) { s = new Set(); takenIn.set(path, s); }
+        return s;
+      };
+
+      /**
+       * Протоколы измерений, с рефлектограммами.
+       *
+       * Раньше протокол в пакет не попадал вовсе, и его досылали
+       * отдельным письмом. Берём муфты, по которым мерили в этом периоде, —
+       * по протоколам сварки, а не по сменам: сваривают и меряют, когда
+       * смен на участке уже нет. Рефлектограмма ложится рядом, а протокол
+       * честно пишет, какая легла, а какой не нашлось.
+       */
+      for (const m of measuredForPack(journal.objects, journal.splices, from, to)) {
+        const path = whereOf(m.uchastok);
+        const folder = zip.folder(path) ?? zip;
+        const packed = new Map<string, string>();
+        for (const r of m.records) {
+          if (!otdrAttached(r)) continue;
+          const blob = await otdrBlob(r);
+          if (!blob) continue;
+          // Рефлектометр называет файлы одинаково («1550.sor») у всех муфт.
+          const name = uniqueFileName(otdrFileName(r, m.name), taken(`${path}/Рефлектограммы`));
+          (folder.folder('Рефлектограммы') ?? folder).file(name, blob);
+          packed.set(r.id, name);
+        }
+        const input = measureInput(m, {
+          customer: partyNames.customer, date: to, contractor, packed,
+        });
+        await put(folder, uniqueFileName(measureProtocolFile(input), taken(path)), measureProtocolPage(input));
+        protocols += 1;
+      }
+
       // Акты по участкам, у которых за период была работа. Участок без
       // заполненных полей в пакет не кладём: пустой бланк в архиве
       // выглядит готовым документом, а он не готов.
       for (const uchastok of report.sections.map((s) => s.uchastok)) {
+        if (uchastok === '—') continue;
         // Акт собирается тем же кодом, что и в «Закрытии»: со своими
         // отклонениями, своим исполнителем и теми же полями бланка.
         // Раньше сюда шли отклонения всего журнала, и участок худел на
         // чужую скалу, а исполнитель оставался прочерком.
         const prep = prepareSectionAct(journal, uchastok);
-        // Область / район / участок — так их и ищут потом в почте.
-        const where = [prep.oblast, prep.rayon, uchastok]
-          .filter(Boolean)
-          .map((x) => String(x).replace(/[\\/:*?"<>|]+/g, ' ').trim())
-          .join('/');
+        const where = whereOf(uchastok);
         // Папку заводим, только когда в неё есть что положить: пустая
         // папка участка в архиве читается как «документы потеряли».
-        const folderOf = () => zip.folder(where || 'Участки') ?? zip;
-
-        /**
-         * Протоколы измерений — к актам участка, с рефлектограммами.
-         *
-         * Раньше протокол в пакет не попадал вовсе, и его досылали
-         * отдельным письмом. Берём муфты участка, по которым мерили в
-         * этом периоде; рефлектограмма ложится рядом, а протокол честно
-         * пишет, какая легла, а какой не нашлось.
-         */
-        // Рефлектометр называет файлы одинаково («1550.sor») у всех муфт:
-        // одноимённый файл второй муфты затёр бы первый в общей папке.
-        const usedOtdr = new Set<string>();
-        for (const m of measuredObjects(journal.objects, journal.splices, uchastok)
-          .filter((x) => measuredInPeriod(x, from, to))) {
-          const folder = folderOf();
-          const packed = new Map<string, string>();
-          for (const r of m.records) {
-            if (!otdrAttached(r)) continue;
-            const blob = await otdrBlob(r);
-            if (!blob) continue;
-            let name = otdrFileName(r, m.name);
-            if (usedOtdr.has(name)) name = otdrFileName({ ...r, otdrName: `${m.name} ${r.date} ${name}` });
-            usedOtdr.add(name);
-            const sub = folder.folder('Рефлектограммы') ?? folder;
-            sub.file(name, blob);
-            packed.set(r.id, name);
-          }
-          const input = measureInput(m, {
-            customer: partyNames.customer, date: to, contractor, packed,
-          });
-          await put(folder, measureProtocolFile(input), measureProtocolPage(input));
-          protocols += 1;
-        }
+        const folderOf = () => zip.folder(where) ?? zip;
 
         if (!actFieldsOf(journal.actFields, uchastok)?.actNumber) continue;
         if (prep.entries.length === 0 || prep.totals.variants.length === 0) continue;
@@ -516,9 +538,8 @@ export default function DocsView({
       const blob = await zip.generateAsync({ type: 'blob' });
       downloadBlob(`Пакет документов ${from}—${to}.zip`, blob);
       const head = protocols ? `Пакет собран, протоколов измерений: ${protocols}` : 'Пакет собран';
-      onFlash?.(unmarked.length
-        ? `${head}. В актах не отмечено: ${unmarked.join('; ')}`
-        : head);
+      setPackGaps(unmarked);
+      onFlash?.(unmarked.length ? `${head}. В актах есть неотмеченные графы — список под кнопкой` : head);
     } catch (err) {
       onFlash?.(errorLine(err, 'собрать пакет'));
     } finally {
@@ -541,8 +562,14 @@ export default function DocsView({
   const [docSection, setDocSection] = useState('');
   // По умолчанию — участок с наибольшим метражом за период: его чаще всего
   // и закрывают. Это подсказка, а не приговор.
+  // Участок по умолчанию ищем среди вариантов списка без учёта написания:
+  // список хранит первое встреченное («еленовка»), отчёт — своё
+  // («Еленовка»). Без этого список показывал один участок, а документы
+  // собирались по другому, и выбрать показанный было нельзя.
+  const fallbackSection = report.sections[0]?.uchastok;
   const section = sections.find((x) => x === docSection)
-    ?? report.sections[0]?.uchastok ?? sections[0] ?? '';
+    ?? sections.find((x) => normLoose(x) === normLoose(fallbackSection))
+    ?? fallbackSection ?? sections[0] ?? '';
   const sectionFields = actFieldsOf(journal.actFields, section) ?? {};
   const hiddenInput = useMemo(
     () => (section
@@ -562,17 +589,17 @@ export default function DocsView({
   // '*' — все муфты участка; иначе id муфты. Пусто — выбор по умолчанию.
   const [muftaChoice, setMuftaChoice] = useState('');
   const protocolSet: MeasuredObject[] = useMemo(() => {
-    if (muftaChoice !== '*') {
+    if (muftaChoice && muftaChoice !== '*') {
       const one = measured.find((m) => m.objectId === muftaChoice);
       if (one) return [one];
     }
-    if (measuredHere.length) return measuredHere;
-    return measured.slice(0, 1);
+    // Без своих муфт ничего не подставляем. Раньше здесь бралась первая
+    // муфта всего журнала, и протокол на подпись уходил по чужой муфте.
+    return measuredHere;
   }, [measured, measuredHere, muftaChoice]);
-  const muftaValue = protocolSet.length === 1 && (muftaChoice === protocolSet[0].objectId
-    || measuredHere.length === 0)
-    ? protocolSet[0].objectId
-    : '*';
+  const chosenOne = muftaChoice && muftaChoice !== '*'
+    && protocolSet.length === 1 && protocolSet[0].objectId === muftaChoice;
+  const muftaValue = chosenOne ? muftaChoice : measuredHere.length ? '*' : '';
 
   // Фотоотчёт: по выбранному участку или за период целиком.
   const [photoScope, setPhotoScope] = useState<'section' | 'period'>('section');
@@ -646,7 +673,7 @@ export default function DocsView({
     }
     const safe = section.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 50) || 'участок';
     return {
-      name: `Протоколы измерений ${safe} ${to || new Date().toISOString().slice(0, 10)}.doc`,
+      name: `Протоколы измерений ${safe} ${to || localDay()}.doc`,
       html: measureProtocolsPage(inputs, `Протоколы измерений — ${section}`),
     };
   }
@@ -838,7 +865,7 @@ export default function DocsView({
           )}
           <button type="button" className="btn btn-ghost text-[11.5px]"
                   onClick={() => {
-                    const w = weekRange(to || new Date().toISOString().slice(0, 10));
+                    const w = weekRange(to || localDay());
                     const weekly = periodReport(journal.ground, { ...w, contractor });
                     save(
                       periodDocFile({ report: weekly, contractor }),
@@ -900,6 +927,20 @@ export default function DocsView({
             </button>
           ))}
         </div>
+        {packGaps.length > 0 && (
+          <div className="flex items-start gap-2 rounded-lg border border-[var(--warn)]/40
+                          bg-[var(--warn)]/10 px-3 py-2 text-[11.5px] text-[var(--warn)]">
+            <span className="flex-1">
+              В последнем пакете в актах не отмечено: {packGaps.join('; ')}.
+              <span className="block text-[var(--text-muted)]">
+                Отметьте графы в «Закрытии участка» и соберите пакет заново — иначе акт уйдёт с пустой графой.
+              </span>
+            </span>
+            <button type="button" className="btn btn-ghost text-[11px]" onClick={() => setPackGaps([])}>
+              Понятно
+            </button>
+          </div>
+        )}
         {contractors.length > 0 && (
           <div className="text-[11px] text-[var(--text-muted)]">
             Отчёт по одному подрядчику: выберите его в фильтре сверху —
@@ -1095,8 +1136,10 @@ export default function DocsView({
                   className="w-full bg-[var(--bg-canvas)] border border-[var(--border)]
                              rounded px-2 py-1 text-[11.5px] text-[var(--text)]"
                 >
-                  {measuredHere.length > 0 && (
+                  {measuredHere.length > 0 ? (
                     <option value="*">Все муфты участка ({measuredHere.length})</option>
+                  ) : (
+                    <option value="" disabled>По участку протоколов нет — выберите муфту</option>
                   )}
                   {measured.map((m) => (
                     <option key={m.objectId} value={m.objectId}>

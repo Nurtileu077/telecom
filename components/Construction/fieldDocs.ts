@@ -1,3 +1,4 @@
+import { localDay } from '@/lib/localDay';
 import {
   DailyWorkEntry, Deviation, FieldPhoto, DESIGN_DEPTH_M,
   SpliceRecord, SPLICE_LOSS_LIMIT_DB,
@@ -173,7 +174,7 @@ export function hiddenWorksPage(i: HiddenWorksInput): string {
 
 export function hiddenWorksFile(i: HiddenWorksInput): string {
   const safe = i.uchastok.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 60) || 'участок';
-  return `Акт скрытых работ ${safe} ${i.date || new Date().toISOString().slice(0, 10)}.doc`;
+  return `Акт скрытых работ ${safe} ${i.date || localDay()}.doc`;
 }
 
 // ── Фотоотчёт ────────────────────────────────────────────────────────────────
@@ -466,5 +467,5 @@ export function measureProtocolsPage(list: MeasureProtocolInput[], title: string
 
 export function measureProtocolFile(i: MeasureProtocolInput): string {
   const safe = i.objectName.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 50) || 'муфта';
-  return `Протокол измерений ${safe} ${i.date || new Date().toISOString().slice(0, 10)}.doc`;
+  return `Протокол измерений ${safe} ${i.date || localDay()}.doc`;
 }
