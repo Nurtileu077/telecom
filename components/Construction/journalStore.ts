@@ -241,8 +241,15 @@ export function scopeJournal(base: JournalState, oblast?: string): JournalState 
   const o = oblast?.trim();
   if (!o) return base;
   const keep = (v?: string) => !v || v === o;
+  // Протокол сварки своей области не знает — она записана у муфты. Пока
+  // протоколы не сужались, муфта Мангистау отбрасывалась, а её протоколы
+  // оставались и всплывали в пакете «Акмолинской» как «муфта, удалённая с
+  // карты». Протокол муфты, которой в справочнике нет вовсе, оставляем:
+  // про него не известно, что он чужой.
+  const elsewhere = new Set(base.objects.filter((r) => !keep(r.oblast)).map((r) => r.id));
   return {
     ...base,
+    splices: (base.splices ?? []).filter((s) => !elsewhere.has(s.objectId)),
     orders: base.orders.filter((r) => keep(r.oblast)),
     ground: base.ground.filter((e) => keep(e.oblast)),
     aerial: base.aerial.filter((e) => keep(e.oblast)),

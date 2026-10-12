@@ -1,9 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
   otdrKey, otdrAttached, otdrFileName, otdrLines, measuredObjects, measureInput,
-  measuredInPeriod, uploadPendingOtdr, objectLabel, uniqueFileName, measuredForPack,
+  measuredInPeriod, uploadPendingOtdr, objectLabel, uniqueFileName, protocolsForPack,
+  archiveNames, choiceLabels,
 } from './otdr';
-import type { SiteObject, SpliceRecord } from '@/types/construction';
+import { measureProtocolFile } from './fieldDocs';
+import { commitUploaded } from './photoStore';
+import { periodAnchor } from './journalStore';
+import type { DailyWorkEntry, SiteObject, SpliceRecord } from '@/types/construction';
 
 function rec(over: Partial<SpliceRecord> = {}): SpliceRecord {
   return {
@@ -52,6 +56,15 @@ describe('рефлектограмма протокола сварки', () => {
     expect(lines[1].status).toContain('в архив не попала');
   });
 
+  it('рефлектограмма, ещё не ушедшая с чужого телефона, не списывается на связь', () => {
+    const lines = otdrLines(
+      [rec({ otdrName: 'a.sor', otdrPending: true }), rec({ id: 's2', otdrUrl: 'https://x/b.sor' })],
+      'Муфта №1', new Map(),
+    );
+    expect(lines[0].status).toBe('на телефоне, где её приложили, ещё не отправлена — в архив не попала');
+    expect(lines[1].status).toBe('есть в журнале, в архив не попала — не было связи');
+  });
+
   it('записанное только имя не выдаётся за приложенный файл', () => {
     const lines = otdrLines([rec({ otdrName: 'OTDR_m3.sor' })]);
     expect(lines).toEqual([{ name: 'OTDR_m3.sor', status: 'файл не загружен — записано только имя' }]);
@@ -94,6 +107,29 @@ describe('муфты для протокола измерений', () => {
     expect(list.map((m) => m.name)).toEqual(['Муфта №3', 'Муфта №4']);
   });
 
+  it('одинаковые безымянные муфты в списке выбора различимы', () => {
+    const list = measuredObjects(
+      [
+        mufta({ id: 'x', name: '', number: '', lat: 51.1, lon: 71.1 }),
+        mufta({ id: 'y', name: '', number: '', lat: 51.2, lon: 71.2 }),
+        mufta({ id: 'z', name: '', number: '', lat: 51.3, lon: 71.3 }),
+        mufta({ id: 'n', name: '', number: '4' }),
+      ],
+      [
+        rec({ id: 'r1', objectId: 'x', date: '2026-09-10' }),
+        rec({ id: 'r2', objectId: 'y', date: '2026-09-10' }),
+        rec({ id: 'r3', objectId: 'z', date: '2026-09-12' }),
+        rec({ id: 'r4', objectId: 'n' }),
+      ],
+    );
+    const labels = choiceLabels(list);
+    expect(new Set(labels.values()).size).toBe(4);
+    expect(labels.get('z')).toBe('Муфта без названия · Еленовка · сварка 12.09.2026');
+    expect(labels.get('x')).toBe('Муфта без названия · Еленовка · сварка 10.09.2026 · 51.10000, 71.10000');
+    // Различимую муфту не загромождаем.
+    expect(labels.get('n')).toBe('Муфта №4 · Еленовка');
+  });
+
   it('смены без участка («—») не тянут за собой протоколы всех муфт журнала', () => {
     expect(measuredObjects(objects, splices, '—')).toEqual([]);
   });
@@ -101,12 +137,60 @@ describe('муфты для протокола измерений', () => {
   it('в пакет идут муфты по замерам за период, а не по участкам со сменами', () => {
     // Сварили и померили, когда смен на участке уже не было: отбор по
     // сменам эту муфту терял, а муфту без участка — всегда.
-    const list = measuredForPack(
+    const { items } = protocolsForPack(
       [mufta({ id: 'm9', uchastok: undefined, name: '', number: '9' })],
       [rec({ id: 'late', objectId: 'm9', date: '2026-09-25' })],
-      '2026-09-20', '2026-09-30',
+      { from: '2026-09-20', to: '2026-09-30' },
     );
-    expect(list.map((m) => m.name)).toEqual(['Муфта №9']);
+    expect(items.map((x) => x.m.name)).toEqual(['Муфта №9']);
+    expect(items[0].section).toBeUndefined();
+  });
+
+  it('замер после последней смены попадает в пакет', () => {
+    // Последняя смена на участке — 18-го, сварили и померили 25-го. Конец
+    // периода считается и по замерам (periodAnchor), и муфта в пакете.
+    const ground = [{ date: '2026-09-18' }] as DailyWorkEntry[];
+    const splicesLate = [rec({ id: 'late', objectId: 'm1', date: '2026-09-25' })];
+    const to = periodAnchor({ ground, deviations: [], splices: splicesLate });
+    const { items, leftOut } = protocolsForPack([mufta()], splicesLate, { from: '2026-09-19', to });
+    expect(items.map((x) => x.m.objectId)).toEqual(['m1']);
+    expect(leftOut).toEqual([]);
+  });
+
+  it('муфта ложится в папку участка тем написанием, что в сменах', () => {
+    const { items } = protocolsForPack(
+      [mufta({ uchastok: 'с. Еленовка' })], [rec()], { sections: ['Еленовка', 'Обалы'] },
+    );
+    expect(items[0].section).toBe('Еленовка');
+    // Протокол при этом пишет участок так, как он записан у муфты.
+    expect(items[0].m.uchastok).toBe('с. Еленовка');
+  });
+
+  it('протокол без даты в пакет за период не входит, и пакет об этом говорит', () => {
+    const { items, leftOut } = protocolsForPack(
+      [mufta({ id: 'x', name: '', number: '5' })],
+      [rec({ id: 'nodate', objectId: 'x', date: '' })],
+      { from: '2026-09-20', to: '2026-09-30' },
+    );
+    expect(items).toEqual([]);
+    expect(leftOut).toHaveLength(1);
+    expect(leftOut[0]).toContain('Муфта №5 · Еленовка');
+    expect(leftOut[0]).toContain('нет даты');
+  });
+
+  it('мерили после конца периода — названо, а не молча пропущено', () => {
+    const { items, leftOut } = protocolsForPack(
+      [mufta()], [rec({ date: '2026-10-02' })], { from: '2026-09-01', to: '2026-09-30' },
+    );
+    expect(items).toEqual([]);
+    expect(leftOut).toEqual(['Муфта №1 · Еленовка — мерили после 2026-09-30, войдёт в следующий пакет']);
+  });
+
+  it('муфты прошлых периодов пакет не перечисляет: они в своих пакетах', () => {
+    const { leftOut } = protocolsForPack(
+      [mufta()], [rec({ date: '2026-08-02' })], { from: '2026-09-01', to: '2026-09-30' },
+    );
+    expect(leftOut).toEqual([]);
   });
 
   it('муфты участка отбираются по участку, нестрого к написанию', () => {
@@ -148,6 +232,26 @@ describe('отправка рефлектограмм', () => {
     expect(res.sentKeys).toEqual(['otdr-s1']);
   });
 
+  it('журнал не записался — файл на устройстве остаётся', async () => {
+    // Отправка прошла, а память браузера кончилась: журнал со ссылкой не
+    // записан. Стёртая копия означала бы рефлектограмму в облаке под
+    // путём, которого никто не знает, и протокол, вечно «ждущий отправки».
+    const onPhone = new Map([['otdr-s1', new Blob(['x'])]]);
+    const res = await uploadPendingOtdr([rec({ otdrPending: true, otdrName: 'a.sor' })], {
+      get: async (key) => onPhone.get(key) ?? null,
+      upload: async (id, name) => ({ url: `https://x/${id}/${name}`, storagePath: `p/${id}` }),
+    });
+    const del = async (key: string) => { onPhone.delete(key); };
+    const ok = await commitUploaded({ splices: res.splices }, res.sentKeys, { save: () => false, del });
+    expect(ok).toBe(false);
+    expect(onPhone.has('otdr-s1')).toBe(true);
+
+    // Журнал записался — тогда и только тогда копию стираем.
+    expect(await commitUploaded({ splices: res.splices }, res.sentKeys, { save: () => true, del }))
+      .toBe(true);
+    expect(onPhone.has('otdr-s1')).toBe(false);
+  });
+
   it('при обрыве связи файл остаётся ждать и не теряется', async () => {
     const res = await uploadPendingOtdr([rec({ otdrPending: true })], {
       get: async () => new Blob(['x']),
@@ -176,11 +280,37 @@ describe('имена файлов в архиве', () => {
   });
 
   it('две безымянные муфты участка дают два протокола, а не один', () => {
-    const taken = new Set<string>();
-    const a = uniqueFileName('Протокол измерений Муфта без названия 2026-09-30.doc', taken);
-    const b = uniqueFileName('Протокол измерений Муфта без названия 2026-09-30.doc', taken);
-    expect(a).not.toBe(b);
-    expect(b.endsWith('.doc')).toBe(true);
+    // Ни названия, ни номера: подписи у муфт одинаковые, и раньше второй
+    // протокол затирал первый в папке участка.
+    const { items } = protocolsForPack(
+      [mufta({ id: 'x', name: '', number: '' }), mufta({ id: 'y', name: '', number: '' })],
+      [rec({ id: 'r1', objectId: 'x' }), rec({ id: 'r2', objectId: 'y' })],
+      { sections: ['Еленовка'] },
+    );
+    const name = archiveNames();
+    const files = items.map(({ m, section }) => name(
+      section ?? 'Участок не указан',
+      measureProtocolFile(measureInput(m, { date: '2026-09-30' })),
+    ));
+    expect(files).toHaveLength(2);
+    expect(new Set(files).size).toBe(2);
+    expect(files.every((f) => f.endsWith('.doc'))).toBe(true);
+  });
+
+  it('три «1550.sor» разных муфт одного дня в папке участка не затирают друг друга', () => {
+    const name = archiveNames();
+    const files = ['x', 'y', 'z'].map((id) => name(
+      'Еленовка/Рефлектограммы',
+      otdrFileName(rec({ id, objectId: id, otdrName: '1550.sor' }), 'Муфта без названия'),
+    ));
+    expect(files).toEqual(['1550.sor', '1550 (2).sor', '1550 (3).sor']);
+    // В другой папке то же имя свободно.
+    expect(name('Обалы/Рефлектограммы', '1550.sor')).toBe('1550.sor');
+  });
+
+  it('свободное имя ищется, пока не найдётся, а не один раз', () => {
+    const taken = new Set(['1550.sor', '1550 (2).sor']);
+    expect(uniqueFileName('1550.sor', taken)).toBe('1550 (3).sor');
   });
 
   it('имя без расширения тоже получает номер', () => {

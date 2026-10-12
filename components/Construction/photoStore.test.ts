@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   photoMeta, photosOf, pendingPhotos, fmtBytes, GEO_SOURCE_LABEL, putPhotoBlob,
+  commitUploaded,
 } from './photoStore';
 import type { FieldPhoto } from '@/types/construction';
 
@@ -84,6 +85,26 @@ describe('отправка фото в облако', () => {
     expect(res.photos[0]).toBe(sentPhoto);
     expect(res.sent).toBe(0);
     expect(res.failed).toBe(0);
+  });
+
+  it('журнал со ссылкой не записался — снимок с телефона не стирается', async () => {
+    const deleted: string[] = [];
+    const ok = await commitUploaded({ photos: [] }, ['p1', 'p2'], {
+      save: () => false,
+      del: async (id) => { deleted.push(id); },
+    });
+    expect(ok).toBe(false);
+    expect(deleted).toEqual([]);
+  });
+
+  it('журнал записался — копии отправленных стираются, и только они', async () => {
+    const deleted: string[] = [];
+    const ok = await commitUploaded({ photos: [] }, ['p1'], {
+      save: () => true,
+      del: async (id) => { deleted.push(id); },
+    });
+    expect(ok).toBe(true);
+    expect(deleted).toEqual(['p1']);
   });
 });
 

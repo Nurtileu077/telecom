@@ -51,11 +51,14 @@ export function otdrLines(
       if (inZip) return { name: inZip, status: 'прилагается — папка «Рефлектограммы»' };
       const name = otdrFileName(r, objectName);
       if (otdrAttached(r)) {
+        if (!packed) return { name, status: 'файл в журнале, выдаётся по запросу' };
+        // Без ссылки файл лежит только на телефоне, где его приложили: «не
+        // было связи» тут неправда — на этом устройстве его нет вовсе.
         return {
           name,
-          status: packed
+          status: r.otdrUrl
             ? 'есть в журнале, в архив не попала — не было связи'
-            : 'файл в журнале, выдаётся по запросу',
+            : 'на телефоне, где её приложили, ещё не отправлена — в архив не попала',
         };
       }
       return { name, status: 'файл не загружен — записано только имя' };
@@ -95,6 +98,22 @@ export function uniqueFileName(name: string, taken: Set<string>): string {
     const candidate = `${base} (${i})${ext}`;
     if (!taken.has(candidate)) { taken.add(candidate); return candidate; }
   }
+}
+
+/**
+ * Свободные имена по папкам одного архива.
+ *
+ * Одна папка участка — это и протоколы, и рефлектограммы рядом, и в
+ * каждой своё «уже занято». Держим это здесь, а не на экране: имя файла в
+ * архиве — то, что потом ищут в почте, и проверять его надо тестом.
+ */
+export function archiveNames(): (folder: string, name: string) => string {
+  const byFolder = new Map<string, Set<string>>();
+  return (folder, name) => {
+    let taken = byFolder.get(folder);
+    if (!taken) { taken = new Set(); byFolder.set(folder, taken); }
+    return uniqueFileName(name, taken);
+  };
 }
 
 /** Муфта с протоколами сварки — то, по чему можно собрать протокол измерений. */
@@ -146,20 +165,96 @@ export function measuredObjects(
 }
 
 /**
- * Муфты, протоколы которых идут в пакет за период.
+ * Подписи муфт в списке выбора.
+ *
+ * Муфт без названия и номера на участке бывает несколько, и строки
+ * «Муфта без названия · Еленовка» в списке одинаковы — нужную не выбрать.
+ * Совпавшим дописываем день последней сварки, а если и он один —
+ * координаты: это то, по чему муфту и находят на карте. Ничего не
+ * придумываем: только то, что записано.
+ */
+export function choiceLabels(list: MeasuredObject[]): Map<string, string> {
+  const base = (m: MeasuredObject) => `${m.name} · ${m.uchastok || 'участок не указан'}`;
+  const ru = (d: string) => (/^\d{4}-\d{2}-\d{2}$/.test(d) ? d.split('-').reverse().join('.') : 'без даты');
+  const lastDay = (m: MeasuredObject) => m.records[m.records.length - 1]?.date ?? '';
+  const count = (labels: string[]) => {
+    const c = new Map<string, number>();
+    for (const l of labels) c.set(l, (c.get(l) ?? 0) + 1);
+    return c;
+  };
+  let labels = list.map(base);
+  let seen = count(labels);
+  labels = labels.map((l, i) => (seen.get(l)! > 1 ? `${l} · сварка ${ru(lastDay(list[i]))}` : l));
+  seen = count(labels);
+  labels = labels.map((l, i) => {
+    const o = list[i].object;
+    return seen.get(l)! > 1 && o ? `${l} · ${o.lat.toFixed(5)}, ${o.lon.toFixed(5)}` : l;
+  });
+  return new Map(list.map((m, i) => [m.objectId, labels[i]]));
+}
+
+/** Муфта в пакете и участок, под которым её класть. */
+export interface PackProtocol {
+  m: MeasuredObject;
+  /**
+   * Участок папки — тем написанием, что в сменах, если муфта записана
+   * иначе («с. Еленовка» у муфты, «Еленовка» в сменах). Иначе протоколы
+   * легли бы в одну папку, а акты того же участка — в соседнюю.
+   * Пусто — муфта без участка.
+   */
+  section?: string;
+}
+
+export interface PackProtocols {
+  items: PackProtocol[];
+  /**
+   * Чего в пакете нет и почему — строками для человека. Пакет уходит
+   * заказчику целиком, и «протоколов: 5» без списка пропущенных читается
+   * как «все пять, что были».
+   */
+  leftOut: string[];
+}
+
+/**
+ * Протоколы измерений в пакет за период.
  *
  * Список строится от протоколов сварки, а не от участков, где за период
  * были смены. Обычный порядок — проложили, задули, потом сварили и
  * померили, когда смен на участке уже нет. Отбор по сменам терял как раз
  * законченные участки, а муфты без участка не попадали никогда.
+ *
+ * Муфты, мерянные раньше периода, не называем: они в прошлых пакетах.
+ * Называем те, что не попадут никуда (протокол сварки без даты — поле в
+ * форме можно стереть), и те, что мерили после конца периода.
  */
-export function measuredForPack(
+export function protocolsForPack(
   objects: SiteObject[],
   splices: SpliceRecord[],
-  from?: string,
-  to?: string,
-): MeasuredObject[] {
-  return measuredObjects(objects, splices).filter((m) => measuredInPeriod(m, from, to));
+  opts: { from?: string; to?: string; sections?: string[] } = {},
+): PackProtocols {
+  const { from, to, sections = [] } = opts;
+  const bySection = new Map<string, string>();
+  for (const s of sections) {
+    const key = normName(s);
+    if (key && !bySection.has(key)) bySection.set(key, s);
+  }
+  const items: PackProtocol[] = [];
+  const leftOut: string[] = [];
+  for (const m of measuredObjects(objects, splices)) {
+    const own = (m.uchastok ?? '').trim();
+    if (measuredInPeriod(m, from, to)) {
+      items.push({ m, section: own ? bySection.get(normName(own)) ?? own : undefined });
+      continue;
+    }
+    const where = own ? ` · ${own}` : '';
+    if (m.records.some((r) => !r.date)) {
+      leftOut.push(`${m.name}${where} — в протоколе сварки нет даты, в пакет за период он не попадёт; `
+        + 'поставьте дату в «Паспорте сети» → «Сварка»');
+    } else if (to && m.records.some((r) => r.date > to)) {
+      leftOut.push(`${m.name}${where} — мерили после ${to}, войдёт в следующий пакет`);
+    }
+  }
+  return { items, leftOut };
 }
 
 /** Вход протокола измерений по одной муфте. */

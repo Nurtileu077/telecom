@@ -27,8 +27,8 @@ import {
   type PhotoReportItem,
 } from './fieldDocs';
 import {
-  measuredObjects, measuredForPack, measureInput, otdrAttached, otdrFileName, otdrKey,
-  uniqueFileName, type MeasuredObject,
+  measuredObjects, protocolsForPack, measureInput, otdrAttached, otdrFileName, otdrKey,
+  archiveNames, choiceLabels, type MeasuredObject,
 } from './otdr';
 import {
   groupPhotos, splitPhotoReport, photosInRange, photoReportFileName, PHOTOS_PER_PART,
@@ -186,10 +186,14 @@ export default function DocsView({
   onChangeActFields, onReverseRoute, onSwapRouteEnds, places: mapPlaces,
 }: Props) {
   const [busy, setBusy] = useState(false);
-  // Что в последнем пакете осталось неотмеченным. Строка-вспышка гаснет за
-  // две секунды, а при нескольких участках её не успеть прочесть — акты с
-  // пустой графой уже в архиве, и заметить это должны до отправки.
-  const [packGaps, setPackGaps] = useState<string[]>([]);
+  // Что в последнем пакете осталось неотмеченным или не вошло. Строка-
+  // вспышка гаснет за две секунды, а при нескольких участках её не успеть
+  // прочесть — акты с пустой графой уже в архиве, и заметить это, как и
+  // пропущенный протокол, должны до отправки.
+  const [packGaps, setPackGaps] = useState<{
+    acts: string[]; protocols: string[]; otdr: string[];
+  }>({ acts: [], protocols: [], otdr: [] });
+  const hasPackGaps = packGaps.acts.length + packGaps.protocols.length + packGaps.otdr.length > 0;
   const [prices, setPrices] = useState<WorkPrices>({});
   const [schemeRouteId, setSchemeRouteId] = useState('');
   const [linkLife, setLinkLife] = useState(DEFAULT_LINK_LIFE.key);
@@ -441,14 +445,8 @@ export default function DocsView({
         whereCache.set(uchastok, path);
         return path;
       };
-      // Имена, уже занятые в каждой папке: архив молча перезаписывает
-      // одноимённый файл.
-      const takenIn = new Map<string, Set<string>>();
-      const taken = (path: string) => {
-        let s = takenIn.get(path);
-        if (!s) { s = new Set(); takenIn.set(path, s); }
-        return s;
-      };
+      // Свободное имя в папке: архив молча перезаписывает одноимённый файл.
+      const freeName = archiveNames();
 
       /**
        * Протоколы измерений, с рефлектограммами.
@@ -459,23 +457,35 @@ export default function DocsView({
        * смен на участке уже нет. Рефлектограмма ложится рядом, а протокол
        * честно пишет, какая легла, а какой не нашлось.
        */
-      for (const m of measuredForPack(journal.objects, journal.splices, from, to)) {
-        const path = whereOf(m.uchastok);
+      // Написание участка — сперва как у актов этого пакета, потом как в
+      // сменах вообще: папка участка одна на акты и протоколы.
+      const { items: protocolItems, leftOut } = protocolsForPack(
+        journal.objects, journal.splices,
+        { from, to, sections: [...report.sections.map((s) => s.uchastok), ...sections] },
+      );
+      // Рефлектограммы, которые есть в журнале, но в архив не легли: в
+      // протоколе это написано, но протокол открывают уже у заказчика.
+      const otdrMissing: string[] = [];
+      for (const { m, section: where } of protocolItems) {
+        const path = whereOf(where);
         const folder = zip.folder(path) ?? zip;
         const packed = new Map<string, string>();
         for (const r of m.records) {
           if (!otdrAttached(r)) continue;
           const blob = await otdrBlob(r);
-          if (!blob) continue;
+          if (!blob) {
+            otdrMissing.push(`${m.name}${m.uchastok ? ` · ${m.uchastok}` : ''} — ${otdrFileName(r, m.name)}`);
+            continue;
+          }
           // Рефлектометр называет файлы одинаково («1550.sor») у всех муфт.
-          const name = uniqueFileName(otdrFileName(r, m.name), taken(`${path}/Рефлектограммы`));
+          const name = freeName(`${path}/Рефлектограммы`, otdrFileName(r, m.name));
           (folder.folder('Рефлектограммы') ?? folder).file(name, blob);
           packed.set(r.id, name);
         }
         const input = measureInput(m, {
           customer: partyNames.customer, date: to, contractor, packed,
         });
-        await put(folder, uniqueFileName(measureProtocolFile(input), taken(path)), measureProtocolPage(input));
+        await put(folder, freeName(path, measureProtocolFile(input)), measureProtocolPage(input));
         protocols += 1;
       }
 
@@ -538,8 +548,13 @@ export default function DocsView({
       const blob = await zip.generateAsync({ type: 'blob' });
       downloadBlob(`Пакет документов ${from}—${to}.zip`, blob);
       const head = protocols ? `Пакет собран, протоколов измерений: ${protocols}` : 'Пакет собран';
-      setPackGaps(unmarked);
-      onFlash?.(unmarked.length ? `${head}. В актах есть неотмеченные графы — список под кнопкой` : head);
+      setPackGaps({ acts: unmarked, protocols: leftOut, otdr: otdrMissing });
+      const notes = [
+        unmarked.length ? 'в актах есть неотмеченные графы' : '',
+        leftOut.length ? `протоколов не вошло: ${leftOut.length}` : '',
+        otdrMissing.length ? `рефлектограмм не легло в архив: ${otdrMissing.length}` : '',
+      ].filter(Boolean);
+      onFlash?.(notes.length ? `${head}. Не всё: ${notes.join(', ')} — список под кнопкой` : head);
     } catch (err) {
       onFlash?.(errorLine(err, 'собрать пакет'));
     } finally {
@@ -582,6 +597,7 @@ export default function DocsView({
     () => measuredObjects(journal.objects, journal.splices),
     [journal.objects, journal.splices],
   );
+  const measuredLabels = useMemo(() => choiceLabels(measured), [measured]);
   const measuredHere = useMemo(
     () => measured.filter((m) => normLoose(m.uchastok) === normLoose(section)),
     [measured, section],
@@ -927,16 +943,35 @@ export default function DocsView({
             </button>
           ))}
         </div>
-        {packGaps.length > 0 && (
+        {hasPackGaps && (
           <div className="flex items-start gap-2 rounded-lg border border-[var(--warn)]/40
                           bg-[var(--warn)]/10 px-3 py-2 text-[11.5px] text-[var(--warn)]">
-            <span className="flex-1">
-              В последнем пакете в актах не отмечено: {packGaps.join('; ')}.
-              <span className="block text-[var(--text-muted)]">
-                Отметьте графы в «Закрытии участка» и соберите пакет заново — иначе акт уйдёт с пустой графой.
-              </span>
+            <span className="flex-1 space-y-1">
+              {packGaps.acts.length > 0 && (
+                <span className="block">
+                  В последнем пакете в актах не отмечено: {packGaps.acts.join('; ')}.
+                  <span className="block text-[var(--text-muted)]">
+                    Отметьте графы в «Закрытии участка» и соберите пакет заново — иначе акт уйдёт с пустой графой.
+                  </span>
+                </span>
+              )}
+              {packGaps.protocols.length > 0 && (
+                <span className="block">
+                  Протоколы измерений, не вошедшие в пакет: {packGaps.protocols.join('; ')}.
+                </span>
+              )}
+              {packGaps.otdr.length > 0 && (
+                <span className="block">
+                  Рефлектограммы есть в журнале, но в архив не легли: {packGaps.otdr.join('; ')}.
+                  <span className="block text-[var(--text-muted)]">
+                    Файл не скачался из облака или ещё лежит на телефоне, где его приложили, — протокол так и пишет.
+                    Соберите пакет заново после обмена при связи.
+                  </span>
+                </span>
+              )}
             </span>
-            <button type="button" className="btn btn-ghost text-[11px]" onClick={() => setPackGaps([])}>
+            <button type="button" className="btn btn-ghost text-[11px]"
+                    onClick={() => setPackGaps({ acts: [], protocols: [], otdr: [] })}>
               Понятно
             </button>
           </div>
@@ -1143,7 +1178,7 @@ export default function DocsView({
                   )}
                   {measured.map((m) => (
                     <option key={m.objectId} value={m.objectId}>
-                      {m.name} · {m.uchastok || 'участок не указан'}
+                      {measuredLabels.get(m.objectId)}
                     </option>
                   ))}
                 </select>

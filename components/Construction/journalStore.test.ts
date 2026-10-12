@@ -12,7 +12,9 @@ import {
   crewOnDuty, crewEquipmentCount, deviationMapItems, plural,
   scopeJournal, smuList, DEFAULT_SMUS, isOneDrill,
 } from './journalStore';
-import type { DailyWorkEntry, DrillLogEntry, Deviation, Crew } from '@/types/construction';
+import type {
+  DailyWorkEntry, DrillLogEntry, Deviation, Crew, SiteObject, SpliceRecord,
+} from '@/types/construction';
 
 const now = '2026-09-17T00:00:00.000Z';
 
@@ -633,6 +635,23 @@ describe('область держится во всех разрезах', () =>
       }],
     };
     expect(scopeJournal(withUnknown, 'Акмолинская область').crews).toHaveLength(1);
+  });
+
+  it('протоколы сварки муфт чужой области не всплывают «удалёнными с карты»', () => {
+    const muf = (id: string, oblast: string): SiteObject => ({
+      id, kind: 'mufta', name: id, lat: 51, lon: 71, oblast, createdAt: now, updatedAt: now,
+    });
+    const sp = (id: string, objectId: string): SpliceRecord => ({
+      id, objectId, date: '2026-09-10', fibers: [], createdAt: now, updatedAt: now,
+    });
+    const s = scopeJournal({
+      ...base,
+      objects: [muf('m-akm', 'Акмолинская область'), muf('m-man', 'Мангистауская область')],
+      splices: [sp('s-akm', 'm-akm'), sp('s-man', 'm-man'), sp('s-gone', 'нет-на-карте')],
+    }, 'Акмолинская область');
+    // Протокол муфты, удалённой с карты, остаётся: про него не известно,
+    // что он чужой.
+    expect(s.splices.map((r) => r.id)).toEqual(['s-akm', 's-gone']);
   });
 });
 

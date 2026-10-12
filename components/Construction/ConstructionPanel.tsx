@@ -71,7 +71,7 @@ import { downloadText } from '@/lib/download';
 import ChangeLogView from './ChangeLogView';
 import PassportView from './PassportView';
 import IncidentsView from './IncidentsView';
-import { uploadPending, getPhotoBlob, deletePhotoBlob } from './photoStore';
+import { uploadPending, getPhotoBlob, deletePhotoBlob, commitUploaded } from './photoStore';
 import { storageUploadJournalPhoto, storageUploadOtdr } from '@/lib/supabase';
 import { uploadPendingOtdr } from './otdr';
 import DeviationForm from './DeviationForm';
@@ -419,8 +419,9 @@ export default function ConstructionPanel({
       // ссылкой на него записан. Не записался (память браузера кончилась) —
       // копия остаётся на телефоне, и следующий обмен отправит её снова:
       // лишний файл в облаке лучше потерянного снимка или рефлектограммы.
+      const commit = { save: saveJournal, del: deletePhotoBlob };
       const withPhotos = await uploadPendingPhotos(loadJournal());
-      if (withPhotos.changed && !saveJournal(withPhotos.state)) {
+      if (withPhotos.changed && !(await commitUploaded(withPhotos.state, withPhotos.sentIds, commit))) {
         setSyncNote({
           tone: 'warn',
           text: 'Фото отправлены, но журнал не сохранился: переполнено хранилище браузера. '
@@ -428,9 +429,8 @@ export default function ConstructionPanel({
         });
         return;
       }
-      for (const id of withPhotos.sentIds) await deletePhotoBlob(id);
       const withOtdr = await uploadPendingOtdrFiles(loadJournal());
-      if (withOtdr.changed && !saveJournal(withOtdr.state)) {
+      if (withOtdr.changed && !(await commitUploaded(withOtdr.state, withOtdr.sentKeys, commit))) {
         setSyncNote({
           tone: 'warn',
           text: 'Рефлектограммы отправлены, но журнал не сохранился: переполнено хранилище браузера. '
@@ -438,7 +438,6 @@ export default function ConstructionPanel({
         });
         return;
       }
-      for (const key of withOtdr.sentKeys) await deletePhotoBlob(key);
 
       const res = await syncJournal(loadJournal(), actor);
       if (!res.ok) {
@@ -446,7 +445,16 @@ export default function ConstructionPanel({
         return;
       }
       setJournal(res.merged);
-      saveJournal(res.merged);
+      // Слитое с сервера тоже проверяем: не записалось — следующий обмен
+      // принесёт чужие правки заново, а человек думает, что всё сошлось.
+      if (!saveJournal(res.merged)) {
+        setSyncNote({
+          tone: 'warn',
+          text: 'Журнал получен из облака, но на устройстве не сохранился: переполнено хранилище браузера. '
+            + 'Освободите место и синхронизируйте ещё раз.',
+        });
+        return;
+      }
       saveLastSyncAt(res.at);
       setSyncedAt(res.at);
       const { pulled, pushed, conflicts, removed } = res.stats;

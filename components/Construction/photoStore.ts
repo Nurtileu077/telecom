@@ -216,3 +216,24 @@ export async function uploadPending(
   }
   return { photos: out, sent, failed, sentIds };
 }
+
+/**
+ * Записать журнал со ссылками и только потом стереть локальные копии.
+ *
+ * Порядок здесь и есть защита: файл ушёл в облако, а журнал со ссылкой не
+ * записался (память браузера кончилась) — копия обязана остаться на
+ * телефоне. Иначе снимок или рефлектограмма лежат в облаке под путём,
+ * которого никто не знает, а протокол навсегда «ждёт отправки». Лишний
+ * файл в облаке при повторной отправке — меньшая беда.
+ *
+ * `false` — журнал не записался, ничего не стёрто.
+ */
+export async function commitUploaded<S>(
+  state: S,
+  keys: string[],
+  deps: { save: (s: S) => boolean; del: (key: string) => Promise<unknown> },
+): Promise<boolean> {
+  if (!deps.save(state)) return false;
+  for (const key of keys) await deps.del(key);
+  return true;
+}
