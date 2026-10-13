@@ -1,10 +1,11 @@
 'use client';
 import { useMemo } from 'react';
-import { AlertTriangle, MapPin, Trash2, Check, Undo2 } from 'lucide-react';
+import { AlertTriangle, MapPin, Trash2, Check, Undo2, Pencil } from 'lucide-react';
 import type { JournalState } from './journalStore';
 import { findOverlaps } from './overlaps';
 import { formatMeters } from './mapDecor';
 import { journalRouteWork } from './routeSegments';
+import { journalMarksIssues } from './entryChecks';
 
 /**
  * Проверки по тому, что загружено.
@@ -27,10 +28,12 @@ interface Props {
   onRestore: (id: string) => void;
   /** Где факт разошёлся с проектом. */
   planFactRows: import('./entriesTable').PlanFactRow[];
+  /** Открыть смену в форме — поправить метры или метки. */
+  onOpenEntry?: (id: string) => void;
 }
 
 export default function ChecksView({
-  journal, onShow, onDeleteRoute, onRestore, planFactRows,
+  journal, onShow, onDeleteRoute, onRestore, planFactRows, onOpenEntry,
 }: Props) {
   const pairs = useMemo(
     () => findOverlaps(journal.planRoutes.map((r) => ({
@@ -53,6 +56,10 @@ export default function ChecksView({
       .slice().sort((a, b) => b.date.localeCompare(a.date)),
     [journal],
   );
+
+  // Метки трубы против метров. Форма сверяет их до сохранения, но смены из
+  // таблицы идут мимо формы, а метки чаще всего приходят именно таблицей.
+  const marks = useMemo(() => journalMarksIssues(journal.ground), [journal.ground]);
 
   const trash = [...journal.trash].sort((a, b) => b.at.localeCompare(a.at));
 
@@ -115,6 +122,12 @@ export default function ChecksView({
                   )}
                   {m.text}
                 </span>
+                {onOpenEntry && (
+                  <button type="button" className="btn btn-ghost btn-icon shrink-0"
+                          title="Открыть смену" onClick={() => onOpenEntry(m.entryId)}>
+                    <Pencil size={14} />
+                  </button>
+                )}
                 {route && (
                   <button type="button" className="btn btn-ghost btn-icon shrink-0"
                           title="Показать трассу на карте" onClick={() => onShow(route.coords)}>
@@ -124,6 +137,45 @@ export default function ChecksView({
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Где метки трубы разошлись с метрами смены. */}
+      {marks.length > 0 && (
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-3 space-y-1.5">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={16} className="text-[var(--warn)]" />
+            <div className="text-[13px] font-semibold text-[var(--text)]">
+              Метки трубы расходятся с метрами смены: {marks.length}
+            </div>
+          </div>
+          <div className="text-[11.5px] text-[var(--text-muted)]">
+            {marks[0].hint} Сами ничего не правим: какая цифра верна, знает тот, кто там был.
+          </div>
+          {marks.slice(0, 15).map((m) => (
+            <div key={m.entryId} className="flex items-start gap-2">
+              <span className="text-[11.5px] text-[var(--text)] min-w-0 flex-1">
+                <span className="block text-[10.5px] text-[var(--text-muted)] truncate">
+                  {m.date ? new Date(`${m.date}T00:00:00Z`).toLocaleDateString('ru') : '—'}
+                  {' · '}
+                  {m.uchastok || 'участок не указан'}
+                  {m.crew ? ` · ${m.crew}` : ''}
+                </span>
+                {m.text}
+              </span>
+              {onOpenEntry && (
+                <button type="button" className="btn btn-ghost btn-icon shrink-0"
+                        title="Открыть смену" onClick={() => onOpenEntry(m.entryId)}>
+                  <Pencil size={14} />
+                </button>
+              )}
+            </div>
+          ))}
+          {marks.length > 15 && (
+            <div className="text-[10.5px] text-[var(--text-muted)]">
+              И ещё {marks.length - 15} — сначала показаны последние.
+            </div>
+          )}
         </div>
       )}
 

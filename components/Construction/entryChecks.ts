@@ -3,6 +3,7 @@ import { LAY_METHOD_LABEL } from '@/types/construction';
 import { normName } from './areaImport';
 import { entryMeters, entryHasWork } from './entriesTable';
 import { marksMismatch } from './stopCheck';
+import { crewLabel } from './shiftPlace';
 
 /**
  * Проверки перед сохранением смены.
@@ -106,16 +107,8 @@ export function checkEntry(
 
   // Метки трубы подтверждают метраж — или нет. Расхождение больше 3 %
   // видно сразу, а не через месяц при сверке с расходом бухт.
-  const marks = marksMismatch(total, entry.ductMarks);
-  if (marks) {
-    out.push({
-      level: 'check',
-      text: `По меткам трубы ушло ${Math.round(marks.marksM).toLocaleString('ru')} м,`
-        + ` а в смене ${Math.round(total).toLocaleString('ru')} м — расходится больше чем на 3 %.`,
-      hint: 'Метки считаем с метки на метку: «4000 — 2490» — это 1 510 м. Если в траншее '
-        + 'не одна труба, по меткам выйдет кратно больше — тогда это не ошибка.',
-    });
-  }
+  const marks = marksWarning(entry);
+  if (marks) out.push(marks);
 
   // Глубину и материалы проверяют свои правила; здесь — только то, что
   // видно прямо в смене.
@@ -136,6 +129,58 @@ export function checkEntry(
   }
 
   return out;
+}
+
+const MARKS_HINT = 'Метки считаем с метки на метку: «4000 — 2490» — это 1 510 м. Если в траншее '
+  + 'не одна труба, по меткам выйдет кратно больше — тогда это не ошибка.';
+
+/** Метки трубы разошлись с метрами смены — одной фразой для формы и «Проверок». */
+export function marksWarning(entry: DailyWorkEntry): EntryWarning | null {
+  const total = entryMeters(entry);
+  const marks = marksMismatch(total, entry.ductMarks);
+  if (!marks) return null;
+  return {
+    level: 'check',
+    text: `По меткам трубы ушло ${Math.round(marks.marksM).toLocaleString('ru')} м,`
+      + ` а в смене ${Math.round(total).toLocaleString('ru')} м — расходится больше чем на 3 %.`,
+    hint: MARKS_HINT,
+  };
+}
+
+/** Сохранённая смена, у которой метки трубы разошлись с метрами. */
+export interface MarksIssue {
+  entryId: string;
+  date: string;
+  uchastok: string;
+  /** «1-колонна (Дозер)» — чья смена; пусто — не названо. */
+  crew: string;
+  text: string;
+  hint: string;
+}
+
+/**
+ * Смены журнала, у которых метки трубы не сходятся с метрами.
+ *
+ * Метки проверялись только в форме, до сохранения. А основной путь меток —
+ * отчёт таблицей: смены из Excel приходят с метками и мимо формы, и
+ * расхождение не видел никто. Сверяем и сохранённые — тем же правилом и
+ * той же фразой, что в форме.
+ */
+export function journalMarksIssues(ground: DailyWorkEntry[]): MarksIssue[] {
+  const out: MarksIssue[] = [];
+  for (const e of ground) {
+    const w = marksWarning(e);
+    if (!w) continue;
+    out.push({
+      entryId: e.id,
+      date: e.date,
+      uchastok: e.uchastok,
+      crew: crewLabel(e),
+      text: w.text,
+      hint: w.hint ?? MARKS_HINT,
+    });
+  }
+  return out.sort((a, b) => b.date.localeCompare(a.date));
 }
 
 /** Есть ли то, из-за чего сохранять не стоит. */

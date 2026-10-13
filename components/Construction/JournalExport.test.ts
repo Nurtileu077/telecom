@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as XLSX from 'xlsx';
 import { parseJournalBuffer } from './JournalImport';
 import { buildJournalWorkbook, formatDrillCoords, GROUND_HEADERS } from './JournalExport';
+import { journalMarksIssues } from './entryChecks';
 import type { DailyWorkEntry, DrillLogEntry, AerialWorkEntry, SettlementOrder } from '@/types/construction';
 
 const now = '2026-09-17T00:00:00.000Z';
@@ -209,6 +210,15 @@ describe('подробный отчёт инженера', () => {
     expect(r.ground[0].ductMarks).toEqual([
       { coil: '2590', meters: 0 }, { coil: '4000', meters: 2490 },
     ]);
+  });
+
+  it('метки, разошедшиеся с метрами, у смены из таблицы видны в «Проверках», хоть она и шла мимо формы', async () => {
+    // В смене 1 784 м по способам, а по меткам ушло 2 590 + 1 510 = 4 100 м.
+    const r = await roundTrip(detailed());
+    const issues = journalMarksIssues(r.ground);
+    expect(issues).toHaveLength(1);
+    expect(issues[0].entryId).toBe(r.ground[0].id);
+    expect(issues[0].text).toBe('По меткам трубы ушло 4 100 м, а в смене 1 784 м — расходится больше чем на 3 %.');
   });
 
   it('тоталы, простои и план на завтра переживают оборот', async () => {

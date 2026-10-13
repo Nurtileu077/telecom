@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   findDuplicate, typicalPerShift, checkEntry, hasBlocking, HARD_METERS_LIMIT, saveBlocker,
+  journalMarksIssues,
 } from './entryChecks';
 import type { DailyWorkEntry } from '@/types/construction';
 
@@ -141,5 +142,25 @@ describe('saveBlocker', () => {
     const idle = e({ id: 'new', date: '2026-08-01', byMethod: {}, downtime: 'ждём разрешения' });
     expect(checkEntry(idle, [])).toEqual([]);
     expect(saveBlocker(idle)).toBeNull();
+  });
+});
+
+describe('метки трубы у сохранённых смен', () => {
+  it('сохранённая смена с метками не по метрам попадает в список, сошедшаяся — нет', () => {
+    const off = e({ id: 'off', date: '2026-07-20', column: '1-колонна', byMethod: { 'бар': 1200 },
+      ductMarks: [{ coil: '4000', meters: 2490 }] });
+    const ok = e({ id: 'ok', date: '2026-07-21', byMethod: { 'бар': 1500 },
+      ductMarks: [{ coil: '4000', meters: 2490 }] });
+    const noMarks = e({ id: 'none', date: '2026-07-22' });
+    const issues = journalMarksIssues([off, ok, noMarks]);
+    expect(issues.map((i) => i.entryId)).toEqual(['off']);
+    expect(issues[0].crew).toBe('1-колонна (Дозер)');
+    // Та же фраза, что в форме до сохранения.
+    expect(issues[0].text).toBe(checkEntry(off, []).find((w) => w.text.startsWith('По меткам'))?.text);
+  });
+
+  it('номер бухты вместо метки — по меткам не считаем и не ругаемся', () => {
+    const coil = e({ id: 'coil', byMethod: { 'бар': 300 }, ductMarks: [{ coil: 'Б-12', meters: 2490 }] });
+    expect(journalMarksIssues([coil])).toEqual([]);
   });
 });

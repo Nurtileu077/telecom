@@ -1624,6 +1624,12 @@ export default function ConstructionPanel({
             planFactRows={planFactRows}
             onRestore={(id) => persist(restoreFromTrash(loadJournal(), id))}
             onShow={(coords) => { onShowCoords?.(coords); onClose(); }}
+            onOpenEntry={(id) => {
+              const e = loadJournal().ground.find((x) => x.id === id);
+              if (!e) { setFlash('Смены уже нет — обновите журнал'); return; }
+              setEditing(e);
+              setFormOpen(true);
+            }}
             onDeleteRoute={(id) => {
               if (!confirm('Удалить эту трассу?\nВернуть её можно будет в журнале изменений.')) return;
               persist(deleteRoute(loadJournal(), id, actor));
