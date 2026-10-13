@@ -104,6 +104,7 @@ const DRILL_COLOR: Record<'ГНБ' | 'ГНП', string> = {
 };
 import GpsLocateButton from '@/components/Map/GpsLocateButton';
 import { fixQuality, fixLabel, fixStyle, zoomForAccuracy } from '@/components/Map/gpsFix';
+import { photoGeoNote, photoTimeNote } from '@/components/Construction/photoGeo';
 import OfflineTilesButton from '@/components/Map/OfflineTilesButton';
 import {
   getTile, deleteTile, ancestorPiece, MAX_FALLBACK_UP,
@@ -1860,8 +1861,11 @@ export default function LeafletMap(props: Props) {
   /**
    * Снимки на карте.
    *
-   * Метка ставится там, где нажали затвор, а не там, где потом завели
-   * запись: координаты снимка — это EXIF, и именно поэтому им верят.
+   * Метка ставится по координатам снимка. Обычно это EXIF — место, где
+   * нажали затвор. Но если в снимке координат не было, их брали у
+   * телефона при добавлении, и это может быть вагончик через полдня:
+   * такую метку рисуем пунктиром и в подсказке говорим, почему ей не
+   * верить как месту работ.
    */
   function renderPhotos() {
     const group = photoGroupRef.current;
@@ -1874,6 +1878,7 @@ export default function LeafletMap(props: Props) {
 
       for (const p of photos) {
         const when = new Date(p.exifAt || p.takenAt || p.createdAt);
+        const geo = photoGeoNote(p);
         const m = L.marker([p.lat as number, p.lon as number], {
           zIndexOffset: 420,
           icon: L.divIcon({
@@ -1882,9 +1887,10 @@ export default function LeafletMap(props: Props) {
             iconAnchor: [11, 11],
             html: `<div style="
               width:20px;height:20px;border-radius:4px;
-              background:#0c1018ee;border:2px solid #fbbf24;
+              background:#0c1018ee;border:2px ${geo.atShot ? 'solid' : 'dashed'} #fbbf24;
               display:flex;align-items:center;justify-content:center;
               font-size:10px;line-height:1;box-shadow:0 0 6px #fbbf2455;
+              ${geo.atShot ? '' : 'opacity:0.75;'}
             ">📷</div>`,
           }),
         });
@@ -1894,7 +1900,9 @@ export default function LeafletMap(props: Props) {
         );
         m.bindPopup(
           `<b>📷 ${esc(p.note || 'Снимок')}</b>`
-          + `<br/><span style="font-size:11px">${when.toLocaleString('ru')}</span>`
+          + `<br/><span style="font-size:11px">${esc(photoTimeNote(p))}</span>`
+          + `<br/><span style="font-size:10px;color:${geo.warning ? '#b45309' : '#64748b'}">`
+          + `${esc(geo.source)}${geo.warning ? `: ${esc(geo.warning)}` : ''}</span>`
           + (p.author ? `<br/><span style="font-size:11px">${esc(p.author)}</span>` : '')
           + `<br/><span style="color:#64748b;font-size:10px">${esc(p.uchastok || '')}</span>`
           + (propsRef.current.onOpenPhoto

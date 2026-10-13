@@ -6,7 +6,8 @@ import {
   type LayMethod, type MaterialKind,
 } from '@/types/construction';
 import { JournalState, fmtKm, fmtMeters, MATERIAL_LABEL, plural } from './journalStore';
-import { getPhotoBlob, GEO_SOURCE_LABEL } from './photoStore';
+import { getPhotoBlob } from './photoStore';
+import { photoGeoNote } from './photoGeo';
 import { isIdleShift } from './entriesTable';
 import type { FieldPhoto } from '@/types/construction';
 
@@ -345,7 +346,8 @@ function DayPhoto({ photo }: { photo: FieldPhoto }) {
     return () => { alive = false; if (url) URL.revokeObjectURL(url); };
   }, [photo.id, photo.url]);
 
-  const when = new Date(photo.takenAt);
+  const when = new Date(photo.exifAt || photo.takenAt);
+  const geo = photoGeoNote(photo);
   return (
     <figure className="w-[120px] m-0 rounded-lg border border-[var(--border)] overflow-hidden bg-[var(--bg-canvas)]">
       {src
@@ -357,7 +359,12 @@ function DayPhoto({ photo }: { photo: FieldPhoto }) {
           ? '—'
           : when.toLocaleString('ru', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
         <br />
-        {GEO_SOURCE_LABEL[photo.geoSource]}
+        {/* Отчёт дня читают как «где работали»: точку не с места съёмки
+            помечаем прямо здесь, а причину — в подсказке. */}
+        <span title={geo.warning ? `${geo.source}: ${geo.warning}` : geo.source}
+              style={geo.warning ? { color: 'var(--warn)' } : undefined}>
+          {geo.short}
+        </span>
         {photo.uchastok && <><br />{photo.uchastok}</>}
       </figcaption>
     </figure>

@@ -30,6 +30,14 @@ describe('откуда у фото координаты', () => {
     expect(GEO_SOURCE_LABEL.device).toContain('телефона');
   });
 
+  it('с точкой телефона запоминает её погрешность и время', async () => {
+    const meta = await photoMeta(new Blob([new Uint8Array([1, 2, 3])]), {
+      lat: 51.5, lon: 71.2, accuracyM: 640, at: '2026-09-18T14:40:00.000Z',
+    });
+    expect(meta.geoAccuracyM).toBe(640);
+    expect(meta.geoAt).toBe('2026-09-18T14:40:00.000Z');
+  });
+
   it('кривые координаты телефона не берутся', async () => {
     const meta = await photoMeta(new Blob([new Uint8Array([1])]), { lat: NaN, lon: 71 });
     expect(meta.geoSource).toBe('none');

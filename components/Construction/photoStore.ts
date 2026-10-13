@@ -90,7 +90,21 @@ export interface PhotoMeta {
   geoSource: PhotoGeoSource;
   takenAt: string;
   exifAt?: string;
+  geoAccuracyM?: number;
+  geoAt?: string;
 }
+
+/** Положение телефона в момент, когда фото прикладывали. */
+export interface DevicePosition {
+  lat: number;
+  lon: number;
+  /** Погрешность, м — телефон сообщает её всегда, но проверяем. */
+  accuracyM?: number;
+  /** Когда телефон определил это место, ISO. */
+  at?: string;
+}
+
+const positive = (v: number | undefined) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined);
 
 /**
  * Откуда брать координаты.
@@ -99,10 +113,14 @@ export interface PhotoMeta {
  * устройства, но помеченное как «телефон», потому что снимок могли
  * приложить вечером и не на месте работ. Придумывать координаты, когда
  * их нет ни там, ни там, нельзя — так и пишем.
+ *
+ * Вместе с местом запоминаем погрешность и время, когда место получено:
+ * без них в отчёте не отличить точку со спутников в момент съёмки от
+ * точки вагончика через десять часов.
  */
 export async function photoMeta(
   file: Blob,
-  devicePos?: { lat: number; lon: number } | null,
+  devicePos?: DevicePosition | null,
 ): Promise<PhotoMeta> {
   const now = new Date().toISOString();
   let exif: ReturnType<typeof readExifGps> = null;
@@ -119,6 +137,8 @@ export async function photoMeta(
       geoSource: 'exif',
       takenAt: exif!.takenAt ?? now,
       exifAt: exif!.takenAt,
+      geoAccuracyM: positive(exif!.accuracyM),
+      geoAt: exif!.fixAt,
     };
   }
   if (devicePos && Number.isFinite(devicePos.lat) && Number.isFinite(devicePos.lon)) {
@@ -127,6 +147,8 @@ export async function photoMeta(
       geoSource: 'device',
       takenAt: exif?.takenAt ?? now,
       exifAt: exif?.takenAt,
+      geoAccuracyM: positive(devicePos.accuracyM),
+      geoAt: devicePos.at ?? now,
     };
   }
   return { geoSource: 'none', takenAt: exif?.takenAt ?? now, exifAt: exif?.takenAt };

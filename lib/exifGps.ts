@@ -20,12 +20,26 @@ export interface ExifGps {
   alt?: number;
   /** Дата и время съёмки, ISO. */
   takenAt?: string;
+  /**
+   * Погрешность точки, м (GPSHPositioningError). Пишут не все телефоны;
+   * нет — значит неизвестна, а не ноль.
+   */
+  accuracyM?: number;
+  /**
+   * Когда спутники дали эту точку, ISO (GPSDateStamp + GPSTimeStamp, UTC).
+   * Телефон, потерявший спутники, кладёт в снимок последнюю известную
+   * точку — иногда часовой давности и с другого конца участка. По
+   * разнице с временем съёмки это и видно.
+   */
+  fixAt?: string;
 }
 
 const TAG_GPS_IFD = 0x8825;
 const TAG_EXIF_IFD = 0x8769;
 const TAG_DATETIME_ORIGINAL = 0x9003;
 const TAG_DATETIME = 0x0132;
+/** Часовой пояс времени съёмки, «+05:00» — пишут новые телефоны. */
+const TAG_OFFSET_TIME_ORIGINAL = 0x9011;
 
 const GPS_LAT_REF = 0x0001;
 const GPS_LAT = 0x0002;
@@ -33,6 +47,9 @@ const GPS_LON_REF = 0x0003;
 const GPS_LON = 0x0004;
 const GPS_ALT_REF = 0x0005;
 const GPS_ALT = 0x0006;
+const GPS_TIMESTAMP = 0x0007;
+const GPS_DATESTAMP = 0x001d;
+const GPS_HPOS_ERROR = 0x001f;
 
 interface Reader {
   u16(at: number): number;
@@ -105,12 +122,34 @@ function dms(r: Reader, e: Entry): number | null {
   return d + m / 60 + s / 3600;
 }
 
-/** «2026:09:17 08:41:03» → ISO. Часовой пояс EXIF не пишет — берём местное. */
-export function exifDateToIso(s: string): string | undefined {
+/**
+ * «2026:09:17 08:41:03» → ISO.
+ *
+ * Старые телефоны часовой пояс не пишут — тогда берём местный: снимок
+ * обычно прикладывают с того же телефона, которым снимали. Новые пишут
+ * его отдельным тегом («+05:00»), и тогда он точнее местного: снимок
+ * могли переслать в контору и прикладывать оттуда.
+ */
+export function exifDateToIso(s: string, offset?: string): string | undefined {
   const m = s.trim().match(/^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
   if (!m) return undefined;
-  const [, y, mo, d, h, mi, sec] = m;
-  const date = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(sec));
+  const [y, mo, d, h, mi, sec] = m.slice(1, 7).map(Number);
+  const off = offset?.trim().match(/^([+-])(\d{2}):?(\d{2})$/);
+  const date = off
+    ? new Date(Date.UTC(y, mo - 1, d, h, mi, sec)
+      - (off[1] === '-' ? -1 : 1) * (Number(off[2]) * 60 + Number(off[3])) * 60_000)
+    : new Date(y, mo - 1, d, h, mi, sec);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+/** Время спутниковой точки: дата «2026:09:17» и часы-минуты-секунды UTC. */
+export function gpsFixToIso(dateStamp: string, hms: [number, number, number]): string | undefined {
+  const m = dateStamp.trim().match(/^(\d{4}):(\d{2}):(\d{2})$/);
+  if (!m || !hms.every(Number.isFinite)) return undefined;
+  const [h, mi, sec] = hms;
+  if (h >= 24 || mi >= 60 || sec >= 61) return undefined;
+  const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 0, 0, 0) + ((h * 60 + mi) * 60 + sec) * 1000;
+  const date = new Date(Math.round(ms));
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
@@ -161,8 +200,10 @@ export function readExifGps(buf: ArrayBuffer): ExifGps | null {
     if (exifPtr) {
       const exif = readIfd(r, pointerOf(r, exifPtr));
       const dto = exif.find((e) => e.tag === TAG_DATETIME_ORIGINAL);
+      const off = exif.find((e) => e.tag === TAG_OFFSET_TIME_ORIGINAL);
+      const offset = off ? r.ascii(off.valueAt, off.count) : undefined;
       // Время съёмки вернее времени файла: файл мог быть пересохранён.
-      if (dto) takenAt = exifDateToIso(r.ascii(dto.valueAt, dto.count)) ?? takenAt;
+      if (dto) takenAt = exifDateToIso(r.ascii(dto.valueAt, dto.count), offset) ?? takenAt;
     }
 
     const gpsPtr = ifd0.find((e) => e.tag === TAG_GPS_IFD);
@@ -195,7 +236,25 @@ export function readExifGps(buf: ArrayBuffer): ExifGps | null {
       || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
       return takenAt ? { lat: NaN, lon: NaN, takenAt } : null;
     }
-    return { lat, lon, alt, takenAt };
+
+    let accuracyM: number | undefined;
+    const errE = gps.find((e) => e.tag === GPS_HPOS_ERROR);
+    if (errE && errE.valueAt + 8 <= r.size) {
+      const v = r.rational(errE.valueAt);
+      // Ноль погрешности — не «идеально», а «не записали»: так его и считаем.
+      if (Number.isFinite(v) && v > 0) accuracyM = v;
+    }
+
+    let fixAt: string | undefined;
+    const dateE = gps.find((e) => e.tag === GPS_DATESTAMP);
+    const timeE = gps.find((e) => e.tag === GPS_TIMESTAMP);
+    if (dateE && timeE && timeE.count >= 3 && timeE.valueAt + 24 <= r.size) {
+      fixAt = gpsFixToIso(r.ascii(dateE.valueAt, dateE.count), [
+        r.rational(timeE.valueAt), r.rational(timeE.valueAt + 8), r.rational(timeE.valueAt + 16),
+      ]);
+    }
+
+    return { lat, lon, alt, takenAt, accuracyM, fixAt };
   } catch {
     // Битый EXIF не должен мешать приложить фотографию.
     return null;

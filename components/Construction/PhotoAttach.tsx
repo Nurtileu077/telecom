@@ -4,8 +4,9 @@ import { Camera, X, MapPin, CloudOff } from 'lucide-react';
 import { FieldPhoto } from '@/types/construction';
 import {
   photoMeta, putPhotoBlob, getPhotoBlob, deletePhotoBlob,
-  GEO_SOURCE_LABEL, fmtBytes,
+  fmtBytes, type DevicePosition,
 } from './photoStore';
+import { photoGeoNote, hasPhotoCoords } from './photoGeo';
 import { shrinkPhoto } from './photoShrink';
 
 /**
@@ -34,14 +35,23 @@ interface Props {
   onFlash?: (text: string) => void;
 }
 
-/** Положение устройства — спрашиваем только когда в файле координат нет. */
-function devicePosition(): Promise<{ lat: number; lon: number } | null> {
+/**
+ * Положение устройства — спрашиваем только когда в файле координат нет.
+ *
+ * Вместе с местом берём погрешность и время, когда телефон его определил:
+ * по ним в отчёте видно, место ли это съёмки или вагончик через полдня.
+ */
+function devicePosition(): Promise<DevicePosition | null> {
   if (typeof navigator === 'undefined' || !navigator.geolocation) return Promise.resolve(null);
   return new Promise((resolve) => {
-    const done = (v: { lat: number; lon: number } | null) => resolve(v);
     navigator.geolocation.getCurrentPosition(
-      (pos) => done({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
-      () => done(null),
+      (pos) => resolve({
+        lat: pos.coords.latitude,
+        lon: pos.coords.longitude,
+        accuracyM: Math.round(pos.coords.accuracy),
+        at: Number.isFinite(pos.timestamp) ? new Date(pos.timestamp).toISOString() : undefined,
+      }),
+      () => resolve(null),
       { enableHighAccuracy: true, timeout: 6000, maximumAge: 60_000 },
     );
   });
@@ -62,7 +72,7 @@ export default function PhotoAttach({
     try {
       // Положение спрашиваем один раз на всю пачку: диалог разрешения на
       // каждый файл — верный способ получить отказ.
-      let pos: { lat: number; lon: number } | null | undefined;
+      let pos: DevicePosition | null | undefined;
       let savedBytes = 0;
       for (const file of Array.from(files)) {
         const id = `ph-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -86,6 +96,8 @@ export default function PhotoAttach({
           id, kind, refId,
           lat: meta.lat, lon: meta.lon,
           geoSource: meta.geoSource,
+          geoAccuracyM: meta.geoAccuracyM,
+          geoAt: meta.geoAt,
           takenAt: meta.takenAt,
           exifAt: meta.exifAt,
           oblast: place?.oblast, rayon: place?.rayon,
@@ -161,8 +173,9 @@ function Thumb({ photo, onRemove }: { photo: FieldPhoto; onRemove: () => void })
     };
   }, [photo.id, photo.url]);
 
-  const when = new Date(photo.takenAt);
-  const geo = photo.lat !== undefined && photo.lon !== undefined;
+  const when = new Date(photo.exifAt || photo.takenAt);
+  const geo = photoGeoNote(photo);
+  const title = geo.warning ? `${geo.source}: ${geo.warning}` : geo.source;
 
   return (
     <div className="w-[104px] rounded-lg border border-[var(--border)] bg-[var(--bg-canvas)] overflow-hidden relative">
@@ -184,11 +197,17 @@ function Thumb({ photo, onRemove }: { photo: FieldPhoto; onRemove: () => void })
             ? '—'
             : when.toLocaleString('ru', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
         </span>
+        {/* Не место съёмки — красим предупреждением: так это и увидят
+            в фотоотчёте, лучше узнать сейчас, пока можно переснять. */}
         <span className="text-[9px] leading-tight flex items-center gap-0.5"
-              style={{ color: photo.geoSource === 'exif' ? 'var(--accent)' : 'var(--text-muted)' }}
-              title={GEO_SOURCE_LABEL[photo.geoSource]}>
+              style={{
+                color: !hasPhotoCoords(photo) ? 'var(--text-muted)'
+                  : geo.warning ? 'var(--warn)'
+                    : photo.geoSource === 'exif' ? 'var(--accent)' : 'var(--text-muted)',
+              }}
+              title={title}>
           <MapPin size={9} className="shrink-0" />
-          {geo ? GEO_SOURCE_LABEL[photo.geoSource] : 'без координат'}
+          {geo.short}
         </span>
         {photo.pending && (
           <span className="text-[9px] text-[var(--text-muted)] flex items-center gap-0.5"

@@ -6,6 +6,7 @@ import {
 import { esc, ACT_DOC_CSS, fmtDate, ruDateWords } from './actDocument';
 import { entryMeters } from './entriesTable';
 import { formatWeather } from './weather';
+import { photoGeoNote, photoTimeNote, photoGeoSummary, hasPhotoCoords } from './photoGeo';
 
 /**
  * Документы, которые рождаются прямо на объекте.
@@ -201,15 +202,24 @@ export interface PhotoReportInput {
   part?: { index: number; of: number; total: number };
 }
 
-/** Подпись под снимком: место, время и откуда взялись координаты. */
+/**
+ * Подпись под снимком: место, время и откуда взялись координаты.
+ *
+ * Голые цифры координат заказчик читает как место работ. Поэтому рядом
+ * всегда источник, а если точку нельзя считать местом съёмки — почему:
+ * взята с телефона через десять часов, осталась с прошлого места,
+ * погрешность в километр.
+ */
 export function photoCaption(p: FieldPhoto): string {
-  const when = new Date(p.exifAt || p.takenAt || p.createdAt);
+  const geo = photoGeoNote(p);
+  const where = hasPhotoCoords(p)
+    ? `${(p.lat as number).toFixed(5)}, ${(p.lon as number).toFixed(5)} (${geo.source})`
+      + (geo.warning ? `: ${geo.warning}` : '')
+    : 'без координат';
   const parts = [
     p.note?.trim(),
-    Number.isNaN(when.getTime()) ? '' : when.toLocaleString('ru'),
-    p.lat !== undefined && p.lon !== undefined
-      ? `${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`
-      : 'без координат',
+    photoTimeNote(p),
+    where,
     p.author,
   ].filter(Boolean);
   return parts.join(' · ');
@@ -249,6 +259,8 @@ export function photoReportHtml(i: PhotoReportInput): string {
     + (i.part && i.part.of > 1
       ? `<p>Снимков в этой части: ${count}, всего в отчёте: ${i.part.total}.</p>`
       : `<p>Снимков: ${count}.</p>`)
+    // Откуда точки — на первой странице, а не только под каждым снимком.
+    + (count > 0 ? `<p>${esc(photoGeoSummary(groups.flatMap((g) => g.items.map((it) => it.photo))))}</p>` : '')
     + groups.map((g) => (g.title ? `<p class="b">${esc(g.title)}</p>` : '')
       + `<div class="photos">${photoCells(g.items)}</div>`).join('');
 }
