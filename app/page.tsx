@@ -2443,6 +2443,7 @@ export default function HomePage() {
           key={buildProject.id}
           projectSlot={projectSwitcher}
           onProjectsChanged={reloadProjects}
+          onNotice={(text) => say(text, 8000)}
           onPlayDay={(date) => { playDay(date); setShowJournal(false); }}
           onShowRoute={showSnpRoute}
           onShowCoords={(coords) => fitRef.current?.(coords)}

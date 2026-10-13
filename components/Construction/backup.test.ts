@@ -5,6 +5,7 @@ import {
   loadImports, saveImports, noteImport, IMPORT_HISTORY_LIMIT,
 } from './backup';
 import { emptyJournal, addGroundEntry, type JournalState } from './journalStore';
+import { SNP_PROJECT_ID } from './projects';
 import type { DailyWorkEntry } from '@/types/construction';
 
 function withEntries(n: number): JournalState {
@@ -126,7 +127,7 @@ describe('история импортов', () => {
       id: 'i1', at: '2026-07-25T10:00:00.000Z', file: 'журнал.xlsx',
       counts: { смены: 120 },
     });
-    saveImports(list);
+    saveImports(list, SNP_PROJECT_ID);
     expect(loadImports()[0].file).toBe('журнал.xlsx');
   });
 

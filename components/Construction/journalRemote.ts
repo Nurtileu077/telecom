@@ -237,15 +237,23 @@ const LAST_SYNC_KEY = 'optiq-journal-synced-at';
  * разу, потому что в 9:40 обменивался «СНП», — ровно то, после чего
  * смены неделю живут на одном телефоне.
  */
-function lastSyncKey(): string {
-  return scopedKey(LAST_SYNC_KEY, currentProjectId());
+function lastSyncKey(projectId: string): string {
+  return scopedKey(LAST_SYNC_KEY, projectId);
 }
 
-export function loadLastSyncAt(): string | null {
+export function loadLastSyncAt(projectId: string = currentProjectId()): string | null {
   if (typeof window === 'undefined') return null;
-  try { return localStorage.getItem(lastSyncKey()); } catch { return null; }
+  try { return localStorage.getItem(lastSyncKey(projectId)); } catch { return null; }
 }
 
-export function saveLastSyncAt(iso: string): void {
-  try { localStorage.setItem(lastSyncKey(), iso); } catch { /* приватный режим */ }
+/**
+ * Проект — обязательно, а не «открытый».
+ *
+ * Время ставят после ответа облака, а за эти полминуты по слабой связи
+ * человек успевает переключиться на Гипертрассу. Открытым к этому
+ * моменту может быть уже другой проект, и время обмена «СНП» досталось
+ * бы ему.
+ */
+export function saveLastSyncAt(iso: string, projectId: string): void {
+  try { localStorage.setItem(lastSyncKey(projectId), iso); } catch { /* приватный режим */ }
 }

@@ -404,15 +404,31 @@ describe('черновики и подсказки прошлой смены —
 
   it('время обмена — у проекта, который обменивался', () => {
     saveProjects([SNP_PROJECT, HYPER]);
-    saveLastSyncAt('2026-10-12T04:40:00.000Z');
+    saveLastSyncAt('2026-10-12T04:40:00.000Z', SNP_PROJECT_ID);
     openProject(HYPER.id);
     expect(loadLastSyncAt()).toBeNull();
   });
 
+  it('время обмена «СНП», пришедшее после переключения, Гипертрассе не достаётся', () => {
+    saveProjects([SNP_PROJECT, HYPER]);
+    openProject(HYPER.id);
+    saveLastSyncAt('2026-10-12T04:40:00.000Z', SNP_PROJECT_ID);
+    expect(loadLastSyncAt()).toBeNull();
+    expect(loadLastSyncAt(SNP_PROJECT_ID)).toBe('2026-10-12T04:40:00.000Z');
+  });
+
   it('история загрузок — у своего проекта', () => {
     saveProjects([SNP_PROJECT, HYPER]);
-    saveImports([{ id: 'i1', at: '2026-10-01T00:00:00.000Z', file: 'сёла.xlsx', counts: {} }]);
+    saveImports([{ id: 'i1', at: '2026-10-01T00:00:00.000Z', file: 'сёла.xlsx', counts: {} }], SNP_PROJECT_ID);
     openProject(HYPER.id);
     expect(loadImports()).toEqual([]);
+  });
+
+  it('загрузку из книги, выбранной в «СНП», записывает в историю «СНП», даже если открыта Гипертрасса', () => {
+    saveProjects([SNP_PROJECT, HYPER]);
+    openProject(HYPER.id);
+    saveImports([{ id: 'i1', at: '2026-10-01T00:00:00.000Z', file: 'сёла.xlsx', counts: {} }], SNP_PROJECT_ID);
+    expect(loadImports()).toEqual([]);
+    expect(loadImports(SNP_PROJECT_ID).map((r) => r.file)).toEqual(['сёла.xlsx']);
   });
 });

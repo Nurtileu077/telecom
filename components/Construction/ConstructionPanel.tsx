@@ -12,7 +12,7 @@ import { importJournal, type JournalImportResult } from './JournalImport';
 import { buildJournalWorkbook, journalFileName } from './JournalExport';
 import DailyEntryForm from './DailyEntryForm';
 import {
-  JournalState, JournalFilter, emptyJournal, loadJournal, saveJournal, mergeJournal,
+  JournalState, JournalFilter, emptyJournal, loadJournal, saveJournal,
   matchesFilter, groundTotals, metersBy, metersByDay, periodAnchor, distinct,
   fmtKm, fmtMeters, shiftDays, MATERIAL_LABEL, addGroundEntry, removeEntry,
   submitCorrection, approveCorrection, rejectCorrection, pendingCorrections,
@@ -51,8 +51,9 @@ import { errorLine } from '@/lib/errors';
 import { loadImports, saveImports, noteImport, makeBackup, backupFileName } from './backup';
 import {
   SNP_PROJECT_ID, loadProjects, saveProjects, mergeProjectLists, duplicateNames,
-  adoptionDue, markAdoptionSeen, type BuildProject,
+  adoptionDue, markAdoptionSeen, currentProjectId, projectMeta, type BuildProject,
 } from './projects';
+import { runJournalSync, importBookInto } from './journalFlows';
 import { demoJournal } from './demoData';
 import { reminders } from './siteRecords';
 import { hasNews, lastSeenVersion, markVersionSeen } from '@/lib/version';
@@ -75,7 +76,7 @@ import { downloadText } from '@/lib/download';
 import ChangeLogView from './ChangeLogView';
 import PassportView from './PassportView';
 import IncidentsView from './IncidentsView';
-import { uploadPending, getPhotoBlob, deletePhotoBlob, commitUploaded } from './photoStore';
+import { uploadPending, getPhotoBlob, deletePhotoBlob } from './photoStore';
 import { storageUploadJournalPhoto, storageUploadOtdr } from '@/lib/supabase';
 import { uploadPendingOtdr } from './otdr';
 import DeviationForm from './DeviationForm';
@@ -138,11 +139,17 @@ interface Props {
   projectSlot?: React.ReactNode;
   /** Список проектов пополнился из облака — шапке пора перечитать. */
   onProjectsChanged?: () => void;
+  /**
+   * Сказать через страницу. Обмен или загрузка книги, начатые в «СНП»,
+   * заканчиваются, когда журнал уже пересоздан под Гипертрассу, — их
+   * итог в закрытом журнале никто не увидит.
+   */
+  onNotice?: (text: string) => void;
 }
 
 export default function ConstructionPanel({
   onClose, onRequestPick, editObjectId, onDoneEditObject, onPlayDay, onShowRoute,
-  onShowCoords, hidden = false, projectSlot, onProjectsChanged,
+  onShowCoords, hidden = false, projectSlot, onProjectsChanged, onNotice,
 }: Props) {
   const { t } = useT();
   const [journal, setJournal] = useState<JournalState>(emptyJournal);
@@ -486,84 +493,76 @@ export default function ConstructionPanel({
    * иначе при следующем обмене чужие правки придут заново.
    */
   const handleSync = useCallback(async () => {
+    // Проект — до первого await, и дальше только он (см. journalFlows.ts):
+    // пока уходят снимки, человек успевает открыть Гипертрассу, и обмен
+    // «СНП» не должен превратиться в обмен Гипертрассы или отдать ей своё
+    // время «синхронизировано».
+    const pid = currentProjectId();
     setSyncing(true);
     setSyncNote(null);
     try {
-      // Сначала файлы, потом журнал: карточка со ссылкой уйдёт в том же
-      // обмене, и у соседа фото откроется сразу, а не «в следующий раз».
-      // Локальную копию файла стираем только после того, как журнал со
-      // ссылкой на него записан. Не записался (память браузера кончилась) —
-      // копия остаётся на телефоне, и следующий обмен отправит её снова:
-      // лишний файл в облаке лучше потерянного снимка или рефлектограммы.
-      const commit = { save: saveJournal, del: deletePhotoBlob };
-      const withPhotos = await uploadPendingPhotos(loadJournal());
-      if (withPhotos.changed && !(await commitUploaded(withPhotos.state, withPhotos.sentIds, commit))) {
-        setSyncNote({
-          tone: 'warn',
-          text: 'Фото отправлены, но журнал не сохранился: переполнено хранилище браузера. '
-            + 'Снимки остались на устройстве — освободите место и синхронизируйте ещё раз.',
-        });
+      const run = await runJournalSync(pid, {
+        load: loadJournal,
+        save: saveJournal,
+        photos: async (base) => {
+          const r = await uploadPendingPhotos(base);
+          return { ...r, keys: r.sentIds };
+        },
+        otdr: async (base) => {
+          const r = await uploadPendingOtdrFiles(base);
+          return { ...r, keys: r.sentKeys };
+        },
+        dropLocal: deletePhotoBlob,
+        exchange: (local) => syncJournal(local, actor),
+        markSynced: saveLastSyncAt,
+      });
+      // Переключились, пока шёл обмен: этот журнал уже закрыт, и его
+      // строка итога никому не видна. Говорим через страницу и называем
+      // проект — иначе «отправлено 12» прочтут как итог открытой
+      // Гипертрассы. Проверяем в момент итога: переключиться могли и
+      // пока рассылались проекты.
+      const tell = (tone: 'ok' | 'warn', text: string) => {
+        setSyncNote({ tone, text });
+        if (currentProjectId() !== pid) onNotice?.(`Обмен «${projectMeta(pid).name}»: ${text}`);
+      };
+      if (!run.ok) {
+        if (run.shown) setJournal(run.shown);
+        tell('warn', run.text);
         return;
       }
-      const withOtdr = await uploadPendingOtdrFiles(loadJournal());
-      if (withOtdr.changed && !(await commitUploaded(withOtdr.state, withOtdr.sentKeys, commit))) {
-        setSyncNote({
-          tone: 'warn',
-          text: 'Рефлектограммы отправлены, но журнал не сохранился: переполнено хранилище браузера. '
-            + 'Файлы остались на устройстве — освободите место и синхронизируйте ещё раз.',
-        });
-        return;
-      }
-
-      const res = await syncJournal(loadJournal(), actor);
-      if (!res.ok) {
-        setSyncNote({ tone: 'warn', text: res.message });
-        return;
-      }
-      setJournal(res.merged);
-      // Слитое с сервера тоже проверяем: не записалось — следующий обмен
-      // принесёт чужие правки заново, а человек думает, что всё сошлось.
-      if (!saveJournal(res.merged)) {
-        setSyncNote({
-          tone: 'warn',
-          text: 'Журнал получен из облака, но на устройстве не сохранился: переполнено хранилище браузера. '
-            + 'Освободите место и синхронизируйте ещё раз.',
-        });
-        return;
-      }
-      saveLastSyncAt(res.at);
-      setSyncedAt(res.at);
+      setJournal(run.merged);
+      setSyncedAt(run.at);
       // Свой журнал сошёлся: «СНП» на этом устройстве — тот же, что везде.
       if (adoptNote) { markAdoptionSeen(); setAdoptNote(false); }
       const projectNote = await shareProjects();
-      const { pulled, pushed, conflicts, removed } = res.stats;
+      const { pulled, pushed, conflicts, removed } = run.stats;
       const parts = [
         pulled ? `получено ${pulled}` : '',
         pushed ? `отправлено ${pushed}` : '',
         conflicts ? `расхождений ${conflicts}` : '',
         removed ? `удалено ${removed}` : '',
       ].filter(Boolean);
-      const photoNote = withPhotos.sent
-        ? ` Фото отправлено: ${withPhotos.sent}.`
+      const photoNote = run.photos.sent
+        ? ` Фото отправлено: ${run.photos.sent}.`
         : '';
-      const photoWarn = withPhotos.failed
-        ? ` Не ушло фото: ${withPhotos.failed} — попробуйте при связи получше.`
+      const photoWarn = run.photos.failed
+        ? ` Не ушло фото: ${run.photos.failed} — попробуйте при связи получше.`
         : '';
-      const otdrNote = withOtdr.sent ? ` Рефлектограмм отправлено: ${withOtdr.sent}.` : '';
-      const otdrWarn = withOtdr.failed
-        ? ` Не ушло рефлектограмм: ${withOtdr.failed} — попробуйте при связи получше.`
+      const otdrNote = run.otdr.sent ? ` Рефлектограмм отправлено: ${run.otdr.sent}.` : '';
+      const otdrWarn = run.otdr.failed
+        ? ` Не ушло рефлектограмм: ${run.otdr.failed} — попробуйте при связи получше.`
         : '';
-      setSyncNote({
-        tone: withPhotos.failed || withOtdr.failed ? 'warn' : 'ok',
-        text: (res.firstPush
+      tell(
+        run.photos.failed || run.otdr.failed ? 'warn' : 'ok',
+        (run.firstPush
           ? 'Журнал впервые выгружен в облако.'
           : parts.length ? `Синхронизировано: ${parts.join(', ')}.` : 'Всё уже совпадало.')
           + photoNote + photoWarn + otdrNote + otdrWarn + projectNote,
-      });
+      );
     } finally {
       setSyncing(false);
     }
-  }, [actor, uploadPendingPhotos, uploadPendingOtdrFiles, shareProjects, adoptNote]);
+  }, [actor, uploadPendingPhotos, uploadPendingOtdrFiles, shareProjects, adoptNote, onNotice]);
 
   /**
    * Загрузка KML: и проектные трассы, и обводки районов с сёлами.
@@ -718,6 +717,23 @@ export default function ConstructionPanel({
   }, []);
 
   /**
+   * Записать, что загрузили.
+   *
+   * «Откуда это взялось» спрашивают через месяц, когда файла уже нет, а
+   * цифры в журнале есть. Проект называют явно: запись делают после
+   * разбора книги, и открытым к этому времени может быть уже другой.
+   */
+  const rememberImport = useCallback((file: string, counts: Record<string, number>, projectId: string) => {
+    saveImports(noteImport(loadImports(projectId), {
+      id: `imp-${Date.now().toString(36)}`,
+      at: new Date().toISOString(),
+      file,
+      counts,
+      author: actor,
+    }), projectId);
+  }, [actor]);
+
+  /**
    * Загрузка книги.
    *
    * Сначала пробуем как нашу выгрузку — там известны и листы, и колонки.
@@ -726,28 +742,41 @@ export default function ConstructionPanel({
    * переделывать книгу под нашу форму бессмысленно.
    */
   const handleFile = useCallback(async (file: File) => {
+    // Проект — до разбора: книгу выбрали в «СНП», и пока она читается,
+    // человек может открыть Гипертрассу. Сотни сёльских строк не должны
+    // лечь в ведомость магистрали (см. journalFlows.ts).
+    const pid = currentProjectId();
+    // Переключились, пока книга читалась: этот журнал уже закрыт, и ни
+    // сводки, ни ошибки, ни разбора по колонкам в нём никто не увидит.
+    // Говорим через страницу и называем проект — иначе строки будут
+    // искать в открытом.
+    const tellAway = (text: string) => {
+      if (currentProjectId() !== pid) onNotice?.(`«${file.name}», проект «${projectMeta(pid).name}»: ${text}`);
+    };
+    const askColumns = () => {
+      tellAway('это не наша выгрузка, её разбирают по колонкам — откройте проект и выберите файл снова.');
+      setSheetFile(file);
+    };
     setBusy(true); setError(''); setReport(null);
     try {
-      const res = await importJournal(file);
-      const known = res.ground.length + res.aerial.length
-        + res.drills.length + res.orders.length;
-      if (known === 0) {
-        setSheetFile(file);
+      const got = await importBookInto(pid, () => importJournal(file));
+      if (!got) { askColumns(); return; }
+      // Не записалось — и в истории загрузок ей не место: «загружено 300
+      // смен» при пустом журнале хуже, чем ничего.
+      if (!persist(got.next)) {
+        tellAway('не загружен — переполнено хранилище браузера.');
         return;
       }
-      persist(mergeJournal(loadJournal(), res));
-      setReport(res.stats);
-      rememberImport(file.name, {
-        смены: res.ground.length,
-        подвес: res.aerial.length,
-        проколы: res.drills.length,
-        заказ: res.orders.length,
-      });
+      setReport(got.stats);
+      rememberImport(file.name, got.counts, pid);
+      const what = Object.entries(got.counts).filter(([, n]) => n > 0)
+        .map(([k, n]) => `${k} ${n}`).join(', ');
+      tellAway(`загружено туда, где книгу выбрали: ${what}.`);
     } catch {
       // Не разобрали своим разбором — попробуем разобрать по колонкам.
-      setSheetFile(file);
+      askColumns();
     } finally { setBusy(false); }
-  }, [persist]);
+  }, [persist, rememberImport, onNotice]);
 
   // ── Период считаем от последнего дня, по которому вообще есть данные:
   //    выработка, отклонения, замеры сварки (см. periodAnchor).
@@ -830,22 +859,6 @@ export default function ConstructionPanel({
    * остаётся вчерашняя трасса. Цвет линии сохраняем тот же, что на
    * карте: по нему в Google Earth сразу видно, докуда дошли.
    */
-  /**
-   * Записать, что загрузили.
-   *
-   * «Откуда это взялось» спрашивают через месяц, когда файла уже нет, а
-   * цифры в журнале есть.
-   */
-  const rememberImport = useCallback((file: string, counts: Record<string, number>) => {
-    saveImports(noteImport(loadImports(), {
-      id: `imp-${Date.now().toString(36)}`,
-      at: new Date().toISOString(),
-      file,
-      counts,
-      author: actor,
-    }));
-  }, [actor]);
-
   const handleExportKml = useCallback(() => {
     const views = routeViews(scoped.planRoutes, {
       progress: live.progress,
@@ -1787,10 +1800,11 @@ export default function ConstructionPanel({
           author={actor}
           onClose={() => setSheetFile(null)}
           onDone={(entries) => {
-            let next = loadJournal();
+            const pid = currentProjectId();
+            let next = loadJournal(pid);
             for (const e of entries) next = addGroundEntry(next, e);
             persist(next);
-            rememberImport(sheetFile.name, { смены: entries.length });
+            rememberImport(sheetFile.name, { смены: entries.length }, pid);
             setSheetFile(null);
             setFlash(`Загружено строк: ${entries.length}`);
           }}

@@ -212,24 +212,29 @@ export const IMPORT_HISTORY_LIMIT = 30;
  * История загрузок — у открытого проекта: «откуда в журнале Гипертрассы
  * эти строки» не отвечают загрузками в журнал сёл.
  */
-function importsKey(): string {
-  return scopedKey(IMPORTS_KEY, currentProjectId());
+function importsKey(projectId: string): string {
+  return scopedKey(IMPORTS_KEY, projectId);
 }
 
-export function loadImports(): ImportRecord[] {
+export function loadImports(projectId: string = currentProjectId()): ImportRecord[] {
   if (typeof window === 'undefined') return [];
   try {
-    const v = JSON.parse(window.localStorage.getItem(importsKey()) ?? '[]');
+    const v = JSON.parse(window.localStorage.getItem(importsKey(projectId)) ?? '[]');
     return Array.isArray(v) ? v : [];
   } catch {
     return [];
   }
 }
 
-export function saveImports(list: ImportRecord[]): void {
+/**
+ * Проект называют явно: запись о загрузке делают после разбора книги, а
+ * пока она разбиралась, могли открыть другой проект. Строки легли в
+ * «СНП» — и запись о них должна быть там же, а не в Гипертрассе.
+ */
+export function saveImports(list: ImportRecord[], projectId: string): void {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(importsKey(), JSON.stringify(list.slice(0, IMPORT_HISTORY_LIMIT)));
+    window.localStorage.setItem(importsKey(projectId), JSON.stringify(list.slice(0, IMPORT_HISTORY_LIMIT)));
   } catch { /* приватный режим */ }
 }
 
