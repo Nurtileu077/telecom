@@ -10,6 +10,7 @@ import { polylineLengthM } from './planImport';
 import { routeViews } from './routeStyle';
 import { effectiveProgress } from './stageDerive';
 import { normName } from './areaImport';
+import { placeDeviations, lengthWithDeviations } from './schemeDeviations';
 
 /**
  * Что сохранить из нарисованной линии.
@@ -66,6 +67,24 @@ export default function RouteDrawForm({
     () => journal.ground.find((e) => e.uchastok === uchastok),
     [journal.ground, uchastok],
   );
+
+  /**
+   * Где обход ляжет на трассу участка — тем же расчётом, что и схема.
+   *
+   * Раньше здесь писали «трасса + обход = по участку», прибавляя обход
+   * целиком. Обход заменяет кусок проекта, а не дописывается к нему, и
+   * схема по факту называла меньше — два экрана, две длины одного участка.
+   */
+  const joint = useMemo(() => {
+    if (!parent || kind !== 'deviation' || coords.length < 2) return null;
+    const { placed } = placeDeviations(parent.coords, [{
+      id: 'draft', kind: 'route', date: '', oblast: '', uchastok, kato: '',
+      lengthM: Math.round(lengthM), reason: '', author: '', createdAt: '', updatedAt: '',
+      coords: coords.map(([lat, lon]) => ({ lat, lon })),
+    }], 120);
+    const p = placed[0];
+    return p ? { replacedM: p.projectM, factM: lengthWithDeviations(parent.lengthM, placed) } : 'off';
+  }, [parent, kind, coords, lengthM, uchastok]);
 
   const save = () => {
     const now = new Date().toISOString();
@@ -169,8 +188,13 @@ export default function RouteDrawForm({
           {parent && (
             <div className="rounded-lg border border-[var(--accent)]/40 bg-[var(--accent-dim)] px-3 py-2 text-[11.5px] text-[var(--text)]">
               Пристыкуется к трассе «{parent.name}»: {fmtKm(parent.lengthM)} км
-              {kind === 'deviation' && (
-                <> + {Math.round(lengthM)} м = <b>{fmtKm(parent.lengthM + lengthM)} км</b> по участку</>
+              {kind === 'deviation' && joint && joint !== 'off' && (
+                <>: обход {Math.round(lengthM)} м вместо {Math.round(joint.replacedM)} м проекта
+                  {' '}= <b>{fmtKm(joint.factM)} км</b> по факту</>
+              )}
+              {kind === 'deviation' && joint === 'off' && (
+                <>. Концы линии дальше 120 м от трассы — длину по факту не пересчитать,
+                  в схеме отклонение будет оговоркой</>
               )}
             </div>
           )}

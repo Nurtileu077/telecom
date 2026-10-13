@@ -37,8 +37,12 @@ import type { FieldPhoto, SpliceRecord } from '@/types/construction';
 import type { SectionActManual } from './sectionAct';
 import {
   buildScheme, schemeDocPage, schemeFileName, withSchemeAttached,
-  schemeObjectsFor, displacedMarks, spanMismatches, unassignedNote,
+  schemeObjectsFor, displacedMarks, spanMismatches, unassignedNote, objectMarks,
 } from './asBuilt';
+import {
+  schemeDeviationsFor, loadSchemeMode, saveSchemeMode,
+  SCHEME_MODES, SCHEME_MODE_LABEL, SCHEME_MODE_HINT, type SchemeMode,
+} from './schemeDeviations';
 import { routeOfSection, sectionForRoute, sectionMatchesRoute } from './routeSection';
 import { withDefaults, missingForPayment, binLooksWrong } from './requisites';
 import { normName } from './areaImport';
@@ -210,6 +214,9 @@ export default function DocsView({
   const hasPackGaps = packGaps.acts.length + packGaps.protocols.length + packGaps.otdr.length > 0;
   const [prices, setPrices] = useState<WorkPrices>({});
   const [schemeRouteId, setSchemeRouteId] = useState('');
+  // По факту или по проекту с отклонениями — заказчики просят по-разному,
+  // и выбор помнится на устройстве, как и формат файла.
+  const [schemeMode, setSchemeMode] = useState<SchemeMode>(() => loadSchemeMode());
   const [linkLife, setLinkLife] = useState(DEFAULT_LINK_LIFE.key);
   // Без облака ссылку давать неоткуда: документ останется файлом.
   const cloudReady = journalCloudEnabled();
@@ -317,6 +324,13 @@ export default function DocsView({
     [schemeRoute, journal.ground],
   );
 
+  // Отклонения по трассе этого участка: без них схема рисовала проект и
+  // спорила с подписанным протоколом мобильной группы.
+  const schemeDevs = useMemo(
+    () => schemeDeviationsFor(journal.deviations, schemeRoute),
+    [journal.deviations, schemeRoute],
+  );
+
   const scheme = useMemo(
     () => (schemeRoute
       ? buildScheme(schemeRoute, schemeObjects.own, {
@@ -324,9 +338,12 @@ export default function DocsView({
         others: schemeObjects.others,
         section: schemeSection,
         places,
+        deviations: schemeDevs.own,
+        otherDeviations: schemeDevs.others,
+        mode: schemeMode,
       })
       : null),
-    [schemeRoute, schemeObjects, schemeSection, places],
+    [schemeRoute, schemeObjects, schemeSection, places, schemeDevs, schemeMode],
   );
 
   // Та же трасса глазами карты: по обводкам сёл видно, не начинается ли
@@ -562,6 +579,8 @@ export default function DocsView({
             const objs = schemeObjectsFor(journal.objects, own);
             return buildScheme(own, objs.own, {
               unassigned: objs.unassigned, section: uchastok, places,
+              deviations: schemeDeviationsFor(journal.deviations, own).own,
+              mode: schemeMode,
             });
           })()
           : null;
@@ -1391,13 +1410,53 @@ export default function DocsView({
             {schemeHint && (
               <div className="text-[11px] text-[var(--warn)]">{schemeHint}</div>
             )}
+            {/* Какую схему ждёт заказчик — решает он: одни сверяют с проектом,
+                другие подписывают только факт. Отклонения есть в обеих. */}
+            <div className="flex gap-1.5 flex-wrap items-center">
+              {SCHEME_MODES.map((m) => (
+                <button key={m} type="button"
+                        title={SCHEME_MODE_HINT[m]}
+                        onClick={() => { setSchemeMode(m); saveSchemeMode(m); }}
+                        className={`chip ${schemeMode === m ? 'chip-on' : ''}`}>
+                  {SCHEME_MODE_LABEL[m]}
+                </button>
+              ))}
+              <span className="text-[10.5px] text-[var(--text-muted)]">{SCHEME_MODE_HINT[schemeMode]}</span>
+            </div>
             {scheme && (
               <div className="text-[11px] text-[var(--text-muted)]">
                 Отметок: {scheme.marks.length}, пролётов: {scheme.spans.length}
                 {scheme.spans.some((sp) => sp.measured)
                   ? ` (по замеру из карточек — ${scheme.spans.filter((sp) => sp.measured).length})`
                   : ''},
-                {' '}протяжённость {(scheme.totalM / 1000).toFixed(2).replace('.', ',')} км.
+                {' '}протяжённость {(scheme.totalM / 1000).toFixed(2).replace('.', ',')} км
+                {scheme.deviations.length > 0
+                  ? (scheme.mode === 'fact'
+                    ? ` по факту (по проекту ${(scheme.projectM / 1000).toFixed(2).replace('.', ',')} км)`
+                    : ` по проекту (по факту ${(scheme.factM / 1000).toFixed(2).replace('.', ',')} км)`)
+                  : ''}.
+              </div>
+            )}
+            {scheme && scheme.deviations.length > 0 && (
+              <div className="text-[11px] text-[var(--text)]">
+                Отклонения по трассе на схеме: {scheme.deviations.map((d) => (
+                  `№${d.n} ${d.from} — ${d.to}: ${Math.round(d.factM).toLocaleString('ru')} м `
+                  + `вместо ${Math.round(d.projectM).toLocaleString('ru')} м, ${d.protocol}`
+                )).join('; ')}.
+              </div>
+            )}
+            {scheme && scheme.deviationsUnplaced.length > 0 && (
+              <div className="text-[11px] text-[var(--warn)]">
+                Не легли на схему: {scheme.deviationsUnplaced.join('; ')}. Лист называет их
+                оговоркой; чтобы они вошли в длины, укажите в карточке отклонения начало и конец
+                на трассе.
+              </div>
+            )}
+            {scheme && scheme.deviationsForeign.length > 0 && (
+              <div className="text-[11px] text-[var(--warn)]">
+                На самой линии лежат отклонения других участков: {scheme.deviationsForeign.join('; ')}.
+                В схему не взяты — если это обход этой трассы, поставьте в карточке участок
+                {scheme.section ? ` «${scheme.section}»` : ' трассы'}.
               </div>
             )}
             {scheme && spanMismatches(scheme).length > 0 && (
@@ -1430,7 +1489,7 @@ export default function DocsView({
                 {scheme.section ? ` «${scheme.section}»` : ' трассы'}.
               </div>
             )}
-            {scheme && scheme.marks.length <= 2 && scheme.skipped.length === 0 && (
+            {scheme && objectMarks(scheme).length === 0 && scheme.skipped.length === 0 && (
               <div className="text-[11px] text-[var(--text-muted)]">
                 Своих объектов у участка нет — на схеме только концы трассы.
               </div>

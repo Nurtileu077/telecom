@@ -62,6 +62,21 @@ const DOCS: { name: string; html: string; tables: number }[] = [
     tables: 1,
   },
   { name: 'исполнительная схема', html: schemeDocPage({ scheme: buildScheme(route, []) }), tables: 1 },
+  {
+    // В Word рисунка нет — отклонение должно дойти таблицей.
+    name: 'исполнительная схема с отклонением',
+    html: schemeDocPage({
+      scheme: buildScheme(route, [], {
+        deviations: [{
+          id: 'd1', kind: 'route', date: '2026-07-20', oblast: '', uchastok: 'Зеренда', kato: '',
+          lengthM: 900, reason: 'Обход болота', author: '', createdAt: '', updatedAt: '',
+          coords: [{ lat: 52, lon: 71.005 }, { lat: 52.002, lon: 71.008 }, { lat: 52, lon: 71.011 }],
+          protocol: { number: '14', date: '2026-07-21' },
+        }],
+      }),
+    }),
+    tables: 2,
+  },
   { name: 'акт скрытых работ', html: hiddenWorksPage({ uchastok: 'Зеренда', rows }), tables: 1 },
   { name: 'реестр замечаний', html: remarksPage(remarksFromDeviations([])), tables: 1 },
   {
