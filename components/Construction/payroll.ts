@@ -1,8 +1,9 @@
 import {
   DailyWorkEntry, LayMethod, LAY_METHODS, LAY_METHOD_LABEL,
-  WorkRate, Payment, PAYMENT_KIND_LABEL,
+  WorkRate, Payment, PaymentKind, PAYMENT_KIND_LABEL,
 } from '@/types/construction';
 import { entryMeters, isIdleShift } from './entriesTable';
+import { monthRange, monthName, monthOf, fmtDay } from './moneyPeriod';
 
 /**
  * Расчёт с подрядчиками.
@@ -175,14 +176,28 @@ export interface PayrollResult {
   from: string;
   to: string;
   lines: PayLine[];
-  /** Начислено по расценкам. */
+  /** Начислено по расценкам за период. */
   accrued: number;
   /** Позиции без расценки: их стоимость неизвестна, а не равна нулю. */
   unpriced: string[];
+  /** Аванс, удержания и оплаты, отнесённые к этому периоду. */
   advances: number;
   deductions: number;
   paid: number;
-  /** Сколько осталось заплатить: начислено минус аванс, удержания и оплаты. */
+  /**
+   * Долг на начало периода: всё начисленное до него минус всё выплаченное
+   * за прошлые месяцы. Отрицательный — переплата, она переходит дальше.
+   */
+  opening: number;
+  /**
+   * Работы до периода без расценки: долг на начало из-за них неполный, и
+   * сказать это нужно, а не показывать его точным.
+   */
+  openingUnpriced: string[];
+  /**
+   * Сколько осталось заплатить на конец периода — нарастающим итогом:
+   * долг на начало плюс начисленное минус аванс, удержания и оплаты.
+   */
   due: number;
   /** Смены с работой — по ним «метров за смену» в сравнении подрядчиков. */
   shifts: number;
@@ -197,6 +212,11 @@ export interface PayrollResult {
 export interface PayrollFilter {
   from?: string;
   to?: string;
+  /**
+   * С какого числа отчётный месяц — чтобы платёж «за сентябрь» лёг в
+   * сентябрь и при периоде с 26-го по 25-е.
+   */
+  startDay?: number;
 }
 
 function inPeriod(date: string, f: PayrollFilter): boolean {
@@ -206,10 +226,97 @@ function inPeriod(date: string, f: PayrollFilter): boolean {
 }
 
 /**
+ * Каким днём платёж ложится в расчёт.
+ *
+ * По дате, если месяц не назван. Назван — днём того месяца: аванс за июль,
+ * внесённый 5 августа, ложится последним днём июля и гасит июль, а не
+ * август. Если деньги и ушли в том же месяце — остаётся настоящая дата.
+ */
+export function paymentDay(p: Pick<Payment, 'date' | 'forMonth'>, startDay = 1): string {
+  if (!p.forMonth) return p.date;
+  const r = monthRange(p.forMonth, startDay);
+  if (!r.from) return p.date;
+  if (p.date >= r.from && p.date <= r.to) return p.date;
+  return p.date > r.to ? r.to : r.from;
+}
+
+interface Accrual {
+  qty: Map<string, number>;
+  pricedQty: Map<string, number>;
+  sums: Map<string, number>;
+  seenPrices: Map<string, Set<number>>;
+}
+
+/** Что начислено по сменам: количество, оценённое количество и сумма по видам. */
+function accrue(entries: DailyWorkEntry[], rates: WorkRate[], contractor: string): Accrual {
+  const acc: Accrual = {
+    qty: new Map(), pricedQty: new Map(), sums: new Map(),
+    // Какие цены встретились за период: одна — её и показываем, несколько —
+    // показывать любую из них нельзя, иначе строка не сойдётся.
+    seenPrices: new Map(),
+  };
+  for (const e of entries) {
+    for (const w of PAYABLE_WORKS) {
+      const q = workQuantity(e, w.key);
+      if (q <= 0) continue;
+      acc.qty.set(w.key, (acc.qty.get(w.key) ?? 0) + q);
+      // Цену берём на день работы: договор меняют с какого-то числа, и
+      // пересчитывать по нему старые смены нельзя.
+      const rate = rateFor(rates, w.key, e.date, contractor);
+      if (rate) {
+        acc.pricedQty.set(w.key, (acc.pricedQty.get(w.key) ?? 0) + q);
+        acc.sums.set(w.key, (acc.sums.get(w.key) ?? 0) + q * rate.price);
+        const set = acc.seenPrices.get(w.key) ?? new Set<number>();
+        set.add(rate.price);
+        acc.seenPrices.set(w.key, set);
+      }
+    }
+  }
+  return acc;
+}
+
+function linesOf(acc: Accrual): PayLine[] {
+  return PAYABLE_WORKS
+    .filter((w) => (acc.qty.get(w.key) ?? 0) > 0)
+    .map((w) => {
+      const prices = acc.seenPrices.get(w.key);
+      return {
+        work: w.key,
+        label: w.label,
+        unit: w.unit,
+        quantity: acc.qty.get(w.key) ?? 0,
+        pricedQuantity: acc.pricedQty.get(w.key) ?? 0,
+        price: prices?.size === 1 ? [...prices][0] : undefined,
+        sum: acc.sums.get(w.key),
+      };
+    });
+}
+
+// Не только «расценки нет вовсе», но и «на часть объёма её нет»: молчать о
+// второй половине — значит занижать начисление молча.
+function unpricedOf(lines: PayLine[]): string[] {
+  return lines
+    .filter((l) => l.pricedQuantity < l.quantity)
+    .map((l) => (l.pricedQuantity === 0
+      ? l.label
+      : `${l.label} (${Math.round(l.quantity - l.pricedQuantity).toLocaleString('ru')} ${l.unit} вне расценки)`));
+}
+
+// Сумма всегда положительная — знак задаёт вид; минус, пришедший из
+// старого файла, не должен превращать оплату в долг.
+const amountOf = (p: Payment) => Math.max(0, p.amount);
+
+/**
  * Расчёт по подрядчику за период.
  *
  * Работа без расценки в сумму не попадает и называется отдельно: ноль
  * здесь означал бы «бесплатно», а это не так.
+ *
+ * Долг — нарастающим итогом. Раньше «к оплате» считалось только внутри
+ * окна: неоплаченный август в сентябрьском расчёте исчезал, будто его
+ * заплатили, и долг Дозеру с тетрадью бухгалтера не сходился. Теперь
+ * прошлое приходит строкой «долг на начало», а сам месяц виден отдельно —
+ * так сверяются оба способа вести тетрадь: и помесячно, и итогом.
  */
 export function payroll(
   contractor: string,
@@ -218,58 +325,31 @@ export function payroll(
   payments: Payment[],
   filter: PayrollFilter = {},
 ): PayrollResult {
-  const mine = rows.filter((e) => (e.contractor || '') === contractor
-    && inPeriod(e.date, filter));
+  const own = rows.filter((e) => (e.contractor || '') === contractor);
+  const mine = own.filter((e) => inPeriod(e.date, filter));
+  const lines = linesOf(accrue(mine, rates, contractor));
 
-  const qty = new Map<string, number>();
-  const pricedQty = new Map<string, number>();
-  const sums = new Map<string, number>();
-  // Какие цены встретились за период: одна — её и показываем, несколько —
-  // показывать любую из них нельзя, иначе строка не сойдётся.
-  const seenPrices = new Map<string, Set<number>>();
+  // Всё, что было до периода, — одним итогом. Смена без даты сюда тоже
+  // попадает: расценки на «никакой день» нет, и она будет названа
+  // неоценённой, а не потеряна.
+  const earlier = filter.from ? own.filter((e) => (e.date || '') < filter.from!) : [];
+  const earlierLines = linesOf(accrue(earlier, rates, contractor));
 
-  for (const e of mine) {
-    for (const w of PAYABLE_WORKS) {
-      const q = workQuantity(e, w.key);
-      if (q <= 0) continue;
-      qty.set(w.key, (qty.get(w.key) ?? 0) + q);
-      // Цену берём на день работы: договор меняют с какого-то числа, и
-      // пересчитывать по нему старые смены нельзя.
-      const rate = rateFor(rates, w.key, e.date, contractor);
-      if (rate) {
-        pricedQty.set(w.key, (pricedQty.get(w.key) ?? 0) + q);
-        sums.set(w.key, (sums.get(w.key) ?? 0) + q * rate.price);
-        const set = seenPrices.get(w.key) ?? new Set<number>();
-        set.add(rate.price);
-        seenPrices.set(w.key, set);
-      }
-    }
-  }
-
-  const lines: PayLine[] = PAYABLE_WORKS
-    .filter((w) => (qty.get(w.key) ?? 0) > 0)
-    .map((w) => {
-      const prices = seenPrices.get(w.key);
-      return {
-        work: w.key,
-        label: w.label,
-        unit: w.unit,
-        quantity: qty.get(w.key) ?? 0,
-        pricedQuantity: pricedQty.get(w.key) ?? 0,
-        price: prices?.size === 1 ? [...prices][0] : undefined,
-        sum: sums.get(w.key),
-      };
-    });
-
-  const money = payments.filter((p) => p.contractor === contractor && inPeriod(p.date, filter));
-  const sumOf = (kind: Payment['kind']) => money
-    .filter((p) => p.kind === kind)
-    .reduce((s, p) => s + Math.max(0, p.amount), 0);
+  const startDay = filter.startDay ?? 1;
+  const theirs = payments.filter((p) => p.contractor === contractor);
+  const money = theirs.filter((p) => inPeriod(paymentDay(p, startDay), filter));
+  const before = filter.from
+    ? theirs.filter((p) => paymentDay(p, startDay) < filter.from!)
+    : [];
+  const sumOf = (list: Payment[], kind?: Payment['kind']) => list
+    .filter((p) => !kind || p.kind === kind)
+    .reduce((s, p) => s + amountOf(p), 0);
 
   const accrued = lines.reduce((s, l) => s + (l.sum ?? 0), 0);
-  const advances = sumOf('advance');
-  const deductions = sumOf('deduction');
-  const paid = sumOf('payment');
+  const advances = sumOf(money, 'advance');
+  const deductions = sumOf(money, 'deduction');
+  const paid = sumOf(money, 'payment');
+  const opening = earlierLines.reduce((s, l) => s + (l.sum ?? 0), 0) - sumOf(before);
   const dates = mine.map((e) => e.date).filter(Boolean).sort();
 
   return {
@@ -278,23 +358,24 @@ export function payroll(
     to: filter.to || dates[dates.length - 1] || '',
     lines,
     accrued,
-    // Не только «расценки нет вовсе», но и «на часть объёма её нет»:
-    // молчать о второй половине — значит занижать начисление молча.
-    unpriced: lines
-      .filter((l) => l.pricedQuantity < l.quantity)
-      .map((l) => (l.pricedQuantity === 0
-        ? l.label
-        : `${l.label} (${Math.round(l.quantity - l.pricedQuantity).toLocaleString('ru')} ${l.unit} вне расценки)`)),
+    unpriced: unpricedOf(lines),
     advances,
     deductions,
     paid,
-    due: accrued - advances - deductions - paid,
+    opening,
+    openingUnpriced: unpricedOf(earlierLines),
+    due: opening + accrued - advances - deductions - paid,
     // Дождливая неделя не должна делать подрядчика «медленнее» в
     // сравнении: средние — по сменам, в которые работали.
     shifts: mine.filter((e) => !isIdleShift(e)).length,
     idleShifts: mine.filter(isIdleShift).length,
     meters: mine.reduce((s, e) => s + entryMeters(e), 0),
   };
+}
+
+/** Сам месяц, без долга прошлых: начислено минус выплаченное за него. */
+export function periodBalance(r: PayrollResult): number {
+  return r.accrued - r.advances - r.deductions - r.paid;
 }
 
 /**
@@ -397,7 +478,13 @@ export function moneyBehind(
 /** Строка расчёта словами — её вставляют в акт и в переписку. */
 export function payrollSummary(r: PayrollResult): string {
   const money = (v: number) => `${Math.round(v).toLocaleString('ru')} ₸`;
-  const parts = [`начислено ${money(r.accrued)}`];
+  const parts: string[] = [];
+  // Долг прошлых месяцев называем первым: без него «к оплате» в конце
+  // строки не сходится с начисленным, и подрядчик спросит, откуда цифра.
+  if (Math.round(r.opening) !== 0) {
+    parts.push(r.opening > 0 ? `долг на начало ${money(r.opening)}` : `переплата на начало ${money(-r.opening)}`);
+  }
+  parts.push(`начислено ${money(r.accrued)}`);
   if (r.advances > 0) parts.push(`аванс ${money(r.advances)}`);
   if (r.deductions > 0) parts.push(`удержано ${money(r.deductions)}`);
   if (r.paid > 0) parts.push(`оплачено ${money(r.paid)}`);
@@ -405,12 +492,74 @@ export function payrollSummary(r: PayrollResult): string {
   return parts.join(', ');
 }
 
+/** «за сентябрь 2026», если платёж отнесён не к своему месяцу. */
+export function paymentFor(p: Pick<Payment, 'date' | 'forMonth'>, startDay = 1): string {
+  if (!p.forMonth || p.forMonth === monthOf(p.date, startDay)) return '';
+  return `за ${monthName(p.forMonth)}`;
+}
+
 /** Что за деньги были: список движений с подписями. */
-export function paymentLines(payments: Payment[], contractor: string): string[] {
+export function paymentLines(payments: Payment[], contractor: string, startDay = 1): string[] {
   return payments
     .filter((p) => p.contractor === contractor)
     .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-    .map((p) => `${new Date(`${p.date}T00:00:00Z`).toLocaleDateString('ru')} · `
-      + `${PAYMENT_KIND_LABEL[p.kind]} ${Math.round(p.amount).toLocaleString('ru')} ₸`
-      + (p.note ? ` — ${p.note}` : ''));
+    .map((p) => {
+      const forWhat = paymentFor(p, startDay);
+      return `${fmtDay(p.date)} · `
+        + `${PAYMENT_KIND_LABEL[p.kind]}${forWhat ? ` ${forWhat}` : ''} `
+        + `${Math.round(p.amount).toLocaleString('ru')} ₸`
+        + (p.note ? ` — ${p.note}` : '');
+    });
+}
+
+export interface PaymentDraft {
+  id?: string;
+  kind: PaymentKind;
+  amount: string;
+  /** Когда деньги ушли. */
+  date: string;
+  /** За какой месяц «ГГГГ-ММ»; пусто — по дате. */
+  forMonth: string;
+  note: string;
+}
+
+/**
+ * Платёж из формы.
+ *
+ * Раньше дата ставилась сама — днём нажатия кнопки, причём по UTC: аванс,
+ * записанный 5 августа, гасил август, а внесённый после полуночи ложился
+ * вчерашним числом. Теперь дату выбирают, и месяц, за который платят,
+ * тоже. Сумму с пробелами и запятой понимаем: так её и набирают.
+ */
+export function checkPayment(
+  draft: PaymentDraft,
+  contractor: string,
+  now: string,
+  newId: () => string,
+  author?: string,
+  createdAt?: string,
+): { payment: Payment } | { error: string } {
+  if (!contractor) return { error: 'Не выбран подрядчик' };
+  const amount = Number(draft.amount.replace(/\s|\u00a0/g, '').replace(',', '.'));
+  if (!draft.amount.trim() || !Number.isFinite(amount) || amount <= 0) {
+    return { error: 'Сумма — число больше нуля' };
+  }
+  const date = parseRateDate(draft.date);
+  if (!date) return { error: 'Дата не читается — выберите её в календаре' };
+  const forMonth = draft.forMonth.trim();
+  if (forMonth && !monthRange(forMonth).from) return { error: 'Месяц не читается — выберите его из списка' };
+  return {
+    payment: {
+      id: draft.id || newId(),
+      contractor,
+      kind: draft.kind,
+      amount,
+      date,
+      forMonth: forMonth || undefined,
+      note: draft.note.trim() || undefined,
+      author,
+      createdAt: createdAt || now,
+      updatedAt: now,
+    },
+  };
 }

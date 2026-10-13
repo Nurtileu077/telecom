@@ -8,12 +8,13 @@ import {
 import type { JournalState } from './journalStore';
 import ExportButton, { type ExportColumn } from '@/components/Layout/ExportButton';
 import {
-  payroll, compareContractors, payrollSummary, paymentLines, costPerMeter,
+  payroll, compareContractors, payrollSummary, costPerMeter,
   PAYABLE_WORKS, rateFor, rateStart, brokenRates, checkRate, payableOption,
-  type PayLine, type RateDraft,
+  paymentDay, paymentFor, periodBalance, checkPayment,
+  type PayLine, type RateDraft, type PaymentDraft,
 } from './payroll';
 import { useT } from '@/components/Layout/LangProvider';
-import { rangeText } from './moneyPeriod';
+import { rangeText, monthName, fmtDay, monthOf } from './moneyPeriod';
 
 /**
  * Деньги с подрядчиками.
@@ -34,6 +35,12 @@ interface Props {
   onAddPayment: (payment: Payment) => void;
   onRemovePayment: (id: string) => void;
   onFlash?: (text: string) => void;
+  /** С какого числа отчётный месяц — платёж «за сентябрь» ложится по нему. */
+  startDay?: number;
+  /** Месяцы для поля «за какой месяц». */
+  months?: string[];
+  /** Выбранный отчётный месяц: новый платёж по умолчанию за него. */
+  month?: string;
 }
 
 const money = (v: number) => `${Math.round(v).toLocaleString('ru')} ₸`;
@@ -57,6 +64,7 @@ const PAY_COLUMNS: ExportColumn<PayLine>[] = [
 
 export default function PayrollView({
   journal, from, to, author, onAddRate, onRemoveRate, onAddPayment, onRemovePayment, onFlash,
+  startDay = 1, months = [], month,
 }: Props) {
   const { t } = useT();
   const contractors = useMemo(
@@ -68,8 +76,8 @@ export default function PayrollView({
   const current = who || contractors[0] || '';
 
   const result = useMemo(
-    () => payroll(current, journal.ground, journal.rates, journal.payments, { from, to }),
-    [current, journal.ground, journal.rates, journal.payments, from, to],
+    () => payroll(current, journal.ground, journal.rates, journal.payments, { from, to, startDay }),
+    [current, journal.ground, journal.rates, journal.payments, from, to, startDay],
   );
 
   const deviationsBy = useMemo(() => {
@@ -83,8 +91,9 @@ export default function PayrollView({
   }, [journal.deviations]);
 
   const table = useMemo(
-    () => compareContractors(journal.ground, journal.rates, journal.payments, deviationsBy, { from, to }),
-    [journal.ground, journal.rates, journal.payments, deviationsBy, from, to],
+    () => compareContractors(journal.ground, journal.rates, journal.payments, deviationsBy,
+      { from, to, startDay }),
+    [journal.ground, journal.rates, journal.payments, deviationsBy, from, to, startDay],
   );
 
   // Черновик расценки: открыт — значит, человек её сейчас заполняет.
@@ -119,30 +128,55 @@ export default function PayrollView({
     onFlash?.(rateDraft.id ? 'Расценка исправлена' : 'Расценка добавлена');
   }
 
-  function addPayment(kind: PaymentKind) {
-    if (!current) return;
-    const amount = Number((window.prompt(`${PAYMENT_KIND_LABEL[kind]}, ₸:`, '') ?? '').replace(',', '.'));
-    if (!Number.isFinite(amount) || amount <= 0) return;
-    const note = window.prompt('За что (необязательно):', '') ?? '';
-    const now = new Date().toISOString();
-    onAddPayment({
-      id: newId('pay'),
-      contractor: current,
-      kind,
-      amount,
-      date: now.slice(0, 10),
-      note: note.trim() || undefined,
-      author,
-      createdAt: now,
-      updatedAt: now,
-    });
-    onFlash?.(`${PAYMENT_KIND_LABEL[kind]} записан`);
+  // Платёж заполняют формой: дату и месяц, за который он, выбирают, а не
+  // берут днём нажатия кнопки — иначе аванс за июль, записанный 5 августа,
+  // гасил бы август.
+  const [payDraft, setPayDraft] = useState<PaymentDraft | null>(null);
+  const [payError, setPayError] = useState('');
+  const payMonths = useMemo(() => {
+    const set = new Set(months);
+    if (payDraft?.forMonth) set.add(payDraft.forMonth);
+    return [...set].sort((a, b) => b.localeCompare(a));
+  }, [months, payDraft?.forMonth]);
+
+  function openPayment(kind: PaymentKind, p?: Payment) {
+    setPayError('');
+    setPayDraft(p
+      ? {
+        id: p.id, kind: p.kind, amount: String(p.amount), date: p.date,
+        forMonth: p.forMonth ?? '', note: p.note ?? '',
+      }
+      : {
+        kind, amount: '', date: localDay(),
+        // Выбран месяц — платят за него: так расчёт открывают, чтобы
+        // закрыть именно его.
+        forMonth: month ?? '',
+        note: '',
+      });
+  }
+
+  function savePayment() {
+    if (!payDraft) return;
+    const was = payDraft.id ? journal.payments.find((p) => p.id === payDraft.id) : undefined;
+    const res = checkPayment(payDraft, was?.contractor ?? current, new Date().toISOString(),
+      () => newId('pay'), was?.author ?? author, was?.createdAt);
+    if ('error' in res) { setPayError(res.error); return; }
+    onAddPayment(res.payment);
+    setPayDraft(null);
+    setPayError('');
+    onFlash?.(payDraft.id ? 'Платёж исправлен' : `${PAYMENT_KIND_LABEL[res.payment.kind]} записан`);
   }
 
   async function copySummary() {
     const text = [
       `${current}, период ${rangeText({ from: result.from, to: result.to })}`,
       payrollSummary(result),
+      // Сам месяц — отдельной строкой: у кого тетрадь помесячная, сверяет
+      // по ней, у кого итогом — по строке выше.
+      ...(Math.round(result.opening) !== 0
+        ? [`за сам период: ${periodBalance(result) >= 0 ? 'к оплате' : 'переплата'} `
+          + `${money(Math.abs(periodBalance(result)))}`]
+        : []),
       '',
       ...result.lines.map((l) => {
         const head = `${l.label}: ${l.quantity.toLocaleString('ru')} ${l.unit}`;
@@ -216,6 +250,19 @@ export default function PayrollView({
 
         <table className="w-full text-left text-[11.5px]">
           <tbody>
+            {/* Долг прошлых месяцев — первой строкой: без неё «к оплате» в
+                конце не сходится с начисленным, и это видно сразу. */}
+            {from && Math.round(result.opening) !== 0 && (
+              <tr>
+                <td className="py-1 text-[var(--text-muted)]" colSpan={3}
+                    title="Всё начисленное до начала периода минус всё выплаченное за прошлые месяцы">
+                  {result.opening > 0 ? 'Долг' : 'Переплата'} на {fmtDay(from)}
+                </td>
+                <td className="py-1 text-right font-mono tabular-nums text-[var(--text-muted)]">
+                  {result.opening > 0 ? '' : '−'}{money(Math.abs(result.opening))}
+                </td>
+              </tr>
+            )}
             {result.lines.map((l) => (
               <tr key={l.work} className="border-t border-[var(--border)]">
                 <td className="py-1 text-[var(--text)]">{l.label}</td>
@@ -238,7 +285,7 @@ export default function PayrollView({
               </tr>
             ))}
             <tr className="border-t-2 border-[var(--border)]">
-              <td className="py-1 font-semibold text-[var(--text)]" colSpan={3}>Начислено</td>
+              <td className="py-1 font-semibold text-[var(--text)]" colSpan={3}>Начислено за период</td>
               <td className="py-1 text-right font-mono tabular-nums font-semibold text-[var(--text)]">
                 {money(result.accrued)}
               </td>
@@ -262,8 +309,10 @@ export default function PayrollView({
                 </td></tr>
             )}
             <tr className="border-t border-[var(--border)]">
-              <td className="py-1 font-semibold text-[var(--accent)]" colSpan={3}>
+              <td className="py-1 font-semibold text-[var(--accent)]" colSpan={3}
+                  title="Нарастающим итогом: долг на начало плюс начисленное минус выплаченное">
                 {result.due >= 0 ? 'К оплате' : 'Переплата'}
+                {result.to ? ` на ${fmtDay(result.to)}` : ''}
               </td>
               <td className="py-1 text-right font-mono tabular-nums font-semibold text-[var(--accent)]">
                 {money(Math.abs(result.due))}
@@ -271,6 +320,28 @@ export default function PayrollView({
             </tr>
           </tbody>
         </table>
+
+        {/* Тетрадь ведут по-разному: кто итогом, кто помесячно. Месяц сам
+            по себе — отдельной строкой, чтобы сверялось и так, и так. */}
+        {from && Math.round(result.opening) !== 0 && (
+          <div className="text-[11px] text-[var(--text-muted)]">
+            За сам период, без прошлых месяцев:{' '}
+            {periodBalance(result) >= 0 ? 'к оплате' : 'переплата'}{' '}
+            {money(Math.abs(periodBalance(result)))}.
+          </div>
+        )}
+
+        {result.openingUnpriced.length > 0 && (
+          <div className="flex items-start gap-1.5 text-[11px] text-[var(--warn)]">
+            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+            <span>
+              До периода есть работы без расценки: {result.openingUnpriced.join(', ')}.
+              <span className="block text-[var(--text-muted)]">
+                Долг на начало без них — он больше, чем показан, на неизвестную сумму.
+              </span>
+            </span>
+          </div>
+        )}
 
         {result.unpriced.length > 0 && (
           <div className="flex items-start gap-1.5 text-[11px] text-[var(--warn)]">
@@ -297,12 +368,76 @@ export default function PayrollView({
           </button>
           {(['advance', 'deduction', 'payment'] as PaymentKind[]).map((k) => (
             <button key={k} type="button" className="btn btn-ghost text-[11px]"
-                    onClick={() => addPayment(k)}>
+                    onClick={() => openPayment(k)}>
               <Plus size={13} />{PAYMENT_KIND_LABEL[k]}
             </button>
           ))}
         </div>
       </div>
+
+      {/* Новый или исправляемый платёж */}
+      {payDraft && (
+        <div className="rounded-lg border border-[var(--accent)]/40 bg-[var(--bg-surface)] p-3 space-y-2">
+          <div className="text-[12.5px] font-semibold text-[var(--text)]">
+            {payDraft.id ? 'Исправить платёж' : 'Новый платёж'} · {current}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <label className="flex flex-col gap-1">
+              <span className="text-[10.5px] text-[var(--text-muted)]">Что</span>
+              <select value={payDraft.kind}
+                      onChange={(e) => setPayDraft({ ...payDraft, kind: e.target.value as PaymentKind })}
+                      className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[12px] text-[var(--text)]">
+                {(['advance', 'deduction', 'payment'] as PaymentKind[]).map((k) => (
+                  <option key={k} value={k}>{PAYMENT_KIND_LABEL[k]}</option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10.5px] text-[var(--text-muted)]">Сумма, ₸</span>
+              <input value={payDraft.amount} inputMode="decimal" autoFocus
+                     onChange={(e) => setPayDraft({ ...payDraft, amount: e.target.value })}
+                     onKeyDown={(e) => { if (e.key === 'Enter') savePayment(); }}
+                     className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[12px] text-[var(--text)] font-mono tabular-nums" />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10.5px] text-[var(--text-muted)]">Когда ушли деньги</span>
+              <input type="date" value={payDraft.date}
+                     onChange={(e) => setPayDraft({ ...payDraft, date: e.target.value })}
+                     className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[12px] text-[var(--text)]" />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10.5px] text-[var(--text-muted)]">За какой месяц</span>
+              <select value={payDraft.forMonth}
+                      onChange={(e) => setPayDraft({ ...payDraft, forMonth: e.target.value })}
+                      className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[12px] text-[var(--text)]">
+                <option value="">По дате платежа</option>
+                {payMonths.map((m) => <option key={m} value={m}>За {monthName(m)}</option>)}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 sm:col-span-2">
+              <span className="text-[10.5px] text-[var(--text-muted)]">За что (необязательно)</span>
+              <input value={payDraft.note}
+                     onChange={(e) => setPayDraft({ ...payDraft, note: e.target.value })}
+                     onKeyDown={(e) => { if (e.key === 'Enter') savePayment(); }}
+                     className="bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1.5 text-[12px] text-[var(--text)]" />
+            </label>
+          </div>
+          {payError && <div className="text-[11px] text-[var(--danger)]">{payError}</div>}
+          <div className="flex gap-1.5">
+            <button type="button" className="btn btn-primary text-[11.5px]" onClick={savePayment}>
+              Сохранить
+            </button>
+            <button type="button" className="btn btn-ghost text-[11.5px]"
+                    onClick={() => { setPayDraft(null); setPayError(''); }}>
+              {t('Отмена')}
+            </button>
+          </div>
+          <div className="text-[10.5px] text-[var(--text-muted)]">
+            Аванс за июль, внесённый в августе, гасит июль: дата остаётся
+            настоящей — её сверяют с выпиской, — а в расчёт он ложится июлем.
+          </div>
+        </div>
+      )}
 
       {/* Движение денег */}
       {journal.payments.some((p) => p.contractor === current) && (
@@ -311,22 +446,34 @@ export default function PayrollView({
           {journal.payments
             .filter((p) => p.contractor === current)
             .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-            .map((p) => (
-              <div key={p.id} className="flex items-center gap-2 text-[11.5px]">
-                <span className="min-w-0 flex-1 text-[var(--text-muted)] truncate">
-                  {new Date(`${p.date}T00:00:00Z`).toLocaleDateString('ru')} ·{' '}
-                  {PAYMENT_KIND_LABEL[p.kind]}
-                  {p.note ? ` — ${p.note}` : ''}
-                </span>
-                <span className="font-mono tabular-nums text-[var(--text)]">
-                  {money(p.amount)}
-                </span>
-                <button type="button" className="btn btn-ghost btn-icon text-[var(--danger)]"
-                        title="Удалить запись" onClick={() => onRemovePayment(p.id)}>
-                  <Trash2 size={13} />
-                </button>
-              </div>
-            ))}
+            .map((p) => {
+              // Что вошло в этот период, а что — в другой: видно, откуда
+              // взялись аванс и оплата в расчёте выше.
+              const day = paymentDay(p, startDay);
+              const inside = (!from || day >= from) && (!to || day <= to);
+              const forWhat = paymentFor(p, startDay);
+              return (
+                <div key={p.id} className="flex items-center gap-2 text-[11.5px]">
+                  <span className={`min-w-0 flex-1 truncate ${inside ? 'text-[var(--text)]' : 'text-[var(--text-muted)]'}`}
+                        title={inside ? 'Вошло в этот период' : `Лежит в другом периоде: ${monthName(monthOf(day, startDay)) || 'без даты'}`}>
+                    {fmtDay(p.date)} · {PAYMENT_KIND_LABEL[p.kind]}
+                    {forWhat ? ` ${forWhat}` : ''}
+                    {p.note ? ` — ${p.note}` : ''}
+                  </span>
+                  <span className={`font-mono tabular-nums ${inside ? 'text-[var(--text)]' : 'text-[var(--text-muted)]'}`}>
+                    {money(p.amount)}
+                  </span>
+                  <button type="button" className="btn btn-ghost btn-icon"
+                          title="Исправить: дату, месяц, сумму" onClick={() => openPayment(p.kind, p)}>
+                    <Pencil size={13} />
+                  </button>
+                  <button type="button" className="btn btn-ghost btn-icon text-[var(--danger)]"
+                          title="Удалить запись" onClick={() => onRemovePayment(p.id)}>
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              );
+            })}
         </div>
       )}
 
@@ -457,7 +604,8 @@ export default function PayrollView({
                   <th className="py-1 font-medium text-right">м/смену</th>
                   <th className="py-1 font-medium text-right">₸/м</th>
                   <th className="py-1 font-medium text-right">Отклонений</th>
-                  <th className="py-1 font-medium text-right">К оплате</th>
+                  <th className="py-1 font-medium text-right"
+                      title="Нарастающим итогом на конец периода">К оплате</th>
                 </tr>
               </thead>
               <tbody>

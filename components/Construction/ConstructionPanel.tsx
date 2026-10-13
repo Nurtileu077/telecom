@@ -1606,6 +1606,9 @@ export default function ConstructionPanel({
             journal={scoped}
             from={moneyRange.from || undefined}
             to={moneyRange.to || undefined}
+            startDay={startDay}
+            months={moneyMonths}
+            month={moneyPeriod.kind === 'month' ? moneyPeriod.month : undefined}
             author={actor}
             onFlash={setFlash}
             onAddRate={(r) => persist(upsertRate(loadJournal(), r))}

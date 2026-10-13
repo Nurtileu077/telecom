@@ -3,7 +3,9 @@ import {
   rateFor, workQuantity, payroll, costPerMeter, compareContractors,
   parseRateDate, rateStart, brokenRates, checkRate, payableOption,
   payrollSummary, paymentLines, PAYABLE_WORKS, moneyBehind,
+  paymentDay, paymentFor, periodBalance, checkPayment,
 } from './payroll';
+import { monthRange } from './moneyPeriod';
 import type { DailyWorkEntry, WorkRate, Payment } from '@/types/construction';
 
 function e(patch: Partial<DailyWorkEntry> = {}): DailyWorkEntry {
@@ -354,5 +356,166 @@ describe('расценка из формы', () => {
   it('цену с запятой и неразрывным пробелом понимает', () => {
     const res = make({ price: '1\u00a0200,5' });
     expect('rate' in res && res.rate.price).toBe(1200.5);
+  });
+});
+
+/**
+ * Аванс за июль вносят 5 августа, акт за август оплачивают в сентябре.
+ * Если «к оплате» живёт только внутри месяца, долг прошлых месяцев
+ * пропадает из расчёта, а платёж гасит не тот месяц, — и с тетрадью
+ * бухгалтера ничего не сходится.
+ */
+describe('долг нарастающим итогом', () => {
+  const july = monthRange('2026-07');
+  const aug = monthRange('2026-08');
+  const rows = [
+    e({ id: 'j', date: '2026-07-20', byMethod: { 'бар': 1000 } }), // 300 000
+    e({ id: 'a', date: '2026-08-10', byMethod: { 'бар': 1000 } }), // 350 000 (новая цена)
+  ];
+  const pay = (patch: Partial<Payment>): Payment => ({
+    id: 'p', contractor: 'Дозер', kind: 'advance', amount: 100_000,
+    date: '2026-08-05', createdAt: '', updatedAt: '', ...patch,
+  });
+
+  it('неоплаченный июль не пропадает в августовском расчёте', () => {
+    const r = payroll('Дозер', rows, RATES, [], aug);
+    expect(r.accrued).toBe(350_000);
+    expect(r.opening).toBe(300_000);
+    expect(r.due).toBe(650_000);
+  });
+
+  it('аванс за июль, внесённый 5 августа, гасит июль, а не август', () => {
+    const p = [pay({ forMonth: '2026-07' })];
+    const rJuly = payroll('Дозер', rows, RATES, p, july);
+    const rAug = payroll('Дозер', rows, RATES, p, aug);
+    expect(rJuly.advances).toBe(100_000);
+    expect(rJuly.due).toBe(200_000);
+    expect(rAug.advances).toBe(0);
+    expect(rAug.opening).toBe(200_000);
+    expect(rAug.due).toBe(550_000);
+  });
+
+  it('платёж без месяца ложится по дате, как раньше', () => {
+    const rAug = payroll('Дозер', rows, RATES, [pay({})], aug);
+    expect(rAug.advances).toBe(100_000);
+    expect(rAug.opening).toBe(300_000);
+  });
+
+  it('долг на конец месяца равен долгу на начало следующего', () => {
+    const p = [pay({ forMonth: '2026-07' }), pay({ id: 'q', kind: 'payment', amount: 50_000, date: '2026-08-20' })];
+    const rJuly = payroll('Дозер', rows, RATES, p, july);
+    const rAug = payroll('Дозер', rows, RATES, p, aug);
+    expect(rAug.opening).toBe(rJuly.due);
+  });
+
+  it('итог за всё время сходится с суммой месяцев', () => {
+    const p = [pay({ forMonth: '2026-07' })];
+    const all = payroll('Дозер', rows, RATES, p);
+    expect(all.opening).toBe(0);
+    expect(all.due).toBe(payroll('Дозер', rows, RATES, p, aug).due);
+  });
+
+  it('сам месяц виден отдельно от долга прошлых', () => {
+    const r = payroll('Дозер', rows, RATES, [pay({})], aug);
+    expect(periodBalance(r)).toBe(250_000);
+    expect(r.due - r.opening).toBe(periodBalance(r));
+  });
+
+  it('работы до периода без расценки названы, долг на начало не выдаётся за точный', () => {
+    const early = [e({ id: 'm', date: '2026-07-01', byMethod: { 'вручную': 50 } }), ...rows];
+    const r = payroll('Дозер', early, RATES, [], aug);
+    expect(r.openingUnpriced).toEqual(['Ручным способом']);
+    expect(r.unpriced).toEqual([]);
+  });
+
+  it('чужие платежи в чужой долг не идут', () => {
+    const r = payroll('Дозер', rows, RATES, [pay({ contractor: 'TERRA TECH', forMonth: '2026-07' })], aug);
+    expect(r.opening).toBe(300_000);
+  });
+});
+
+describe('каким днём ложится платёж', () => {
+  it('за прошлый месяц — его последним днём', () => {
+    expect(paymentDay({ date: '2026-08-05', forMonth: '2026-07' })).toBe('2026-07-31');
+  });
+
+  it('вперёд за следующий месяц — его первым днём', () => {
+    expect(paymentDay({ date: '2026-07-28', forMonth: '2026-08' })).toBe('2026-08-01');
+  });
+
+  it('внутри своего месяца остаётся настоящая дата', () => {
+    expect(paymentDay({ date: '2026-07-15', forMonth: '2026-07' })).toBe('2026-07-15');
+    expect(paymentDay({ date: '2026-07-15' })).toBe('2026-07-15');
+  });
+
+  it('при месяце с 26-го сентябрьский платёж 2 октября ложится 25 сентября', () => {
+    expect(paymentDay({ date: '2026-10-02', forMonth: '2026-09' }, 26)).toBe('2026-09-25');
+  });
+
+  it('подпись «за июль» — только когда месяц не совпадает с датой', () => {
+    expect(paymentFor({ date: '2026-08-05', forMonth: '2026-07' })).toBe('за июль 2026');
+    expect(paymentFor({ date: '2026-07-05', forMonth: '2026-07' })).toBe('');
+    expect(paymentFor({ date: '2026-07-05' })).toBe('');
+  });
+});
+
+describe('платёж из формы', () => {
+  const draft = {
+    kind: 'advance' as const, amount: '150 000', date: '05.08.2026', forMonth: '2026-07', note: ' за июль ',
+  };
+  const make = (d: Partial<typeof draft> & { id?: string } = {}, createdAt?: string) =>
+    checkPayment({ ...draft, ...d }, 'Дозер', 'T', () => 'new-id', 'Инженер', createdAt);
+
+  it('дату и месяц берёт из формы, а не из часов', () => {
+    expect(make()).toEqual({
+      payment: {
+        id: 'new-id', contractor: 'Дозер', kind: 'advance', amount: 150_000,
+        date: '2026-08-05', forMonth: '2026-07', note: 'за июль',
+        author: 'Инженер', createdAt: 'T', updatedAt: 'T',
+      },
+    });
+  });
+
+  it('без месяца — по дате платежа', () => {
+    const res = make({ forMonth: '' });
+    expect('payment' in res && res.payment.forMonth).toBeUndefined();
+  });
+
+  it('исправление сохраняет тот же платёж и время его записи', () => {
+    const res = make({ id: 'p7' }, '2026-08-05T10:00:00.000Z');
+    expect('payment' in res && res.payment.id).toBe('p7');
+    expect('payment' in res && res.payment.createdAt).toBe('2026-08-05T10:00:00.000Z');
+  });
+
+  it('сумму с неразрывным пробелом и запятой понимает', () => {
+    const res = make({ amount: '1\u00a0200,5' });
+    expect('payment' in res && res.payment.amount).toBe(1200.5);
+  });
+
+  it('на ошибку отвечает словами', () => {
+    expect(make({ amount: '0' })).toEqual({ error: 'Сумма — число больше нуля' });
+    expect(make({ amount: 'много' })).toEqual({ error: 'Сумма — число больше нуля' });
+    expect(make({ date: '31.02.2026' })).toEqual({ error: 'Дата не читается — выберите её в календаре' });
+    expect(make({ forMonth: 'июль' })).toEqual({ error: 'Месяц не читается — выберите его из списка' });
+    expect(checkPayment({ ...draft }, '', 'T', () => 'x')).toEqual({ error: 'Не выбран подрядчик' });
+  });
+});
+
+describe('строка расчёта с долгом прошлых месяцев', () => {
+  it('называет долг на начало, иначе «к оплате» не сходится с начисленным', () => {
+    const rows = [
+      e({ id: 'j', date: '2026-07-20', byMethod: { 'бар': 1000 } }),
+      e({ id: 'a', date: '2026-08-10', byMethod: { 'бар': 1000 } }),
+    ];
+    const s = payrollSummary(payroll('Дозер', rows, RATES, [], monthRange('2026-08')));
+    expect(s).toBe('долг на начало 300\u00a0000 ₸, начислено 350\u00a0000 ₸, к оплате 650\u00a0000 ₸');
+  });
+
+  it('в списке движений видно, за какой месяц платёж', () => {
+    const lines = paymentLines([{
+      id: 'p', contractor: 'Дозер', kind: 'advance', amount: 100_000,
+      date: '2026-08-05', forMonth: '2026-07', createdAt: '', updatedAt: '',
+    }], 'Дозер');
+    expect(lines[0]).toBe('05.08.2026 · Аванс за июль 2026 100\u00a0000 ₸');
   });
 });
