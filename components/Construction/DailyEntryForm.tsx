@@ -21,6 +21,7 @@ import { routeEnds, placeNames } from './routeStyle';
 import { checkEntry, saveBlocker } from './entryChecks';
 import { isIdleShift, entryHasWork } from './entriesTable';
 import { downtimeReasons } from './dayPlan';
+import { settleIdleEquipment } from './equipmentUse';
 import { nearestOnRoute, type LatLon } from './measureTool';
 import { measureShift, describeShiftMeasure } from './shiftMeasure';
 import { parseMeters, metersHint } from './units';
@@ -420,6 +421,10 @@ export default function DailyEntryForm({
   const blocker = saveBlocker(candidate, { correcting, reason });
   const canSave = blocker === null;
   const idle = isIdleShift(candidate);
+  /** Что из техники в простой запишется простоявшим. */
+  const idleEquipment = idle
+    ? Object.entries(equipment).filter(([, v]) => numOf(v) > 0).map(([k]) => k)
+    : [];
   /** Ни работы, ни причины — такую смену не сохраняем и подсвечиваем причину. */
   const empty = !entryHasWork(candidate) && !downtime.trim();
 
@@ -488,7 +493,9 @@ export default function DailyEntryForm({
       if (v > 0) mats[m] = MATERIAL_UNIT[m] === 'м' ? Math.round(v) : v;
     }
 
-    onSave({
+    // В смене простоя вчерашняя техника — простоявшая: иначе три дня
+    // дождя дают кабелеукладчику три отработанные смены и топливо по норме.
+    onSave(settleIdleEquipment({
       kind: 'ground',
       id: entryId,
       date, smu: smu.trim(),
@@ -555,7 +562,7 @@ export default function DailyEntryForm({
           ? { routeId: sectionRoute.id, lat: stop.lat, lon: stop.lon, manual: !!stopPoint || undefined }
           : undefined,
       createdAt: initial?.createdAt ?? now, updatedAt: now, sync: 'local',
-    },
+    }),
     correcting ? reason.trim() : undefined,
     // Точку сохраняем только подтверждённую: молча двигать метку колонны
     // по расчёту — значит однажды показать её там, где никого нет.
@@ -892,6 +899,12 @@ export default function DailyEntryForm({
               <span className="text-[10.5px] text-[var(--text-muted)]">
                 Сохранится сменой простоя: в отчёте за период она встанет отдельной
                 строкой с этой причиной, а средние метры за смену не испортит.
+                {idleEquipment.length > 0 && (
+                  // Техника перенесена со вчера и спрятана в свёрнутом
+                  // отчёте инженера — говорим, куда она уйдёт, здесь.
+                  <> Техника ({idleEquipment.join(', ')}) запишется простоявшей по
+                  этой причине — в отработанные смены и топливо не пойдёт.</>
+                )}
               </span>
             )}
           </section>

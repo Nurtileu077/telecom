@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  equipmentUse, idleShare, fuelNeed, fuelTotal, drillQueue, FUEL_NORMS,
+  equipmentUse, idleShare, fuelNeed, fuelTotal, drillQueue, FUEL_NORMS, settleIdleEquipment,
 } from './equipmentUse';
 import type { DailyWorkEntry, DrillLogEntry } from '@/types/construction';
 
@@ -189,5 +189,52 @@ describe('очередь на ГНБ', () => {
   it('участок, где месяц не работают, установку не ждёт', () => {
     const q = drillQueue([], [w({ id: 'a', uchastok: 'Старый', date: '2026-05-01' })], today);
     expect(q.waiting).toHaveLength(0);
+  });
+});
+
+/**
+ * Техника вчерашней смены переносится в форму сама. До №294 смену без
+ * метров сохранить было нельзя, а теперь день дождя сохраняется — и
+ * кабелеукладчик из вчерашней смены попадал в него как «выходил».
+ */
+describe('техника в день простоя', () => {
+  const rain = (id: string, date: string, patch: Partial<DailyWorkEntry> = {}) => e({
+    id, date, byMethod: {}, downtime: 'дождь',
+    equipment: { 'Кабелеукладчик': 1 }, ...patch,
+  });
+  const rows = [
+    e({ id: 'w', date: '2026-07-20', equipment: { 'Кабелеукладчик': 1 } }),
+    rain('r1', '2026-07-21'),
+    rain('r2', '2026-07-22'),
+    rain('r3', '2026-07-23'),
+  ];
+
+  it('день дождя не добавляет технике смен и топлива', () => {
+    const ku = equipmentUse(rows).find((u) => u.name === 'Кабелеукладчик')!;
+    expect(ku.shifts).toBe(1);
+    const fuel = fuelNeed(equipmentUse(rows)).find((l) => l.name === 'Кабелеукладчик')!;
+    expect(fuel.expectedL).toBe(FUEL_NORMS['Кабелеукладчик'].perShift);
+  });
+
+  it('простоявшую технику доля простоя видит, с причиной простоя', () => {
+    const ku = equipmentUse(rows).find((u) => u.name === 'Кабелеукладчик')!;
+    expect(ku.offShifts).toBe(3);
+    expect(ku.offReasons).toEqual(['дождь']);
+    expect(idleShare(ku)).toBeCloseTo(0.75, 5);
+  });
+
+  it('в смене простоя техника уходит в невышедшую, своя причина не перетирается', () => {
+    const settled = settleIdleEquipment(rain('r', '2026-07-21', {
+      equipment: { 'Кабелеукладчик': 1, 'Манипулятор': 1 },
+      equipmentOff: { 'Манипулятор': 'в ремонте' },
+    }));
+    expect(settled.equipment).toBeUndefined();
+    expect(settled.equipmentOff).toEqual({ 'Кабелеукладчик': 'дождь', 'Манипулятор': 'в ремонте' });
+  });
+
+  it('смену с работой не трогает, даже если причина простоя записана', () => {
+    // Полдня дождь, полдня копали: техника работала.
+    const half = e({ id: 'h', downtime: 'дождь до обеда', equipment: { 'Кабелеукладчик': 1 } });
+    expect(settleIdleEquipment(half)).toBe(half);
   });
 });

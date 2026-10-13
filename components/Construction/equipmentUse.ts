@@ -1,6 +1,6 @@
 import { localDay } from '@/lib/localDay';
 import type { DailyWorkEntry, DrillLogEntry } from '@/types/construction';
-import { entryMeters } from './entriesTable';
+import { entryMeters, isIdleShift } from './entriesTable';
 
 /**
  * Техника: где была, сколько отработала и чем это кончилось.
@@ -43,6 +43,32 @@ function inPeriod(e: DailyWorkEntry, p: UsePeriod): boolean {
 }
 
 /**
+ * Техника в день простоя — простоявшая, а не отработавшая.
+ *
+ * Форма переносит технику со вчерашней смены: колонна не меняет
+ * кабелеукладчик каждое утро. В дождь она так же стоит у бровки, и в
+ * смену простоя попадал тот же кабелеукладчик — уже как «выходил». Три
+ * дня дождя давали ему три отработанные смены и 360 л топлива по норме,
+ * а доля простоя их не видела. Машина на объекте была, но не работала:
+ * это невыход по причине простоя, её же словами.
+ *
+ * Причину, которую назвали отдельно («в ремонте»), не перетираем: она
+ * точнее общей «дождь».
+ */
+export function settleIdleEquipment(e: DailyWorkEntry): DailyWorkEntry {
+  if (!isIdleShift(e)) return e;
+  const kinds = Object.entries(e.equipment ?? {})
+    .filter(([name, count]) => name.trim() && (count ?? 0) > 0);
+  if (kinds.length === 0) return e;
+  const reason = (e.downtime ?? '').trim();
+  const off: Record<string, string> = { ...(e.equipmentOff ?? {}) };
+  for (const [name] of kinds) {
+    if (!(off[name] ?? '').trim()) off[name] = reason;
+  }
+  return { ...e, equipment: undefined, equipmentOff: off };
+}
+
+/**
  * Наработка по технике.
  *
  * «Не вышла» считаем отдельно от «не упоминалась»: молчание — это не
@@ -60,8 +86,12 @@ export function equipmentUse(rows: DailyWorkEntry[], period: UsePeriod = {}): Eq
     return fresh;
   };
 
-  for (const e of rows) {
-    if (!inPeriod(e, period)) continue;
+  for (const row of rows) {
+    if (!inPeriod(row, period)) continue;
+    // Смены простоя, записанные до поправки, загруженные из таблицы или
+    // пришедшие с другого устройства, хранят технику как вышедшую —
+    // считаем их так же, как форма теперь их и пишет.
+    const e = settleIdleEquipment(row);
     const meters = entryMeters(e);
 
     for (const [name, count] of Object.entries(e.equipment ?? {})) {
