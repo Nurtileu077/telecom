@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { changeFeed, filterFeed } from './changeLog';
+import { polylineLengthM } from './planImport';
 import {
-  emptyJournal, updateRouteCoords, deleteRoute, restoreShape, logChange,
+  emptyJournal, updateRouteCoords, deleteRoute, restoreShape, logChange, splitPlanRoute,
   updateAreaCoords, renameArea, removeArea, addDrawnArea, DRAWN_SOURCE,
   type JournalState,
 } from './journalStore';
@@ -58,6 +59,40 @@ describe('правка трассы без одобрения, но с запи�
     const back = restoreShape(gone, gone.changes[0].id, 'Асет');
     expect(back.planRoutes).toHaveLength(1);
     expect(back.planRoutes[0].coords).toHaveLength(2);
+  });
+
+  /**
+   * Нажал «вернуть как было», и трасса в 20 км стала на 22 м длиннее,
+   * хотя линия та же самая: откат считал длину своей формулой, а не той,
+   * которой её посчитала загрузка файла.
+   */
+  it('откат возвращает ту же длину, что была до правки, — до метра', () => {
+    // ≈ 20 км на северо-восток у Кокшетау.
+    const line: [number, number][] = [[53.28, 69.39], [53.35, 69.48], [53.42, 69.6]];
+    const loaded = { ...emptyJournal(), planRoutes: [route({ coords: line, lengthM: polylineLengthM(line) })] };
+    const edited = updateRouteCoords(loaded, 'r1', [[53.28, 69.39], [53.42, 69.6]], {
+      author: 'Ербол', lengthM: polylineLengthM([[53.28, 69.39], [53.42, 69.6]]),
+    });
+    const back = restoreShape(edited, edited.changes[0].id, 'Асет');
+    expect(back.planRoutes[0].coords).toEqual(line);
+    expect(back.planRoutes[0].lengthM).toBe(loaded.planRoutes[0].lengthM);
+  });
+
+  it('удалённая и разрезанная трасса тоже возвращается со своей длиной', () => {
+    const gone = deleteRoute(base(), 'r1', 'Ербол');
+    expect(restoreShape(gone, gone.changes[0].id, 'Асет').planRoutes[0].lengthM).toBe(12400);
+    const cut = splitPlanRoute(base(), 'r1', 5000, 'Ербол');
+    const whole = restoreShape(cut, cut.changes[0].id, 'Асет').planRoutes.find((r) => r.id === 'r1')!;
+    expect(whole.lengthM).toBe(12400);
+  });
+
+  it('запись, сделанная до этой правки, без длины — считаем той же меркой, что и загрузка', () => {
+    const line: [number, number][] = [[53.28, 69.39], [53.35, 69.48], [53.42, 69.6]];
+    const j = logChange({ ...emptyJournal(), planRoutes: [route()] }, {
+      author: 'Ербол', kind: 'route_edit', target: 'Еленовка Ивановка', routeId: 'r1', before: line,
+    });
+    const back = restoreShape(j, j.changes[0].id, 'Асет');
+    expect(back.planRoutes[0].lengthM).toBe(polylineLengthM(line));
   });
 
   it('правка несуществующей трассы ничего не ломает', () => {

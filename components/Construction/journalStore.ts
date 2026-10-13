@@ -8,7 +8,7 @@ import {
 } from '@/types/construction';
 import { haversineM } from '@/components/Network/KMeans';
 import { splitRoute, joinRoutes, joinedName, splitNames, lineMatch } from './routeEdit';
-import { pointAtDistanceM, type SectionProgress } from './routeProgress';
+import { pointAtDistanceM, routeLengthM, type SectionProgress } from './routeProgress';
 import {
   shiftsOnRoute, stopPositionM, stopForRunStart, crewLabel, describeRunPlaced,
 } from './shiftPlace';
@@ -1233,6 +1233,7 @@ export function reversePlanRoute(
     detail: prev.reversed ? 'счёт снова от начала, как в файле' : 'счёт метров с другого конца',
     routeId: id,
     before: prev.coords,
+    lengthBefore: prev.lengthM,
     reversedBefore: !!prev.reversed,
   });
 }
@@ -1338,6 +1339,7 @@ export function updateRouteCoords(
     routeId: id,
     kato: ctx.kato,
     before: prev.coords,
+    lengthBefore: prev.lengthM,
     reversedBefore: !!prev.reversed,
   });
 }
@@ -1395,6 +1397,7 @@ export function splitPlanRoute(
     detail: `${changeKm(cut.headM)} и ${changeKm(cut.tailM)}`,
     routeId: id,
     before: prev.coords,
+    lengthBefore: prev.lengthM,
     reversedBefore: !!prev.reversed,
   });
 }
@@ -1448,6 +1451,7 @@ export function joinPlanRoutes(
       : `${changeKm(merged.lengthM)}, разрыв в стыке ${Math.round(joined.gapM)} м`,
     routeId: idA,
     before: a.coords,
+    lengthBefore: a.lengthM,
     reversedBefore: !!a.reversed,
   });
 }
@@ -1474,6 +1478,7 @@ export function deleteRoute(
     detail: `удалена, была ${changeKm(prev.lengthM)}`,
     routeId: id,
     before: prev.coords,
+    lengthBefore: prev.lengthM,
     reversedBefore: !!prev.reversed,
   });
 }
@@ -1501,7 +1506,13 @@ export function restoreShape(
   if (ch.areaId) return restoreArea(base, changeId, author);
   if (!ch.routeId) return base;
   const now = new Date().toISOString();
-  const lengthM = Math.round(coordsLengthM(ch.before));
+  // Длина — та, что была записана до правки. Записи постарше её не
+  // несут: тогда считаем той же меркой, что и загрузка файла
+  // (`polylineLengthM`), а не своей формулой — иначе «та же самая
+  // линия» после отката становилась длиннее.
+  const lengthM = typeof ch.lengthBefore === 'number' && Number.isFinite(ch.lengthBefore)
+    ? ch.lengthBefore
+    : Math.round(routeLengthM(ch.before));
   const exists = base.planRoutes.find((r) => r.id === ch.routeId);
   // Записи, сделанные до разворотов, отметки не несут — тогда трасса и
   // не могла быть развёрнута.
@@ -1539,6 +1550,7 @@ export function restoreShape(
     detail: `возвращено как было на ${new Date(ch.at).toLocaleString('ru')}`,
     routeId: ch.routeId,
     before: exists?.coords,
+    lengthBefore: exists?.lengthM,
     reversedBefore: exists ? !!exists.reversed : undefined,
   });
 }
@@ -1582,19 +1594,6 @@ function restoreArea(base: JournalState, changeId: string, author: string): Jour
 /** Километры в журнале изменений — с запятой, как их пишут и читают. */
 function changeKm(m: number): string {
   return `${(m / 1000).toFixed(3).replace('.', ',')} км`;
-}
-
-/** Длина ломаной в метрах — по той же формуле, что и везде в стройке. */
-function coordsLengthM(coords: [number, number][]): number {
-  let m = 0;
-  for (let i = 1; i < coords.length; i++) {
-    const [la1, lo1] = coords[i - 1];
-    const [la2, lo2] = coords[i];
-    const dLat = (la2 - la1) * 111_320;
-    const dLon = (lo2 - lo1) * 111_320 * Math.cos(((la1 + la2) / 2) * Math.PI / 180);
-    m += Math.hypot(dLat, dLon);
-  }
-  return m;
 }
 
 // ── Продвижение по трассе ────────────────────────────────────────────────────
