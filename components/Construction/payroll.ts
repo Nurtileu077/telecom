@@ -7,7 +7,7 @@ import { entryMeters, isIdleShift, weekStart } from './entriesTable';
 import { aerialMeters } from './aerialWork';
 import { normName } from './areaImport';
 import type { MaterialPrices } from './materialCost';
-import { monthRange, monthName, monthOf, fmtDay } from './moneyPeriod';
+import { monthRange, monthName, monthOf, fmtDay, rangeText } from './moneyPeriod';
 
 /**
  * Расчёт с подрядчиками.
@@ -422,6 +422,60 @@ export function periodBalance(r: PayrollResult): number {
   return r.accrued - r.advances - r.deductions - r.paid;
 }
 
+/** Расчёт без денег: что сделано и что за это начислено. */
+export type Accrued = Omit<PayrollResult,
+  'advances' | 'deductions' | 'paid' | 'opening' | 'openingUnpriced' | 'due'>;
+
+/** Начислено в выбранной области — без долга: долга по области не бывает. */
+export type AreaAccrual = Accrued & { oblast: string };
+
+/** Смены и подвес — то, из чего считается начисление. */
+export interface PayrollRows {
+  ground: DailyWorkEntry[];
+  aerial: AerialWorkEntry[];
+}
+
+export interface AreaPayroll {
+  /** Расчёт с подрядчиком целиком, по всем областям: долг, платежи, к оплате. */
+  whole: PayrollResult;
+  /** Начислено в выбранной области; null — область не выбрана. */
+  area: AreaAccrual | null;
+}
+
+/**
+ * Расчёт, когда на экране выбрана область.
+ *
+ * Платежи по областям не разнесены: аванс Дозеру — один на все его
+ * участки, в тетради бухгалтера области нет. Пока долг считался по
+ * журналу, суженному областью, выходило «начислено в Акмолинской минус
+ * всё выплаченное Дозеру»: работал он поровну в Акмолинской и в
+ * Карагандинской, оплачено ему всё — а в Акмолинской на «Расчётах»
+ * стояла переплата на половину всех выплат, и она же уезжала в чат.
+ *
+ * Поэтому делим вопросы: у области — сделанное и начисленное, у расчёта
+ * целиком — долг на начало, платежи и «к оплате». Тип области долга не
+ * несёт вовсе, чтобы его нельзя было показать по ошибке.
+ */
+export function areaPayroll(
+  contractor: string,
+  whole: PayrollRows & { rates: WorkRate[]; payments: Payment[] },
+  area: (PayrollRows & { oblast: string }) | null,
+  filter: PayrollFilter = {},
+): AreaPayroll {
+  const all = payroll(contractor, whole.ground, whole.rates, whole.payments, filter, whole.aerial);
+  if (!area?.oblast) return { whole: all, area: null };
+  const r = payroll(contractor, area.ground, whole.rates, [], filter, area.aerial);
+  return {
+    whole: all,
+    area: {
+      oblast: area.oblast,
+      contractor: r.contractor, from: r.from, to: r.to, lines: r.lines,
+      accrued: r.accrued, unpriced: r.unpriced, shifts: r.shifts, idleShifts: r.idleShifts,
+      meters: r.meters, aerialM: r.aerialM, materials: r.materials,
+    },
+  };
+}
+
 /** Цена метра одним способом прокладки — или подвеса. */
 export interface MethodMeterPrice {
   method: LayMethod | 'aerialM';
@@ -472,7 +526,7 @@ export interface MeterCost {
  * не оценено, полная цена — «не меньше», с названием того, чего нет, а не
  * красивая и заниженная цифра.
  */
-export function meterCost(r: PayrollResult, prices: MaterialPrices = {}): MeterCost {
+export function meterCost(r: Accrued, prices: MaterialPrices = {}): MeterCost {
   const byMethod: MethodMeterPrice[] = r.lines
     .filter((l) => LAY_METHODS.includes(l.work as LayMethod) || l.work === 'aerialM')
     .map((l) => ({
@@ -559,6 +613,9 @@ export interface ContractorSummary {
  *
  * Кто быстрее, кто дешевле, у кого больше замечаний — три разных
  * вопроса, и отвечать на них одной цифрой нельзя. Показываем все три.
+ *
+ * С выбранной областью скорость и цена метра — по ней, а «к оплате» —
+ * по всем областям: платежи по областям не разнесены (см. areaPayroll).
  */
 export function compareContractors(
   rows: DailyWorkEntry[],
@@ -567,17 +624,21 @@ export function compareContractors(
   deviationsBy: Map<string, number>,
   filter: PayrollFilter = {},
   aerial: AerialWorkEntry[] = [],
+  area: (PayrollRows & { oblast: string }) | null = null,
 ): ContractorSummary[] {
-  const names = payrollContractors(rows, aerial);
+  const names = area?.oblast
+    ? payrollContractors(area.ground, area.aerial)
+    : payrollContractors(rows, aerial);
   return names.map((contractor) => {
-    const r = payroll(contractor, rows, rates, payments, filter, aerial);
+    const both = areaPayroll(contractor, { ground: rows, aerial, rates, payments }, area, filter);
+    const r = both.area ?? both.whole;
     const w = meterCost(r).work;
     return {
       contractor,
       shifts: r.shifts,
       meters: r.meters,
       accrued: r.accrued,
-      due: r.due,
+      due: both.whole.due,
       perShift: r.shifts > 0 ? r.meters / r.shifts : 0,
       perMeter: w.value,
       perMeterComplete: w.complete,
@@ -752,6 +813,49 @@ export function payrollSummary(r: PayrollResult): string {
   if (r.paid > 0) parts.push(`оплачено ${money(r.paid)}`);
   parts.push(r.due >= 0 ? `к оплате ${money(r.due)}` : `переплата ${money(-r.due)}`);
   return parts.join(', ');
+}
+
+/** Строка работы для чата: объём, цена и сумма — так, чтобы сходилось. */
+function payLineText(l: PayLine): string {
+  const money = (v: number) => `${Math.round(v).toLocaleString('ru')} ₸`;
+  const head = `${l.label}: ${l.quantity.toLocaleString('ru')} ${l.unit}`;
+  if (l.pricedQuantity === 0) return `${head} — без расценки`;
+  // Когда оценён не весь объём или цена за период менялась, писать
+  // «× цену» нельзя: у подрядчика не сойдётся, и начнётся спор.
+  if (l.pricedQuantity < l.quantity || l.price === undefined) {
+    return `${head}, из них по расценке `
+      + `${l.pricedQuantity.toLocaleString('ru')} ${l.unit} = ${money(l.sum ?? 0)}`;
+  }
+  return `${head} × ${money(l.price)} = ${money(l.sum ?? 0)}`;
+}
+
+/**
+ * Расчёт текстом — его копируют в чат подрядчику.
+ *
+ * С выбранной областью работы и начисленное — по ней, а долг и «к
+ * оплате» — по всем областям и так и подписаны: платежи по областям не
+ * разнесены, и «переплата» по одной области ушла бы Дозеру в чат как
+ * факт, хотя ему оплачено ровно.
+ */
+export function payrollText(r: PayrollResult, area: AreaAccrual | null = null): string {
+  const money = (v: number) => `${Math.round(v).toLocaleString('ru')} ₸`;
+  const shown: Accrued = area ?? r;
+  const out = [`${r.contractor}${area ? `, ${area.oblast}` : ''}, период ${rangeText({ from: r.from, to: r.to })}`];
+  if (area) {
+    out.push(`${area.oblast}: начислено ${money(area.accrued)}`);
+    out.push(`по всем областям (платежи по областям не разнесены): ${payrollSummary(r)}`);
+  } else {
+    out.push(payrollSummary(r));
+  }
+  // Сам месяц — отдельной строкой: у кого тетрадь помесячная, сверяет по
+  // ней, у кого итогом — по строке выше.
+  if (Math.round(r.opening) !== 0) {
+    const b = periodBalance(r);
+    out.push(`за сам период${area ? ' по всем областям' : ''}: `
+      + `${b >= 0 ? 'к оплате' : 'переплата'} ${money(Math.abs(b))}`);
+  }
+  out.push('', ...shown.lines.map(payLineText));
+  return out.join('\n');
 }
 
 /** «за сентябрь 2026», если платёж отнесён не к своему месяцу. */

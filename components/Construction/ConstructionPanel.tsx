@@ -872,6 +872,14 @@ export default function ConstructionPanel({
       : byRegion;
   }, [journal, oblast, role, ownContractor]);
 
+  // Долг подрядчику — без сужения областью: платежи по областям не
+  // разнесены, и «начислено в Акмолинской минус всё выплаченное» давало
+  // переплату тому, кому оплачено ровно (см. areaPayroll). Своё
+  // субподрядчику режем так же, как в `scoped`.
+  const debtJournal = useMemo(() => (JOURNAL_ROLES[role].ownContractorOnly
+    ? scopeToContractor(journal, ownContractor)
+    : journal), [journal, role, ownContractor]);
+
   // Доска и сводки смотрят на журнал с выведенными этапами: руками
   // отмечать шесть этапов на шестистах сёлах никто не станет, а журнал
   // и так знает, где что делают.
@@ -1619,6 +1627,8 @@ export default function ConstructionPanel({
         ) : view === 'payroll' ? (
           <PayrollView
             journal={scoped}
+            wholeJournal={debtJournal}
+            oblast={oblast || undefined}
             from={moneyRange.from || undefined}
             to={moneyRange.to || undefined}
             startDay={startDay}

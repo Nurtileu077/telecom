@@ -4,8 +4,10 @@ import {
   parseRateDate, rateStart, brokenRates, checkRate, payableOption,
   payrollSummary, paymentLines, PAYABLE_WORKS, moneyBehind,
   paymentDay, paymentFor, periodBalance, checkPayment, meterCost,
+  areaPayroll, payrollText,
 } from './payroll';
 import { monthRange } from './moneyPeriod';
+import { emptyJournal, scopeJournal } from './journalStore';
 import type { DailyWorkEntry, WorkRate, Payment } from '@/types/construction';
 
 function e(patch: Partial<DailyWorkEntry> = {}): DailyWorkEntry {
@@ -675,5 +677,92 @@ describe('строка расчёта с долгом прошлых месяц�
       date: '2026-08-05', forMonth: '2026-07', createdAt: '', updatedAt: '',
     }], 'Дозер');
     expect(lines[0]).toBe('05.08.2026 · Аванс за июль 2026 100\u00a0000 ₸');
+  });
+});
+
+/**
+ * Дозер работал поровну в Акмолинской и Карагандинской, за август ему
+ * заплатили всё одним платежом. Платежи по областям не разнесены, а долг
+ * считался по журналу, суженному областью: в Акмолинской выходило
+ * «начислено здесь минус всё выплаченное» — переплата на половину выплат,
+ * и она же уходила в чат.
+ */
+describe('долг при выбранной области', () => {
+  const AKM = 'Акмолинская область';
+  const KAR = 'Карагандинская область';
+  const journal = {
+    ...emptyJournal(),
+    ground: [
+      e({ id: 'a1', date: '2026-08-10', oblast: AKM, byMethod: { 'бар': 1000 } }), // 350 000
+      e({ id: 'k1', date: '2026-08-12', oblast: KAR, byMethod: { 'бар': 1000 } }), // 350 000
+      e({ id: 'a2', date: '2026-09-05', oblast: AKM, byMethod: { 'бар': 200 } }), //   70 000
+    ],
+    rates: RATES,
+    payments: [{
+      id: 'pay', contractor: 'Дозер', kind: 'payment' as const, amount: 700_000,
+      date: '2026-08-28', createdAt: '', updatedAt: '',
+    }],
+  };
+  const sept = monthRange('2026-09');
+  const scoped = scopeJournal(journal, AKM);
+  const area = { oblast: AKM, ground: scoped.ground, aerial: scoped.aerial };
+
+  it('смены в двух областях, платежи общие — долг по одной области не уходит в «переплату»', () => {
+    const r = areaPayroll('Дозер', journal, area, sept);
+    expect(r.whole.opening).toBe(0);
+    expect(r.whole.due).toBe(70_000);
+    expect(r.area?.accrued).toBe(70_000);
+  });
+
+  it('у области нет ни долга, ни «к оплате» — показать их по ошибке нечего', () => {
+    const r = areaPayroll('Дозер', journal, area, sept);
+    expect(r.area).not.toHaveProperty('opening');
+    expect(r.area).not.toHaveProperty('due');
+    expect(r.area).not.toHaveProperty('paid');
+  });
+
+  it('начислено по области — только её смены, долг — по всем', () => {
+    const more = {
+      ...journal,
+      ground: [...journal.ground, e({ id: 'k2', date: '2026-09-07', oblast: KAR, byMethod: { 'бар': 300 } })],
+    };
+    const r = areaPayroll('Дозер', more, area, sept);
+    expect(r.area?.accrued).toBe(70_000);
+    expect(r.area?.meters).toBe(200);
+    expect(r.whole.accrued).toBe(175_000);
+    expect(r.whole.due).toBe(175_000);
+  });
+
+  it('без области — обычный расчёт, без второй половины', () => {
+    const r = areaPayroll('Дозер', journal, null, sept);
+    expect(r.area).toBeNull();
+    expect(r.whole).toEqual(payroll('Дозер', journal.ground, RATES, journal.payments, sept));
+  });
+
+  it('в сравнении подрядчиков «к оплате» по области не уходит в переплату', () => {
+    const [dozer] = compareContractors(journal.ground, RATES, journal.payments, new Map(), sept, [], area);
+    expect(dozer.contractor).toBe('Дозер');
+    expect(dozer.due).toBe(70_000);
+    expect(dozer.meters).toBe(200);
+  });
+
+  it('в текст для чата долг идёт по всем областям и так и подписан', () => {
+    const r = areaPayroll('Дозер', journal, area, sept);
+    const text = payrollText(r.whole, r.area);
+    expect(text).toContain(`Акмолинская область: начислено 70\u00a0000 ₸`);
+    expect(text).toContain('по всем областям (платежи по областям не разнесены): начислено 70\u00a0000 ₸, к оплате 70\u00a0000 ₸');
+    expect(text).toContain('Бар: 200 м × 350 ₸ = 70\u00a0000 ₸');
+    expect(text).not.toContain('переплата');
+  });
+
+  it('без области текст прежний: период, итог, сам месяц и работы', () => {
+    const r = areaPayroll('Дозер', { ...journal, payments: [] }, null, sept);
+    expect(payrollText(r.whole, r.area)).toBe([
+      'Дозер, период 01.09.2026 — 30.09.2026',
+      'долг на начало 700\u00a0000 ₸, начислено 70\u00a0000 ₸, к оплате 770\u00a0000 ₸',
+      'за сам период: к оплате 70\u00a0000 ₸',
+      '',
+      'Бар: 200 м × 350 ₸ = 70\u00a0000 ₸',
+    ].join('\n'));
   });
 });

@@ -8,7 +8,7 @@ import {
 import type { JournalState } from './journalStore';
 import ExportButton, { type ExportColumn } from '@/components/Layout/ExportButton';
 import {
-  payroll, compareContractors, payrollSummary, meterCost, payrollContractors,
+  areaPayroll, compareContractors, payrollText, meterCost, payrollContractors,
   PAYABLE_WORKS, rateFor, rateStart, brokenRates, checkRate, payableOption,
   paymentDay, paymentFor, periodBalance, checkPayment,
   type PayLine, type RateDraft, type PaymentDraft, type PerMeter,
@@ -27,7 +27,17 @@ import { rangeText, monthName, fmtDay, monthOf } from './moneyPeriod';
  */
 
 interface Props {
+  /** Журнал, суженный выбранной областью: по нему работы и начисление. */
   journal: JournalState;
+  /**
+   * Тот же журнал без сужения областью — для долга и платежей. Платежи по
+   * областям не разнесены, и долг по одной области не посчитать: «начислено
+   * в Акмолинской минус всё выплаченное» давало переплату тому, кому
+   * оплачено ровно. Нет — долг по `journal`.
+   */
+  wholeJournal?: JournalState;
+  /** Выбранная область: начисление — по ней, долг — по всем областям. */
+  oblast?: string;
   from?: string;
   to?: string;
   author?: string;
@@ -70,9 +80,16 @@ const PAY_COLUMNS: ExportColumn<PayLine>[] = [
 ];
 
 export default function PayrollView({
-  journal, from, to, author, onAddRate, onRemoveRate, onAddPayment, onRemovePayment, onFlash,
+  journal, wholeJournal, oblast, from, to, author,
+  onAddRate, onRemoveRate, onAddPayment, onRemovePayment, onFlash,
   startDay = 1, months = [], month, onAssignAerial,
 }: Props) {
+  const whole = wholeJournal ?? journal;
+  // Область выбрана — значит, работы показываем по ней, а долг по всем.
+  const area = useMemo(
+    () => (oblast ? { oblast, ground: journal.ground, aerial: journal.aerial } : null),
+    [oblast, journal.ground, journal.aerial],
+  );
   const { t } = useT();
   // Подрядчик, который весь месяц висел на опорах, тоже здесь: смен
   // подземки у него может не быть вовсе.
@@ -83,11 +100,12 @@ export default function PayrollView({
   const [who, setWho] = useState<string>('');
   const current = who || contractors[0] || '';
 
-  const result = useMemo(
-    () => payroll(current, journal.ground, journal.rates, journal.payments,
-      { from, to, startDay }, journal.aerial),
-    [current, journal.ground, journal.aerial, journal.rates, journal.payments, from, to, startDay],
+  const { whole: result, area: inArea } = useMemo(
+    () => areaPayroll(current, whole, area, { from, to, startDay }),
+    [current, whole, area, from, to, startDay],
   );
+  // Работы, начисление и цена метра — по области, если она выбрана.
+  const shown = inArea ?? result;
 
   // Подвес из Excel приходит без подрядчика и ни в чей расчёт не ложится.
   // Молча это означало бы «подвес бесплатный» — называем его и даём
@@ -112,12 +130,12 @@ export default function PayrollView({
     return m;
   }, [journal.deviations]);
 
-  const cost = useMemo(() => meterCost(result, journal.prices), [result, journal.prices]);
+  const cost = useMemo(() => meterCost(shown, journal.prices), [shown, journal.prices]);
 
   const table = useMemo(
-    () => compareContractors(journal.ground, journal.rates, journal.payments, deviationsBy,
-      { from, to, startDay }, journal.aerial),
-    [journal.ground, journal.aerial, journal.rates, journal.payments, deviationsBy, from, to, startDay],
+    () => compareContractors(whole.ground, whole.rates, whole.payments, deviationsBy,
+      { from, to, startDay }, whole.aerial, area),
+    [whole, area, deviationsBy, from, to, startDay],
   );
 
   // Черновик расценки: открыт — значит, человек её сейчас заполняет.
@@ -181,7 +199,7 @@ export default function PayrollView({
 
   function savePayment() {
     if (!payDraft) return;
-    const was = payDraft.id ? journal.payments.find((p) => p.id === payDraft.id) : undefined;
+    const was = payDraft.id ? whole.payments.find((p) => p.id === payDraft.id) : undefined;
     const res = checkPayment(payDraft, was?.contractor ?? current, new Date().toISOString(),
       () => newId('pay'), was?.author ?? author, was?.createdAt);
     if ('error' in res) { setPayError(res.error); return; }
@@ -192,28 +210,7 @@ export default function PayrollView({
   }
 
   async function copySummary() {
-    const text = [
-      `${current}, период ${rangeText({ from: result.from, to: result.to })}`,
-      payrollSummary(result),
-      // Сам месяц — отдельной строкой: у кого тетрадь помесячная, сверяет
-      // по ней, у кого итогом — по строке выше.
-      ...(Math.round(result.opening) !== 0
-        ? [`за сам период: ${periodBalance(result) >= 0 ? 'к оплате' : 'переплата'} `
-          + `${money(Math.abs(periodBalance(result)))}`]
-        : []),
-      '',
-      ...result.lines.map((l) => {
-        const head = `${l.label}: ${l.quantity.toLocaleString('ru')} ${l.unit}`;
-        if (l.pricedQuantity === 0) return `${head} — без расценки`;
-        // Когда оценён не весь объём или цена за период менялась, писать
-        // «× цену» нельзя: у подрядчика не сойдётся, и начнётся спор.
-        if (l.pricedQuantity < l.quantity || l.price === undefined) {
-          return `${head}, из них по расценке `
-            + `${l.pricedQuantity.toLocaleString('ru')} ${l.unit} = ${money(l.sum ?? 0)}`;
-        }
-        return `${head} × ${money(l.price)} = ${money(l.sum ?? 0)}`;
-      }),
-    ].join('\n');
+    const text = payrollText(result, inArea);
     try {
       await navigator.clipboard.writeText(text);
       onFlash?.('Расчёт скопирован');
@@ -221,6 +218,20 @@ export default function PayrollView({
       window.prompt('Скопируйте расчёт вручную:', text);
     }
   }
+
+  // Долг на начало: без области — первой строкой, с областью — под
+  // строкой «по всем областям», к которой он и относится.
+  const openingRow = from && Math.round(result.opening) !== 0 ? (
+    <tr>
+      <td className="py-1 text-[var(--text-muted)]" colSpan={3}
+          title="Всё начисленное до начала периода минус всё выплаченное за прошлые месяцы">
+        {result.opening > 0 ? 'Долг' : 'Переплата'} на {fmtDay(from)}
+      </td>
+      <td className="py-1 text-right font-mono tabular-nums text-[var(--text-muted)]">
+        {result.opening > 0 ? '' : '−'}{money(Math.abs(result.opening))}
+      </td>
+    </tr>
+  ) : null;
 
   const orphans = (
     <AerialOrphans groups={aerialOrphans} choices={assignChoices} onAssign={onAssignAerial} />
@@ -260,11 +271,12 @@ export default function PayrollView({
           {/* Период называем в самом расчёте: его копируют и пересылают, и
               «за какие числа» должно ехать вместе с суммой. */}
           <span className="text-[11px] text-[var(--text-muted)]">
+            {inArea && `${inArea.oblast} · `}
             {rangeText({ from: result.from, to: result.to })} ·{' '}
-            {result.shifts} смен · {Math.round(result.meters).toLocaleString('ru')} м
-            {result.aerialM > 0
-              && ` (из них подвес ${Math.round(result.aerialM).toLocaleString('ru')} м)`}
-            {result.idleShifts > 0 && ` · простой — ${result.idleShifts} смен`}
+            {shown.shifts} смен · {Math.round(shown.meters).toLocaleString('ru')} м
+            {shown.aerialM > 0
+              && ` (из них подвес ${Math.round(shown.aerialM).toLocaleString('ru')} м)`}
+            {shown.idleShifts > 0 && ` · простой — ${shown.idleShifts} смен`}
           </span>
           <span className="ml-auto inline-flex gap-1">
             <button type="button" onClick={copySummary} className="btn btn-ghost btn-icon"
@@ -273,10 +285,10 @@ export default function PayrollView({
             </button>
             <ExportButton
               compact
-              name={`Расчёт ${current} ${rangeText({ from: result.from, to: result.to })}`}
-              rows={result.lines}
+              name={`Расчёт ${current}${inArea ? ` ${inArea.oblast}` : ''} ${rangeText({ from: result.from, to: result.to })}`}
+              rows={shown.lines}
               columns={PAY_COLUMNS}
-              footer={{ 'Работа': 'Начислено', 'Сумма': result.accrued }}
+              footer={{ 'Работа': 'Начислено', 'Сумма': shown.accrued }}
               onFlash={onFlash}
             />
           </span>
@@ -286,18 +298,8 @@ export default function PayrollView({
           <tbody>
             {/* Долг прошлых месяцев — первой строкой: без неё «к оплате» в
                 конце не сходится с начисленным, и это видно сразу. */}
-            {from && Math.round(result.opening) !== 0 && (
-              <tr>
-                <td className="py-1 text-[var(--text-muted)]" colSpan={3}
-                    title="Всё начисленное до начала периода минус всё выплаченное за прошлые месяцы">
-                  {result.opening > 0 ? 'Долг' : 'Переплата'} на {fmtDay(from)}
-                </td>
-                <td className="py-1 text-right font-mono tabular-nums text-[var(--text-muted)]">
-                  {result.opening > 0 ? '' : '−'}{money(Math.abs(result.opening))}
-                </td>
-              </tr>
-            )}
-            {result.lines.map((l) => (
+            {!inArea && openingRow}
+            {shown.lines.map((l) => (
               <tr key={l.work} className="border-t border-[var(--border)]">
                 <td className="py-1 text-[var(--text)]">{l.label}</td>
                 <td className="py-1 text-right font-mono tabular-nums text-[var(--text-muted)]">
@@ -319,11 +321,33 @@ export default function PayrollView({
               </tr>
             ))}
             <tr className="border-t-2 border-[var(--border)]">
-              <td className="py-1 font-semibold text-[var(--text)]" colSpan={3}>Начислено за период</td>
+              <td className="py-1 font-semibold text-[var(--text)]" colSpan={3}>
+                Начислено за период{inArea ? ` — ${inArea.oblast}` : ''}
+              </td>
               <td className="py-1 text-right font-mono tabular-nums font-semibold text-[var(--text)]">
-                {money(result.accrued)}
+                {money(shown.accrued)}
               </td>
             </tr>
+            {/* Платежи по областям не разнесены: аванс Дозеру один на все
+                его участки. Долг по одной области выдавал «переплату» тому,
+                кому оплачено ровно, — поэтому дальше всё по всем областям,
+                и так и подписано. */}
+            {inArea && (
+              <>
+                <tr>
+                  <td className="pt-2 pb-0.5 text-[10.5px] text-[var(--text-muted)]" colSpan={4}>
+                    Долг — по всем областям: платежи по областям не разнесены.
+                  </td>
+                </tr>
+                {openingRow}
+                <tr>
+                  <td className="py-0.5 text-[var(--text-muted)]" colSpan={3}>Начислено за период, все области</td>
+                  <td className="py-0.5 text-right font-mono tabular-nums text-[var(--text-muted)]">
+                    {money(result.accrued)}
+                  </td>
+                </tr>
+              </>
+            )}
             {result.advances > 0 && (
               <tr><td className="py-0.5 text-[var(--text-muted)]" colSpan={3}>Аванс</td>
                 <td className="py-0.5 text-right font-mono tabular-nums text-[var(--text-muted)]">
@@ -347,6 +371,7 @@ export default function PayrollView({
                   title="Нарастающим итогом: долг на начало плюс начисленное минус выплаченное">
                 {result.due >= 0 ? 'К оплате' : 'Переплата'}
                 {result.to ? ` на ${fmtDay(result.to)}` : ''}
+                {inArea ? ', все области' : ''}
               </td>
               <td className="py-1 text-right font-mono tabular-nums font-semibold text-[var(--accent)]">
                 {money(Math.abs(result.due))}
@@ -359,7 +384,7 @@ export default function PayrollView({
             по себе — отдельной строкой, чтобы сверялось и так, и так. */}
         {from && Math.round(result.opening) !== 0 && (
           <div className="text-[11px] text-[var(--text-muted)]">
-            За сам период, без прошлых месяцев:{' '}
+            За сам период, без прошлых месяцев{inArea ? ', по всем областям' : ''}:{' '}
             {periodBalance(result) >= 0 ? 'к оплате' : 'переплата'}{' '}
             {money(Math.abs(periodBalance(result)))}.
           </div>
@@ -377,11 +402,11 @@ export default function PayrollView({
           </div>
         )}
 
-        {result.unpriced.length > 0 && (
+        {shown.unpriced.length > 0 && (
           <div className="flex items-start gap-1.5 text-[11px] text-[var(--warn)]">
             <AlertTriangle size={12} className="mt-0.5 shrink-0" />
             <span>
-              Без расценки: {result.unpriced.join(', ')}.
+              Без расценки: {shown.unpriced.join(', ')}.
               <span className="block text-[var(--text-muted)]">
                 Эти работы в сумму не вошли — ноль здесь означал бы «бесплатно».
               </span>
@@ -389,12 +414,26 @@ export default function PayrollView({
           </div>
         )}
 
+        {/* Долг по всем областям, а неоценённое в соседней области из
+            предупреждения по этой не видно — называем его отдельно. */}
+        {inArea && result.unpriced.length > 0 && (
+          <div className="flex items-start gap-1.5 text-[11px] text-[var(--warn)]">
+            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+            <span>
+              По всем областям без расценки: {result.unpriced.join(', ')}.
+              <span className="block text-[var(--text-muted)]">
+                «К оплате» без них — оно больше, чем показано, на неизвестную сумму.
+              </span>
+            </span>
+          </div>
+        )}
+
         {/* Цена метра — на два вопроса отдельно: «почём прокладка» и
             «почём метр трассы целиком». Одна цифра на оба отвечала неверно. */}
-        {result.meters > 0 && (
+        {shown.meters > 0 && (
           <div className="rounded-md bg-[var(--bg-canvas)] px-2 py-1.5 space-y-0.5 text-[11px]">
             <div className="text-[var(--text-muted)]">
-              {result.aerialM > 0 ? 'Метр по способу:' : 'Метр прокладки:'}{' '}
+              {shown.aerialM > 0 ? 'Метр по способу:' : 'Метр прокладки:'}{' '}
               {cost.byMethod.map((m, i) => (
                 <span key={m.method}>
                   {i > 0 && ' · '}
@@ -406,7 +445,7 @@ export default function PayrollView({
               ))}
             </div>
             <PerMeterLine
-              label={result.aerialM > 0
+              label={shown.aerialM > 0
                 ? 'Метр трассы целиком — прокладка, подвес, ГНБ, задувка, переходы'
                 : 'Метр трассы целиком — прокладка, ГНБ, задувка, переходы'}
               value={cost.work}
@@ -496,10 +535,17 @@ export default function PayrollView({
       )}
 
       {/* Движение денег */}
-      {journal.payments.some((p) => p.contractor === current) && (
+      {whole.payments.some((p) => p.contractor === current) && (
         <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-3 space-y-1">
-          <div className="text-[12.5px] font-semibold text-[var(--text)]">Движение денег</div>
-          {journal.payments
+          <div className="text-[12.5px] font-semibold text-[var(--text)]">
+            Движение денег
+            {inArea && (
+              <span className="ml-1.5 text-[10.5px] font-normal text-[var(--text-muted)]">
+                все области — платежи по ним не разнесены
+              </span>
+            )}
+          </div>
+          {whole.payments
             .filter((p) => p.contractor === current)
             .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
             .map((p) => {
@@ -661,7 +707,11 @@ export default function PayrollView({
                   <th className="py-1 font-medium text-right">₸/м</th>
                   <th className="py-1 font-medium text-right">Отклонений</th>
                   <th className="py-1 font-medium text-right"
-                      title="Нарастающим итогом на конец периода">К оплате</th>
+                      title={inArea
+                        ? 'Нарастающим итогом на конец периода, по всем областям: платежи по областям не разнесены'
+                        : 'Нарастающим итогом на конец периода'}>
+                    К оплате{inArea ? '*' : ''}
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -694,6 +744,7 @@ export default function PayrollView({
           <p className="text-[10.5px] text-[var(--text-muted)] mt-1">
             Кто быстрее, кто дешевле и у кого больше замечаний — три разных вопроса.
             Одной цифрой на них не ответить.
+            {inArea && ` Метры и цена — по области «${inArea.oblast}»; *«к оплате» — по всем областям: платежи по областям не разнесены.`}
           </p>
         </div>
       )}
