@@ -5,6 +5,7 @@ import { stageStatus } from './stageTasks';
 import { normName, PLACE_PREFIX } from './areaImport';
 import { effectiveProgress, type DeriveContext } from './stageDerive';
 import { routeLengthM } from './routeProgress';
+import { mainRouteByKato } from './routeMain';
 
 /**
  * Как выглядит трасса на карте.
@@ -64,6 +65,14 @@ export interface RouteView {
   startIn?: string;
   /** То же для последней точки. */
   endIn?: string;
+  /**
+   * Линия села, но не основная: отвод, вариант. Смены без своей отметки
+   * на неё не ложатся, и этап села её не красит — пока по ней не
+   * отметили работу, это проект (см. routeMain).
+   */
+  side?: boolean;
+  /** Основная назначена человеком, а не выбрана по длине. */
+  mainSet?: boolean;
 }
 
 /**
@@ -373,7 +382,7 @@ export function routeViews(routes: PlanRoute[], ctx: RouteStyleContext): RouteVi
   const known = ctx.places ?? placeNames(ctx.progress);
   const villages = villageOutlines(ctx.areas ?? []);
 
-  return routes.map((r) => {
+  const views: RouteView[] = routes.map((r) => {
     const label = r.name || r.uchastok || r.folder || '';
     const ends = routeEnds(r, known);
 
@@ -407,8 +416,19 @@ export function routeViews(routes: PlanRoute[], ctx: RouteStyleContext): RouteVi
       endsSwapped: r.endsSwapped,
       startIn: villageAt(villages, r.coords[0]),
       endIn: r.coords.length > 1 ? villageAt(villages, r.coords[r.coords.length - 1]) : undefined,
+      mainSet: r.main || undefined,
     };
   });
+
+  // Одна линия села основная, прочие — отводы и варианты.
+  const mains = mainRouteByKato(
+    routes,
+    new Map(views.filter((v) => v.kato).map((v) => [v.id, v.kato as string])),
+  );
+  for (const v of views) {
+    if (v.kato && mains.get(v.kato) !== v.id) v.side = true;
+  }
+  return views;
 }
 
 /** Подпись «Шортанды → Камышенка» или просто название. */

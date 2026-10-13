@@ -1125,7 +1125,10 @@ export function loadPlanRoutes(base: JournalState, routes: PlanRoute[]): PlanLoa
       warn = true;
     }
 
-    byId.set(r.id, { ...r, coords, reversed, endsSwapped });
+    // Основную линию села назначал человек, и файл о ней не знает: та же
+    // линия остаётся основной, пришедшая под её номером чужая — нет.
+    const main = old.main && match !== 'other' ? true : undefined;
+    byId.set(r.id, { ...r, coords, reversed, endsSwapped, main });
     // Счёт пошёл с другого конца — посчитанные точки колонн вслед за ним.
     if (lineMatch(old.coords, coords) === 'flipped') {
       sectionProgress = realignProgress(
@@ -1266,6 +1269,44 @@ export function swapRouteEnds(
     kind: 'route_ends',
     target: prev.name || prev.uchastok || 'трасса',
     detail: prev.endsSwapped ? 'как в названии' : 'наоборот названию',
+    routeId: id,
+  });
+}
+
+/**
+ * Назначить линию основной в её селе.
+ *
+ * Смены без своей отметки ложатся на основную линию села, и когда
+ * система выбрала не ту (вариант длиннее основной, отвод назван не по
+ * правилам), поправить это можно только так. Метка снимается с прочих
+ * линий того же села — `siblings` знает карта, привязку к селу считает
+ * она. Цифры смен это не меняет, только то, где они лежат на карте.
+ */
+export function setMainRoute(
+  base: JournalState,
+  id: string,
+  siblings: string[],
+  author: string,
+): JournalState {
+  const prev = base.planRoutes.find((r) => r.id === id);
+  if (!prev) return base;
+  const now = new Date().toISOString();
+  const others = new Set(siblings.filter((s) => s !== id));
+  const next: JournalState = {
+    ...base,
+    planRoutes: base.planRoutes.map((r) => {
+      if (r.id === id) return r.main ? r : { ...r, main: true, updatedAt: now };
+      if (others.has(r.id) && r.main) return { ...r, main: undefined, updatedAt: now };
+      return r;
+    }),
+    updatedAt: now,
+  };
+  return logChange(next, {
+    at: now,
+    author,
+    kind: 'route_main',
+    target: prev.name || prev.uchastok || 'трасса',
+    detail: 'смены без отметки ложатся на неё',
     routeId: id,
   });
 }

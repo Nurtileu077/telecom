@@ -115,8 +115,8 @@ function reportMoment(date: string): string {
 }
 
 /**
- * Трасса, по которой сейчас идёт колонна, — самая длинная у этого села.
- * Коротких отводов на селе несколько, но едет колонна по основной.
+ * Трасса, по которой сейчас идёт колонна, — основная линия села.
+ * Отводов и вариантов на селе несколько, но едет колонна по основной.
  */
 function tripFinder(ctx: CrewPlaceContext) {
   const routes = ctx.planRoutes ?? [];
@@ -124,9 +124,7 @@ function tripFinder(ctx: CrewPlaceContext) {
   const views = routeViews(routes, { progress: ctx.progress ?? [] });
   const byKato = new Map<string, (typeof views)[number]>();
   for (const v of views) {
-    if (!v.kato) continue;
-    const prev = byKato.get(v.kato);
-    if (!prev || v.lengthM > prev.lengthM) byKato.set(v.kato, v);
+    if (v.kato && !v.side) byKato.set(v.kato, v);
   }
 
   return (kato: string, doneM?: number): CrewTrip | undefined => {

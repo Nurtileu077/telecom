@@ -15,9 +15,13 @@ import {
 import PhotoAttach from './PhotoAttach';
 import ProjectBadge from './ProjectBadge';
 import { photosOf } from './photoStore';
-import { routeOfSection } from './routeSection';
-import { proposeStop, shiftsOnRoute, describeStop, crewLabel } from './shiftPlace';
-import { routeEnds, placeNames } from './routeStyle';
+import { routeOfSection, sectionMatchesRoute } from './routeSection';
+import {
+  proposeStop, shiftsOnRoute, describeStop, crewLabel, lineForPoint,
+} from './shiftPlace';
+import { routeEnds, placeNames, routeViews } from './routeStyle';
+import { effectiveProgress } from './stageDerive';
+import { lineIndex, crewLineIn } from './routeMain';
 import { checkEntry, saveBlocker } from './entryChecks';
 import { isIdleShift, entryHasWork } from './entriesTable';
 import { downtimeReasons } from './dayPlan';
@@ -292,10 +296,32 @@ export default function DailyEntryForm({
   // Правило одно с исполнительной схемой и приложением к акту: метры
   // участка и его схема должны лечь на одну и ту же линию. Подстрокой
   // больше не сверяем — «Аксу» сидит внутри «Аксуат».
-  const sectionRoute = useMemo(
-    () => routeOfSection(journal.planRoutes, uchastok),
-    [journal.planRoutes, uchastok],
-  );
+  //
+  // Линий у села бывает несколько, и смена ложится на одну: ту, где её
+  // колонна в этом селе стояла в последний раз, иначе на основную — тем
+  // же расчётом, что и закраска на карте (см. routeMain). Точку поставили
+  // у другой линии села — смена на ней (`lineChoice`).
+  const lines = useMemo(() => {
+    const progress = effectiveProgress(journal.progress, journal);
+    const views = routeViews(journal.planRoutes, { progress, areas: journal.areas });
+    const katoByRouteId = new Map(views.filter((v) => v.kato).map((v) => [v.id, v.kato as string]));
+    return { katoByRouteId, ...lineIndex(journal.planRoutes, katoByRouteId, journal.ground) };
+  }, [journal]);
+  const [lineChoice, setLineChoice] = useState<string | null>(null);
+  const villageLines = useMemo(() => {
+    const k = kato.trim();
+    return journal.planRoutes.filter((r) => (k && lines.katoByRouteId.get(r.id) === k)
+      || sectionMatchesRoute(uchastok, r));
+  }, [journal.planRoutes, lines, kato, uchastok]);
+  const sectionRoute = useMemo(() => {
+    const byName = routeOfSection(journal.planRoutes, uchastok);
+    const k = kato.trim() || undefined;
+    const id = (lineChoice && villageLines.some((r) => r.id === lineChoice) ? lineChoice : null)
+      ?? crewLineIn(journal.ground, { contractor, column }, k, lines.live, date)
+      ?? (k ? lines.mainByKato.get(k) : undefined);
+    return (id ? journal.planRoutes.find((r) => r.id === id) : undefined) ?? byName;
+  }, [journal.planRoutes, journal.ground, uchastok, kato, contractor, column, date,
+    lines, lineChoice, villageLines]);
 
   /**
    * Замер с карты: по трассе участка, если клики на ней, иначе по любой
@@ -342,10 +368,9 @@ export default function DailyEntryForm({
    */
   const routeShifts = useMemo(() => {
     if (!sectionRoute) return [];
-    const live = new Set(journal.planRoutes.map((r) => r.id));
-    return shiftsOnRoute(sectionRoute.id, kato || undefined, journal.ground, live)
+    return shiftsOnRoute(sectionRoute.id, kato || undefined, journal.ground, lines.live, lines.lineOf)
       .filter((e) => e.id !== entryId);
-  }, [sectionRoute, kato, journal.ground, journal.planRoutes, entryId]);
+  }, [sectionRoute, kato, journal.ground, lines, entryId]);
 
   // Считаем от смен своей колонны: вторая колонна на том же селе иначе
   // видела место первой как «прошлая смена кончилась на 9 км».
@@ -851,6 +876,22 @@ export default function DailyEntryForm({
                     {stop.lat.toFixed(5)}, {stop.lon.toFixed(5)}
                   </span>
                 </div>
+                {/* Линий у села несколько — на какую ляжет смена, видно и
+                    меняется здесь: метры одной смены красят одну линию. */}
+                {villageLines.length > 1 && sectionRoute && (
+                  <label className="flex items-center gap-1.5 text-[10.5px] text-[var(--text-muted)]">
+                    Линия:
+                    <select className="inp text-[11px] py-0.5 flex-1 min-w-0" value={sectionRoute.id}
+                            onChange={(e) => { setLineChoice(e.target.value); setStopPoint(null); setStopConfirmed(false); }}>
+                      {villageLines.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {(r.name || r.uchastok || 'трасса')}
+                          {r.id === lines.mainByKato.get(kato.trim()) ? ' — основная' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 {/* Откуда счёт — словами: от начала линии считаем, только
                     пока места не называли, и это допущение, а не знание. */}
                 <div className={`text-[10.5px] ${proposedStop?.from === 'start' && !stopPoint
@@ -868,7 +909,13 @@ export default function DailyEntryForm({
                     <button type="button" className="btn btn-ghost text-[10.5px]"
                             onClick={async () => {
                               const p = await onRequestPick('где остановились');
-                              if (p) { setStopPoint(p); setStopConfirmed(true); }
+                              if (!p) return;
+                              // Точку поставили у отвода — смена на отводе.
+                              if (sectionRoute) {
+                                const to = lineForPoint(p, villageLines, sectionRoute.id);
+                                if (to !== sectionRoute.id) setLineChoice(to);
+                              }
+                              setStopPoint(p); setStopConfirmed(true);
                             }}>
                       <MapPin size={12} />{t('Указать на карте')}</button>
                   )}

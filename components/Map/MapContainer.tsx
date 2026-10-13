@@ -397,6 +397,8 @@ interface Props {
   onReverseRoute?: (id: string) => void;
   /** Подписи концов наоборот: название написано против хода работ. */
   onSwapRouteEnds?: (id: string) => void;
+  /** Сделать линию основной в её селе: смены без отметки ложатся на неё. */
+  onSetMainRoute?: (id: string) => void;
   /**
    * Назначить место сменам колонны, пройденным без него: от начала линии
    * или от точки, которую укажут на карте.
@@ -1958,10 +1960,13 @@ export default function LeafletMap(props: Props) {
         // здесь», этап не красит — его у неё нет. Но работа на ней была,
         // и рисовать её синим проекта нельзя: красим цветом трубы.
         const workColor = r.stage ? r.color : STAGE_LINE_COLOR.mkt;
-        const planOnly = r.dashed && !worked;
+        // Отвод и вариант этап села не красит: смены без отметки на них не
+        // ложатся, и пока по линии не отметили работу, это проект. Раньше
+        // этап закрашивал все линии села, и карта показывала втрое больше.
+        const planOnly = (r.dashed || !!r.side) && !worked;
 
         const line = L.polyline(r.coords, {
-          color: asBase ? '#475569' : partial ? PLAN_LINE_COLOR : worked ? workColor : r.color,
+          color: asBase ? '#475569' : partial || planOnly ? PLAN_LINE_COLOR : worked ? workColor : r.color,
           // Проект — сплошная синяя, тоньше факта. Пунктир превращал её в
           // такую же штриховку, как у границ района, и трасса терялась
           // среди контуров. Тонкая и сплошная читается как трасса, а
@@ -1971,7 +1976,9 @@ export default function LeafletMap(props: Props) {
           dashArray: undefined,
         });
         const title = routeTitle(r);
-        const stageLabel = r.stage ? SNP_STAGE_SPECS[r.stage].label : 'работ не было';
+        const stageLabel = r.side && !worked
+          ? 'не основная линия села — работ по ней не отмечено'
+          : r.stage ? SNP_STAGE_SPECS[r.stage].label : 'работ не было';
         // Сколько пройдено неизвестно где — словами и с тем, как это
         // исправить: штрих сам по себе ничего не объясняет. Совет «отметьте
         // в смене» для закрытых смен невыполним — форма ставит отметку
@@ -1997,6 +2004,23 @@ export default function LeafletMap(props: Props) {
               + '</div>'
             )).join('')
           : '';
+        // Какая линия села основная — на неё ложатся смены без своей
+        // отметки. Выбрана по длине, а не человеком, — так и сказано, и
+        // поправить можно здесь же.
+        const mainNote = r.kato
+          ? `<div style="margin-top:4px;font-size:11px;color:#cbd5e1;max-width:260px">`
+            + (r.side
+              ? 'Не основная линия села: смены без отметки на неё не ложатся — только отмеченные на ней.'
+              : r.mainSet
+                ? 'Основная линия села: смены без отметки ложатся на неё.'
+                : 'Основная линия села (самая длинная из не названных вариантом или отводом): смены без отметки ложатся на неё.')
+            + '</div>'
+            + (r.side && propsRef.current.onSetMainRoute
+              ? `<div style="margin-top:3px"><button onclick="window.__optiqSetMainRoute__('${esc(r.id)}')"
+                   style="padding:3px 8px;background:transparent;color:#2dd4bf;border:1px solid #2dd4bf;border-radius:3px;font-size:10px;cursor:pointer">
+                   Сделать основной линией села</button></div>`
+              : '')
+          : '';
         line.bindTooltip(
           `${esc(title)} · ${esc(stageLabel)}${r.lengthM ? ` · ${(r.lengthM / 1000).toFixed(2)} км` : ''}`
           + (hatchArr
@@ -2008,7 +2032,8 @@ export default function LeafletMap(props: Props) {
           `<b>${esc(title)}</b>`
           + (r.name && r.name !== title
             ? `<br/><span style="color:#64748b;font-size:11px">${esc(r.name)}</span>` : '')
-          + `<div style="margin-top:4px;color:${r.color};font-size:12px">${esc(stageLabel)}</div>`
+          + `<div style="margin-top:4px;color:${planOnly ? PLAN_LINE_COLOR : r.color};font-size:12px">${esc(stageLabel)}</div>`
+          + mainNote
           + unplacedNote
           + (r.snp ? `<span style="font-size:11px">${esc(r.snp)}</span><br/>` : '')
           + `<span style="font-size:11px">${(r.lengthM / 1000).toFixed(3)} км</span>`
@@ -2131,7 +2156,7 @@ export default function LeafletMap(props: Props) {
                 // ▲ смотрит вверх, а азимут считается от севера — значит
                 // поворот на сам азимут и даёт направление движения.
                 html: `<div style="transform:translate(-5px,-6px) rotate(${a.deg.toFixed(0)}deg);
-                  font-size:10px;line-height:1;color:${r.color};
+                  font-size:10px;line-height:1;color:${planOnly ? PLAN_LINE_COLOR : r.color};
                   text-shadow:0 0 3px #000,0 0 3px #000">▲</div>`,
               }),
             }));
@@ -3507,6 +3532,10 @@ export default function LeafletMap(props: Props) {
       mapRef.current?.closePopup?.();
       propsRef.current.onSwapRouteEnds?.(id);
     };
+    (window as any).__optiqSetMainRoute__ = (id: string) => {
+      mapRef.current?.closePopup?.();
+      propsRef.current.onSetMainRoute?.(id);
+    };
     // Номер колонны в карточке, а не id смены: id из загруженной таблицы
     // может нести кавычку, и строка обработчика в разметке сломалась бы.
     (window as any).__optiqPlaceShifts__ = (routeId: string, i: number, how: 'line' | 'pick') => {
@@ -3524,6 +3553,7 @@ export default function LeafletMap(props: Props) {
       delete (window as any).__optiqJoinRoute__;
       delete (window as any).__optiqReverseRoute__;
       delete (window as any).__optiqSwapRouteEnds__;
+      delete (window as any).__optiqSetMainRoute__;
       delete (window as any).__optiqPlaceShifts__;
       delete (window as any).__optiqOpenPhoto__;
       delete (window as any).__optiqEditObject__;

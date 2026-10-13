@@ -70,7 +70,7 @@ import {
   addPlanRoutes, addDeviation, updateRouteCoords, deleteRoute,
   removePlanSource, removeAreaSource, updateAreaCoords, renameArea, removeArea,
   addDrawnArea, upsertObject, splitPlanRoute, joinPlanRoutes,
-  reversePlanRoute, swapRouteEnds, placeRunFrom,
+  reversePlanRoute, swapRouteEnds, placeRunFrom, setMainRoute,
 } from '@/components/Construction/journalStore';
 import { polylineLengthM } from '@/components/Construction/planImport';
 import {
@@ -563,6 +563,21 @@ export default function HomePage() {
     const ok = persist(swapRouteEnds(loadJournal(), id, getActorName() || 'Без имени'));
     refreshJournalLayers();
     if (ok) say('Подписи концов поменяны');
+  }, [refreshJournalLayers]);
+
+  /**
+   * Основная линия села — та, на которую ложатся смены без отметки.
+   * Прочие линии того же села карта знает по привязке к селу.
+   */
+  const handleSetMainRoute = useCallback((id: string) => {
+    const j = loadJournal();
+    const views = routeViews(j.planRoutes, { progress: effectiveProgress(j.progress, j), areas: j.areas });
+    const kato = views.find((v) => v.id === id)?.kato;
+    if (!kato) return;
+    const siblings = views.filter((v) => v.kato === kato).map((v) => v.id);
+    const ok = persist(setMainRoute(j, id, siblings, getActorName() || 'Без имени'));
+    refreshJournalLayers();
+    if (ok) say('Линия стала основной: смены без отметки теперь ложатся на неё');
   }, [refreshJournalLayers]);
 
   /**
@@ -1808,6 +1823,7 @@ export default function HomePage() {
             onJoinRoute={building ? handleJoinRoute : undefined}
             onReverseRoute={building ? handleReverseRoute : undefined}
             onSwapRouteEnds={building ? handleSwapRouteEnds : undefined}
+            onSetMainRoute={building ? handleSetMainRoute : undefined}
             onPlaceShifts={building ? handlePlaceShifts : undefined}
             siteObjects={conLayers.objects ? siteObjects : EMPTY_LAYER}
             incidents={conLayers.incidents ? incidents : EMPTY_LAYER}

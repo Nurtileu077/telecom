@@ -482,6 +482,15 @@ export interface PlanRoute {
    * а не переименованием трассы: по названию её ищут в журнале.
    */
   endsSwapped?: boolean;
+  /**
+   * Основная линия своего села — назначил человек.
+   *
+   * Смены пишутся по селу, а линий у села бывает несколько: основная,
+   * отвод к школе, альтернативный вариант. Смена без своей отметки
+   * ложится на одну из них, и угадать её по длине не всегда выходит:
+   * вариант бывает длиннее основной.
+   */
+  main?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -1122,7 +1131,7 @@ export type ChangeKind =
   | 'route_split' | 'route_join' | 'route_reverse' | 'route_ends'
   | 'area_add' | 'area_edit' | 'area_rename' | 'area_delete'
   | 'entry_delete' | 'entry_restore' | 'entry_bulk' | 'entry_dispute'
-  | 'shift_place';
+  | 'shift_place' | 'route_main';
 
 export interface ChangeLogEntry {
   id: string;

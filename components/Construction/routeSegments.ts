@@ -6,6 +6,7 @@ import { ellipsoidM, type Metric } from '@/lib/geodesy';
 import {
   placeShifts, shiftIndex, unplacedRuns, type PlacedShift, type UnplacedRun,
 } from './shiftPlace';
+import { lineIndex } from './routeMain';
 
 /**
  * Трасса кусками: где шли баром, где кабелеукладчиком, где по колодцам.
@@ -174,14 +175,18 @@ export interface RouteWork {
  * лежат по КАТО, и приписывать их линии, о которой мы не знаем, чьё это
  * село, значит рисовать выдумку. Но если на ней отмечали «остановились
  * здесь», село этих смен — её село: человек сам сказал, где шёл.
+ *
+ * Смена без отметки ложится на одну линию села, а не на все: основная
+ * линия, отвод к школе и альтернативный вариант раньше брали её себе
+ * втроём (см. routeMain).
  */
 export function routeWork(
   routes: PlanRoute[],
   katoByRouteId: Map<string, string>,
   ground: DailyWorkEntry[],
 ): RouteWork {
-  const live = new Set(routes.map((r) => r.id));
-  const onRoute = shiftIndex(ground, live);
+  const { live, lineOf } = lineIndex(routes, katoByRouteId, ground);
+  const onRoute = shiftIndex(ground, live, lineOf);
   const katoByStop = new Map<string, string>();
   for (const e of ground) {
     const own = e.stop?.routeId;

@@ -1,5 +1,6 @@
 import { PlanRoute } from '@/types/construction';
 import { ellipsoidM, type Metric } from '@/lib/geodesy';
+import { pickMainRoute } from './routeMain';
 
 /**
  * Где остановились вчера и где окажемся сегодня.
@@ -123,14 +124,14 @@ export function advanceAlong(
 
 /**
  * Трасса участка: ту, вдоль которой идут, выбираем по названию.
- * Несколько подходящих — берём самую длинную: короткие обычно заезды и
- * альтернативные куски, а не основная линия.
+ * Несколько подходящих — основную линию села (см. routeMain): ту, что
+ * назначил человек, иначе самую длинную из не названных вариантом или
+ * отводом. Альтернативный вариант бывает длиннее основной, и «самая
+ * длинная» ставила смены на него.
  */
 export function routeForSection(
   routes: PlanRoute[],
   match: (r: PlanRoute) => boolean,
 ): PlanRoute | null {
-  const hits = routes.filter(match);
-  if (hits.length === 0) return null;
-  return hits.reduce((best, r) => (r.lengthM > best.lengthM ? r : best), hits[0]);
+  return pickMainRoute(routes.filter(match));
 }

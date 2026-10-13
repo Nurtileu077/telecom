@@ -285,13 +285,19 @@ export function describeRunPlaced(o: {
  *
  * Отметка в смене привязывает её к своей линии прямо: у села бывает
  * основная линия и отвод к школе, и смена, отмеченная на основной, на
- * отвод ложиться не должна. Смены без отметки ложатся на трассы своего
- * села, как и раньше. Отметка на линии, которой больше нет (разрезали,
- * удалили), ничего не привязывает — смена ищет трассу по селу.
+ * отвод ложиться не должна. Отметка на линии, которой больше нет
+ * (разрезали, удалили), ничего не привязывает — смена ищет трассу по селу.
+ *
+ * Смены без отметки: если известно, на какую линию села каждая ложится
+ * (`lineOf`, см. routeMain.lineOfUnmarked), — только на неё. Иначе — на
+ * трассы своего села, как раньше: тогда одну смену брали себе и основная
+ * линия, и отвод, и альтернативный вариант, и карта показывала втрое
+ * больше сделанного.
  */
 export function shiftIndex(
   ground: DailyWorkEntry[],
   liveRouteIds?: Set<string>,
+  lineOf?: Map<string, string>,
 ): (routeId: string, kato?: string) => DailyWorkEntry[] {
   const byRoute = new Map<string, DailyWorkEntry[]>();
   const byKato = new Map<string, DailyWorkEntry[]>();
@@ -302,6 +308,8 @@ export function shiftIndex(
   for (const e of ground) {
     const own = e.stop?.routeId;
     if (own && (!liveRouteIds || liveRouteIds.has(own))) { push(byRoute, own, e); continue; }
+    const line = lineOf?.get(e.id);
+    if (line) { push(byRoute, line, e); continue; }
     if (e.kato) push(byKato, e.kato, e);
   }
   return (routeId, kato) => [
@@ -310,13 +318,37 @@ export function shiftIndex(
   ];
 }
 
+/**
+ * На какую линию села легла точка «остановились здесь».
+ *
+ * Форма смены предлагает линию, на которой колонна стояла в последний
+ * раз (или основную), а сегодня колонна могла уйти на отвод к школе.
+ * Точку ставят пальцем рядом с отводом — значит, смена на отводе. Берём
+ * ближайшую линию села в пределах промаха пальца; дальше от всех — та,
+ * что предложена, и промах называется в подписи.
+ */
+export function lineForPoint(
+  p: { lat: number; lon: number },
+  lines: Pick<PlanRoute, 'id' | 'coords'>[],
+  currentId: string,
+): string {
+  let best: { id: string; dev: number } | null = null;
+  for (const r of lines) {
+    const hit = nearestOnRoute(p, r.coords);
+    if (!hit) continue;
+    if (!best || hit.deviationM < best.dev) best = { id: r.id, dev: hit.deviationM };
+  }
+  return best && best.dev <= SHIFT_SNAP_M ? best.id : currentId;
+}
+
 export function shiftsOnRoute(
   routeId: string,
   kato: string | undefined,
   ground: DailyWorkEntry[],
   liveRouteIds?: Set<string>,
+  lineOf?: Map<string, string>,
 ): DailyWorkEntry[] {
-  return shiftIndex(ground, liveRouteIds)(routeId, kato);
+  return shiftIndex(ground, liveRouteIds, lineOf)(routeId, kato);
 }
 
 export interface StopProposal {

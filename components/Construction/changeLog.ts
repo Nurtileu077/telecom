@@ -31,6 +31,7 @@ const CHANGE_TEXT: Record<string, string> = {
   route_reverse: 'счёт трассы развёрнут',
   route_ends: 'подписи концов поменяны',
   shift_place: 'место смен указано',
+  route_main: 'основная линия села назначена',
   area_add: 'обводка нарисована',
   area_edit: 'обводка изменена',
   area_rename: 'обводка переименована',
