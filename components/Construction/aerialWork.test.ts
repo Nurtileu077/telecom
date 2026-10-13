@@ -225,6 +225,11 @@ describe('расчёт с подрядчиком за подвес', () => {
     expect(r.lines.some((l) => l.work === 'aerialM')).toBe(false);
   });
 
+  it('расчёт «без подрядчика» не забирает себе чужой подвес', () => {
+    const r = payroll('', [], RATES, [], {}, [a({ id: 'x', contractor: 'Дозер', totalM: 900 })]);
+    expect(r.aerialM).toBe(0);
+  });
+
   it('подрядчик, который только вешал, есть в расчётах и в сравнении', () => {
     const air = [a({ contractor: 'Модуль Строй', totalM: 2000 })];
     expect(payrollContractors([g()], air)).toEqual(['Дозер', 'Модуль Строй']);

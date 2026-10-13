@@ -4,7 +4,7 @@ import {
   type AerialWorkEntry,
 } from '@/types/construction';
 import { entryMeters, isIdleShift, weekStart } from './entriesTable';
-import { aerialIn, aerialMeters } from './aerialWork';
+import { aerialMeters } from './aerialWork';
 import { normName } from './areaImport';
 import type { MaterialPrices } from './materialCost';
 import { monthRange, monthName, monthOf, fmtDay } from './moneyPeriod';
@@ -350,7 +350,8 @@ export function payroll(
   const mine = own.filter((e) => inPeriod(e.date, filter));
   // Подвес подрядчика — в том же расчёте. Раньше его не было ни в сумме, ни
   // в метрах: бригада, неделю висевшая на опорах, выглядела простаивающей.
-  const ownAir = aerialIn(aerial, { contractor }).filter((e) => !!e.contractor);
+  // Тем же правилом, что смены: «пустой» подрядчик — не «все подрядчики».
+  const ownAir = aerial.filter((e) => (e.contractor || '') === contractor);
   const mineAir = ownAir.filter((e) => inPeriod(e.date, filter));
   const lines = linesOf(accrue([...mine, ...mineAir], rates, contractor));
 
