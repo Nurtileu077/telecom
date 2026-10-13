@@ -36,9 +36,11 @@ import {
   groupPoints, endpointKindOf, POINT_GROUPS, type PointGroup,
 } from './pointKind';
 import { placeCrews } from './crewPlace';
-import { routeViews, routeTitle, journalPlaces } from './routeStyle';
+import { routeViews, journalPlaces } from './routeStyle';
 import { namesakeNote } from './routeVillage';
 import { buildKml, kmlFileName } from './kmlExport';
+import { kmlRouteLines } from './kmlRoutes';
+import { routeWork } from './routeSegments';
 import ChecksView from './ChecksView';
 import TimesheetView from './TimesheetView';
 import DocsView from './DocsView';
@@ -102,7 +104,7 @@ import { effectiveProgress } from './stageDerive';
 import { routeBinding } from './routeSection';
 import {
   LAY_METHOD_LABEL, MATERIAL_UNIT, JOURNAL_ROLES, JOURNAL_ROLE_LIST, DEVIATION_KIND_LABEL,
-  CREW_KINDS, CREW_STATUS, SNP_STAGE_SPECS,
+  CREW_KINDS, CREW_STATUS,
   type LayMethod, type MaterialKind, type DailyWorkEntry,
   type CorrectionRequest, type JournalRole, type Deviation, type Crew,
   type DrillLogEntry,
@@ -884,28 +886,20 @@ export default function ConstructionPanel({
     const views = routeViews(scoped.planRoutes, {
       progress: live.progress, areas: scoped.areas, drills: scoped.drills,
     });
-    const byId = new Map(views.map((v) => [v.id, v]));
+    // Цвет и подпись — тем же расчётом, что карта: отвод и вариант без
+    // работ уходят проектом, а не построенными, сделанное — там, где копали.
+    const work = routeWork(
+      scoped.planRoutes,
+      new Map(views.filter((v) => v.kato).map((v) => [v.id, v.kato as string])),
+      scoped.ground,
+    );
+    const routeLines = kmlRouteLines(scoped.planRoutes, views, work);
     const xml = buildKml({
       name: oblast ? `Optiq — ${oblast}` : 'Optiq — трассы и объекты',
       description: `Выгружено ${new Date().toLocaleString('ru')}`,
       folders: [
-        {
-          name: 'Трассы',
-          lines: scoped.planRoutes.map((r) => {
-            const v = byId.get(r.id);
-            return {
-              name: v ? routeTitle(v) : (r.name || 'Трасса'),
-              coords: r.coords,
-              color: v?.color,
-              description: [
-                r.name,
-                `${(r.lengthM / 1000).toFixed(3)} км`,
-                v?.stage ? SNP_STAGE_SPECS[v.stage].label : 'работ не было',
-                r.source,
-              ].filter(Boolean).join(' · '),
-            };
-          }),
-        },
+        { name: 'Трассы', lines: routeLines.lines },
+        { name: 'Сделано', lines: routeLines.done },
         {
           name: 'Контуры',
           lines: scoped.areas.map((a) => ({
