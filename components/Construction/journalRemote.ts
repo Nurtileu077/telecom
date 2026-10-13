@@ -3,13 +3,15 @@ import { getDefaultOrgId } from '@/lib/orgId';
 import { assertSupabaseAccess } from '@/lib/supabaseAccess';
 import { JournalState, emptyJournal } from './journalStore';
 import { mergeJournalStates, MergeStats } from './journalSync';
+import { SNP_PROJECT_ID, cloudRowKey, pickProjectRow } from './projects';
 
 /**
  * Облачная сторона журнала стройки.
  *
- * Весь журнал лежит одним документом на организацию. Для дневных отчётов
- * этого достаточно: объёмы небольшие, а разрешение расхождений делает
- * клиент — см. journalSync.ts.
+ * Журнал проекта лежит одним документом: «СНП» — строкой организации, как
+ * было до деления на проекты, остальные — строкой «организация:проект»
+ * (см. cloudRowKey). Для дневных отчётов этого достаточно: объёмы
+ * небольшие, а разрешение расхождений делает клиент — см. journalSync.ts.
  *
  * Оффлайн — нормальный режим работы, а не сбой: в СНП связи нет по
  * определению. Поэтому запись всегда идёт сначала в localStorage, а обмен
@@ -20,9 +22,19 @@ import { mergeJournalStates, MergeStats } from './journalSync';
 
 const TABLE = 'optiq_journal';
 
-/** Ключ строки: организация текстом или 'default' для установки без орг. */
+/** Организация текстом или 'default' для установки без орг. */
 function orgKey(): string {
   return getDefaultOrgId() ?? 'default';
+}
+
+/** Ключ строки журнала проекта. */
+function rowKey(projectId: string): string {
+  return cloudRowKey(orgKey(), projectId);
+}
+
+/** Чей журнал: без отметки — заведённый до деления, то есть «СНП». */
+function projectOf(state: JournalState): string {
+  return state.project?.id ?? SNP_PROJECT_ID;
 }
 
 export function journalCloudEnabled(): boolean {
@@ -54,15 +66,17 @@ export async function isSubcontractorAccount(): Promise<boolean> {
   return data.session?.user?.app_metadata?.role === 'sub';
 }
 
-/** Чтение журнала с сервера. null — строки ещё нет (первая синхронизация). */
-export async function fetchRemoteJournal(): Promise<RemoteJournal | null> {
+/** Чтение журнала проекта с сервера. null — строки ещё нет (первая синхронизация). */
+export async function fetchRemoteJournal(projectId: string = SNP_PROJECT_ID): Promise<RemoteJournal | null> {
   if (!supabase) return null;
   await assertSupabaseAccess();
 
   if (await isSubcontractorAccount()) {
     const { data, error } = await supabase.rpc('optiq_journal_mine');
     if (error) throw error;
-    const row = (data as Record<string, unknown>[] | null)?.[0];
+    const rows = (data as Record<string, unknown>[] | null) ?? [];
+    const row = pickProjectRow(rows, projectId);
+    if (row === 'ambiguous') throw new Error('SLICE_AMBIGUOUS');
     if (!row) return null;
     return {
       state: { ...emptyJournal(), ...(row.data as Partial<JournalState>) },
@@ -74,7 +88,7 @@ export async function fetchRemoteJournal(): Promise<RemoteJournal | null> {
   const { data, error } = await supabase
     .from(TABLE)
     .select('data, updated_at, updated_by')
-    .eq('org_key', orgKey())
+    .eq('org_key', rowKey(projectId))
     .maybeSingle();
   if (error) throw error;
   if (!data) return null;
@@ -85,14 +99,14 @@ export async function fetchRemoteJournal(): Promise<RemoteJournal | null> {
   };
 }
 
-/** Запись журнала на сервер целиком. */
+/** Запись журнала проекта на сервер целиком — в строку его проекта. */
 export async function pushRemoteJournal(state: JournalState, by: string): Promise<string> {
   if (!supabase) throw new Error('Облако не настроено');
   await assertSupabaseAccess();
   const now = new Date().toISOString();
   const org = getDefaultOrgId();
   const { error } = await supabase.from(TABLE).upsert({
-    org_key: orgKey(),
+    org_key: rowKey(projectOf(state)),
     org_id: org ?? null,
     data: state,
     updated_at: now,
@@ -116,8 +130,34 @@ export async function syncJournal(local: JournalState, by: string): Promise<Sync
   if (!supabase) {
     return { ok: false, reason: 'disabled', message: 'Облако не настроено: журнал живёт только в этом браузере.' };
   }
+  const projectId = projectOf(local);
   try {
-    const remote = await fetchRemoteJournal();
+    /**
+     * Срез субподрядчику режет сервер, и пока он режет его по
+     * организации, а не по проекту (п. 222). Отдать в журнал магистрали
+     * срез сёл — значит показать подрядчику чужой договор под своим
+     * названием, поэтому, кроме «СНП», ему пока не показываем ничего.
+     */
+    if (projectId !== SNP_PROJECT_ID && await isSubcontractorAccount()) {
+      return {
+        ok: false, reason: 'readonly',
+        message: 'Этот проект субподрядчику пока не открыт: сервер отдаёт срез только по «СНП».',
+      };
+    }
+
+    const remote = await fetchRemoteJournal(projectId);
+
+    // Под ключом проекта должен лежать его журнал. Если там другой —
+    // не сливаем: два договора, смешанные в одном журнале, назад не
+    // разделить.
+    const theirs = remote?.state.project?.id;
+    if (theirs && theirs !== projectId) {
+      return {
+        ok: false, reason: 'network',
+        message: `В облаке на месте этого проекта лежит журнал проекта «${remote!.state.project!.name}». `
+          + 'Обмен остановлен, чтобы не смешать договоры.',
+      };
+    }
 
     /**
      * Субподрядчик журнал читает, но не пишет: смены закрывает
@@ -146,6 +186,13 @@ export async function syncJournal(local: JournalState, by: string): Promise<Sync
     // а не «попробовать ещё раз».
     if (msg.includes('AUTH_REQUIRED')) {
       return { ok: false, reason: 'auth', message: 'Нужен вход: облачные операции закрыты для гостей.' };
+    }
+    if (msg.includes('SLICE_AMBIGUOUS')) {
+      return {
+        ok: false, reason: 'readonly',
+        message: 'Сервер отдал журналы нескольких проектов, не назвав их. Обмен остановлен, '
+          + 'чтобы не смешать договоры: срез по проектам для субподрядчика ещё не настроен.',
+      };
     }
     if (/relation .*optiq_journal.* does not exist|schema cache/i.test(msg)) {
       return {

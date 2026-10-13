@@ -39,9 +39,14 @@ import { diffScenarioCables, highlightCurrentCableIds } from '@/lib/scenarioDiff
 import AuthButton from '@/components/Auth/AuthButton';
 import {
   loadJournal, saveJournal, drillMapPoints, drillMapLines, placedCrews, moveCrew,
-  deviationMapItems,
+  deviationMapItems, newProjectJournal,
   type DrillMapPoint, type DrillMapLine, type DeviationMapItem, type JournalState,
 } from '@/components/Construction/journalStore';
+import {
+  SNP_PROJECT, loadProjects, saveProjects, currentProject, openProject, projectMeta,
+  addProject, seedContractors, type BuildProject,
+} from '@/components/Construction/projects';
+import ProjectSwitcher from '@/components/Construction/ProjectSwitcher';
 import { snpMapPoints, type SnpMapPoint } from '@/components/Construction/snpMap';
 import { effectiveProgress } from '@/components/Construction/stageDerive';
 import { placeCrews, type CrewPlacement, type CrewTrip } from '@/components/Construction/crewPlace';
@@ -345,6 +350,58 @@ export default function HomePage() {
    * нет — контур рисовал человек, он же его и поправит.
    */
   const [editingAreaId, setEditingAreaId] = useState<string | null>(null);
+
+  /**
+   * Проект стройки, открытый в этой вкладке.
+   *
+   * Всё, что страница читает и пишет в журнал, идёт в открытый проект
+   * (loadJournal без номера). Поэтому переход в другой проект — это не
+   * только другое название в шапке: сбрасывается всё начатое в прежнем
+   * (правка линии, выбранный объект, движение за день), карта
+   * перечитывается, а журнал пересоздаётся (key ниже) — иначе форма,
+   * открытая в «СНП», сохранила бы смену в Гипертрассу.
+   */
+  const [buildProject, setBuildProject] = useState<BuildProject>(SNP_PROJECT);
+  const [buildProjects, setBuildProjects] = useState<BuildProject[]>([SNP_PROJECT]);
+  useEffect(() => {
+    setBuildProjects(loadProjects());
+    setBuildProject(currentProject());
+  }, []);
+
+  const switchProject = useCallback((id: string) => {
+    openProject(id);
+    const meta = projectMeta(id);
+    setBuildProject(meta);
+    setBuildProjects(loadProjects());
+    setEditingRouteId(null);
+    setEditObjectId(null);
+    setEditingAreaId(null);
+    setPlaybackDate(null);
+    setPlaybackMoves([]);
+    setDrawnCoords(null);
+    setDrawingRoute(false);
+    refreshJournalLayers();
+    say(`Открыт проект «${meta.name}»`, 2400);
+  }, [refreshJournalLayers, say]);
+
+  const createProject = useCallback(() => {
+    const name = window.prompt(
+      'Новый проект стройки — отдельный договор: свои смены, акты, расценки и платежи.\n\nНазвание:',
+      '',
+    );
+    if (name === null) return;
+    const res = addProject(loadProjects(), name);
+    if (!res.ok) { say(res.problem, 5000); return; }
+    // Журнал — раньше списка: не записался список — проекта просто не
+    // видно, а не записался журнал при записанном списке — проект есть,
+    // а компаний в его справочнике нет.
+    const journal = newProjectJournal(res.project, seedContractors(loadJournal().contractors));
+    if (!saveJournal(journal) || !saveProjects(res.list)) {
+      say('Проект не заведён: в браузере кончилось место. Снимите копию журнала и освободите память.', 7000);
+      return;
+    }
+    switchProject(res.project.id);
+  }, [say, switchProject]);
 
   const handleUpdateArea = useCallback((id: string, coords: [number, number][]) => {
     persist(updateAreaCoords(loadJournal(), id, coords, getActorName() || 'Без имени'));
@@ -2276,6 +2333,15 @@ export default function HomePage() {
 
       {showJournal && (
         <ConstructionPanel
+          key={buildProject.id}
+          projectSlot={(
+            <ProjectSwitcher
+              project={buildProject}
+              projects={buildProjects}
+              onSwitch={switchProject}
+              onCreate={createProject}
+            />
+          )}
           onPlayDay={(date) => { playDay(date); setShowJournal(false); }}
           onShowRoute={showSnpRoute}
           onShowCoords={(coords) => fitRef.current?.(coords)}

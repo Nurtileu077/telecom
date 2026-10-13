@@ -126,11 +126,17 @@ interface Props {
    * со всем набранным должны дождаться точки.
    */
   hidden?: boolean;
+  /**
+   * Переключатель проектов. Сам журнал проекты не переключает: при
+   * переходе его пересоздаёт страница целиком, чтобы ни открытая форма,
+   * ни отмена, ни недописанный обмен не перенесли смену в другой договор.
+   */
+  projectSlot?: React.ReactNode;
 }
 
 export default function ConstructionPanel({
   onClose, onRequestPick, editObjectId, onDoneEditObject, onPlayDay, onShowRoute,
-  onShowCoords, hidden = false,
+  onShowCoords, hidden = false, projectSlot,
 }: Props) {
   const { t } = useT();
   const [journal, setJournal] = useState<JournalState>(emptyJournal);
@@ -929,7 +935,8 @@ export default function ConstructionPanel({
       <div data-print="hide" className="flex items-center gap-2 px-3 md:px-4 py-2.5 border-b border-[var(--border)] bg-[var(--bg-surface)] shrink-0"
            style={{ paddingTop: 'calc(0.625rem + env(safe-area-inset-top, 0px))' }}>
         <Wrench size={17} className="text-[var(--accent)] shrink-0" />
-        <h2 className="text-sm font-semibold text-[var(--text)] shrink-0">{t('Журнал стройки')}</h2>
+        <h2 className="text-sm font-semibold text-[var(--text)] shrink-0 hidden sm:block">{t('Журнал стройки')}</h2>
+        {projectSlot}
         {anchor && (
           <span className="text-[11px] font-mono text-[var(--text-muted)] hidden sm:inline">
             данные по {new Date(`${anchor}T00:00:00Z`).toLocaleDateString('ru')}
@@ -1385,7 +1392,9 @@ export default function ConstructionPanel({
             author={actor}
             lastSyncAt={syncedAt ?? undefined}
             onFlash={setFlash}
-            onRestore={(j) => { persist(j); setFlash('Журнал заменён копией'); }}
+            // Копия разворачивается в открытый проект, как и раньше: куда
+            // её положить, человек решил, открыв проект.
+            onRestore={(j) => { persist({ ...j, project: journal.project }); setFlash('Журнал заменён копией'); }}
           />
         ) : view === 'records' ? (
           <SiteRecordsView

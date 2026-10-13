@@ -13,6 +13,7 @@ import {
 import { pointAtDistanceM, type SectionProgress } from './routeProgress';
 import { shiftsOnRoute, stopPositionM } from './shiftPlace';
 import { lineMatch } from './routeEdit';
+import { newerProject } from './projects';
 
 /**
  * Слияние двух версий журнала — своей и серверной.
@@ -218,6 +219,10 @@ export function mergeJournalStates(
   );
 
   const merged: JournalState = {
+    // Чей журнал — не меняется от обмена: другой проект под тем же
+    // ключом не сливается (это отсекает syncJournal), а название берём
+    // свежее — его могли поменять на другом устройстве.
+    project: newerProject(local.project, remote.project),
     orders: mergeOrders(local.orders, remote.orders),
     ground,
     aerial: fixList(

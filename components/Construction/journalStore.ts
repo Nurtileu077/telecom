@@ -10,9 +10,23 @@ import { haversineM } from '@/components/Network/KMeans';
 import { splitRoute, joinRoutes, joinedName, splitNames, lineMatch } from './routeEdit';
 import { pointAtDistanceM, type SectionProgress } from './routeProgress';
 import { shiftsOnRoute, stopPositionM } from './shiftPlace';
+import {
+  SNP_PROJECT_ID, currentProjectId, projectMeta, scopedKey, newerProject,
+  type BuildProject,
+} from './projects';
 
 /** Состояние журнала стройки — Слой 2. */
 export interface JournalState {
+  /**
+   * Чей это журнал. Журнал — это один проект стройки (см. projects.ts).
+   *
+   * Проект едет вместе с журналом, а не берётся из того, что открыто
+   * сейчас: обмен с облаком идёт секунды, и если за это время человек
+   * переключился на Гипертрассу, слитый журнал сёл должен лечь обратно
+   * в «СНП», а не поверх магистрали. Нет отметки — журнал заведён до
+   * деления на проекты, то есть это «СНП».
+   */
+  project?: BuildProject;
   orders: SettlementOrder[];
   ground: DailyWorkEntry[];
   aerial: AerialWorkEntry[];
@@ -444,13 +458,48 @@ export function fixList<T>(list: T[] | undefined, fix: (x: T) => T): T[] {
   return list.map(fix);
 }
 
-export function loadJournal(): JournalState {
-  if (typeof window === 'undefined') return emptyJournal();
+/** Ключ журнала проекта на устройстве. У «СНП» он прежний. */
+export function journalKey(projectId: string): string {
+  return scopedKey(KEY, projectId);
+}
+
+/**
+ * Пустой журнал проекта.
+ *
+ * Стартовый справочник подрядчиков — Транстелеком, СК Фаворит и их
+ * субподрядчики на сёлах — только у «СНП». Новому проекту подставить его
+ * значит напечатать Транстелеком генподрядчиком в актах магистрали
+ * Freedom; компании ему переносятся при заведении (seedContractors).
+ */
+export function blankJournal(project: BuildProject): JournalState {
+  return project.id === SNP_PROJECT_ID
+    ? { ...emptyJournal(), project }
+    : { ...emptyJournal(), contractors: [], project };
+}
+
+/**
+ * Журнал только что заведённого проекта.
+ *
+ * Компании из справочника открытого проекта переносятся (см.
+ * seedContractors), всё остальное — пусто: смены, расценки и платежи
+ * другого договора сюда не относятся.
+ */
+export function newProjectJournal(project: BuildProject, contractors: Contractor[]): JournalState {
+  return { ...blankJournal(project), contractors };
+}
+
+export function loadJournal(projectId: string = currentProjectId()): JournalState {
+  const meta = projectMeta(projectId);
+  if (typeof window === 'undefined') return blankJournal(meta);
   try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return emptyJournal();
+    const raw = window.localStorage.getItem(journalKey(projectId));
+    if (!raw) return blankJournal(meta);
     const p = JSON.parse(raw) as Partial<JournalState>;
     return {
+      // Под ключом проекта лежит его журнал. Отметка внутри могла отстать
+      // от списка проектов (переименовали на другом устройстве) — берём
+      // свежее название, но номер всегда тот, под которым лежит.
+      project: p.project?.id === projectId ? newerProject(p.project, meta) : meta,
       orders: p.orders ?? [],
       // Записи чиним на входе: у пришедшей из старой копии может не быть
       // полей, которые весь остальной код считает обязательными.
@@ -482,21 +531,31 @@ export function loadJournal(): JournalState {
       requisites: p.requisites,
       deleted: p.deleted ?? [],
       trash: p.trash ?? [],
-      // Пустой справочник заменяем стартовым — иначе подрядчика не из чего выбрать.
-      contractors: p.contractors?.length ? p.contractors : DEFAULT_CONTRACTORS,
+      // Пустой справочник «СНП» заменяем стартовым — иначе подрядчика не
+      // из чего выбрать. У других проектов стартового нет (см. blankJournal).
+      contractors: p.contractors?.length
+        ? p.contractors
+        : projectId === SNP_PROJECT_ID ? DEFAULT_CONTRACTORS : [],
       updatedAt: p.updatedAt ?? '',
     };
-  } catch { return emptyJournal(); }
+  } catch { return blankJournal(meta); }
 }
 
 /**
  * Запись журнала. Возвращает false при переполнении localStorage —
  * вызывающий код обязан сказать об этом пользователю, а не потерять данные молча.
+ *
+ * Пишется в свой проект, а не в открытый: см. JournalState.project.
  */
 export function saveJournal(state: JournalState): boolean {
   if (typeof window === 'undefined') return false;
+  const id = state.project?.id ?? currentProjectId();
   try {
-    localStorage.setItem(KEY, JSON.stringify({ ...state, updatedAt: new Date().toISOString() }));
+    window.localStorage.setItem(journalKey(id), JSON.stringify({
+      ...state,
+      project: state.project ?? projectMeta(id),
+      updatedAt: new Date().toISOString(),
+    }));
     return true;
   } catch { return false; }
 }
@@ -514,6 +573,9 @@ export function mergeJournal(base: JournalState, add: Partial<JournalState>): Jo
     return [...byKato.values()];
   };
   return {
+    // Файл грузят в открытый проект: в какой журнал он ляжет, решает
+    // человек, выбирая проект, а не отметка в файле.
+    project: base.project,
     orders: mergeOrders(base.orders, add.orders ?? []),
     // Импортированный файл делали не мы: поля, которое весь остальной код
     // считает обязательным, там может не быть.
