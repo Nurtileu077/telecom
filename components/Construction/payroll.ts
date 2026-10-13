@@ -1,8 +1,10 @@
 import {
   DailyWorkEntry, LayMethod, LAY_METHODS, LAY_METHOD_LABEL,
-  WorkRate, Payment, PaymentKind, PAYMENT_KIND_LABEL,
+  WorkRate, Payment, PaymentKind, PAYMENT_KIND_LABEL, MATERIAL_KINDS, type MaterialKind,
 } from '@/types/construction';
-import { entryMeters, isIdleShift } from './entriesTable';
+import { entryMeters, isIdleShift, weekStart } from './entriesTable';
+import { normName } from './areaImport';
+import type { MaterialPrices } from './materialCost';
 import { monthRange, monthName, monthOf, fmtDay } from './moneyPeriod';
 
 /**
@@ -207,6 +209,8 @@ export interface PayrollResult {
    */
   idleShifts: number;
   meters: number;
+  /** Расход материала по сменам периода — для полной цены метра. */
+  materials: Partial<Record<MaterialKind, number>>;
 }
 
 export interface PayrollFilter {
@@ -370,7 +374,19 @@ export function payroll(
     shifts: mine.filter((e) => !isIdleShift(e)).length,
     idleShifts: mine.filter(isIdleShift).length,
     meters: mine.reduce((s, e) => s + entryMeters(e), 0),
+    materials: materialsOf(mine),
   };
+}
+
+function materialsOf(entries: DailyWorkEntry[]): Partial<Record<MaterialKind, number>> {
+  const out: Partial<Record<MaterialKind, number>> = {};
+  for (const e of entries) {
+    for (const m of MATERIAL_KINDS) {
+      const q = e.materials?.[m] ?? 0;
+      if (q > 0) out[m] = (out[m] ?? 0) + q;
+    }
+  }
+  return out;
 }
 
 /** Сам месяц, без долга прошлых: начислено минус выплаченное за него. */
@@ -378,16 +394,116 @@ export function periodBalance(r: PayrollResult): number {
   return r.accrued - r.advances - r.deductions - r.paid;
 }
 
+/** Цена метра одним способом прокладки. */
+export interface MethodMeterPrice {
+  method: LayMethod;
+  label: string;
+  /** Протянуто этим способом за период. */
+  meters: number;
+  pricedMeters: number;
+  /**
+   * Сумма на оценённые метры: при одной расценке — она сама, при смене
+   * цены внутри периода — средняя. null — расценки нет вовсе.
+   */
+  perMeter: number | null;
+}
+
+/** Цена метра, которую можно и не знать целиком. */
+export interface PerMeter {
+  /** При неполных данных — нижняя граница: «не меньше». null — не из чего считать. */
+  value: number | null;
+  /** Всё оценено: false — value только «не меньше». */
+  complete: boolean;
+  /** Чего не хватает, словами. */
+  missing: string[];
+}
+
+export interface MeterCost {
+  /** Цена одной прокладки — по каждому способу отдельно. */
+  byMethod: MethodMeterPrice[];
+  /** Вся работа подрядчика — прокладка, ГНБ, задувка, переходы — на протянутый метр. */
+  work: PerMeter;
+  /** Материал на протянутый метр, по нынешней цене закупки. */
+  material: PerMeter;
+  /** Работа и материал вместе. */
+  total: PerMeter;
+}
+
 /**
  * Во сколько обошёлся метр.
  *
- * Считаем по тому, что начислено, и по тем метрам, за которые начислено:
- * делить сумму на всю длину трассы, включая неоплаченные работы, —
- * значит получить красивую, но неверную цифру.
+ * Раньше одна цифра делила все деньги — вместе с ГНБ и задувкой — на все
+ * метры, вместе с теми, на которые расценки нет: бар по 300 ₸ и ГНБ
+ * по 5000 ₸ давали «метр в 660 ₸», а неоценённая ручная прокладка ещё и
+ * занижала её. Какой из двух вопросов задают — «почём прокладка» или
+ * «почём метр трассы целиком» — заранее не известно, поэтому отвечаем на
+ * оба отдельно: цена метра по каждому способу и полная цена метра трассы,
+ * с работой и с материалом.
+ *
+ * Делим на протянутые метры: по ним и платят субподрядчику. Если что-то
+ * не оценено, полная цена — «не меньше», с названием того, чего нет, а не
+ * красивая и заниженная цифра.
+ */
+export function meterCost(r: PayrollResult, prices: MaterialPrices = {}): MeterCost {
+  const byMethod: MethodMeterPrice[] = r.lines
+    .filter((l) => LAY_METHODS.includes(l.work as LayMethod))
+    .map((l) => ({
+      method: l.work as LayMethod,
+      label: l.label,
+      meters: l.quantity,
+      pricedMeters: l.pricedQuantity,
+      perMeter: l.pricedQuantity > 0 && l.sum !== undefined ? l.sum / l.pricedQuantity : null,
+    }));
+
+  const noMeters = r.meters <= 0 ? ['протянутых метров за период нет'] : [];
+  const work: PerMeter = r.meters > 0 && r.accrued > 0
+    ? { value: r.accrued / r.meters, complete: r.unpriced.length === 0, missing: [...r.unpriced] }
+    : {
+      value: null,
+      complete: false,
+      missing: noMeters.length ? noMeters : r.unpriced.length ? [...r.unpriced] : ['расценок нет'],
+    };
+
+  // Материал — по нынешней цене закупки: цены поставок по датам журнал не
+  // хранит, и выдавать нынешнюю за тогдашнюю молча нельзя — поэтому она
+  // так и подписана на экране.
+  const used = MATERIAL_KINDS.filter((m) => (r.materials[m] ?? 0) > 0);
+  const noPrice = used.filter((m) => !((prices[m] ?? 0) > 0));
+  const matSum = used.reduce((s, m) => s + (r.materials[m] ?? 0) * (prices[m] ?? 0), 0);
+  const material: PerMeter = r.meters <= 0
+    ? { value: null, complete: false, missing: noMeters }
+    : used.length === 0
+      // Расход не записан — это не «материал бесплатный».
+      ? { value: null, complete: false, missing: ['расход материала в сменах не записан'] }
+      : matSum <= 0
+        ? { value: null, complete: false, missing: [`нет цены: ${noPrice.join(', ')}`] }
+        : {
+          value: matSum / r.meters,
+          complete: noPrice.length === 0,
+          missing: noPrice.length ? [`нет цены: ${noPrice.join(', ')}`] : [],
+        };
+
+  const total: PerMeter = work.value === null
+    ? { value: null, complete: false, missing: [...work.missing, ...material.missing] }
+    : {
+      value: work.value + (material.value ?? 0),
+      complete: work.complete && material.complete,
+      missing: [...work.missing, ...material.missing],
+    };
+
+  return { byMethod, work, material, total };
+}
+
+/**
+ * Полная цена работы на протянутый метр — для сравнения подрядчиков.
+ *
+ * Только когда оценено всё: иначе у того, чью ручную прокладку забыли
+ * оценить, метр выходил «дешевле», и сравнение награждало пробел в
+ * расценках. Неполная — `null`; «не меньше» показывает `meterCost`.
  */
 export function costPerMeter(r: PayrollResult): number | null {
-  if (r.meters <= 0 || r.accrued <= 0) return null;
-  return r.accrued / r.meters;
+  const w = meterCost(r).work;
+  return w.complete ? w.value : null;
 }
 
 export interface ContractorSummary {
@@ -398,8 +514,10 @@ export interface ContractorSummary {
   due: number;
   /** Средние метры за смену — по ним сравнивают. */
   perShift: number;
-  /** Стоимость метра; пусто, если расценок нет. */
+  /** Вся работа на протянутый метр; при неоценённой части — «не меньше». */
   perMeter: number | null;
+  /** perMeter — точная цифра, а не нижняя граница. */
+  perMeterComplete: boolean;
   /** Сколько отклонений на его участках — качество работы. */
   deviations: number;
 }
@@ -420,6 +538,7 @@ export function compareContractors(
   const names = [...new Set(rows.map((e) => e.contractor).filter((v): v is string => !!v))];
   return names.map((contractor) => {
     const r = payroll(contractor, rows, rates, payments, filter);
+    const w = meterCost(r).work;
     return {
       contractor,
       shifts: r.shifts,
@@ -427,19 +546,87 @@ export function compareContractors(
       accrued: r.accrued,
       due: r.due,
       perShift: r.shifts > 0 ? r.meters / r.shifts : 0,
-      perMeter: costPerMeter(r),
+      perMeter: w.value,
+      perMeterComplete: w.complete,
       deviations: deviationsBy.get(contractor) ?? 0,
     };
   }).sort((a, b) => b.meters - a.meters);
 }
 
 export interface MoneyGap {
+  /** Задание, к которому относится строка, — если у него есть id. */
+  id?: string;
   crew: string;
   uchastok: string;
   /** Сколько метров недодали к обещанному. */
   shortM: number;
-  /** Во сколько это обошлось по расценке. */
-  shortMoney: number;
+  /**
+   * Во что недобор обходится по расценке способа этой бригады. При
+   * неоценённой части способов — нижняя граница; null — оценить нечем.
+   */
+  shortMoney: number | null;
+  /** Каким способом бригада работает: «Бар» или «Бар 70 %, Ручным способом 30 %». */
+  method: string;
+  /** Оценка полная. */
+  complete: boolean;
+  /** Почему не полная: способ неизвестен или на него нет расценки. */
+  why?: string;
+}
+
+export interface MoneyBehind {
+  rows: MoneyGap[];
+  totalM: number;
+  /** Сумма по оценённому; при complete = false — «не меньше». */
+  totalMoney: number;
+  complete: boolean;
+  /** Метры недобора, которые в деньги не перевести вовсе. */
+  unknownM: number;
+}
+
+type PlanLike = {
+  id?: string; crew: string; uchastok: string; leftM: number; contractor?: string; week: string;
+};
+
+/**
+ * Каким способом бригада прокладывает — доли по метрам.
+ *
+ * Сначала — эта неделя на этом участке: так она работает здесь и сейчас.
+ * Нет смен — вся её история до конца недели: бригада с баром обычно и
+ * дальше идёт с баром. Нет и её — способ неизвестен, и придумывать его
+ * нельзя. «Колонна 1» бывает у двух подрядчиков: если подрядчик задания
+ * известен, чужие смены не берём.
+ */
+export function crewMethodMix(rows: DailyWorkEntry[], p: PlanLike): Map<LayMethod, number> {
+  const weekEnd = shiftIso(p.week, 6);
+  const crewRows = rows.filter((e) => normName(e.column ?? '') === normName(p.crew)
+    && (!p.contractor || !e.contractor || e.contractor === p.contractor));
+  const here = crewRows.filter((e) => weekStart(e.date) === p.week
+    && normName(e.uchastok ?? '') === normName(p.uchastok));
+  const history = crewRows.filter((e) => !!e.date && e.date <= weekEnd);
+  for (const pool of [here, history]) {
+    const by = new Map<LayMethod, number>();
+    for (const e of pool) {
+      for (const m of LAY_METHODS) {
+        const v = e.byMethod?.[m] ?? 0;
+        if (v > 0) by.set(m, (by.get(m) ?? 0) + v);
+      }
+    }
+    const total = [...by.values()].reduce((s, v) => s + v, 0);
+    if (total > 0) return new Map([...by.entries()].map(([m, v]) => [m, v / total]));
+  }
+  return new Map();
+}
+
+function shiftIso(iso: string, days: number): string {
+  const t = Date.parse(`${iso}T00:00:00Z`);
+  if (Number.isNaN(t)) return iso;
+  return new Date(t + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+function mixLabel(mix: Map<LayMethod, number>): string {
+  const list = [...mix.entries()].sort((a, b) => b[1] - a[1]);
+  if (list.length === 1) return LAY_METHOD_LABEL[list[0][0]];
+  return list.map(([m, share]) => `${LAY_METHOD_LABEL[m]} ${Math.round(share * 100)} %`).join(', ');
 }
 
 /**
@@ -447,31 +634,57 @@ export interface MoneyGap {
  *
  * Метры недобора понятны прорабу, а руководству нужен тот же недобор в
  * тенге: по нему считают, чем это кончится для сроков и для выручки.
- * Считаем по расценке того же участка — иначе цифра получится средней
- * по больнице.
+ *
+ * Раньше любой недобор оценивался по расценке кабелеукладчика — и у
+ * бригады с баром, и у ручной. Теперь — по расценке того способа, которым
+ * эта бригада работает (по её же сменам), долями, если способов несколько.
+ * Способ неизвестен или расценки на него нет — так и пишем, а не
+ * подставляем чужую.
  */
 export function moneyBehind(
-  plans: { crew: string; uchastok: string; leftM: number; contractor?: string; week: string }[],
+  plans: PlanLike[],
   rates: WorkRate[],
-  work = 'кабелеукладчик',
-): { rows: MoneyGap[]; totalM: number; totalMoney: number } {
-  const rows: MoneyGap[] = [];
+  rows: DailyWorkEntry[] = [],
+): MoneyBehind {
+  const out: MoneyGap[] = [];
   for (const p of plans) {
     if (p.leftM <= 0) continue;
-    const rate = rateFor(rates, work, p.week, p.contractor);
-    rows.push({
+    const mix = crewMethodMix(rows, p);
+    if (mix.size === 0) {
+      out.push({
+        id: p.id, crew: p.crew, uchastok: p.uchastok, shortM: p.leftM, shortMoney: null,
+        method: 'способ неизвестен', complete: false,
+        why: 'бригада ещё не записала ни одной смены с метрами — способ прокладки неизвестен',
+      });
+      continue;
+    }
+    let price = 0;
+    const noRate: string[] = [];
+    for (const [m, share] of mix) {
+      const rate = rateFor(rates, m, p.week, p.contractor);
+      if (rate) price += share * rate.price;
+      else noRate.push(LAY_METHOD_LABEL[m]);
+    }
+    out.push({
+      id: p.id,
       crew: p.crew,
       uchastok: p.uchastok,
       shortM: p.leftM,
       // Без расценки денег не считаем: ноль означал бы «отставание
       // ничего не стоит», а это не так.
-      shortMoney: rate ? p.leftM * rate.price : 0,
+      shortMoney: price > 0 ? p.leftM * price : null,
+      method: mixLabel(mix),
+      complete: noRate.length === 0,
+      why: noRate.length ? `нет расценки: ${noRate.join(', ')}` : undefined,
     });
   }
+  const rowsOut = out.sort((a, b) => (b.shortMoney ?? -1) - (a.shortMoney ?? -1) || b.shortM - a.shortM);
   return {
-    rows: rows.sort((a, b) => b.shortMoney - a.shortMoney || b.shortM - a.shortM),
-    totalM: rows.reduce((s, r) => s + r.shortM, 0),
-    totalMoney: rows.reduce((s, r) => s + r.shortMoney, 0),
+    rows: rowsOut,
+    totalM: rowsOut.reduce((s, r) => s + r.shortM, 0),
+    totalMoney: rowsOut.reduce((s, r) => s + (r.shortMoney ?? 0), 0),
+    complete: rowsOut.every((r) => r.complete),
+    unknownM: rowsOut.filter((r) => r.shortMoney === null).reduce((s, r) => s + r.shortM, 0),
   };
 }
 

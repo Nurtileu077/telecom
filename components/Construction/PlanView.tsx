@@ -57,7 +57,16 @@ export default function PlanView({ journal, author, onAddPlan, onRemovePlan, onF
 
   const shown = rows.filter((r) => r.week === week);
   const summary = planSummary(shown);
-  const gap = useMemo(() => moneyBehind(shown, journal.rates), [shown, journal.rates]);
+  // Недобор в деньгах — по способу, которым работает каждая бригада, а не
+  // по кабелеукладчику для всех: у бригады с баром метр стоит иначе.
+  const gap = useMemo(
+    () => moneyBehind(shown, journal.rates, journal.ground),
+    [shown, journal.rates, journal.ground],
+  );
+  const gapOf = useMemo(
+    () => new Map(gap.rows.map((g) => [g.id ?? '', g])),
+    [gap],
+  );
 
   const crews = useMemo(
     () => [...new Set([
@@ -204,8 +213,14 @@ export default function PlanView({ journal, author, onAddPlan, onRemovePlan, onF
               <div className="mt-1 text-[11px] text-[var(--text-muted)]">
                 Недобор {m(gap.totalM)}
                 {gap.totalMoney > 0
-                  ? ` — это ${Math.round(gap.totalMoney).toLocaleString('ru')} ₸ по расценке`
-                  : ' · в деньгах не считаем: расценки нет'}
+                  ? ` — это ${gap.complete ? '' : 'не меньше '}`
+                    + `${Math.round(gap.totalMoney).toLocaleString('ru')} ₸ по расценке способа каждой бригады`
+                  : ' · в деньгах не считаем: способа или расценки нет'}
+                {gap.unknownM > 0 && gap.totalMoney > 0 && (
+                  <span className="block text-[var(--warn)]">
+                    {m(gap.unknownM)} в деньги не перевести — способ бригады неизвестен или на него нет расценки.
+                  </span>
+                )}
               </div>
             )}
           </div>
@@ -232,6 +247,18 @@ export default function PlanView({ journal, author, onAddPlan, onRemovePlan, onF
               <div className="flex items-baseline gap-2 text-[11px] text-[var(--text-muted)]">
                 <span>{m(p.doneM)} из {m(p.targetM)}</span>
                 {p.leftM > 0 && <span>· осталось {m(p.leftM)}</span>}
+                {p.leftM > 0 && (() => {
+                  const g = gapOf.get(p.id);
+                  if (!g) return null;
+                  return (
+                    <span className={g.complete ? '' : 'text-[var(--warn)]'}
+                          title={g.why ? `${g.method}: ${g.why}` : `По расценке: ${g.method}`}>
+                      · {g.shortMoney !== null
+                        ? `${g.complete ? '≈' : '≥'} ${Math.round(g.shortMoney).toLocaleString('ru')} ₸`
+                        : 'в деньгах — неизвестно'}
+                    </span>
+                  );
+                })()}
                 <span>· смен {p.shifts}</span>
                 <button type="button" className="btn btn-ghost btn-icon ml-auto"
                         title="Отправить наряд в WhatsApp"

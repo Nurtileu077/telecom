@@ -3,7 +3,7 @@ import {
   rateFor, workQuantity, payroll, costPerMeter, compareContractors,
   parseRateDate, rateStart, brokenRates, checkRate, payableOption,
   payrollSummary, paymentLines, PAYABLE_WORKS, moneyBehind,
-  paymentDay, paymentFor, periodBalance, checkPayment,
+  paymentDay, paymentFor, periodBalance, checkPayment, meterCost,
 } from './payroll';
 import { monthRange } from './moneyPeriod';
 import type { DailyWorkEntry, WorkRate, Payment } from '@/types/construction';
@@ -184,22 +184,180 @@ describe('moneyBehind', () => {
   const rates: WorkRate[] = [
     { id: 'k', work: 'кабелеукладчик', price: 200, unit: 'м', from: '2026-01-01', updatedAt: '' },
   ];
+  const shifts = [
+    e({ id: 's1', date: '2026-07-21', column: '1-колонна', uchastok: 'Зеренда', byMethod: { 'кабелеукладчик': 800 } }),
+    e({ id: 's2', date: '2026-07-21', column: '2-колонна', uchastok: 'Щучинск', byMethod: { 'кабелеукладчик': 300 } }),
+  ];
 
   it('переводит недобор метров в тенге', () => {
-    const r = moneyBehind(plans, rates);
+    const r = moneyBehind(plans, rates, shifts);
     expect(r.totalM).toBe(1500);
     expect(r.totalMoney).toBe(300_000);
+    expect(r.complete).toBe(true);
     expect(r.rows[0].crew).toBe('1-колонна');
   });
 
   it('закрытые задания в отставание не идут', () => {
-    expect(moneyBehind(plans, rates).rows).toHaveLength(2);
+    expect(moneyBehind(plans, rates, shifts).rows).toHaveLength(2);
   });
 
   it('без расценки отставание считается только в метрах', () => {
-    const r = moneyBehind(plans, []);
+    const r = moneyBehind(plans, [], shifts);
     expect(r.totalM).toBe(1500);
     expect(r.totalMoney).toBe(0);
+    expect(r.unknownM).toBe(1500);
+    expect(r.rows[0].why).toBe('нет расценки: Кабелеукладчиком');
+  });
+});
+
+/**
+ * Недобор всегда оценивали по расценке кабелеукладчика — и у бригады с
+ * баром, и у ручной. Бар дороже, ручная — иначе; «отставание в деньгах»
+ * у такой бригады выходило выдуманным.
+ */
+describe('недобор по способу бригады', () => {
+  const rates: WorkRate[] = [
+    { id: 'k', work: 'кабелеукладчик', price: 200, unit: 'м', from: '2026-01-01', updatedAt: '' },
+    { id: 'b', work: 'бар', price: 300, unit: 'м', from: '2026-01-01', updatedAt: '' },
+  ];
+  const plan = { crew: 'Бар-1', uchastok: 'Зеренда', leftM: 1000, week: '2026-07-20' };
+
+  it('бригада с баром считается по расценке бара, а не кабелеукладчика', () => {
+    const rows = [e({ id: 'a', date: '2026-07-21', column: 'Бар-1', uchastok: 'Зеренда', byMethod: { 'бар': 400 } })];
+    const r = moneyBehind([plan], rates, rows);
+    expect(r.totalMoney).toBe(300_000);
+    expect(r.rows[0].method).toBe('Бар');
+  });
+
+  it('два способа — по долям метров', () => {
+    const rows = [e({
+      id: 'a', date: '2026-07-21', column: 'Бар-1', uchastok: 'Зеренда',
+      byMethod: { 'бар': 300, 'кабелеукладчик': 100 },
+    })];
+    const r = moneyBehind([plan], rates, rows);
+    expect(r.totalMoney).toBe(1000 * (0.75 * 300 + 0.25 * 200));
+    expect(r.rows[0].method).toBe('Бар 75 %, Кабелеукладчиком 25 %');
+  });
+
+  it('на этой неделе смен нет — способ по прошлой работе бригады', () => {
+    const rows = [e({ id: 'a', date: '2026-07-01', column: 'Бар-1', uchastok: 'Другое село', byMethod: { 'бар': 400 } })];
+    expect(moneyBehind([plan], rates, rows).totalMoney).toBe(300_000);
+  });
+
+  it('смены после этой недели способ не подсказывают', () => {
+    const rows = [e({ id: 'a', date: '2026-08-10', column: 'Бар-1', uchastok: 'Зеренда', byMethod: { 'бар': 400 } })];
+    expect(moneyBehind([plan], rates, rows).rows[0].shortMoney).toBeNull();
+  });
+
+  it('способ неизвестен — денег не выдумывает', () => {
+    const r = moneyBehind([plan], rates, []);
+    expect(r.rows[0].shortMoney).toBeNull();
+    expect(r.rows[0].method).toBe('способ неизвестен');
+    expect(r.unknownM).toBe(1000);
+    expect(r.complete).toBe(false);
+  });
+
+  it('нет расценки на часть способов — сумма «не меньше» и названо, на что', () => {
+    const rows = [e({
+      id: 'a', date: '2026-07-21', column: 'Бар-1', uchastok: 'Зеренда',
+      byMethod: { 'бар': 300, 'вручную': 100 },
+    })];
+    const r = moneyBehind([plan], rates, rows);
+    expect(r.totalMoney).toBe(1000 * 0.75 * 300);
+    expect(r.complete).toBe(false);
+    expect(r.rows[0].why).toBe('нет расценки: Ручным способом');
+  });
+
+  it('«Колонна 1» чужого подрядчика способ не подсказывает', () => {
+    const rows = [e({
+      id: 'a', date: '2026-07-21', column: 'Колонна 1', contractor: 'TERRA TECH',
+      uchastok: 'Зеренда', byMethod: { 'кабелеукладчик': 400 },
+    })];
+    const r = moneyBehind([{ ...plan, crew: 'Колонна 1', contractor: 'Дозер' }], rates, rows);
+    expect(r.rows[0].shortMoney).toBeNull();
+  });
+});
+
+/**
+ * «Метр обошёлся» делил все деньги — вместе с ГНБ и задувкой — на все
+ * метры, вместе с неоценёнными. Получалась цифра, которая не была ни
+ * ценой прокладки, ни честной ценой метра трассы.
+ */
+describe('цена метра по способу прокладки', () => {
+  const rows = [
+    e({ id: 'a', byMethod: { 'бар': 1000, 'кабелеукладчик': 1000 }, drillM: 72, materials: { 'МКТ': 2000, 'КОД': 4 } }),
+  ];
+  const rates: WorkRate[] = [
+    ...RATES,
+    { id: 'k', work: 'кабелеукладчик', price: 200, unit: 'м', from: '2026-01-01', updatedAt: '' },
+  ];
+
+  it('цена прокладки — по каждому способу отдельно, без ГНБ', () => {
+    const c = meterCost(payroll('Дозер', rows, rates, []));
+    expect(c.byMethod.map((m) => [m.label, m.perMeter])).toEqual([
+      ['Кабелеукладчиком', 200], ['Бар', 300],
+    ]);
+  });
+
+  it('полная цена метра трассы — вся работа на протянутые метры', () => {
+    const c = meterCost(payroll('Дозер', rows, rates, []));
+    expect(c.work.value).toBe((1000 * 300 + 1000 * 200 + 72 * 5000) / 2000);
+    expect(c.work.complete).toBe(true);
+  });
+
+  it('неоценённая ручная прокладка не занижает цену молча — «не меньше» и названо', () => {
+    const more = [...rows, e({ id: 'b', byMethod: { 'вручную': 500 } })];
+    const c = meterCost(payroll('Дозер', more, rates, []));
+    expect(c.work.complete).toBe(false);
+    expect(c.work.missing).toEqual(['Ручным способом']);
+    expect(c.byMethod.find((m) => m.method === 'вручную')?.perMeter).toBeNull();
+    expect(costPerMeter(payroll('Дозер', more, rates, []))).toBeNull();
+  });
+
+  it('цена при смене расценки внутри периода — средняя по оценённым метрам', () => {
+    const two = [
+      e({ id: 'a', date: '2026-07-25', byMethod: { 'бар': 400 } }),
+      e({ id: 'b', date: '2026-08-05', byMethod: { 'бар': 600 } }),
+    ];
+    const c = meterCost(payroll('Дозер', two, RATES, []));
+    expect(c.byMethod[0].perMeter).toBe((400 * 300 + 600 * 350) / 1000);
+  });
+
+  it('с материалом — по цене закупки', () => {
+    const c = meterCost(payroll('Дозер', rows, rates, []), { 'МКТ': 150, 'КОД': 20_000 });
+    expect(c.material.value).toBe((2000 * 150 + 4 * 20_000) / 2000);
+    expect(c.total.value).toBe(c.work.value! + c.material.value!);
+    expect(c.total.complete).toBe(true);
+  });
+
+  it('материал без цены назван, а не посчитан нулём', () => {
+    const c = meterCost(payroll('Дозер', rows, rates, []), { 'МКТ': 150 });
+    expect(c.material.complete).toBe(false);
+    expect(c.material.missing).toEqual(['нет цены: КОД']);
+    expect(c.total.complete).toBe(false);
+  });
+
+  it('расход материала не записан — это не «материал бесплатный»', () => {
+    const bare = [e({ id: 'a', byMethod: { 'бар': 1000 } })];
+    const c = meterCost(payroll('Дозер', bare, RATES, []), { 'МКТ': 150 });
+    expect(c.material.value).toBeNull();
+    expect(c.total.value).toBe(300);
+    expect(c.total.complete).toBe(false);
+  });
+
+  it('смены одного ГНБ без метров прокладки цену метра не дают', () => {
+    const drill = [e({ id: 'a', byMethod: {}, drillM: 72 })];
+    const c = meterCost(payroll('Дозер', drill, RATES, []));
+    expect(c.work.value).toBeNull();
+    expect(c.work.missing).toEqual(['протянутых метров за период нет']);
+  });
+
+  it('в сравнении подрядчиков неполная цена помечена', () => {
+    const list = compareContractors([
+      e({ id: 'a', byMethod: { 'бар': 1000, 'вручную': 1000 } }),
+    ], RATES, [], new Map());
+    expect(list[0].perMeter).toBe(150);
+    expect(list[0].perMeterComplete).toBe(false);
   });
 });
 

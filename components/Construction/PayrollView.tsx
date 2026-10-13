@@ -8,10 +8,10 @@ import {
 import type { JournalState } from './journalStore';
 import ExportButton, { type ExportColumn } from '@/components/Layout/ExportButton';
 import {
-  payroll, compareContractors, payrollSummary, costPerMeter,
+  payroll, compareContractors, payrollSummary, meterCost,
   PAYABLE_WORKS, rateFor, rateStart, brokenRates, checkRate, payableOption,
   paymentDay, paymentFor, periodBalance, checkPayment,
-  type PayLine, type RateDraft, type PaymentDraft,
+  type PayLine, type RateDraft, type PaymentDraft, type PerMeter,
 } from './payroll';
 import { useT } from '@/components/Layout/LangProvider';
 import { rangeText, monthName, fmtDay, monthOf } from './moneyPeriod';
@@ -89,6 +89,8 @@ export default function PayrollView({
     }
     return m;
   }, [journal.deviations]);
+
+  const cost = useMemo(() => meterCost(result, journal.prices), [result, journal.prices]);
 
   const table = useMemo(
     () => compareContractors(journal.ground, journal.rates, journal.payments, deviationsBy,
@@ -355,10 +357,28 @@ export default function PayrollView({
           </div>
         )}
 
-        {costPerMeter(result) !== null && (
-          <div className="text-[11px] text-[var(--text-muted)]">
-            Метр обошёлся в {money(costPerMeter(result)!)} — по оплаченным работам,
-            а не по всей длине трассы.
+        {/* Цена метра — на два вопроса отдельно: «почём прокладка» и
+            «почём метр трассы целиком». Одна цифра на оба отвечала неверно. */}
+        {result.meters > 0 && (
+          <div className="rounded-md bg-[var(--bg-canvas)] px-2 py-1.5 space-y-0.5 text-[11px]">
+            <div className="text-[var(--text-muted)]">
+              Метр прокладки:{' '}
+              {cost.byMethod.map((m, i) => (
+                <span key={m.method}>
+                  {i > 0 && ' · '}
+                  <span className="text-[var(--text)]">{m.label}</span>{' '}
+                  {m.perMeter !== null
+                    ? <span className="font-mono tabular-nums text-[var(--text)]">{money(m.perMeter)}</span>
+                    : <span className="text-[var(--warn)]">расценки нет</span>}
+                </span>
+              ))}
+            </div>
+            <PerMeterLine label="Метр трассы целиком — прокладка, ГНБ, задувка, переходы"
+                          value={cost.work} />
+            <PerMeterLine label="С материалом по нынешней цене закупки" value={cost.total} />
+            <div className="text-[10.5px] text-[var(--text-muted)]">
+              Делим на протянутые метры — по ним и платят.
+            </div>
           </div>
         )}
 
@@ -615,8 +635,13 @@ export default function PayrollView({
                     <td className="py-1 text-right font-mono tabular-nums">
                       {Math.round(c.perShift).toLocaleString('ru')}
                     </td>
-                    <td className="py-1 text-right font-mono tabular-nums">
-                      {c.perMeter !== null ? Math.round(c.perMeter).toLocaleString('ru') : '—'}
+                    <td className={`py-1 text-right font-mono tabular-nums ${
+                      c.perMeterComplete ? '' : 'text-[var(--warn)]'}`}
+                        title={c.perMeterComplete ? 'Вся работа на протянутый метр'
+                          : 'Часть работ без расценки — цена не меньше этой'}>
+                      {c.perMeter !== null
+                        ? `${c.perMeterComplete ? '' : '≥'}${Math.round(c.perMeter).toLocaleString('ru')}`
+                        : '—'}
                     </td>
                     <td className={`py-1 text-right font-mono tabular-nums ${
                       c.deviations > 0 ? 'text-[var(--warn)]' : 'text-[var(--text-muted)]'}`}>
@@ -635,6 +660,28 @@ export default function PayrollView({
             Одной цифрой на них не ответить.
           </p>
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Строка цены метра: точная — цифрой, неполная — «не меньше» и чего нет.
+ * Неполную нельзя показывать как точную: она всегда меньше настоящей.
+ */
+function PerMeterLine({ label, value }: { label: string; value: PerMeter }) {
+  return (
+    <div className="text-[var(--text-muted)]">
+      {label}:{' '}
+      {value.value === null ? (
+        <span className="text-[var(--warn)]">неизвестно — {value.missing.join('; ')}</span>
+      ) : value.complete ? (
+        <span className="font-mono tabular-nums text-[var(--text)]">{money(value.value)}</span>
+      ) : (
+        <>
+          <span className="font-mono tabular-nums text-[var(--warn)]">не меньше {money(value.value)}</span>
+          <span className="text-[var(--warn)]"> — без оценки: {value.missing.join('; ')}</span>
+        </>
       )}
     </div>
   );
