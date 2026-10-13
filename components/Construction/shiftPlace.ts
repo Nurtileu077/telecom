@@ -2,6 +2,7 @@ import type { DailyWorkEntry, PlanRoute } from '@/types/construction';
 import { routeLengthM, pointAtDistanceM, type SectionProgress } from './routeProgress';
 import { nearestOnRoute } from './measureTool';
 import { SHIFT_SNAP_M } from './shiftMeasure';
+import { normName } from './areaImport';
 
 /**
  * Где на линии копали.
@@ -14,9 +15,11 @@ import { SHIFT_SNAP_M } from './shiftMeasure';
  *
  * - отметка, поставленная рукой на карте, — это место: смена кончается в
  *   ней, а начинается на свои метры раньше;
- * - смена без отметки продолжает предыдущую: колонна идёт вдоль линии;
+ * - смена без отметки продолжает предыдущую смену своей колонны: колонна
+ *   идёт вдоль линии. Чужую — нет: одно село часто ведут две колонны, и
+ *   вторая, не отметившая место, иначе закрашивала бы километры за первой;
  * - «Верно» под посчитанной точкой — согласие со счётом, и если до этого
- *   на линии ничего не отмечали, то и с тем, что шли от её начала;
+ *   колонна место на линии не называла, то и с тем, что шла от её начала;
  * - смены, место которых не назвал никто, на линию не кладём. Они пройдены,
  *   но где — неизвестно, и карта так и показывает: долей по всей линии, а
  *   не закраской от начала. Закраска от начала с пометкой «место не
@@ -32,9 +35,31 @@ function metersOf(e: DailyWorkEntry): number {
   return m;
 }
 
+/**
+ * Чья смена: подрядчик и колонна — как и в проверке на дубль.
+ *
+ * Одно имя колонны без подрядчика не годится: «1-колонна» есть почти у
+ * каждого субподрядчика. Ошибка в другую сторону дешевле: смена, которую
+ * не признали своей, остаётся без места и видна штрихом, а признанная
+ * чужой закрашивает не то место.
+ */
+export function crewOf(e: Pick<DailyWorkEntry, 'contractor' | 'column'>): string {
+  return `${normName(e.contractor ?? '')}|${normName(e.column ?? '')}`;
+}
+
+/** Как назвать колонну смены человеку. */
+export function crewLabel(e: Pick<DailyWorkEntry, 'contractor' | 'column'>): string {
+  const column = (e.column ?? '').trim();
+  const contractor = (e.contractor ?? '').trim();
+  if (column && contractor) return `${column} (${contractor})`;
+  return column || contractor;
+}
+
 export interface PlacedShift {
   entryId: string;
   date: string;
+  /** Колонна смены — см. crewOf. */
+  crew: string;
   /** Метры от начала трассы. */
   fromM: number;
   toM: number;
@@ -46,6 +71,7 @@ export interface PlacedShift {
 export interface UnplacedShift {
   entryId: string;
   date: string;
+  crew: string;
   meters: number;
   byMethod: DailyWorkEntry['byMethod'];
 }
@@ -53,10 +79,12 @@ export interface UnplacedShift {
 export interface RoutePlacement {
   /** Смены с известным местом — по порядку дней. */
   placed: PlacedShift[];
-  /** Пройдено, а где — не названо. */
+  /** Пройдено, а где — не названо. По порядку дней. */
   unplaced: UnplacedShift[];
   /** Где кончилась последняя смена с известным местом; null — места не знаем. */
   endM: number | null;
+  /** Где стоит каждая колонна, место которой известно (ключ — crewOf). */
+  endByCrew: Map<string, number>;
   /** Длина линии по координатам. */
   totalM: number;
 }
@@ -78,54 +106,74 @@ export function placeShifts(
 
   const placed: PlacedShift[] = [];
   const unplaced: UnplacedShift[] = [];
-  let cursor: number | null = null;
-  let pending: DailyWorkEntry[] = [];
+  // Счёт у каждой колонны свой: где стоит она и что прошла без отметок.
+  const cursor = new Map<string, number>();
+  const pending = new Map<string, DailyWorkEntry[]>();
 
-  const put = (e: DailyWorkEntry, fromM: number, toM: number) => {
+  const put = (e: DailyWorkEntry, crew: string, fromM: number, toM: number) => {
     placed.push({
-      entryId: e.id, date: e.date, fromM: clamp(fromM), toM: clamp(toM),
+      entryId: e.id, date: e.date, crew, fromM: clamp(fromM), toM: clamp(toM),
       meters: metersOf(e), byMethod: e.byMethod,
     });
+    cursor.set(crew, clamp(toM));
     return clamp(toM);
   };
-  const drop = (e: DailyWorkEntry) => {
-    unplaced.push({ entryId: e.id, date: e.date, meters: metersOf(e), byMethod: e.byMethod });
+  const drop = (e: DailyWorkEntry, crew: string) => {
+    unplaced.push({ entryId: e.id, date: e.date, crew, meters: metersOf(e), byMethod: e.byMethod });
   };
 
   for (const e of list) {
+    const crew = crewOf(e);
     const m = metersOf(e);
     const stop = e.stop?.routeId === route.id ? e.stop : undefined;
     const hit = stop?.manual ? nearestOnRoute(stop, route.coords) : null;
+    const waiting = pending.get(crew) ?? [];
 
     if (hit) {
       // Место названо рукой. Смены до неё без отметок так и остаются без
       // места: назад от отметки не считаем — бригада могла прийти сюда
       // с другого конца села, и закрасить за неё чужой кусок нельзя.
-      for (const p of pending) drop(p);
-      pending = [];
-      cursor = put(e, hit.atM - m, hit.atM);
+      for (const p of waiting) drop(p, crew);
+      pending.delete(crew);
+      put(e, crew, hit.atM - m, hit.atM);
       continue;
     }
 
-    if (cursor === null && stop) {
-      // «Верно» под точкой, посчитанной от начала линии: значит, шли от
-      // начала — и эта смена, и все до неё на этой линии.
-      let at = 0;
-      for (const p of pending) at = put(p, at, at + metersOf(p));
-      pending = [];
-      cursor = put(e, at, at + m);
+    const at = cursor.get(crew);
+    if (at === undefined && stop) {
+      // «Верно» под точкой, посчитанной от начала линии: значит, колонна
+      // шла от начала — и в эту смену, и во все свои до неё на этой линии.
+      let from = 0;
+      for (const p of waiting) from = put(p, crew, from, from + metersOf(p));
+      pending.delete(crew);
+      put(e, crew, from, from + m);
       continue;
     }
 
-    if (cursor !== null) {
-      cursor = put(e, cursor, cursor + m);
+    if (at !== undefined) {
+      put(e, crew, at, at + m);
       continue;
     }
-    pending.push(e);
+    pending.set(crew, [...waiting, e]);
   }
-  for (const p of pending) drop(p);
+  for (const [crew, rest] of pending) for (const p of rest) drop(p, crew);
 
-  return { placed, unplaced, endM: cursor, totalM };
+  // Смены, положенные по «Верно» задним числом, встали в список позже
+  // чужих смен тех же дней — возвращаем порядок дней.
+  const order = new Map(list.map((e, i) => [e.id, i]));
+  const byDay = (a: { entryId: string }, b: { entryId: string }) =>
+    (order.get(a.entryId) ?? 0) - (order.get(b.entryId) ?? 0);
+  placed.sort(byDay);
+  unplaced.sort(byDay);
+
+  const last = placed[placed.length - 1];
+  return {
+    placed,
+    unplaced,
+    endM: last ? cursor.get(last.crew) ?? null : null,
+    endByCrew: cursor,
+    totalM,
+  };
 }
 
 /**
@@ -177,13 +225,16 @@ export interface StopProposal {
   /** Откуда считаем сегодняшние метры, метры от начала линии. */
   beforeM: number;
   /**
-   * 'place' — от места прошлой смены;
-   * 'start' — места на линии не называли ни разу, и считаем от её начала.
-   * Это допущение, и человек должен его видеть до того, как скажет «верно».
+   * 'place' — от места прошлой смены этой колонны;
+   * 'start' — колонна места на линии не называла ни разу, и считаем от её
+   * начала. Это допущение, и человек должен его видеть до того, как
+   * скажет «верно».
    */
   from: 'place' | 'start';
   /** День смены, от которой продолжаем. */
   afterDate?: string;
+  /** На линии стоят другие колонны — от их места не считаем. */
+  othersOnLine?: boolean;
 }
 
 /**
@@ -195,16 +246,23 @@ export interface StopProposal {
  * предлагала 3-й с хвостиком. Теперь предложение и закраска считаются
  * одним правилом и спорить не могут. Смены позже выбранного дня не в счёт:
  * вчерашний день, закрытый сегодня, продолжает позавчерашний.
+ *
+ * Считаем от смен своей колонны (`crew`): вторая колонна на том же селе
+ * видела «прошлая смена кончилась на 9 км» — это место первой, — и «Верно»
+ * записывало чужое место в её смену как подтверждённое.
  */
 export function proposeStop(
   route: Pick<PlanRoute, 'id' | 'coords'>,
   shifts: DailyWorkEntry[],
   addedM: number,
   date?: string,
+  crew?: Pick<DailyWorkEntry, 'contractor' | 'column'>,
 ): StopProposal | null {
   if (route.coords.length < 2) return null;
   const before = date ? shifts.filter((e) => !e.date || e.date <= date) : shifts;
-  const pl = placeShifts(route, before);
+  const key = crew ? crewOf(crew) : null;
+  const mine = key === null ? before : before.filter((e) => crewOf(e) === key);
+  const pl = placeShifts(route, mine);
   const known = pl.endM !== null;
   const beforeM = known
     ? (pl.endM as number)
@@ -212,6 +270,8 @@ export function proposeStop(
   const target = beforeM + Math.max(0, addedM);
   const at = pointAtDistanceM(route.coords, target);
   if (!at) return null;
+  const othersOnLine = key !== null && mine.length !== before.length
+    && placeShifts(route, before).placed.some((p) => p.crew !== key);
   return {
     atM: Math.min(pl.totalM, target),
     lat: at.lat,
@@ -220,6 +280,7 @@ export function proposeStop(
     beforeM,
     from: known ? 'place' : 'start',
     afterDate: known ? pl.placed[pl.placed.length - 1]?.date : undefined,
+    othersOnLine: othersOnLine || undefined,
   };
 }
 
@@ -231,6 +292,9 @@ export function proposeStop(
  * пройденные метры. Если же место хоть раз называли рукой, счёт идёт от
  * него, и точка колонны должна встать туда же, где кончается закраска,
  * а не в стороне от неё. Смен с отметками нет — прежний счёт.
+ *
+ * Точку на участке ставит смена с отметкой, и стоит она там, где сейчас
+ * колонна этой смены, — не та, что последней прошла без отметки.
  */
 export function stopPositionM(
   route: Pick<PlanRoute, 'id' | 'coords'>,
@@ -238,7 +302,14 @@ export function stopPositionM(
   p: Pick<SectionProgress, 'date' | 'doneM'>,
 ): number {
   const upto = shifts.filter((e) => (e.date ?? '') <= (p.date ?? ''));
-  return placeShifts(route, upto).endM ?? p.doneM;
+  const pl = placeShifts(route, upto);
+  const marked = new Set(upto.filter((e) => e.stop?.routeId === route.id).map((e) => e.id));
+  for (let i = pl.placed.length - 1; i >= 0; i--) {
+    if (!marked.has(pl.placed[i].entryId)) continue;
+    const at = pl.endByCrew.get(pl.placed[i].crew);
+    if (at !== undefined) return at;
+  }
+  return pl.endM ?? p.doneM;
 }
 
 const km = (m: number) => `${(Math.max(0, m) / 1000).toFixed(2).replace('.', ',')} км`;
@@ -249,6 +320,8 @@ export interface StopTextInput {
   routeName: string;
   /** Подпись начала линии: «ОМ», «Зеренда». */
   startName?: string;
+  /** Чья смена — «1-колонна (Дозер)»; пусто — колонну не назвали. */
+  crewName?: string;
   proposal: StopProposal;
   /** Метры за день. */
   addedM: number;
@@ -275,11 +348,16 @@ export function describeStop(s: StopTextInput): string {
   }
   const p = s.proposal;
   const end = p.atEnd ? ' — трасса пройдена до конца' : '';
+  const crew = s.crewName ? ` колонны «${s.crewName}»` : '';
   if (p.from === 'place') {
-    return `По трассе «${s.routeName}»: прошлая смена${p.afterDate ? ` (${day(p.afterDate)})` : ''} `
+    return `По трассе «${s.routeName}»: прошлая смена${crew}${p.afterDate ? ` (${day(p.afterDate)})` : ''} `
       + `кончилась на ${km(p.beforeM)}, за день ${meters(s.addedM)}${end}.`;
   }
-  return `По трассе «${s.routeName}»: где копали, на этой линии ещё не отмечали — `
-    + `считаем от её начала${start}: до сегодня ${meters(p.beforeM)}, за день ${meters(s.addedM)}${end}. `
+  const who = s.crewName ? `где копала «${s.crewName}»` : 'где копали';
+  const others = p.othersOnLine
+    ? ' Места других колонн на этой линии отмечены, но от них не считаем: это их путь, а не ваш.'
+    : '';
+  return `По трассе «${s.routeName}»: ${who}, на этой линии ещё не отмечали — `
+    + `считаем от её начала${start}: до сегодня ${meters(p.beforeM)}, за день ${meters(s.addedM)}${end}.${others} `
     + 'Начали не с начала — укажите на карте, где остановились: закрасим там, где копали.';
 }

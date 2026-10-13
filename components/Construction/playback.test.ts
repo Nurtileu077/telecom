@@ -120,6 +120,31 @@ describe('вчерашний день в движении', () => {
     expect(moves[0].uchastok).toBe('Убаган');
   });
 
+  it('две колонны в один день на одном селе — два движения, каждое своим куском', () => {
+    const total = routeLengthM(line);
+    const lonAt = (m: number) => 71 + (m / total) * 0.1;
+    const moves = dayMoves({
+      planRoutes: [route()],
+      ground: [
+        ground({
+          column: '1-колонна', byMethod: { 'кабелеукладчик': 1000 },
+          stop: { routeId: 'r1', lat: 51, lon: lonAt(6000), manual: true },
+        }),
+        ground({
+          column: '2-колонна', byMethod: { 'кабелеукладчик': 400 }, ...confirmed(),
+          createdAt: '2026-09-18T01:00:00.000Z',
+        }),
+      ],
+    }, '2026-09-10');
+    expect(moves).toHaveLength(2);
+    const first = moves.find((m) => m.column === '1-колонна')!;
+    const second = moves.find((m) => m.column === '2-колонна')!;
+    expect(first.beforeM).toBeCloseTo(5000, -1);
+    expect(first.to.lon).toBeCloseTo(lonAt(6000), 3);
+    expect(second.beforeM).toBe(0);
+    expect(second.to.lon).toBeCloseTo(lonAt(400), 3);
+  });
+
   it('пустая дата ничего не показывает', () => {
     expect(dayMoves({ planRoutes: [route()], ground: [ground()] }, '')).toHaveLength(0);
   });

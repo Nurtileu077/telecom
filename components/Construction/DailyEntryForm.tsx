@@ -16,7 +16,7 @@ import PhotoAttach from './PhotoAttach';
 import ProjectBadge from './ProjectBadge';
 import { photosOf } from './photoStore';
 import { routeOfSection } from './routeSection';
-import { proposeStop, shiftsOnRoute, describeStop } from './shiftPlace';
+import { proposeStop, shiftsOnRoute, describeStop, crewLabel } from './shiftPlace';
 import { routeEnds, placeNames } from './routeStyle';
 import { checkEntry, saveBlocker } from './entryChecks';
 import { isIdleShift, entryHasWork } from './entriesTable';
@@ -347,10 +347,12 @@ export default function DailyEntryForm({
       .filter((e) => e.id !== entryId);
   }, [sectionRoute, kato, journal.ground, journal.planRoutes, entryId]);
 
+  // Считаем от смен своей колонны: вторая колонна на том же селе иначе
+  // видела место первой как «прошлая смена кончилась на 9 км».
   const proposedStop = useMemo(() => {
     if (correcting || !sectionRoute || totalMeters <= 0) return null;
-    return proposeStop(sectionRoute, routeShifts, totalMeters, date);
-  }, [correcting, sectionRoute, routeShifts, totalMeters, date]);
+    return proposeStop(sectionRoute, routeShifts, totalMeters, date, { contractor, column });
+  }, [correcting, sectionRoute, routeShifts, totalMeters, date, contractor, column]);
 
   /** Поставленная рукой точка — куда она легла на линии участка. */
   const picked = useMemo(
@@ -366,11 +368,12 @@ export default function DailyEntryForm({
     return describeStop({
       routeName: sectionRoute.name || sectionRoute.uchastok || 'трасса',
       startName: ends.from,
+      crewName: crewLabel({ contractor, column }) || undefined,
       proposal: proposedStop,
       addedM: totalMeters,
       picked: picked ? { atM: picked.atM, deviationM: picked.deviationM } : null,
     });
-  }, [sectionRoute, proposedStop, picked, totalMeters, journal.progress]);
+  }, [sectionRoute, proposedStop, picked, totalMeters, journal.progress, contractor, column]);
 
   // Подрядчик по району — подсказка, а не автозаполнение: район может вести
   // субподрядчик, и решать должен человек.

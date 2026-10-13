@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { DailyWorkEntry, PlanRoute } from '@/types/construction';
 import {
-  placeShifts, shiftsOnRoute, proposeStop, stopPositionM, describeStop,
+  placeShifts, shiftsOnRoute, proposeStop, stopPositionM, describeStop, crewOf, crewLabel,
 } from './shiftPlace';
 import { routeLengthM, pointAtDistanceM } from './routeProgress';
 import {
@@ -118,6 +118,97 @@ describe('где на линии копали', () => {
       shift('2026-09-03', 500),
     ]);
     expect(pl.placed.map((p) => p.toM)).toEqual([1000, 1500]);
+  });
+});
+
+/** Одно село часто ведут две колонны — у каждой свой путь по линии. */
+describe('две колонны на одной линии', () => {
+  const A = { contractor: 'Дозер', column: '1-колонна' };
+  const B = { contractor: 'Дозер', column: '2-колонна' };
+
+  it('вторая колонна без отметки не продолжает чужую закраску', () => {
+    // Колонна A отметила рукой 9-й км, колонна B прошла 500 м у 2-го км и
+    // место не назвала. Раньше её смену клали с 9 по 9,5 км.
+    const a = shift('2026-09-01', 1000, { ...A, ...atMap(9000) });
+    const b = shift('2026-09-02', 500, B);
+    const pl = placeShifts(route(), [a, b]);
+    expect(pl.placed.map((p) => p.entryId)).toEqual([a.id]);
+    expect(pl.unplaced.map((u) => u.entryId)).toEqual([b.id]);
+    expect(pl.endByCrew.get(crewOf(B))).toBeUndefined();
+  });
+
+  it('смена без отметки продолжает свою колонну, а не последнюю на линии', () => {
+    const a1 = shift('2026-09-01', 1000, { ...A, ...atMap(9000) });
+    const b1 = shift('2026-09-01', 500, { ...B, ...agreed(), createdAt: '2026-09-01T18:00:00.000Z' });
+    const a2 = shift('2026-09-02', 1000, A);
+    const pl = placeShifts(route(), [a1, b1, a2]);
+    const at = new Map(pl.placed.map((p) => [p.entryId, [Math.round(p.fromM), Math.round(p.toM)]]));
+    expect(at.get(b1.id)).toEqual([0, 500]);
+    expect(at.get(a2.id)![0]).toBeCloseTo(9000, -2);
+    expect(at.get(a2.id)![1]).toBeCloseTo(10000, -2);
+  });
+
+  it('«Верно» второй колонны кладёт от начала только её смены', () => {
+    const a = shift('2026-09-01', 1000, { ...A, ...atMap(9000) });
+    const b1 = shift('2026-09-02', 400, B);
+    const b2 = shift('2026-09-03', 300, { ...B, ...agreed() });
+    const pl = placeShifts(route(), [a, b1, b2]);
+    expect(pl.unplaced).toHaveLength(0);
+    expect(pl.placed.filter((p) => p.crew === crewOf(B)).map((p) => [p.fromM, p.toM]))
+      .toEqual([[0, 400], [400, 700]]);
+    // Порядок дней сохраняется и после «Верно» задним числом.
+    expect(pl.placed.map((p) => p.date)).toEqual(['2026-09-01', '2026-09-02', '2026-09-03']);
+  });
+
+  it('та же колонна у другого подрядчика — другая колонна', () => {
+    const a = shift('2026-09-01', 1000, { ...A, ...atMap(9000) });
+    const other = shift('2026-09-02', 500, { contractor: 'TERRA TECH', column: '1-колонна' });
+    expect(placeShifts(route(), [a, other]).unplaced.map((u) => u.entryId)).toEqual([other.id]);
+  });
+
+  it('«1-колонна» и «1 колонна» — одна колонна', () => {
+    expect(crewOf({ contractor: 'Дозер', column: '1-колонна' }))
+      .toBe(crewOf({ contractor: ' дозер', column: '1 колонна' }));
+  });
+
+  it('форма второй колонны не предлагает место первой и говорит, почему от начала', () => {
+    const ground = [shift('2026-09-01', 1000, { ...A, ...atMap(9000) })];
+    const p = proposeStop(route(), ground, 500, '2026-09-02', B)!;
+    expect(p.from).toBe('start');
+    expect(p.beforeM).toBe(0);
+    expect(p.atM).toBe(500);
+    expect(p.othersOnLine).toBe(true);
+    const text = describeStop({
+      routeName: 'ОМ — Еленовка', proposal: p, addedM: 500, crewName: crewLabel(B),
+    });
+    expect(text).toContain('где копала «2-колонна (Дозер)», на этой линии ещё не отмечали');
+    expect(text).toContain('Места других колонн на этой линии отмечены');
+  });
+
+  it('своей колонне форма предлагает продолжение от её места', () => {
+    const ground = [
+      shift('2026-09-01', 1000, { ...A, ...atMap(9000) }),
+      shift('2026-09-02', 500, { ...B, ...agreed() }),
+    ];
+    const p = proposeStop(route(), ground, 500, '2026-09-03', A)!;
+    expect(p.from).toBe('place');
+    expect(p.atM).toBeCloseTo(9500, -1);
+    expect(p.afterDate).toBe('2026-09-01');
+    const text = describeStop({ routeName: 'ОМ — Еленовка', proposal: p, addedM: 500, crewName: crewLabel(A) });
+    expect(text).toContain('прошлая смена колонны «1-колонна (Дозер)» (01.09.2026) кончилась на 9,00 км');
+  });
+
+  it('точка участка после разворота — у колонны, поставившей отметку', () => {
+    // A отметила 4-й км и ушла дальше «Верно». B идёт от начала, и в тот
+    // же день закрыла смену позже, без отметки, — точку участка ставила A.
+    const ground = [
+      shift('2026-09-01', 1000, { ...A, ...atMap(4000) }),
+      shift('2026-09-01', 300, { ...B, ...agreed(), createdAt: '2026-09-01T18:00:00.000Z' }),
+      shift('2026-09-02', 1000, { ...A, ...agreed() }),
+      shift('2026-09-02', 300, { ...B, createdAt: '2026-09-02T18:00:00.000Z' }),
+    ];
+    expect(placeShifts(route(), ground).endM).toBe(600);
+    expect(stopPositionM(route(), ground, { date: '2026-09-02', doneM: 5000 })).toBeCloseTo(5000, -1);
   });
 });
 

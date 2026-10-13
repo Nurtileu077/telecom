@@ -76,25 +76,37 @@ export function dayMoves(ctx: PlaybackContext, date: string): DayMove[] {
 
     const shifts = shiftsOnRoute(route.id, kato, ctx.ground, live)
       .filter((e) => !!e.date && e.date <= date);
-    const mine = placeShifts(route, shifts).placed.filter((p) => p.date === date);
-    if (mine.length === 0) continue;
+    const placed = placeShifts(route, shifts).placed.filter((p) => p.date === date);
+    if (placed.length === 0) continue;
 
-    const beforeM = mine[0].fromM;
-    const from = pointAtDistanceM(route.coords, beforeM);
-    const to = pointAtDistanceM(route.coords, mine[mine.length - 1].toM);
-    if (!from || !to) continue;
+    // Каждая колонна — своим движением: две колонны на одном селе идут
+    // каждая своим куском, и стрелка от начала одной к концу другой
+    // нарисовала бы путь, которого не было.
+    const byId = new Map(entries.map((e) => [e.id, e]));
+    const crews = new Map<string, typeof placed>();
+    for (const p of placed) {
+      const list = crews.get(p.crew);
+      if (list) list.push(p); else crews.set(p.crew, [p]);
+    }
+    for (const mine of crews.values()) {
+      const beforeM = mine[0].fromM;
+      const from = pointAtDistanceM(route.coords, beforeM);
+      const to = pointAtDistanceM(route.coords, mine[mine.length - 1].toM);
+      if (!from || !to) continue;
+      const who = byId.get(mine[0].entryId) ?? entries[0];
 
-    out.push({
-      kato,
-      uchastok,
-      routeId: route.id,
-      from: { lat: from.lat, lon: from.lon },
-      to: { lat: to.lat, lon: to.lon },
-      meters: mine.reduce((s, p) => s + p.meters, 0),
-      beforeM,
-      column: entries[0].column,
-      contractor: entries[0].contractor,
-    });
+      out.push({
+        kato,
+        uchastok,
+        routeId: route.id,
+        from: { lat: from.lat, lon: from.lon },
+        to: { lat: to.lat, lon: to.lon },
+        meters: mine.reduce((s, p) => s + p.meters, 0),
+        beforeM,
+        column: who.column,
+        contractor: who.contractor,
+      });
+    }
   }
 
   // Больше прошли — выше в списке: на карте это самое заметное движение.
