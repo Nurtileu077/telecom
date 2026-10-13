@@ -12,7 +12,7 @@ import {
   placeDeviations, factLine, projectLine, lengthWithDeviations, deviationProtocol,
   deviationTitle, type SchemeMode, type PlacedDeviation,
 } from './schemeDeviations';
-import { metricOf, type LengthModel } from '@/lib/geodesy';
+import { ellipsoidM } from '@/lib/geodesy';
 
 /**
  * Исполнительная схема.
@@ -134,8 +134,6 @@ export interface Scheme {
    * Без отклонений они совпадают.
    */
   mode: SchemeMode;
-  /** Чем мерили длины: эллипсоид или, для листов до перехода, шар. */
-  lengths: LengthModel;
   /** Длина проектной линии. */
   projectM: number;
   /** Длина с отклонениями: проект, где обход заменил кусок, — длиной обхода. */
@@ -210,31 +208,6 @@ export interface SchemeOptions {
   otherDeviations?: Deviation[];
   /** По факту (по умолчанию) или по проекту с отмеченными отклонениями. */
   mode?: SchemeMode;
-  /**
-   * Чем мерить: по умолчанию эллипсоид WGS-84; шар — листу, подписанному
-   * до перехода (`schemeLengthModel`).
-   */
-  lengths?: LengthModel;
-}
-
-/**
- * С какого дня схемы меряются по эллипсоиду.
- *
- * Допущение (заказчик не ответил): подписанные листы пересобирают — в
- * пакете, по постоянной ссылке, — и их «Протяжённость» не должна
- * сдвинуться задним числом на 0,1–0,3 %. Поэтому по-новому считаются
- * только документы, датированные с этого дня; лист к акту от более
- * ранней даты собирается, как его тогда и подписали, — по шару.
- */
-export const ELLIPSOID_SINCE = '2026-10-13';
-
-/**
- * Мерка листа по его дате: дате акта, к которому лист относится, а без
- * акта — дате самого листа. Нет даты — лист новый.
- */
-export function schemeLengthModel(docDate: string | undefined): LengthModel {
-  const d = (docDate ?? '').trim();
-  return /^\d{4}-\d{2}-\d{2}$/.test(d) && d < ELLIPSOID_SINCE ? 'sphere' : 'ellipsoid';
 }
 
 /**
@@ -280,10 +253,17 @@ export function buildScheme(
 ): Scheme {
   const maxOffset = opts.maxOffsetM ?? 120;
   const mode: SchemeMode = opts.mode ?? 'fact';
-  const lengths: LengthModel = opts.lengths ?? 'ellipsoid';
   // Одна мерка на весь лист: длина линии, места отметок и обходы. Смешай
   // их — и сумма пролётов разойдётся с протяжённостью на те же 0,3 %.
-  const metric = metricOf(lengths);
+  //
+  // Мерка — эллипсоид WGS-84 у любого листа, какой бы датой он ни был.
+  // Шар «листам до перехода» решали по дате, а дата в руках — это день
+  // последней записи журнала или дата акта, а не день выдачи листа: лист
+  // к сентябрьскому акту, собранный впервые в октябре, навсегда уходил
+  // на шар, и «Протяжённость» оставалась на 38 м из 12 км короче.
+  // Беречь же было нечего: заказчик ответил, что системой ещё не
+  // работают, — подписанных ею листов нет.
+  const metric = ellipsoidM;
   const projectM = routeLengthM(route.coords, metric);
 
   // Отклонения кладём на проект, а потом решаем, вдоль какой линии
@@ -465,7 +445,6 @@ export function buildScheme(
     route: route.name, totalM, marks, spans, chainTotalM, skipped, unassigned, foreign,
     section: opts.section?.trim() || undefined,
     mode,
-    lengths,
     projectM,
     factM: lengthWithDeviations(projectM, layout.placed),
     deviations: layout.placed.map((p) => schemeDeviation(p, labels.get(p.n))),
@@ -651,11 +630,8 @@ function lengthLine(s: Scheme): string {
       ? `; по проекту — <span class="b">${esc(formatMeters(s.projectM))}</span>`
       : `; по факту, с отклонениями, — <span class="b">${esc(formatMeters(s.factM))}</span>`;
   // Чем мерили — одной строкой: заказчик проверяет длины в своей ГИС, а
-  // она считает на эллипсоиде. Листу до перехода строку не добавляем:
-  // он должен выйти таким, каким его подписали.
-  const how = s.lengths === 'ellipsoid'
-    ? '<p class="cap">Длины по координатам — на эллипсоиде WGS-84.</p>'
-    : '';
+  // она считает на эллипсоиде.
+  const how = '<p class="cap">Длины по координатам — на эллипсоиде WGS-84.</p>';
   return `<p>${base}${byChain}${other}, отметок на схеме: <span class="b">${s.marks.length}</span>.</p>${how}`;
 }
 

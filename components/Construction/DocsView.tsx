@@ -14,7 +14,7 @@ import {
   periodReport, paceChange, periodDocPage, periodDocFile, noOblastNote,
   snpReadiness, readinessDocHtml, weekRange,
 } from './periodReports';
-import { actDocHtml, actFileName, ACT_DOC_CSS, esc, fmtDate, type ActKind } from './actDocument';
+import { actDocHtml, actFileName, ACT_DOC_CSS, esc, type ActKind } from './actDocument';
 import {
   prepareSectionAct, sectionActDocInput, actFieldsOf, hiddenWorksInputFor, sectionsOf,
 } from './actInput';
@@ -38,7 +38,6 @@ import type { SectionActManual } from './sectionAct';
 import {
   buildScheme, schemeDocPage, schemeFileName, withSchemeAttached,
   schemeObjectsFor, displacedMarks, spanMismatches, unassignedNote, objectMarks, measuredCount,
-  schemeLengthModel, ELLIPSOID_SINCE,
 } from './asBuilt';
 import {
   schemeDeviationsFor, loadSchemeMode, saveSchemeMode,
@@ -341,14 +340,11 @@ export default function DocsView({
   );
 
   // Акт участка этой трассы — по тому же правилу, что и объекты: его
-  // номер встаёт в шапку листа, а дата решает, чем мерить.
+  // номер встаёт в шапку листа.
   const schemeAct = useMemo(
     () => (schemeRoute ? registry.find((r) => sectionMatchesRoute(r.uchastok, schemeRoute)) : undefined),
     [registry, schemeRoute],
   );
-  // Лист к акту, подписанному до перехода на эллипсоид, собирается по
-  // шару — как его тогда подписали (см. schemeLengthModel).
-  const schemeLengths = schemeLengthModel(schemeAct?.date || to);
 
   const scheme = useMemo(
     () => (schemeRoute
@@ -360,10 +356,9 @@ export default function DocsView({
         deviations: schemeDevs.own,
         otherDeviations: schemeDevs.others,
         mode: schemeMode,
-        lengths: schemeLengths,
       })
       : null),
-    [schemeRoute, schemeObjects, schemeSection, places, schemeDevs, schemeMode, schemeLengths],
+    [schemeRoute, schemeObjects, schemeSection, places, schemeDevs, schemeMode],
   );
 
   // Та же трасса глазами карты: по обводкам сёл видно, не начинается ли
@@ -601,9 +596,6 @@ export default function DocsView({
               unassigned: objs.unassigned, section: uchastok, places,
               deviations: schemeDeviationsFor(journal.deviations, own).own,
               mode: schemeMode,
-              // Приложение к акту, датированному до перехода, — по шару:
-              // в пакете пересобирают и уже подписанные акты.
-              lengths: schemeLengthModel(fields.actDate),
             });
           })()
           : null;
@@ -1458,14 +1450,6 @@ export default function DocsView({
                     ? ` по факту (по проекту ${(scheme.projectM / 1000).toFixed(2).replace('.', ',')} км)`
                     : ` по проекту (по факту ${(scheme.factM / 1000).toFixed(2).replace('.', ',')} км)`)
                   : ''}.
-              </div>
-            )}
-            {scheme && scheme.lengths === 'sphere' && (
-              <div className="text-[11px] text-[var(--text-muted)]">
-                Лист датирован раньше {fmtDate(ELLIPSOID_SINCE)}
-                {schemeAct?.date ? ` (акт от ${fmtDate(schemeAct.date)})` : ''} — длины по шару, как в
-                подписанных тогда листах. Листы с этого дня меряются по эллипсоиду WGS-84: на
-                0,1–0,3 % длиннее.
               </div>
             )}
             {scheme && scheme.deviations.length > 0 && (

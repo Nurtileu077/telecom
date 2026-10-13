@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ellipsoidM, sphereM, metricOf, WGS84_A } from './geodesy';
+import { ellipsoidM, sphereM, WGS84_A } from './geodesy';
 
 /** Градусы, минуты, секунды — как в эталонных примерах. */
 const dms = (d: number, m: number, s: number) => Math.sign(d) * (Math.abs(d) + m / 60 + s / 3600);
@@ -49,11 +49,5 @@ describe('длина по эллипсоиду', () => {
     const m = ellipsoidM(0, 0, 0.5, 179.7);
     expect(Number.isFinite(m)).toBe(true);
     expect(m).toBeGreaterThan(19_000_000);
-  });
-
-  it('шар остаётся для листов до перехода — по названию мерки', () => {
-    expect(metricOf('sphere')).toBe(sphereM);
-    expect(metricOf('ellipsoid')).toBe(ellipsoidM);
-    expect(metricOf(undefined)).toBe(ellipsoidM);
   });
 });

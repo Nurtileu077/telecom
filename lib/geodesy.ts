@@ -89,17 +89,3 @@ export const ellipsoidM: Metric = (lat1, lon1, lat2, lon2) => {
   }
   return (sphereM(lat1, lon1, lat2, lon2) / SPHERE_R) * 6371008.8;
 };
-
-/**
- * Как считать длины в документе.
- *
- * Новое — по эллипсоиду. Шар остаётся для документов, подписанных до
- * перехода: их пересобирают по постоянной ссылке или в пакете, и
- * «Протяжённость» подписанного листа не должна сдвинуться на 0,3 %
- * задним числом.
- */
-export type LengthModel = 'ellipsoid' | 'sphere';
-
-export function metricOf(model: LengthModel | undefined): Metric {
-  return model === 'sphere' ? sphereM : ellipsoidM;
-}

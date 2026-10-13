@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   buildScheme, schemeSvg, schemeDocHtml, schemeDocPage, schemeFileName,
   schemeAttachmentHtml, withSchemeAttached, schemeObjectsFor, displacedMarks,
-  spanMismatches, spanTolerance, unassignedNote, schemeLengthModel, ELLIPSOID_SINCE,
+  spanMismatches, spanTolerance, unassignedNote,
 } from './asBuilt';
+import * as asBuilt from './asBuilt';
 import { ellipsoidM, sphereM } from '@/lib/geodesy';
 import type { SiteObject, PlanRoute } from '@/types/construction';
 import { formatMeters } from './mapDecor';
@@ -643,35 +644,30 @@ describe('протяжённость схемы по эллипсоиду', () =
     ...route(), name: 'Астана — Косшы', coords: [[51.13, 71.43], [51.13, 71.6018]],
   };
 
-  it('новый лист меряется по эллипсоиду WGS-84 и так и говорит', () => {
+  it('лист меряется по эллипсоиду WGS-84 и так и говорит', () => {
     const s = buildScheme(astana, []);
-    expect(s.lengths).toBe('ellipsoid');
     expect(s.totalM).toBeCloseTo(ellipsoidM(51.13, 71.43, 51.13, 71.6018), 6);
+    // По шару было бы на 38 м короче — эту цифру лист больше не печатает.
+    expect(Math.round(s.totalM - sphereM(51.13, 71.43, 51.13, 71.6018))).toBe(38);
     expect(schemeDocHtml({ scheme: s })).toContain('на эллипсоиде WGS-84');
   });
 
-  it('лист к акту, подписанному до перехода, выходит таким, каким его подписали', () => {
-    const old = buildScheme(astana, [], { lengths: 'sphere' });
-    expect(old.totalM).toBeCloseTo(sphereM(51.13, 71.43, 51.13, 71.6018), 6);
-    expect(Math.round(buildScheme(astana, []).totalM - old.totalM)).toBe(38);
-    expect(schemeDocHtml({ scheme: old })).not.toContain('эллипсоид');
-  });
-
   it('отметки стоят той же меркой, что и длина: муфта в конце — в конце', () => {
-    const s = buildScheme(astana, [obj({ lat: 51.13, lon: 71.6018, name: 'Муфта у Косшы' })], {
-      lengths: 'sphere',
-    });
+    const s = buildScheme(astana, [obj({ lat: 51.13, lon: 71.6018, name: 'Муфта у Косшы' })]);
     const m = s.marks.find((x) => x.label === 'Муфта у Косшы')!;
     expect(m.atM).toBeCloseTo(s.totalM, 3);
   });
 
-  it('мерку решает дата акта: до перехода — шар, с него и без даты — эллипсоид', () => {
-    expect(ELLIPSOID_SINCE).toBe('2026-10-13');
-    expect(schemeLengthModel('2026-10-12')).toBe('sphere');
-    expect(schemeLengthModel('2026-10-13')).toBe('ellipsoid');
-    expect(schemeLengthModel(undefined)).toBe('ellipsoid');
-    expect(schemeLengthModel('')).toBe('ellipsoid');
-    // Вписанная руками каша датой не считается — лист новый.
-    expect(schemeLengthModel('12.10.2026')).toBe('ellipsoid');
+  /**
+   * Мерку решала дата: акта, а без акта — последней записи журнала, а не
+   * день выдачи листа. Лист к сентябрьскому акту, собранный впервые в
+   * октябре, уходил на шар навсегда, а подписанных этой системой листов,
+   * ради которых шар держали, нет — системой ещё не работают.
+   */
+  it('дата акта и журнала мерку не решает: шара для «листов до перехода» нет', () => {
+    expect(Object.keys(asBuilt)).not.toContain('schemeLengthModel');
+    expect(Object.keys(asBuilt)).not.toContain('ELLIPSOID_SINCE');
+    const html = schemeDocHtml({ scheme: buildScheme(astana, []), date: '2026-09-30' });
+    expect(html).toContain('на эллипсоиде WGS-84');
   });
 });
