@@ -4,6 +4,7 @@ import {
 import { stageStatus } from './stageTasks';
 import { normName, PLACE_PREFIX } from './areaImport';
 import { effectiveProgress, type DeriveContext } from './stageDerive';
+import { routeLengthM } from './routeProgress';
 
 /**
  * Как выглядит трасса на карте.
@@ -390,7 +391,10 @@ export function routeViews(routes: PlanRoute[], ctx: RouteStyleContext): RouteVi
       id: r.id,
       name: label || 'Трасса',
       coords: r.coords,
-      lengthM: r.lengthM,
+      // Длина — по координатам той же меркой, что и схема (эллипсоид).
+      // Записанная при загрузке до 13.10.2026 посчитана по шару, и
+      // карточка трассы на 0,3 % спорила бы с «Протяжённостью» листа.
+      lengthM: r.coords.length > 1 ? routeLengthM(r.coords) : r.lengthM,
       source: r.source,
       from: ends.from,
       to: ends.to,

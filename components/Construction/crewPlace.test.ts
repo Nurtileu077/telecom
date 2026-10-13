@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { placeCrews } from './crewPlace';
+import { routeLengthM } from './routeProgress';
 import type { Crew, DailyWorkEntry, DrillLogEntry } from '@/types/construction';
 
 const now = '2026-09-18T00:00:00.000Z';
@@ -159,7 +160,8 @@ describe('откуда и куда едет колонна', () => {
       sectionProgress: { '191': { lat: 51.55, lon: 71.55, date: '2026-09-10', doneM: 4200 } },
     }));
     expect(c.trip?.to).toBe('Ивановка');
-    expect(c.trip?.leftM).toBe(5800);
+    // Остаток — от длины линии по координатам, той же, что в схеме.
+    expect(c.trip?.leftM).toBe(Math.round(routeLengthM(route.coords) - 4200));
   });
 
   it('откуда — предыдущее село по её же отчётам, а не начало трассы', () => {

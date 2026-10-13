@@ -12,6 +12,7 @@ import {
   placeDeviations, factLine, projectLine, lengthWithDeviations, deviationProtocol,
   deviationTitle, type SchemeMode, type PlacedDeviation,
 } from './schemeDeviations';
+import { metricOf, type LengthModel } from '@/lib/geodesy';
 
 /**
  * Исполнительная схема.
@@ -115,6 +116,8 @@ export interface Scheme {
    * Без отклонений они совпадают.
    */
   mode: SchemeMode;
+  /** Чем мерили длины: эллипсоид или, для листов до перехода, шар. */
+  lengths: LengthModel;
   /** Длина проектной линии. */
   projectM: number;
   /** Длина с отклонениями: проект, где обход заменил кусок, — длиной обхода. */
@@ -189,6 +192,31 @@ export interface SchemeOptions {
   otherDeviations?: Deviation[];
   /** По факту (по умолчанию) или по проекту с отмеченными отклонениями. */
   mode?: SchemeMode;
+  /**
+   * Чем мерить: по умолчанию эллипсоид WGS-84; шар — листу, подписанному
+   * до перехода (`schemeLengthModel`).
+   */
+  lengths?: LengthModel;
+}
+
+/**
+ * С какого дня схемы меряются по эллипсоиду.
+ *
+ * Допущение (заказчик не ответил): подписанные листы пересобирают — в
+ * пакете, по постоянной ссылке, — и их «Протяжённость» не должна
+ * сдвинуться задним числом на 0,1–0,3 %. Поэтому по-новому считаются
+ * только документы, датированные с этого дня; лист к акту от более
+ * ранней даты собирается, как его тогда и подписали, — по шару.
+ */
+export const ELLIPSOID_SINCE = '2026-10-13';
+
+/**
+ * Мерка листа по его дате: дате акта, к которому лист относится, а без
+ * акта — дате самого листа. Нет даты — лист новый.
+ */
+export function schemeLengthModel(docDate: string | undefined): LengthModel {
+  const d = (docDate ?? '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) && d < ELLIPSOID_SINCE ? 'sphere' : 'ellipsoid';
 }
 
 /**
@@ -234,14 +262,18 @@ export function buildScheme(
 ): Scheme {
   const maxOffset = opts.maxOffsetM ?? 120;
   const mode: SchemeMode = opts.mode ?? 'fact';
-  const projectM = routeLengthM(route.coords);
+  const lengths: LengthModel = opts.lengths ?? 'ellipsoid';
+  // Одна мерка на весь лист: длина линии, места отметок и обходы. Смешай
+  // их — и сумма пролётов разойдётся с протяжённостью на те же 0,3 %.
+  const metric = metricOf(lengths);
+  const projectM = routeLengthM(route.coords, metric);
 
   // Отклонения кладём на проект, а потом решаем, вдоль какой линии
   // ставить отметки: по факту — вдоль обхода, по проекту — вдоль проекта.
-  const layout = placeDeviations(route.coords, opts.deviations ?? [], maxOffset);
+  const layout = placeDeviations(route.coords, opts.deviations ?? [], maxOffset, metric);
   const line = mode === 'fact' && layout.placed.length > 0
-    ? factLine(route.coords, layout.placed)
-    : projectLine(route.coords, layout.placed);
+    ? factLine(route.coords, layout.placed, metric)
+    : projectLine(route.coords, layout.placed, metric);
   const totalM = line.totalM;
 
   const marks: SchemeMark[] = [];
@@ -249,7 +281,7 @@ export function buildScheme(
 
   for (const o of objects) {
     if (!Number.isFinite(o.lat) || !Number.isFinite(o.lon)) continue;
-    const hit = nearestOnRoute({ lat: o.lat, lon: o.lon }, line.coords);
+    const hit = nearestOnRoute({ lat: o.lat, lon: o.lon }, line.coords, metric);
     if (!hit) continue;
     if (hit.deviationM > maxOffset) {
       skipped.push(`${o.name || SITE_OBJECT_SPECS[o.kind].label} (${Math.round(hit.deviationM)} м в стороне)`);
@@ -270,7 +302,7 @@ export function buildScheme(
   const unassigned: string[] = [];
   for (const o of opts.unassigned ?? []) {
     if (!Number.isFinite(o.lat) || !Number.isFinite(o.lon)) continue;
-    const hit = nearestOnRoute({ lat: o.lat, lon: o.lon }, line.coords);
+    const hit = nearestOnRoute({ lat: o.lat, lon: o.lon }, line.coords, metric);
     if (!hit || hit.deviationM > maxOffset) continue;
     unassigned.push(o.name || SITE_OBJECT_SPECS[o.kind].label);
   }
@@ -280,7 +312,7 @@ export function buildScheme(
   const foreign: string[] = [];
   for (const o of opts.others ?? []) {
     if (!Number.isFinite(o.lat) || !Number.isFinite(o.lon)) continue;
-    const hit = nearestOnRoute({ lat: o.lat, lon: o.lon }, line.coords);
+    const hit = nearestOnRoute({ lat: o.lat, lon: o.lon }, line.coords, metric);
     if (!hit || hit.deviationM > OFFSET_NOTE_M) continue;
     foreign.push(`${o.name || SITE_OBJECT_SPECS[o.kind].label} (участок «${(o.uchastok ?? '').trim()}»)`);
   }
@@ -292,7 +324,7 @@ export function buildScheme(
   for (const d of opts.otherDeviations ?? []) {
     const pts = (d.coords ?? []).filter((p) => Number.isFinite(p?.lat) && Number.isFinite(p?.lon));
     if (pts.length < 2) continue;
-    const ends = [pts[0], pts[pts.length - 1]].map((p) => nearestOnRoute(p, route.coords));
+    const ends = [pts[0], pts[pts.length - 1]].map((p) => nearestOnRoute(p, route.coords, metric));
     if (ends.some((h) => !h || h.deviationM > OFFSET_NOTE_M)) continue;
     deviationsForeign.push(`${deviationTitle(d)} (участок «${(d.uchastok ?? '').trim()}»)`);
   }
@@ -396,6 +428,7 @@ export function buildScheme(
     route: route.name, totalM, marks, spans, chainTotalM, skipped, unassigned, foreign,
     section: opts.section?.trim() || undefined,
     mode,
+    lengths,
     projectM,
     factM: lengthWithDeviations(projectM, layout.placed),
     deviations: layout.placed.map((p) => schemeDeviation(p, labels.get(p.n))),
@@ -485,7 +518,13 @@ function lengthLine(s: Scheme): string {
     : s.mode === 'fact'
       ? `; по проекту — <span class="b">${esc(formatMeters(s.projectM))}</span>`
       : `; по факту, с отклонениями, — <span class="b">${esc(formatMeters(s.factM))}</span>`;
-  return `<p>${base}${byChain}${other}, отметок на схеме: <span class="b">${s.marks.length}</span>.</p>`;
+  // Чем мерили — одной строкой: заказчик проверяет длины в своей ГИС, а
+  // она считает на эллипсоиде. Листу до перехода строку не добавляем:
+  // он должен выйти таким, каким его подписали.
+  const how = s.lengths === 'ellipsoid'
+    ? '<p class="cap">Длины по координатам — на эллипсоиде WGS-84.</p>'
+    : '';
+  return `<p>${base}${byChain}${other}, отметок на схеме: <span class="b">${s.marks.length}</span>.</p>${how}`;
 }
 
 /** «+230 м», «−40 м»: насколько обход длиннее проекта. */

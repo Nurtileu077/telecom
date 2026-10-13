@@ -1,6 +1,7 @@
 import { PlanRoute, SettlementOrder } from '@/types/construction';
 import { importKmzRaw, type KmlParseStats } from '@/components/Import/KmzImporter';
 import { buildAreas, type AreaImportResult } from './areaImport';
+import { routeLengthM } from './routeProgress';
 
 /**
  * Загрузка проектной трассы из KML/KMZ.
@@ -10,21 +11,15 @@ import { buildAreas, type AreaImportResult } from './areaImport';
  * от факта и стройкой не переписывается.
  */
 
-const R = 6371000;
-
-/** Длина ломаной по земной поверхности, метры. */
+/**
+ * Длина ломаной по земной поверхности, метры, до метра.
+ *
+ * Той же меркой, что и вся стройка (`routeLengthM`, эллипсоид WGS-84):
+ * своя формула здесь давала длину, которая расходилась со схемой и с
+ * той, что получалась после правки или отката той же линии.
+ */
 export function polylineLengthM(coords: [number, number][]): number {
-  let sum = 0;
-  for (let i = 1; i < coords.length; i++) {
-    const [la1, lo1] = coords[i - 1];
-    const [la2, lo2] = coords[i];
-    const dLat = ((la2 - la1) * Math.PI) / 180;
-    const dLon = ((lo2 - lo1) * Math.PI) / 180;
-    const a = Math.sin(dLat / 2) ** 2
-      + Math.cos((la1 * Math.PI) / 180) * Math.cos((la2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
-    sum += R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  }
-  return Math.round(sum);
+  return Math.round(routeLengthM(coords));
 }
 
 export interface PlanImportResult {

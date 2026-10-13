@@ -14,7 +14,7 @@ import {
   periodReport, paceChange, periodDocPage, periodDocFile, noOblastNote,
   snpReadiness, readinessDocHtml, weekRange,
 } from './periodReports';
-import { actDocHtml, actFileName, ACT_DOC_CSS, esc, type ActKind } from './actDocument';
+import { actDocHtml, actFileName, ACT_DOC_CSS, esc, fmtDate, type ActKind } from './actDocument';
 import {
   prepareSectionAct, sectionActDocInput, actFieldsOf, hiddenWorksInputFor, sectionsOf,
 } from './actInput';
@@ -38,12 +38,14 @@ import type { SectionActManual } from './sectionAct';
 import {
   buildScheme, schemeDocPage, schemeFileName, withSchemeAttached,
   schemeObjectsFor, displacedMarks, spanMismatches, unassignedNote, objectMarks,
+  schemeLengthModel, ELLIPSOID_SINCE,
 } from './asBuilt';
 import {
   schemeDeviationsFor, loadSchemeMode, saveSchemeMode,
   SCHEME_MODES, SCHEME_MODE_LABEL, SCHEME_MODE_HINT, type SchemeMode,
 } from './schemeDeviations';
 import { routeOfSection, sectionForRoute, sectionMatchesRoute } from './routeSection';
+import { routeLengthM } from './routeProgress';
 import { withDefaults, missingForPayment, binLooksWrong } from './requisites';
 import { normName } from './areaImport';
 import { placeNames, routeViews, directionHint } from './routeStyle';
@@ -331,6 +333,23 @@ export default function DocsView({
     [journal.deviations, schemeRoute],
   );
 
+  // Длины в списке трасс — той же меркой, что и лист: записанная при
+  // загрузке до перехода на эллипсоид посчитана по шару.
+  const routeLengths = useMemo(
+    () => new Map(journal.planRoutes.map((r) => [r.id, routeLengthM(r.coords)])),
+    [journal.planRoutes],
+  );
+
+  // Акт участка этой трассы — по тому же правилу, что и объекты: его
+  // номер встаёт в шапку листа, а дата решает, чем мерить.
+  const schemeAct = useMemo(
+    () => (schemeRoute ? registry.find((r) => sectionMatchesRoute(r.uchastok, schemeRoute)) : undefined),
+    [registry, schemeRoute],
+  );
+  // Лист к акту, подписанному до перехода на эллипсоид, собирается по
+  // шару — как его тогда подписали (см. schemeLengthModel).
+  const schemeLengths = schemeLengthModel(schemeAct?.date || to);
+
   const scheme = useMemo(
     () => (schemeRoute
       ? buildScheme(schemeRoute, schemeObjects.own, {
@@ -341,9 +360,10 @@ export default function DocsView({
         deviations: schemeDevs.own,
         otherDeviations: schemeDevs.others,
         mode: schemeMode,
+        lengths: schemeLengths,
       })
       : null),
-    [schemeRoute, schemeObjects, schemeSection, places, schemeDevs, schemeMode],
+    [schemeRoute, schemeObjects, schemeSection, places, schemeDevs, schemeMode, schemeLengths],
   );
 
   // Та же трасса глазами карты: по обводкам сёл видно, не начинается ли
@@ -581,6 +601,9 @@ export default function DocsView({
               unassigned: objs.unassigned, section: uchastok, places,
               deviations: schemeDeviationsFor(journal.deviations, own).own,
               mode: schemeMode,
+              // Приложение к акту, датированному до перехода, — по шару:
+              // в пакете пересобирают и уже подписанные акты.
+              lengths: schemeLengthModel(fields.actDate),
             });
           })()
           : null;
@@ -1345,7 +1368,7 @@ export default function DocsView({
               >
                 {journal.planRoutes.map((r) => (
                   <option key={r.id} value={r.id}>
-                    {r.name} · {(r.lengthM / 1000).toFixed(1).replace('.', ',')} км
+                    {r.name} · {((routeLengths.get(r.id) ?? r.lengthM) / 1000).toFixed(1).replace('.', ',')} км
                   </option>
                 ))}
               </select>
@@ -1359,9 +1382,7 @@ export default function DocsView({
                           terms: docTerms,
                           // Номер акта того участка, к которому относится
                           // трасса, — по тому же правилу, что и объекты.
-                          number: schemeRoute
-                            ? registry.find((r) => sectionMatchesRoute(r.uchastok, schemeRoute))?.number
-                            : undefined,
+                          number: schemeAct?.number,
                           date: to,
                           contractor,
                           customer: partyNames.customer,
@@ -1435,6 +1456,14 @@ export default function DocsView({
                     ? ` по факту (по проекту ${(scheme.projectM / 1000).toFixed(2).replace('.', ',')} км)`
                     : ` по проекту (по факту ${(scheme.factM / 1000).toFixed(2).replace('.', ',')} км)`)
                   : ''}.
+              </div>
+            )}
+            {scheme && scheme.lengths === 'sphere' && (
+              <div className="text-[11px] text-[var(--text-muted)]">
+                Лист датирован раньше {fmtDate(ELLIPSOID_SINCE)}
+                {schemeAct?.date ? ` (акт от ${fmtDate(schemeAct.date)})` : ''} — длины по шару, как в
+                подписанных тогда листах. Листы с этого дня меряются по эллипсоиду WGS-84: на
+                0,1–0,3 % длиннее.
               </div>
             )}
             {scheme && scheme.deviations.length > 0 && (

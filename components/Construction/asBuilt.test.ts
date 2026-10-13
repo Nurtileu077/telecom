@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   buildScheme, schemeSvg, schemeDocHtml, schemeDocPage, schemeFileName,
   schemeAttachmentHtml, withSchemeAttached, schemeObjectsFor, displacedMarks,
-  spanMismatches, spanTolerance, unassignedNote,
+  spanMismatches, spanTolerance, unassignedNote, schemeLengthModel, ELLIPSOID_SINCE,
 } from './asBuilt';
+import { ellipsoidM, sphereM } from '@/lib/geodesy';
 import type { SiteObject, PlanRoute } from '@/types/construction';
 import { formatMeters } from './mapDecor';
 
@@ -629,5 +630,48 @@ describe('объекты трассы без папки', () => {
     expect(schemeDocHtml({ scheme: s })).toContain('укажите у них участок «сущ. ОМ - Акбеит»');
     // И с этим участком объект действительно попадает в схему.
     expect(schemeObjectsFor([mufta('сущ. ОМ - Акбеит')], plain).own).toHaveLength(1);
+  });
+});
+
+/**
+ * По шару трасса в 12 км с запада на восток у Астаны выходила на 38 м
+ * короче, чем по эллипсоиду, и эта цифра шла в «Протяжённость» схемы.
+ */
+describe('протяжённость схемы по эллипсоиду', () => {
+  // ≈ 12 км на восток по широте Астаны.
+  const astana: PlanRoute = {
+    ...route(), name: 'Астана — Косшы', coords: [[51.13, 71.43], [51.13, 71.6018]],
+  };
+
+  it('новый лист меряется по эллипсоиду WGS-84 и так и говорит', () => {
+    const s = buildScheme(astana, []);
+    expect(s.lengths).toBe('ellipsoid');
+    expect(s.totalM).toBeCloseTo(ellipsoidM(51.13, 71.43, 51.13, 71.6018), 6);
+    expect(schemeDocHtml({ scheme: s })).toContain('на эллипсоиде WGS-84');
+  });
+
+  it('лист к акту, подписанному до перехода, выходит таким, каким его подписали', () => {
+    const old = buildScheme(astana, [], { lengths: 'sphere' });
+    expect(old.totalM).toBeCloseTo(sphereM(51.13, 71.43, 51.13, 71.6018), 6);
+    expect(Math.round(buildScheme(astana, []).totalM - old.totalM)).toBe(38);
+    expect(schemeDocHtml({ scheme: old })).not.toContain('эллипсоид');
+  });
+
+  it('отметки стоят той же меркой, что и длина: муфта в конце — в конце', () => {
+    const s = buildScheme(astana, [obj({ lat: 51.13, lon: 71.6018, name: 'Муфта у Косшы' })], {
+      lengths: 'sphere',
+    });
+    const m = s.marks.find((x) => x.label === 'Муфта у Косшы')!;
+    expect(m.atM).toBeCloseTo(s.totalM, 3);
+  });
+
+  it('мерку решает дата акта: до перехода — шар, с него и без даты — эллипсоид', () => {
+    expect(ELLIPSOID_SINCE).toBe('2026-10-13');
+    expect(schemeLengthModel('2026-10-12')).toBe('sphere');
+    expect(schemeLengthModel('2026-10-13')).toBe('ellipsoid');
+    expect(schemeLengthModel(undefined)).toBe('ellipsoid');
+    expect(schemeLengthModel('')).toBe('ellipsoid');
+    // Вписанная руками каша датой не считается — лист новый.
+    expect(schemeLengthModel('12.10.2026')).toBe('ellipsoid');
   });
 });

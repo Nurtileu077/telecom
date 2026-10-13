@@ -1,5 +1,5 @@
 import { routeLengthM, pointAtDistanceM } from './routeProgress';
-import { haversineM } from './measureTool';
+import { distanceM as metersBetween } from './measureTool';
 
 /**
  * Где две трассы легли друг на друга.
@@ -137,7 +137,7 @@ export function findOverlaps(
       for (const key of cellKeysAround(p.lat, p.lon, cellM)) {
         for (const q of byCell.get(key) ?? []) {
           if (q.id === r.id || matched.has(q.id)) continue;
-          if (haversineM(p, q) <= toleranceM) matched.add(q.id);
+          if (metersBetween(p, q) <= toleranceM) matched.add(q.id);
         }
       }
       for (const other of matched) {
@@ -198,7 +198,7 @@ export function nearby(
   limit = 8,
 ): NearbyHit[] {
   return items
-    .map((it) => ({ ...it, distanceM: haversineM(at, it) }))
+    .map((it) => ({ ...it, distanceM: metersBetween(at, it) }))
     .filter((it) => it.distanceM <= radiusM)
     .sort((a, b) => a.distanceM - b.distanceM)
     .slice(0, limit);

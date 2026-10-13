@@ -4,6 +4,7 @@ import { routeLengthM, pointAtDistanceM } from './routeProgress';
 import { sliceByDistance } from './routeSegments';
 import { sectionMatchesRoute } from './routeSection';
 import { fmtDate } from './actDocument';
+import { ellipsoidM, type Metric } from '@/lib/geodesy';
 
 /**
  * Отклонения по трассе в исполнительной схеме.
@@ -131,6 +132,7 @@ export function placeDeviations(
   coords: [number, number][],
   deviations: Deviation[],
   maxOffsetM: number,
+  metric: Metric = ellipsoidM,
 ): DeviationLayout {
   const unplaced: string[] = [];
   const candidates: Omit<PlacedDeviation, 'n'>[] = [];
@@ -151,8 +153,8 @@ export function placeDeviations(
     }
     const first = pts[0];
     const last = pts[pts.length - 1];
-    const a = nearestOnRoute(first, coords);
-    const b = nearestOnRoute(last, coords);
+    const a = nearestOnRoute(first, coords, metric);
+    const b = nearestOnRoute(last, coords, metric);
     if (!a || !b) {
       unplaced.push(`${deviationTitle(d)}: у трассы нет линии`);
       continue;
@@ -169,8 +171,8 @@ export function placeDeviations(
     const from = forward ? a : b;
     const to = forward ? b : a;
     const ordered = forward ? pts : [...pts].reverse();
-    const start = pointAtDistanceM(coords, from.atM);
-    const end = pointAtDistanceM(coords, to.atM);
+    const start = pointAtDistanceM(coords, from.atM, metric);
+    const end = pointAtDistanceM(coords, to.atM, metric);
     if (!start || !end) continue;
     candidates.push({
       dev: d,
@@ -226,10 +228,14 @@ export interface SchemeLine {
 }
 
 /** Проектная линия: отклонения только отмечены на ней. */
-export function projectLine(coords: [number, number][], placed: PlacedDeviation[]): SchemeLine {
+export function projectLine(
+  coords: [number, number][],
+  placed: PlacedDeviation[],
+  metric: Metric = ellipsoidM,
+): SchemeLine {
   return {
     coords,
-    totalM: routeLengthM(coords),
+    totalM: routeLengthM(coords, metric),
     toScheme: (m) => m,
     deviations: placed.map((p) => ({ n: p.n, fromM: p.fromM, toM: p.toM })),
   };
@@ -241,7 +247,11 @@ export function projectLine(coords: [number, number][], placed: PlacedDeviation[
  * Объекты, поставленные на обходе, проецируются на неё, а не на проект:
  * муфта у болота стоит на обходе, и на проектной линии ей места нет.
  */
-export function factLine(coords: [number, number][], placed: PlacedDeviation[]): SchemeLine {
+export function factLine(
+  coords: [number, number][],
+  placed: PlacedDeviation[],
+  metric: Metric = ellipsoidM,
+): SchemeLine {
   const out: [number, number][] = [];
   const pieces: { geoFrom: number; geoLen: number; schemeFrom: number; schemeLen: number }[] = [];
   const deviations: DeviationSpan[] = [];
@@ -250,7 +260,7 @@ export function factLine(coords: [number, number][], placed: PlacedDeviation[]):
 
   const push = (pts: [number, number][], schemeLen?: number) => {
     if (pts.length < 2) return;
-    const geoLen = routeLengthM(pts);
+    const geoLen = routeLengthM(pts, metric);
     for (const p of pts) {
       const lastPt = out[out.length - 1];
       if (!lastPt || lastPt[0] !== p[0] || lastPt[1] !== p[1]) out.push(p);
@@ -261,16 +271,16 @@ export function factLine(coords: [number, number][], placed: PlacedDeviation[]):
     scheme += len;
   };
 
-  const total = routeLengthM(coords);
+  const total = routeLengthM(coords, metric);
   let cursor = 0;
   for (const d of placed) {
-    if (d.fromM > cursor) push(sliceByDistance(coords, cursor, d.fromM));
+    if (d.fromM > cursor) push(sliceByDistance(coords, cursor, d.fromM, metric));
     const at = scheme;
     push(d.path, d.factM);
     deviations.push({ n: d.n, fromM: at, toM: scheme });
     cursor = Math.max(cursor, d.toM);
   }
-  if (total > cursor) push(sliceByDistance(coords, cursor, total));
+  if (total > cursor) push(sliceByDistance(coords, cursor, total, metric));
 
   const toScheme = (m: number): number => {
     for (const p of pieces) {

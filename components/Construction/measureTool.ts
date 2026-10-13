@@ -1,4 +1,5 @@
 import { routeLengthM } from './routeProgress';
+import { ellipsoidM, sphereM, type Metric } from '@/lib/geodesy';
 
 /**
  * Померить по карте.
@@ -17,12 +18,14 @@ const rad = (d: number) => (d * Math.PI) / 180;
 
 export interface LatLon { lat: number; lon: number }
 
-export function haversineM(a: LatLon, b: LatLon): number {
-  const dLat = rad(b.lat - a.lat);
-  const dLon = rad(b.lon - a.lon);
-  const h = Math.sin(dLat / 2) ** 2
-    + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+/**
+ * Расстояние между точками — по эллипсоиду WGS-84, как и длина трассы.
+ *
+ * Раньше это был шар, и замер по карте выходил на 0,1–0,3 % короче, чем
+ * та же линия в чужой ГИС у заказчика.
+ */
+export function distanceM(a: LatLon, b: LatLon, metric: Metric = ellipsoidM): number {
+  return metric(a.lat, a.lon, b.lat, b.lon);
 }
 
 /**
@@ -66,17 +69,22 @@ export interface SnapHit {
 }
 
 /** Куда на этой трассе попадает клик. */
-export function nearestOnRoute(p: LatLon, coords: [number, number][]): SnapHit | null {
+export function nearestOnRoute(
+  p: LatLon,
+  coords: [number, number][],
+  metric: Metric = ellipsoidM,
+): SnapHit | null {
   if (coords.length < 2) return null;
   let best: SnapHit | null = null;
   let acc = 0;
   for (let i = 1; i < coords.length; i++) {
-    const seg = haversineM(
+    const seg = distanceM(
       { lat: coords[i - 1][0], lon: coords[i - 1][1] },
       { lat: coords[i][0], lon: coords[i][1] },
+      metric,
     );
     const near = nearestOnSegment(p, coords[i - 1], coords[i]);
-    const dev = haversineM(p, near);
+    const dev = distanceM(p, near, metric);
     if (!best || dev < best.deviationM) {
       best = { lat: near.lat, lon: near.lon, atM: acc + seg * near.t, deviationM: dev, index: i - 1 };
     }
@@ -120,7 +128,7 @@ export interface LineMeasure {
 export function measureLine(coords: [number, number][]): LineMeasure {
   const legs: number[] = [];
   for (let i = 1; i < coords.length; i++) {
-    legs.push(haversineM(
+    legs.push(distanceM(
       { lat: coords[i - 1][0], lon: coords[i - 1][1] },
       { lat: coords[i][0], lon: coords[i][1] },
     ));
@@ -131,7 +139,7 @@ export function measureLine(coords: [number, number][]): LineMeasure {
     totalM: legs.reduce((s, v) => s + v, 0),
     legs,
     straightM: coords.length >= 2
-      ? haversineM({ lat: first[0], lon: first[1] }, { lat: last[0], lon: last[1] })
+      ? distanceM({ lat: first[0], lon: first[1] }, { lat: last[0], lon: last[1] })
       : 0,
   };
 }
@@ -155,7 +163,7 @@ export function measureAlongRoute(
   const toM = Math.max(a.atM, b.atM);
   return {
     alongM: toM - fromM,
-    straightM: haversineM({ lat: a.lat, lon: a.lon }, { lat: b.lat, lon: b.lon }),
+    straightM: distanceM({ lat: a.lat, lon: a.lon }, { lat: b.lat, lon: b.lon }),
     fromM,
     toM,
   };
@@ -218,9 +226,12 @@ export function circleCoords(
   edge: [number, number],
   steps = 48,
 ): [number, number][] {
-  const radius = haversineM(
+  // Круг строится на шаре (градусы из радиуса через R) — и радиус берём
+  // той же меркой, иначе край круга не прошёл бы через точку, где кликнули.
+  const radius = distanceM(
     { lat: center[0], lon: center[1] },
     { lat: edge[0], lon: edge[1] },
+    sphereM,
   );
   if (radius <= 0) return [];
 

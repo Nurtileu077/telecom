@@ -1,6 +1,6 @@
 import { routeLengthM, pointAtDistanceM } from './routeProgress';
 import { sliceByDistance } from './routeSegments';
-import { haversineM } from './measureTool';
+import { distanceM } from './measureTool';
 
 /**
  * Резать и склеивать трассу.
@@ -54,7 +54,7 @@ export interface JoinResult {
 function endsGap(a: [number, number][], b: [number, number][]): number {
   const from = a[a.length - 1];
   const to = b[0];
-  return haversineM({ lat: from[0], lon: from[1] }, { lat: to[0], lon: to[1] });
+  return distanceM({ lat: from[0], lon: from[1] }, { lat: to[0], lon: to[1] });
 }
 
 /**
@@ -77,7 +77,7 @@ function sameLine(a: [number, number][], b: [number, number][], maxGapM: number)
   const ma = pointAtDistanceM(a, la / 2);
   const mb = pointAtDistanceM(b, lb / 2);
   if (!ma || !mb) return false;
-  const between = haversineM(ma, mb);
+  const between = distanceM(ma, mb);
   return between < Math.min(maxGapM, shorter / 4);
 }
 
@@ -144,7 +144,7 @@ export function lineMatch(prev: [number, number][], next: [number, number][]): L
   const lenPrev = routeLengthM(prev);
   const lenNext = routeLengthM(next);
   const tol = Math.min(300, Math.max(50, 0.1 * Math.min(lenPrev, lenNext)));
-  const d = (a: [number, number], b: [number, number]) => haversineM(
+  const d = (a: [number, number], b: [number, number]) => distanceM(
     { lat: a[0], lon: a[1] }, { lat: b[0], lon: b[1] },
   );
   const p0 = prev[0];
@@ -160,8 +160,8 @@ export function lineMatch(prev: [number, number][], next: [number, number][]): L
     const qSame = pointAtDistanceM(next, lenNext / 4);
     const qFlip = pointAtDistanceM(next, (lenNext * 3) / 4);
     if (!qPrev || !qSame || !qFlip) return 'other';
-    const toSame = haversineM(qPrev, qSame);
-    const toFlip = haversineM(qPrev, qFlip);
+    const toSame = distanceM(qPrev, qSame);
+    const toFlip = distanceM(qPrev, qFlip);
     if (Math.abs(toSame - toFlip) < 1) return 'other';
     return toSame < toFlip ? 'same' : 'flipped';
   }

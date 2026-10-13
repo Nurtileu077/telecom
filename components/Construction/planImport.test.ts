@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { polylineLengthM } from './planImport';
+import { routeLengthM } from './routeProgress';
+import { lengthLabels } from './mapDecor';
+import { measureLine } from './measureTool';
+import { ellipsoidM } from '@/lib/geodesy';
 import {
   emptyJournal, addPlanRoutes, removePlanSource, planSources, type JournalState,
 } from './journalStore';
@@ -31,6 +35,20 @@ describe('длина ломаной', () => {
   it('вырожденная линия даёт ноль', () => {
     expect(polylineLengthM([])).toBe(0);
     expect(polylineLengthM([[52, 69]])).toBe(0);
+  });
+
+  /**
+   * Формул длины было пять: при загрузке, в схеме, в подписях на линии,
+   * в замере и при откате. Одна и та же линия называлась разными
+   * длинами, а схема считала по шару — на 0,3 % короче настоящего.
+   */
+  it('загрузка, схема, подписи на линии и замер меряют одной меркой — эллипсоидом', () => {
+    const line: [number, number][] = [[51.13, 71.43], [51.13, 71.6018]];
+    const exact = ellipsoidM(51.13, 71.43, 51.13, 71.6018);
+    expect(polylineLengthM(line)).toBe(Math.round(exact));
+    expect(routeLengthM(line)).toBeCloseTo(exact, 6);
+    expect(lengthLabels(line, { minMeters: 1 })[0].meters).toBeCloseTo(exact, 6);
+    expect(measureLine(line).totalM).toBeCloseTo(exact, 6);
   });
 });
 

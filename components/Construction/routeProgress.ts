@@ -1,4 +1,5 @@
 import { PlanRoute } from '@/types/construction';
+import { ellipsoidM, type Metric } from '@/lib/geodesy';
 
 /**
  * Где остановились вчера и где окажемся сегодня.
@@ -19,21 +20,26 @@ export interface RoutePosition {
   atEnd: boolean;
 }
 
-const R = 6371000;
-
-/** Длина одного звена, метры. Ею же меряют трассу по частям. */
-export function segMeters(a: [number, number], b: [number, number]): number {
-  const dLat = ((b[0] - a[0]) * Math.PI) / 180;
-  const dLon = ((b[1] - a[1]) * Math.PI) / 180;
-  const h = Math.sin(dLat / 2) ** 2
-    + Math.cos((a[0] * Math.PI) / 180) * Math.cos((b[0] * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+/**
+ * Длина одного звена, метры. Ею же меряют трассу по частям.
+ *
+ * По эллипсоиду WGS-84 (см. lib/geodesy). Мерку можно передать другую —
+ * шар нужен листам, подписанным до перехода: всё, что считает метры
+ * одного листа, должно мерить одним и тем же, иначе отметки съедут
+ * относительно длины.
+ */
+export function segMeters(
+  a: [number, number],
+  b: [number, number],
+  metric: Metric = ellipsoidM,
+): number {
+  return metric(a[0], a[1], b[0], b[1]);
 }
 
 /** Длина трассы по координатам, метры. */
-export function routeLengthM(coords: [number, number][]): number {
+export function routeLengthM(coords: [number, number][], metric: Metric = ellipsoidM): number {
   let sum = 0;
-  for (let i = 1; i < coords.length; i++) sum += segMeters(coords[i - 1], coords[i]);
+  for (let i = 1; i < coords.length; i++) sum += segMeters(coords[i - 1], coords[i], metric);
   return sum;
 }
 
@@ -47,6 +53,7 @@ export function routeLengthM(coords: [number, number][]): number {
 export function pointAtDistanceM(
   coords: [number, number][],
   meters: number,
+  metric: Metric = ellipsoidM,
 ): RoutePosition | null {
   if (coords.length === 0) return null;
   if (coords.length === 1) {
@@ -58,7 +65,7 @@ export function pointAtDistanceM(
 
   let left = meters;
   for (let i = 1; i < coords.length; i++) {
-    const seg = segMeters(coords[i - 1], coords[i]);
+    const seg = segMeters(coords[i - 1], coords[i], metric);
     if (seg <= 0) continue;
     if (left <= seg) {
       const t = left / seg;
@@ -73,7 +80,7 @@ export function pointAtDistanceM(
   }
 
   const last = coords[coords.length - 1];
-  return { lat: last[0], lon: last[1], doneM: routeLengthM(coords), atEnd: true };
+  return { lat: last[0], lon: last[1], doneM: routeLengthM(coords, metric), atEnd: true };
 }
 
 /** Сколько всего прошли по участку за все дни. */

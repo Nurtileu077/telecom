@@ -2,6 +2,7 @@ import {
   PlanRoute, DailyWorkEntry, LayMethod, LAY_METHODS, LAY_METHOD_LABEL,
 } from '@/types/construction';
 import { pointAtDistanceM, segMeters } from './routeProgress';
+import { ellipsoidM, type Metric } from '@/lib/geodesy';
 import {
   placeShifts, shiftIndex, unplacedRuns, type PlacedShift, type UnplacedRun,
 } from './shiftPlace';
@@ -39,10 +40,11 @@ export function sliceByDistance(
   coords: [number, number][],
   fromM: number,
   toM: number,
+  metric: Metric = ellipsoidM,
 ): [number, number][] {
   if (coords.length < 2 || toM <= fromM) return [];
-  const start = pointAtDistanceM(coords, Math.max(0, fromM));
-  const end = pointAtDistanceM(coords, Math.max(0, toM));
+  const start = pointAtDistanceM(coords, Math.max(0, fromM), metric);
+  const end = pointAtDistanceM(coords, Math.max(0, toM), metric);
   if (!start || !end) return [];
 
   const out: [number, number][] = [[start.lat, start.lon]];
@@ -55,7 +57,7 @@ export function sliceByDistance(
   // перерисовку карты в секунды ожидания.
   let acc = 0;
   for (let i = 1; i < coords.length; i++) {
-    acc += segMeters(coords[i - 1], coords[i]);
+    acc += segMeters(coords[i - 1], coords[i], metric);
     if (acc <= fromM) continue;
     if (acc >= toM) break;
     out.push(coords[i]);

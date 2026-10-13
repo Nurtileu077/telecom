@@ -1,5 +1,6 @@
 import { localDay } from '@/lib/localDay';
 import { DrillLogEntry, CrossingKind, DrillPoint } from '@/types/construction';
+import { routeLengthM } from './routeProgress';
 
 /**
  * Проколы: план и факт.
@@ -21,21 +22,16 @@ export function isDone(d: DrillLogEntry): boolean {
   return d.status !== 'planned';
 }
 
-/** Длина прокола по координатам, метры. */
+/**
+ * Длина прокола по координатам, метры.
+ *
+ * Той же меркой, что и трасса (эллипсоид WGS-84): метры прокола уходят
+ * в смену и в расчёт с подрядчиком, и своя формула шара здесь давала их
+ * короче, чем та же линия в схеме.
+ */
 export function drillLengthM(points: DrillPoint[]): number {
   if (points.length < 2) return 0;
-  const R = 6371000;
-  let sum = 0;
-  for (let i = 1; i < points.length; i++) {
-    const a = points[i - 1];
-    const b = points[i];
-    const dLat = ((b.lat - a.lat) * Math.PI) / 180;
-    const dLon = ((b.lon - a.lon) * Math.PI) / 180;
-    const h = Math.sin(dLat / 2) ** 2
-      + Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
-    sum += R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
-  }
-  return Math.round(sum);
+  return Math.round(routeLengthM(points.map((p) => [p.lat, p.lon] as [number, number])));
 }
 
 export interface DrillPlanFilter {

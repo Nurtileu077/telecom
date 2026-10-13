@@ -4,6 +4,7 @@ import {
   STAGE_LINE_COLOR, PLAN_LINE_COLOR,
 } from './routeStyle';
 import type { PlanRoute, SnpProgress } from '@/types/construction';
+import { routeLengthM } from './routeProgress';
 
 const now = '2026-09-18T00:00:00.000Z';
 const done = { status: 'done' as const, doneAt: now };
@@ -126,10 +127,17 @@ describe('вид трассы', () => {
     expect(v.stage).toBe('mkt');
   });
 
-  it('длина и источник не теряются', () => {
+  it('источник не теряется, а длина — по координатам той же меркой, что и схема', () => {
+    // Записанная длина могла быть посчитана по шару до перехода на
+    // эллипсоид: карточка трассы спорила бы с «Протяжённостью» листа.
     const [v] = routeViews([route()], { progress: [] });
-    expect(v.lengthM).toBe(12000);
+    expect(v.lengthM).toBeCloseTo(routeLengthM(route().coords), 6);
     expect(v.source).toBe('plan.kml');
+  });
+
+  it('у линии из одной точки остаётся записанная длина — считать не по чему', () => {
+    const [v] = routeViews([route({ coords: [[51, 71]] })], { progress: [] });
+    expect(v.lengthM).toBe(12000);
   });
 });
 

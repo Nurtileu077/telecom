@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  haversineM, nearestOnRoute, snapToRoutes, measureLine, measureAlongRoute,
+  distanceM, nearestOnRoute, snapToRoutes, measureLine, measureAlongRoute,
   polygonAreaM2, perimeterM, formatArea, rectCoords, circleCoords,
 } from './measureTool';
 
@@ -21,7 +21,7 @@ describe('nearestOnRoute', () => {
 
   it('знает, сколько метров от начала', () => {
     const hit = nearestOnRoute({ lat: 53, lon: 69.05 }, ELBOW)!;
-    const half = haversineM({ lat: 53, lon: 69 }, { lat: 53, lon: 69.1 }) / 2;
+    const half = distanceM({ lat: 53, lon: 69 }, { lat: 53, lon: 69.1 }) / 2;
     expect(hit.atM).toBeCloseTo(half, 0);
   });
 
@@ -145,7 +145,7 @@ describe('circleCoords', () => {
     const center: [number, number] = [53, 69];
     // Точка примерно в километре к северу.
     const edge: [number, number] = [53 + 1000 / 111_320, 69];
-    const r = haversineM({ lat: center[0], lon: center[1] }, { lat: edge[0], lon: edge[1] });
+    const r = distanceM({ lat: center[0], lon: center[1] }, { lat: edge[0], lon: edge[1] });
     const area = polygonAreaM2(circleCoords(center, edge));
     expect(area).toBeGreaterThan(Math.PI * r * r * 0.99);
     expect(area).toBeLessThan(Math.PI * r * r * 1.001);
@@ -154,7 +154,7 @@ describe('circleCoords', () => {
   it('на широте Казахстана круг остаётся круглым, а не овальным', () => {
     const center: [number, number] = [53, 69];
     const ring = circleCoords(center, [53 + 1000 / 111_320, 69]);
-    const dists = ring.map((p) => haversineM(
+    const dists = ring.map((p) => distanceM(
       { lat: center[0], lon: center[1] }, { lat: p[0], lon: p[1] },
     ));
     const min = Math.min(...dists);

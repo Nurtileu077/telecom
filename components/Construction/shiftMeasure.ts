@@ -1,5 +1,5 @@
 import type { PlanRoute } from '@/types/construction';
-import { haversineM, nearestOnRoute, type LatLon } from './measureTool';
+import { distanceM, nearestOnRoute, type LatLon } from './measureTool';
 
 /**
  * Метры смены, снятые с карты.
@@ -51,7 +51,7 @@ export interface ShiftMeasureOptions {
 /** Ломаная через клики — то, что раньше было единственным ответом. */
 export function polylineM(points: LatLon[]): number {
   let sum = 0;
-  for (let i = 1; i < points.length; i += 1) sum += haversineM(points[i - 1], points[i]);
+  for (let i = 1; i < points.length; i += 1) sum += distanceM(points[i - 1], points[i]);
   return sum;
 }
 

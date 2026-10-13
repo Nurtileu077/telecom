@@ -1,5 +1,5 @@
 import { LayMethod } from '@/types/construction';
-import { routeLengthM } from './routeProgress';
+import { routeLengthM, segMeters } from './routeProgress';
 import { sliceByDistance, METHOD_COLOR } from './routeSegments';
 import { ConstructionLayers, RouteColorMode } from './mapLayers';
 import { STAGE_LINE_COLOR, PLAN_LINE_COLOR } from './routeStyle';
@@ -18,13 +18,9 @@ import { STAGE_LINE_COLOR, PLAN_LINE_COLOR } from './routeStyle';
 const R = 6371000;
 const rad = (d: number) => (d * Math.PI) / 180;
 
-function segMeters(a: [number, number], b: [number, number]): number {
-  const dLat = rad(b[0] - a[0]);
-  const dLon = rad(b[1] - a[1]);
-  const h = Math.sin(dLat / 2) ** 2
-    + Math.cos(rad(a[0])) * Math.cos(rad(b[0])) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
-}
+// Длины звеньев — той же меркой, что и вся трасса (эллипсоид WGS-84):
+// своя копия формулы шара здесь подписывала перегон на 0,3 % короче, чем
+// его же длина в схеме.
 
 /** Куда смотрит отрезок: 0 — на север, 90 — на восток. */
 export function bearingDeg(a: [number, number], b: [number, number]): number {
