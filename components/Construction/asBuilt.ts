@@ -53,7 +53,11 @@ export interface SchemeMark {
    * бы сам с собой.
    */
   chainM: number;
-  /** Пролёт от предыдущей отметки по замеру на объекте — из карточки. */
+  /**
+   * Пролёт по замеру на объекте — из карточки: от предыдущей муфты, ККС,
+   * столба или начала трассы. Концы отклонения в счёт не идут: их ставит
+   * схема, а на земле от них никто не мерил.
+   */
   spanM?: number;
   /** Чем мерили этот пролёт. */
   spanBy?: string;
@@ -98,7 +102,9 @@ export interface Scheme {
     /**
      * Один из концов снят в стороне от линии: длина посчитана по его
      * проекции на трассу и верна не точнее этого смещения. В ведомости
-     * такой пролёт идёт со знаком «≈», а не с точностью до метра.
+     * такой пролёт идёт со знаком «≈», а не с точностью до метра. Так
+     * же идёт и часть замера (`partOf`): где на нём ушли с проекта,
+     * известно только по координатам.
      */
     approx?: boolean;
     /**
@@ -106,6 +112,18 @@ export interface Scheme {
      * координат. Координатная длина остаётся рядом для сверки.
      */
     measured?: { by?: string; mapM: number };
+    /**
+     * Часть замера, через который прошёл конец отклонения.
+     *
+     * Пролёт «Муфта №4 — Муфта №5» меряли на земле целиком, а отметку
+     * начала отклонения посреди него ставит схема. Весь замер на кусок
+     * «Начало отклонения — Муфта №5» не повесишь: лист назвал бы его
+     * длиной 1 000 м там, где 500, и сумма пролётов выросла бы на
+     * столько же. Замер делится между кусками по координатам — вместе
+     * они дают замер; обход целиком, если он внутри, идёт длиной из
+     * протокола. Расхождение замера с координатами — на последнем куске.
+     */
+    partOf?: { from: string; to: string; meters: number; by?: string; mapM: number };
     /** Замер и координаты расходятся больше, чем объясняет погрешность. */
     mismatch?: boolean;
     /** Пролёт лежит внутри отклонения с этим номером. */
@@ -381,12 +399,31 @@ export function buildScheme(
   const devOf = (a: SchemeMark, b: SchemeMark): number | undefined => line.deviations
     .find((d) => a.atM >= d.fromM - 0.01 && b.atM <= d.toM + 0.01)?.n;
 
+  const split = splitMeasuredSpans(marks, new Map(layout.placed.map((p) => [p.n, p.factM])));
+
   const spans: Scheme['spans'] = [];
   for (let i = 1; i < marks.length; i += 1) {
     const mapM = marks[i].atM - marks[i - 1].atM;
     const measuredM = marks[i].spanM;
     const dev = devOf(marks[i - 1], marks[i]);
-    if (measuredM !== undefined) {
+    const piece = split.get(i);
+    if (piece) {
+      // Кусок замера: пустяковый в ведомость не идёт, но последний —
+      // всегда, на нём расхождение замера с координатами.
+      if (piece.part ? piece.meters >= 1 || piece.last : piece.meters >= 1) {
+        spans.push({
+          from: marks[i - 1].label,
+          to: marks[i].label,
+          meters: piece.meters,
+          fromIndex: i - 1,
+          toIndex: i,
+          approx: piece.part ? true : undefined,
+          partOf: piece.part,
+          mismatch: piece.last && piece.mismatch ? true : undefined,
+          dev,
+        });
+      }
+    } else if (measuredM !== undefined) {
       spans.push({
         from: marks[i - 1].label,
         to: marks[i].label,
@@ -412,7 +449,7 @@ export function buildScheme(
     // Отметка встаёт по сумме пролётов до неё: с замером — по замеру.
     const span = spans[spans.length - 1];
     marks[i].chainM = marks[i - 1].chainM
-      + (span && span.toIndex === i ? span.meters : Math.max(0, mapM));
+      + (piece ? piece.meters : span && span.toIndex === i ? span.meters : Math.max(0, mapM));
   }
 
   const chainTotalM = marks.length ? marks[marks.length - 1].chainM : 0;
@@ -435,6 +472,80 @@ export function buildScheme(
     deviationsUnplaced: layout.unplaced,
     deviationsForeign,
   };
+}
+
+interface MeasuredPiece {
+  meters: number;
+  /** Нет — это обход целиком: его длина своя, не из замера. */
+  part?: NonNullable<Scheme['spans'][number]['partOf']>;
+  last?: boolean;
+  mismatch?: boolean;
+}
+
+const isDevEnd = (m: SchemeMark) => m.kind === 'devFrom' || m.kind === 'devTo';
+
+/**
+ * Замеры, через которые прошёл конец отклонения, — по кускам.
+ *
+ * Ключ — номер отметки, которой кусок кончается. Замер отсчитывается от
+ * предыдущей настоящей отметки (объекта или начала трассы). Обход,
+ * лежащий внутри замера целиком, берёт свою длину из протокола — это
+ * тоже замер, мобильной группы, — а остаток делится между прочими
+ * кусками по их длине по координатам. По проекту обход на листе
+ * проектный, но с земли из замера вычитается всё равно фактический.
+ */
+function splitMeasuredSpans(marks: SchemeMark[], devGroundM: Map<number, number>): Map<number, MeasuredPiece> {
+  const out = new Map<number, MeasuredPiece>();
+  for (let i = 1; i < marks.length; i += 1) {
+    const q = marks[i];
+    if (q.spanM === undefined || isDevEnd(q)) continue;
+    let j = i - 1;
+    while (j > 0 && isDevEnd(marks[j])) j -= 1;
+    if (j === i - 1) continue;
+
+    const pieces: { k: number; mapM: number; groundM?: number }[] = [];
+    for (let k = j + 1; k <= i; k += 1) {
+      const a = marks[k - 1];
+      const b = marks[k];
+      const whole = a.kind === 'devFrom' && b.kind === 'devTo' && a.dev === b.dev
+        && a.dev !== undefined && devGroundM.has(a.dev);
+      pieces.push({
+        k,
+        mapM: Math.max(0, b.atM - a.atM),
+        groundM: whole ? devGroundM.get(a.dev!) : undefined,
+      });
+    }
+    const meters = splitMeasured(q.spanM, pieces);
+    const groundMapM = pieces.reduce((sum, p) => sum + (p.groundM ?? p.mapM), 0);
+    const part = { from: marks[j].label, to: q.label, meters: q.spanM, by: q.spanBy, mapM: groundMapM };
+    const mismatch = Math.abs(q.spanM - groundMapM) > spanTolerance(q.spanM);
+    pieces.forEach((p, n) => out.set(p.k, p.groundM !== undefined
+      ? { meters: meters[n] }
+      : { meters: meters[n], part, last: p.k === i, mismatch }));
+  }
+  return out;
+}
+
+/**
+ * Разделить замер между кусками.
+ *
+ * Куски с `groundM` (обход целиком) остаются своей длиной на листе и
+ * забирают из замера `groundM`; остаток — прочим кускам по доле их
+ * длины по координатам. Последний кусок всегда без `groundM`: он
+ * кончается объектом, а не концом обхода.
+ */
+export function splitMeasured(
+  measuredM: number,
+  pieces: { mapM: number; groundM?: number }[],
+): number[] {
+  const fixed = pieces.reduce((s, p) => s + (p.groundM ?? 0), 0);
+  const free = pieces.filter((p) => p.groundM === undefined);
+  const rest = Math.max(0, measuredM - fixed);
+  const weight = free.reduce((s, p) => s + p.mapM, 0);
+  return pieces.map((p) => {
+    if (p.groundM !== undefined) return p.mapM;
+    return weight > 0 ? (rest * p.mapM) / weight : rest / free.length;
+  });
 }
 
 function schemeDeviation(
@@ -464,12 +575,29 @@ export function unassignedNote(s: Pick<Scheme, 'unassigned' | 'section'>): strin
     + `укажите у них участок${s.section ? ` «${s.section}»` : ''}.`;
 }
 
-/** Пролёты по замеру, которые спорят с координатами. */
+/**
+ * Пролёты по замеру, которые спорят с координатами.
+ *
+ * Разделённый концом отклонения замер называется целиком — от муфты до
+ * муфты, как его меряли: сверять человеку запись в карточке, а не кусок,
+ * которого на земле нет.
+ */
 export function spanMismatches(s: Scheme): string[] {
-  return s.spans
-    .filter((sp) => sp.mismatch && sp.measured)
-    .map((sp) => `${sp.from} — ${sp.to}: замер ${Math.round(sp.meters).toLocaleString('ru')} м, `
-      + `по координатам ${Math.round(sp.measured!.mapM).toLocaleString('ru')} м`);
+  const out: string[] = [];
+  for (const sp of s.spans) {
+    if (!sp.mismatch) continue;
+    const whole = sp.partOf
+      ?? (sp.measured ? { from: sp.from, to: sp.to, meters: sp.meters, mapM: sp.measured.mapM } : null);
+    if (!whole) continue;
+    out.push(`${whole.from} — ${whole.to}: замер ${Math.round(whole.meters).toLocaleString('ru')} м, `
+      + `по координатам ${Math.round(whole.mapM).toLocaleString('ru')} м`);
+  }
+  return out;
+}
+
+/** Сколько пролётов из карточек объектов пошло в схему — целых или по кускам. */
+export function measuredCount(s: Pick<Scheme, 'marks'>): number {
+  return objectMarks(s).filter((m) => m.spanM !== undefined).length;
 }
 
 /**
@@ -480,6 +608,10 @@ function spanLabel(sp: Scheme['spans'][number], s: Pick<Scheme, 'mode'>): string
   const base = `${esc(sp.from)} — ${esc(sp.to)}`;
   const notes: string[] = [];
   if (sp.measured) notes.push(`замер${sp.measured.by ? `: ${esc(sp.measured.by)}` : ''}`);
+  if (sp.partOf) {
+    notes.push(`часть замера ${esc(sp.partOf.from)} — ${esc(sp.partOf.to)}, `
+      + `${Math.round(sp.partOf.meters).toLocaleString('ru')} м${sp.partOf.by ? `: ${esc(sp.partOf.by)}` : ''}`);
+  }
   if (sp.dev !== undefined) {
     // По проекту пролёт внутри отклонения — проектный: так и подписываем,
     // иначе его длину примут за фактическую.
@@ -620,9 +752,14 @@ function schemeNotes(s: Scheme, full: boolean): string {
     out.push(`<p class="warn">Замер и координаты расходятся: ${esc(mismatched.join('; '))}. `
       + 'Проверьте запись в карточке объекта или его точку.</p>');
   }
-  if (s.spans.some((sp) => sp.measured)) {
+  if (s.spans.some((sp) => sp.measured || sp.partOf)) {
     out.push('<p class="cap">«Замер» — пролёт по записи в карточке объекта; '
-      + 'остальные длины — по координатам вдоль трассы.</p>');
+      + 'остальные длины — по координатам вдоль трассы.'
+      + (s.spans.some((sp) => sp.partOf)
+        ? ' «Часть замера» — замер, через который прошёл конец отклонения: '
+          + 'он поделён между кусками по координатам и целиком равен записи в карточке.'
+        : '')
+      + '</p>');
   }
   if (objectMarks(s).length === 0 && s.skipped.length === 0) {
     out.push('<p>Объектов участка в журнале нет: на схеме только концы трассы.</p>');
@@ -712,7 +849,8 @@ export function schemeSvg(s: Scheme, width = 1000): string {
     if (!a || !b) return '';
     const cx = (x(a.chainM) + x(b.chainM)) / 2;
     return `<text x="${cx}" y="${y + 20}" text-anchor="middle" font-size="10" fill="#334155">`
-      + `${sp.approx ? '≈ ' : ''}${esc(formatMeters(sp.meters))}${sp.measured ? ' (замер)' : ''}</text>`;
+      + `${sp.approx ? '≈ ' : ''}${esc(formatMeters(sp.meters))}${
+        sp.measured ? ' (замер)' : sp.partOf ? ' (часть замера)' : ''}</text>`;
   }).join('');
 
   // Отклонения: скобка под линией через весь кусок, с длинами. По факту

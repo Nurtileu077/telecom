@@ -37,7 +37,7 @@ import type { FieldPhoto, SpliceRecord } from '@/types/construction';
 import type { SectionActManual } from './sectionAct';
 import {
   buildScheme, schemeDocPage, schemeFileName, withSchemeAttached,
-  schemeObjectsFor, displacedMarks, spanMismatches, unassignedNote, objectMarks,
+  schemeObjectsFor, displacedMarks, spanMismatches, unassignedNote, objectMarks, measuredCount,
   schemeLengthModel, ELLIPSOID_SINCE,
 } from './asBuilt';
 import {
@@ -1447,8 +1447,10 @@ export default function DocsView({
             {scheme && (
               <div className="text-[11px] text-[var(--text-muted)]">
                 Отметок: {scheme.marks.length}, пролётов: {scheme.spans.length}
-                {scheme.spans.some((sp) => sp.measured)
-                  ? ` (по замеру из карточек — ${scheme.spans.filter((sp) => sp.measured).length})`
+                {/* Считаем замеры, а не строки: замер, поделённый концом
+                    отклонения, — это одна запись в карточке, а не две. */}
+                {measuredCount(scheme) > 0
+                  ? ` (по замеру из карточек — ${measuredCount(scheme)})`
                   : ''},
                 {' '}протяжённость {(scheme.totalM / 1000).toFixed(2).replace('.', ',')} км
                 {scheme.deviations.length > 0

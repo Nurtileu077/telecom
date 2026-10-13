@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { Deviation, PlanRoute, SiteObject } from '@/types/construction';
 import {
   buildScheme, schemeDocHtml, schemeAttachmentHtml, schemeSvg, objectMarks,
+  spanMismatches, measuredCount, splitMeasured,
 } from './asBuilt';
 import {
   schemeDeviationsFor, placeDeviations, lengthWithDeviations, factLine,
@@ -243,5 +244,117 @@ describe('длина участка по факту', () => {
     const line = factLine(route().coords, placed);
     expect(line.totalM).toBeCloseTo(lengthWithDeviations(PROJECT, placed), 6);
     expect(line.toScheme(routeLengthM(line.coords))).toBeCloseTo(line.totalM, 6);
+  });
+});
+
+/**
+ * Муфта №5 записана с пролётом от Муфты №4, а между ними схема ставит
+ * начало отклонения. Замер вешался на кусок «Начало отклонения — Муфта
+ * №5», где на земле ничего не мерили: ведомость называла 1 000 м там,
+ * где 500, сумма пролётов росла на столько же, а лист требовал «проверить
+ * запись», которая была верной.
+ */
+describe('замер, через который прошёл конец отклонения', () => {
+  /** Трасса ≈ 3 340 м на восток по экватору. */
+  const long = (): PlanRoute => ({ ...route(), coords: [[0, 0], [0, 0.03]] });
+  /** Обход: с 0,0135° на север на 0,002°, до 0,0225° и обратно; по протоколу 1 450 м. */
+  const bypass = () => dev({
+    lengthM: 1450,
+    coords: [
+      { lat: 0, lon: 0.0135 }, { lat: 0.002, lon: 0.0135 },
+      { lat: 0.002, lon: 0.0225 }, { lat: 0, lon: 0.0225 },
+    ],
+  });
+  const m4 = () => obj(0, 0.009, 'Муфта №4');
+  const mark = (s: ReturnType<typeof buildScheme>, label: string) => s.marks.find((m) => m.label === label)!;
+
+  it('замер считается от прошлой муфты, а не от начала отклонения', () => {
+    // Муфта №5 на обходе: от Муфты №4 ≈ 501 м по проекту и ≈ 424 м обходом.
+    const m5 = { ...obj(0.002, 0.0153, 'Муфта №5'), spanM: 930, spanBy: 'метки трубы' };
+    const s = buildScheme(long(), [m4(), m5], { deviations: [bypass()] });
+    const into = s.spans.filter((sp) => sp.partOf);
+    expect(into.map((sp) => `${sp.from} — ${sp.to}`))
+      .toEqual(['Муфта №4 — Начало отклонения', 'Начало отклонения — Муфта №5']);
+    // Вместе куски дают замер, каждый — по своей доле координат.
+    expect(into[0].meters + into[1].meters).toBeCloseTo(930, 6);
+    const from = mark(s, 'Начало отклонения');
+    const share = (from.atM - mark(s, 'Муфта №4').atM) / (mark(s, 'Муфта №5').atM - mark(s, 'Муфта №4').atM);
+    expect(into[0].meters).toBeCloseTo(930 * share, 6);
+    expect(into.every((sp) => sp.approx && sp.partOf!.from === 'Муфта №4')).toBe(true);
+    // Верная запись спором не называется.
+    expect(spanMismatches(s)).toEqual([]);
+    expect(mark(s, 'Муфта №5').chainM - mark(s, 'Муфта №4').chainM).toBeCloseTo(930, 6);
+  });
+
+  it('сумма пролётов не растёт на кусок до начала отклонения', () => {
+    const m5 = { ...obj(0.002, 0.0153, 'Муфта №5'), spanM: 930 };
+    const s = buildScheme(long(), [m4(), m5], { deviations: [bypass()] });
+    const mapM = mark(s, 'Муфта №5').atM - mark(s, 'Муфта №4').atM;
+    // Раньше: + весь замер поверх куска до отклонения, ≈ 500 м лишних.
+    expect(s.chainTotalM - s.totalM).toBeCloseTo(930 - mapM, 3);
+  });
+
+  it('обход внутри замера идёт длиной из протокола, остальное делится', () => {
+    // Муфта №5 после обхода: 501 + 1 450 + 501 ≈ 2 452 м по земле.
+    const m5 = { ...obj(0, 0.027, 'Муфта №5'), spanM: 2460 };
+    const s = buildScheme(long(), [m4(), m5], { deviations: [bypass()] });
+    const whole = s.spans.find((sp) => sp.from === 'Начало отклонения')!;
+    expect(whole.to).toBe('Конец отклонения');
+    expect(whole.meters).toBeCloseTo(1450, 6);
+    expect(whole.partOf).toBeUndefined();
+    const parts = s.spans.filter((sp) => sp.partOf);
+    expect(parts).toHaveLength(2);
+    expect(parts[0].meters + parts[1].meters).toBeCloseTo(2460 - 1450, 6);
+    expect(mark(s, 'Муфта №5').chainM - mark(s, 'Муфта №4').chainM).toBeCloseTo(2460, 6);
+    expect(spanMismatches(s)).toEqual([]);
+  });
+
+  it('по проекту обход на листе проектный, а из замера вычитается фактический', () => {
+    const m5 = { ...obj(0, 0.027, 'Муфта №5'), spanM: 2460 };
+    const s = buildScheme(long(), [m4(), m5], { deviations: [bypass()], mode: 'project' });
+    const whole = s.spans.find((sp) => sp.from === 'Начало отклонения')!;
+    const projectDev = s.deviations[0].projectM;
+    expect(whole.meters).toBeCloseTo(projectDev, 6);
+    expect(mark(s, 'Муфта №5').chainM - mark(s, 'Муфта №4').chainM).toBeCloseTo(2460 - 1450 + projectDev, 6);
+    expect(spanMismatches(s)).toEqual([]);
+  });
+
+  it('спор замера с координатами называется целиком, от муфты до муфты', () => {
+    const m5 = { ...obj(0.002, 0.0153, 'Муфта №5'), spanM: 2000 };
+    const s = buildScheme(long(), [m4(), m5], { deviations: [bypass()] });
+    expect(spanMismatches(s)).toHaveLength(1);
+    expect(spanMismatches(s)[0]).toMatch(/^Муфта №4 — Муфта №5: замер 2 000 м, по координатам 9\d\d м$/);
+  });
+
+  it('строка ведомости говорит, частью какого замера она является', () => {
+    const m5 = { ...obj(0.002, 0.0153, 'Муфта №5'), spanM: 930, spanBy: 'метки трубы' };
+    const s = buildScheme(long(), [m4(), m5], { deviations: [bypass()] });
+    const html = schemeDocHtml({ scheme: s });
+    expect(html).toContain('часть замера Муфта №4 — Муфта №5, 930 м: метки трубы');
+    expect(html).toContain('«Часть замера»');
+    expect(measuredCount(s)).toBe(1);
+    expect(schemeSvg(s)).toContain('(часть замера)');
+  });
+
+  it('замер без отклонения посредине — прежний, целым пролётом', () => {
+    const m5 = { ...obj(0, 0.012, 'Муфта №5'), spanM: 340 };
+    const s = buildScheme(long(), [m4(), m5], { deviations: [bypass()] });
+    const sp = s.spans.find((x) => x.to === 'Муфта №5')!;
+    expect(sp.from).toBe('Муфта №4');
+    expect(sp.meters).toBe(340);
+    expect(sp.measured).toBeTruthy();
+    expect(sp.partOf).toBeUndefined();
+  });
+});
+
+describe('разделить замер между кусками', () => {
+  it('остаток после обхода — по доле координат', () => {
+    expect(splitMeasured(1000, [{ mapM: 300 }, { mapM: 100 }])).toEqual([750, 250]);
+    expect(splitMeasured(2000, [{ mapM: 300 }, { mapM: 600, groundM: 800 }, { mapM: 300 }]))
+      .toEqual([600, 600, 600]);
+  });
+
+  it('куски нулевой длины по координатам делят замер поровну, а не в NaN', () => {
+    expect(splitMeasured(10, [{ mapM: 0 }, { mapM: 0 }])).toEqual([5, 5]);
   });
 });
