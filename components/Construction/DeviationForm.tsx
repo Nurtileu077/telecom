@@ -5,9 +5,10 @@ import { X, Check, AlertTriangle, FileWarning, Crosshair, MapPin, Loader2 } from
 import { getCurrentPosition, positionErrorText } from './currentPosition';
 import {
   Deviation, DeviationKind, DEVIATION_KIND_LABEL, DEVIATION_REASONS,
-  DESIGN_DEPTH_M, needsProtocol, isKzLat, isKzLon,
+  DESIGN_DEPTH_M, needsProtocol,
 } from '@/types/construction';
-import { JournalState, suggestContractor } from './journalStore';
+import { JournalState, suggestContractor, plural } from './journalStore';
+import { deviationEnds, deviationCoordsToSave } from './deviationCoords';
 import ProjectBadge from './ProjectBadge';
 import { useT } from '@/components/Layout/LangProvider';
 
@@ -47,10 +48,13 @@ export default function DeviationForm({ journal, initial, onSave, onRequestPick,
   const [lengthM, setLengthM] = useState(numToStr(initial?.lengthM));
   const [designDepth, setDesignDepth] = useState(numToStr(initial?.designDepthM ?? DESIGN_DEPTH_M));
   const [actualDepth, setActualDepth] = useState(numToStr(initial?.actualDepthM));
-  const [latA, setLatA] = useState(initial?.coords?.[0] ? String(initial.coords[0].lat) : '');
-  const [lonA, setLonA] = useState(initial?.coords?.[0] ? String(initial.coords[0].lon) : '');
-  const [latB, setLatB] = useState(initial?.coords?.[1] ? String(initial.coords[1].lat) : '');
-  const [lonB, setLonB] = useState(initial?.coords?.[1] ? String(initial.coords[1].lon) : '');
+  // Конец — последняя точка снятой линии, а не вторая: обход, нарисованный
+  // на карте, — это десяток точек, и вторая из них стоит посреди болота.
+  const ends = useMemo(() => deviationEnds(initial?.coords), [initial?.coords]);
+  const [latA, setLatA] = useState(ends.a ? String(ends.a.lat) : '');
+  const [lonA, setLonA] = useState(ends.a ? String(ends.a.lon) : '');
+  const [latB, setLatB] = useState(ends.b ? String(ends.b.lat) : '');
+  const [lonB, setLonB] = useState(ends.b ? String(ends.b.lon) : '');
   const [reason, setReason] = useState(initial?.reason ?? '');
   const [protoNumber, setProtoNumber] = useState(initial?.protocol?.number ?? '');
   const [protoDate, setProtoDate] = useState(initial?.protocol?.date ?? '');
@@ -104,15 +108,12 @@ export default function DeviationForm({ journal, initial, onSave, onRequestPick,
    * Одна точка — отметка на карте, две — отрезок трассы.
    * Проверка по границам Казахстана отсекает опечатки вроде
    * перепутанных широты и долготы.
+   *
+   * Точки между началом и концом, снятые на карте, карточка не
+   * показывает, но и не выбрасывает: протокол МГ вписывают именно
+   * здесь, и обход не должен от этого превращаться в отрезок.
    */
-  const buildCoords = (): { lat: number; lon: number }[] | undefined => {
-    const pts: { lat: number; lon: number }[] = [];
-    const a = { lat: num(latA), lon: num(lonA) };
-    if (isKzLat(a.lat) && isKzLon(a.lon)) pts.push(a);
-    const b = { lat: num(latB), lon: num(lonB) };
-    if (isKzLat(b.lat) && isKzLon(b.lon)) pts.push(b);
-    return pts.length ? pts : undefined;
-  };
+  const buildCoords = () => deviationCoordsToSave(initial?.coords, { latA, lonA, latB, lonB });
 
   const coordsTouched = !!(latA || lonA || latB || lonB);
   const coordsValid = !coordsTouched || !!buildCoords();
@@ -317,7 +318,11 @@ export default function DeviationForm({ journal, initial, onSave, onRequestPick,
               </div>
             </div>
             <p className="text-[10.5px] text-[var(--text-muted)] -mt-1">
-              Одна точка — отметка на карте, две — отрезок трассы.
+              {ends.between > 0
+                ? `Обход нарисован на карте: ${ends.between + 2} ${plural(ends.between + 2, 'точка', 'точки', 'точек')}. `
+                  + 'Здесь правятся начало и конец, '
+                  + 'промежуточные точки сохраняются.'
+                : 'Одна точка — отметка на карте, две — отрезок трассы.'}
               {geoNote && <span className="text-[var(--accent)]"> {geoNote}</span>}
               {coordsTouched && !coordsValid && (
                 <span className="text-[var(--danger)]"> Координаты вне границ Казахстана — проверьте порядок широты и долготы.</span>
