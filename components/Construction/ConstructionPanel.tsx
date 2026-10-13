@@ -1542,6 +1542,10 @@ export default function ConstructionPanel({
             places={mapPlaces}
             from={filter.from ?? ''}
             to={filter.to ?? anchor ?? ''}
+            // Чем сужен `scoped`: отчёт области и отчёт подрядчика должны
+            // называть себя и получать свою ссылку, а не ложиться в общий.
+            oblast={oblast || undefined}
+            onlyContractor={JOURNAL_ROLES[role].ownContractorOnly ? ownContractor || undefined : undefined}
             author={actor}
             onFlash={setFlash}
             onOpenSection={() => setView('closing')}

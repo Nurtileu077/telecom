@@ -3,7 +3,7 @@ import type { Project, CatalogItem } from '@/types/network';
 import { getDefaultOrgId } from '@/lib/orgId';
 import { assertSupabaseAccess } from '@/lib/supabaseAccess';
 import {
-  DOC_BUCKET, docPath, expiresAt, DEFAULT_LINK_LIFE, type LinkLife,
+  DOC_BUCKET, docPath, expiresAt, DEFAULT_LINK_LIFE, type LinkLife, type DocAddress,
 } from '@/lib/docLink';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
@@ -306,14 +306,15 @@ export async function storageDeleteFieldPhoto(storagePath: string): Promise<void
  * что лежит сейчас.
  *
  * Поэтому адрес постоянный, а `upsert` заменяет прежнее. Иначе получится
- * та же пачка файлов, только в облаке.
+ * та же пачка файлов, только в облаке. Адрес — из всего, чем сужен
+ * документ (см. DocAddress): заменять можно только тот же самый отчёт, а
+ * не отчёт другой области, подрядчика или проекта за те же даты.
  *
  * Заказчику аккаунт не нужен: ссылка подписанная и со сроком. Срок нужен
  * потому, что письма пересылают, а папки «Загрузки» живут годами.
  */
 export async function shareDocument(
-  kind: string,
-  subject: string,
+  address: DocAddress,
   ext: string,
   blob: Blob,
   life: LinkLife = DEFAULT_LINK_LIFE,
@@ -326,7 +327,7 @@ export async function shareDocument(
     ?? (await supabase.auth.getSession()).data.session?.user?.app_metadata?.org_id;
   if (!org) throw new Error('Не известна организация: доступ выдаёт тот, кто ведёт журнал в конторе');
 
-  const path = docPath(String(org), kind, subject, ext);
+  const path = docPath(String(org), address, ext);
   const { error } = await supabase.storage
     .from(DOC_BUCKET)
     .upload(path, blob, { contentType: blob.type || 'application/octet-stream', upsert: true });

@@ -104,6 +104,18 @@ describe('periodDocHtml', () => {
     expect(periodDocFile({ report, contractor: 'Дозер' })).toContain('Дозер');
   });
 
+  it('отчёт по области называет область — открывший чужую сразу это видит', () => {
+    expect(periodDocHtml({ report, area: 'Акмолинская область' }))
+      .toContain('Область: <span class="b">Акмолинская область</span>');
+    expect(periodDocFile({ report, area: 'Акмолинская область' }))
+      .toBe('Отчёт Акмолинская область 2026-07-20—2026-07-26.doc');
+  });
+
+  it('отчёт по всем областям строки «Область» не пишет', () => {
+    expect(periodDocHtml({ report })).not.toContain('Область:');
+    expect(periodDocHtml({ report, area: '  ' })).not.toContain('Область:');
+  });
+
   it('страница открывается Word', () => {
     expect(periodDocPage({ report })).toContain('urn:schemas-microsoft-com:office:word');
   });

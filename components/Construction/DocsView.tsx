@@ -53,6 +53,8 @@ import {
 import { htmlToPdfBlob, pdfFileName } from '@/lib/pdf';
 import { shareDocument } from '@/lib/supabase';
 import { journalCloudEnabled } from './journalRemote';
+import { periodDoc, sectionDoc, type DocScope, type SharedDoc } from './docShare';
+import { currentProjectId, projectMeta } from './projects';
 import {
   LINK_LIVES, DEFAULT_LINK_LIFE, lifeByKey, linkMessage, validFor,
 } from '@/lib/docLink';
@@ -102,6 +104,17 @@ interface Props {
    * без этого лист называл бы начало линии не тем селом, что карта.
    */
   places?: Set<string>;
+  /**
+   * Область, которой сужен `journal`; пусто — все. Сам журнал уже сужен,
+   * а здесь она нужна, чтобы назвать её в отчёте и дать отчёту своей
+   * области свою ссылку.
+   */
+  oblast?: string;
+  /**
+   * Подрядчик, которым сужен журнал у субподрядчика (его срез). По той
+   * же причине: отчёт одного подрядчика — не отчёт всех.
+   */
+  onlyContractor?: string;
 }
 
 const DOC_MIME = 'application/msword;charset=utf-8';
@@ -184,6 +197,7 @@ type ZipFolder = { file: (name: string, data: string | Blob) => unknown };
 export default function DocsView({
   journal, from, to, contractor, author, onFlash, onOpenSection, onSetActNumber,
   onChangeActFields, onReverseRoute, onSwapRouteEnds, places: mapPlaces,
+  oblast, onlyContractor,
 }: Props) {
   const [busy, setBusy] = useState(false);
   // Что в последнем пакете осталось неотмеченным или не вошло. Строка-
@@ -202,6 +216,20 @@ export default function DocsView({
   const [link, setLink] = useState<
     { url: string; until: string; text: string; subject: string } | null
   >(null);
+
+  // Чем сужены документы этого экрана: из этого строится и адрес ссылки,
+  // и её заголовок (см. docShare.ts). Проект — тот, чей журнал открыт, а
+  // не последний выбранный: так же решает и запись журнала.
+  const area = oblast?.trim() || undefined;
+  const docScope: DocScope = useMemo(() => {
+    const id = journal.project?.id ?? currentProjectId();
+    return {
+      projectId: id,
+      projectName: journal.project?.name ?? projectMeta(id).name,
+      oblast: area,
+      contractor: contractor || onlyContractor || undefined,
+    };
+  }, [journal.project, area, contractor, onlyContractor]);
   const [format, setFormat] = useState<DocFormat>(() => loadDocFormat());
   const [lang, setLang] = useState<Bilingual>(() => loadBilingual());
   const docTerms = useMemo(() => loadTerms(), []);
@@ -231,6 +259,12 @@ export default function DocsView({
   const pace = useMemo(
     () => paceChange(journal.ground, { from, to, contractor }),
     [journal.ground, from, to, contractor],
+  );
+  // Даты ссылки — те же, что напечатаны в отчёте: при «всё время» начало
+  // периода — первая смена, и письмо не должно говорить другое.
+  const periodShare = useMemo(
+    () => periodDoc(docScope, report.from, report.to),
+    [docScope, report.from, report.to],
   );
   // Неделя сплошного дождя — тоже отчёт: смены простоя в него входят, и
   // кнопка не должна гаснуть только потому, что метров ноль.
@@ -366,12 +400,13 @@ export default function DocsView({
    * и у заказчика их два, а какой верный, видно только по дате письма.
    * Ссылка одна, и по ней всегда то, что лежит сейчас.
    */
-  async function share(kind: string, subject: string, html: string, landscape = false) {
+  async function share(doc: SharedDoc, html: string, landscape = false) {
     setBusy(true);
     try {
+      const subject = doc.title;
       const { blob, ext } = await buildFile(subject, html, landscape);
       const life = lifeByKey(linkLife);
-      const { url, until } = await shareDocument(kind, subject, ext, blob, life);
+      const { url, until } = await shareDocument(doc.address, ext, blob, life);
       const text = linkMessage(subject, url, life, until);
       setLink({ url, until, text, subject });
       try {
@@ -424,8 +459,8 @@ export default function DocsView({
       await put(svod, volumeDocFile({ sheet }), volumeDocPage({ sheet, contractor }));
       await put(
         svod,
-        periodDocFile({ report, contractor }),
-        periodDocPage({ report, pace, contractor, author }),
+        periodDocFile({ report, contractor, area }),
+        periodDocPage({ report, pace, contractor, area, author }),
       );
       await put(svod, 'Справка о готовности.doc',
         wordPage('Справка о готовности', readinessDocHtml(readiness)));
@@ -591,6 +626,24 @@ export default function DocsView({
       ? hiddenWorksInputFor(journal, section, { customer: partyNames.customer, date: to, contractor })
       : null),
     [journal, section, partyNames.customer, to, contractor],
+  );
+  // Ссылка акта — по областям смен самого участка, а не по фильтру: акт
+  // того же села не должен получать вторую ссылку оттого, что его собрали
+  // при выбранной области, а одноимённое село другой области — делить с
+  // ним первую.
+  // Подрядчик в адресе акта — только срез субподрядчика: он и правда
+  // убирает из акта чужие смены. Фильтр подрядчика акт не сужает — акт
+  // участка собирается по всем его сменам, — и с ним тот же акт получил
+  // бы вторую ссылку.
+  const hiddenShare = useMemo(
+    () => (hiddenInput
+      ? sectionDoc(
+        { ...docScope, contractor: onlyContractor || undefined },
+        'акт скрытых работ', 'Акт скрытых работ', section,
+        hiddenInput.rows.map((e) => e.oblast),
+      )
+      : null),
+    [hiddenInput, docScope, onlyContractor, section],
   );
 
   const measured = useMemo(
@@ -831,7 +884,9 @@ export default function DocsView({
           </div>
           <div className="text-[10.5px] text-[var(--text-muted)] leading-snug">
             Соберёте документ заново — по этой же ссылке будет новая версия.
-            Перезапрашивать её заказчику не нужно.
+            Перезапрашивать её заказчику не нужно. Отчёт за другие даты, по
+            другой области, подрядчику или проекту получает свою ссылку и эту
+            не заменит.
           </div>
         </div>
       )}
@@ -841,7 +896,10 @@ export default function DocsView({
         <div className="text-[13px] font-semibold text-[var(--text)]">За период</div>
         <div className="text-[11.5px] text-[var(--text-muted)]">
           {from} — {to}
-          {contractor ? ` · ${contractor}` : ''}
+          {/* Область и подрядчик — те же, что попадут в отчёт и в его
+              ссылку: видно, чей отчёт собирается, до того как он ушёл. */}
+          {area ? ` · ${area}` : ''}
+          {docScope.contractor ? ` · ${docScope.contractor}` : ''}
           {' · '}
           {Math.round(report.meters).toLocaleString('ru')} м за {report.shifts} смен
           {/* Простой называем, а не прячем: заказчик спросит, почему метров
@@ -862,19 +920,18 @@ export default function DocsView({
           <button type="button" className="btn btn-ghost text-[11.5px]"
                   disabled={!anyShift}
                   onClick={() => save(
-                    periodDocFile({ report, contractor }),
-                    periodDocPage({ report, pace, contractor, author }),
+                    periodDocFile({ report, contractor, area }),
+                    periodDocPage({ report, pace, contractor, area, author }),
                   )}>
             <FileDown size={14} />Отчёт за период
           </button>
           {cloudReady && (
             <button type="button" className="btn btn-ghost text-[11.5px]"
                     disabled={busy || !anyShift}
-                    title="Отдать ссылкой: заказчик всегда открывает текущую версию"
+                    title={`Своя ссылка: ${periodShare.title}. Заказчик всегда открывает текущую версию`}
                     onClick={() => share(
-                      'отчёт за период',
-                      `Отчёт за период ${from} — ${to}`,
-                      periodDocPage({ report, pace, contractor, author }),
+                      periodShare,
+                      periodDocPage({ report, pace, contractor, area, author }),
                     )}>
               <LinkIcon size={14} />Ссылкой
             </button>
@@ -884,11 +941,12 @@ export default function DocsView({
                     const w = weekRange(to || localDay());
                     const weekly = periodReport(journal.ground, { ...w, contractor });
                     save(
-                      periodDocFile({ report: weekly, contractor }),
+                      periodDocFile({ report: weekly, contractor, area }),
                       periodDocPage({
                         report: weekly,
                         pace: paceChange(journal.ground, { ...w, contractor }),
                         contractor,
+                        area,
                         author,
                         title: 'НЕДЕЛЬНЫЙ ОТЧЁТ О ВЫПОЛНЕННЫХ РАБОТАХ',
                       }),
@@ -1144,10 +1202,11 @@ export default function DocsView({
               {cloudReady && (
                 <button type="button" className="btn btn-ghost text-[11.5px]"
                         disabled={busy || !hiddenInput || hiddenInput.rows.length === 0}
-                        title="Отдать ссылкой: заказчик всегда открывает текущую версию"
-                        onClick={() => hiddenInput && share(
-                          'акт скрытых работ', `Акт скрытых работ, ${section}`,
-                          hiddenWorksPage(hiddenInput),
+                        title={hiddenShare
+                          ? `Своя ссылка: ${hiddenShare.title}. Заказчик всегда открывает текущую версию`
+                          : 'Отдать ссылкой: заказчик всегда открывает текущую версию'}
+                        onClick={() => hiddenInput && hiddenShare && share(
+                          hiddenShare, hiddenWorksPage(hiddenInput),
                         )}>
                   <LinkIcon size={14} />Ссылкой
                 </button>

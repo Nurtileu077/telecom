@@ -199,6 +199,13 @@ export interface PeriodDocInput {
   pace?: PaceChange | null;
   title?: string;
   contractor?: string;
+  /**
+   * Область, которой сужен отчёт; пусто — все.
+   *
+   * Отчёты двух областей за одни даты иначе ничем не отличаются: заказчик,
+   * открыв чужой, не увидит в нём, что это не его область.
+   */
+  area?: string;
   author?: string;
 }
 
@@ -269,6 +276,7 @@ export function periodDocHtml(input: PeriodDocInput): string {
 
   return `<h1>${esc(title)}</h1>`
     + `<p class="center">за период ${esc(fmtDate(r.from))} — ${esc(fmtDate(r.to))}</p>`
+    + (input.area?.trim() ? `<p>Область: <span class="b">${esc(input.area.trim())}</span></p>` : '')
     + (input.contractor ? `<p>Подрядчик: <span class="b">${esc(input.contractor)}</span></p>` : '')
     + done
     + pace
@@ -306,7 +314,10 @@ ${ACT_DOC_CSS}</style></head>
 
 export function periodDocFile(input: PeriodDocInput): string {
   const who = input.contractor ? ` ${input.contractor}` : '';
-  return `Отчёт${who} ${input.report.from}—${input.report.to}.doc`;
+  // Два отчёта за одни даты по разным областям в «Загрузках» иначе
+  // называются одинаково, и в письмо прикладывают не тот.
+  const where = input.area?.trim() ? ` ${input.area.trim()}` : '';
+  return `Отчёт${where}${who} ${input.report.from}—${input.report.to}.doc`;
 }
 
 // ── Справка о готовности села ────────────────────────────────────────────────
