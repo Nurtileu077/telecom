@@ -10,7 +10,20 @@
  * копия журнала, а страховка от закрытой вкладки.
  */
 
+import { currentProjectId, scopedKey } from './projects';
+
 const PREFIX = 'optiq-draft-';
+
+/**
+ * Черновик — у открытого проекта.
+ *
+ * Недописанная смена по Гипертрассе, предложенная к продолжению в «СНП»,
+ * уйдёт в ведомость сёл: человек видит знакомые цифры и жмёт «продолжить».
+ * У «СНП» ключ прежний — черновик, начатый до обновления, не теряется.
+ */
+function draftKey(key: string): string {
+  return scopedKey(PREFIX + key, currentProjectId());
+}
 
 /** Через сколько черновик считается протухшим. */
 export const DRAFT_TTL_HOURS = 72;
@@ -24,7 +37,7 @@ export function saveDraft<T>(key: string, data: T): void {
   if (typeof window === 'undefined') return;
   try {
     window.localStorage.setItem(
-      PREFIX + key,
+      draftKey(key),
       JSON.stringify({ at: new Date().toISOString(), data } satisfies Draft<T>),
     );
   } catch {
@@ -36,7 +49,7 @@ export function saveDraft<T>(key: string, data: T): void {
 export function loadDraft<T>(key: string, now = new Date()): Draft<T> | null {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = window.localStorage.getItem(PREFIX + key);
+    const raw = window.localStorage.getItem(draftKey(key));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Draft<T>;
     if (!parsed || typeof parsed.at !== 'string') return null;
@@ -54,7 +67,7 @@ export function loadDraft<T>(key: string, now = new Date()): Draft<T> | null {
 
 export function clearDraft(key: string): void {
   if (typeof window === 'undefined') return;
-  try { window.localStorage.removeItem(PREFIX + key); } catch { /* приватный режим */ }
+  try { window.localStorage.removeItem(draftKey(key)); } catch { /* приватный режим */ }
 }
 
 /** Насколько давно черновик — словами, для вопроса «продолжить?». */

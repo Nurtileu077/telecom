@@ -1,5 +1,6 @@
 import type { JournalState } from './journalStore';
 import { emptyJournal, fixList, fixWorkEntry, fixDrillEntry } from './journalStore';
+import { currentProjectId, scopedKey } from './projects';
 
 /**
  * Забрать своё и вернуть обратно.
@@ -207,10 +208,18 @@ export interface ImportRecord {
 const IMPORTS_KEY = 'optiq-imports-v1';
 export const IMPORT_HISTORY_LIMIT = 30;
 
+/**
+ * История загрузок — у открытого проекта: «откуда в журнале Гипертрассы
+ * эти строки» не отвечают загрузками в журнал сёл.
+ */
+function importsKey(): string {
+  return scopedKey(IMPORTS_KEY, currentProjectId());
+}
+
 export function loadImports(): ImportRecord[] {
   if (typeof window === 'undefined') return [];
   try {
-    const v = JSON.parse(window.localStorage.getItem(IMPORTS_KEY) ?? '[]');
+    const v = JSON.parse(window.localStorage.getItem(importsKey()) ?? '[]');
     return Array.isArray(v) ? v : [];
   } catch {
     return [];
@@ -220,7 +229,7 @@ export function loadImports(): ImportRecord[] {
 export function saveImports(list: ImportRecord[]): void {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(IMPORTS_KEY, JSON.stringify(list.slice(0, IMPORT_HISTORY_LIMIT)));
+    window.localStorage.setItem(importsKey(), JSON.stringify(list.slice(0, IMPORT_HISTORY_LIMIT)));
   } catch { /* приватный режим */ }
 }
 

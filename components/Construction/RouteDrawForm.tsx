@@ -5,6 +5,7 @@ import {
   DEVIATION_REASONS, DESIGN_DEPTH_M, type Deviation, type PlanRoute,
 } from '@/types/construction';
 import { JournalState, fmtKm, distinct } from './journalStore';
+import ProjectBadge from './ProjectBadge';
 import { polylineLengthM } from './planImport';
 import { routeViews } from './routeStyle';
 import { effectiveProgress } from './stageDerive';
@@ -118,7 +119,10 @@ export default function RouteDrawForm({
            onClick={(e) => e.stopPropagation()}>
         <header className="flex items-center gap-2 px-4 py-3 border-b border-[var(--border)]">
           <Ruler size={16} className="text-[var(--accent)]" />
-          <h3 className="text-[14px] font-semibold text-[var(--text)] flex-1">Нарисованная линия</h3>
+          <h3 className="text-[14px] font-semibold text-[var(--text)] flex-1">
+            Нарисованная линия
+            <ProjectBadge />
+          </h3>
           <button type="button" onClick={onClose} aria-label="Закрыть"
                   className="btn btn-ghost btn-icon"><X size={16} /></button>
         </header>

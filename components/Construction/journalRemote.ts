@@ -4,7 +4,8 @@ import { assertSupabaseAccess } from '@/lib/supabaseAccess';
 import { JournalState, emptyJournal } from './journalStore';
 import { mergeJournalStates, MergeStats } from './journalSync';
 import {
-  SNP_PROJECT_ID, cloudRowKey, pickProjectRow, projectsFromRows, type BuildProject,
+  SNP_PROJECT_ID, cloudRowKey, pickProjectRow, projectsFromRows, currentProjectId, scopedKey,
+  type BuildProject,
 } from './projects';
 
 /**
@@ -229,11 +230,22 @@ export async function syncJournal(local: JournalState, by: string): Promise<Sync
 
 const LAST_SYNC_KEY = 'optiq-journal-synced-at';
 
+/**
+ * Когда обменивался открытый проект.
+ *
+ * «Синхронизировано в 9:40» на Гипертрассе, которую не отправляли ни
+ * разу, потому что в 9:40 обменивался «СНП», — ровно то, после чего
+ * смены неделю живут на одном телефоне.
+ */
+function lastSyncKey(): string {
+  return scopedKey(LAST_SYNC_KEY, currentProjectId());
+}
+
 export function loadLastSyncAt(): string | null {
   if (typeof window === 'undefined') return null;
-  try { return localStorage.getItem(LAST_SYNC_KEY); } catch { return null; }
+  try { return localStorage.getItem(lastSyncKey()); } catch { return null; }
 }
 
 export function saveLastSyncAt(iso: string): void {
-  try { localStorage.setItem(LAST_SYNC_KEY, iso); } catch { /* приватный режим */ }
+  try { localStorage.setItem(lastSyncKey(), iso); } catch { /* приватный режим */ }
 }

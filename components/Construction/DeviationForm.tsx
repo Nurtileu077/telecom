@@ -8,6 +8,7 @@ import {
   DESIGN_DEPTH_M, needsProtocol, isKzLat, isKzLon,
 } from '@/types/construction';
 import { JournalState, suggestContractor } from './journalStore';
+import ProjectBadge from './ProjectBadge';
 import { useT } from '@/components/Layout/LangProvider';
 
 /**
@@ -189,6 +190,7 @@ export default function DeviationForm({ journal, initial, onSave, onRequestPick,
           <div className="min-w-0">
             <h3 className="text-sm font-semibold text-[var(--text)]">
               {initial ? 'Отклонение от проекта' : 'Зафиксировать отклонение'}
+              <ProjectBadge />
             </h3>
             <p className="text-[11px] text-[var(--text-muted)] truncate">
               {uchastok || 'Выберите участок'}

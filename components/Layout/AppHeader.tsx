@@ -19,6 +19,12 @@ interface Props {
   userRole?: UserRole;
   onUserRoleChange?: (r: UserRole) => void;
   authSlot?: React.ReactNode;
+  /**
+   * Переключатель проектов стройки. Только на стройке: у проектирования
+   * свои проекты сети, и два списка «Проекты» рядом — это повод открыть
+   * не тот.
+   */
+  projectSlot?: React.ReactNode;
   flyTo: ((lat: number, lon: number, zoom?: number) => void) | null;
   totalSubscribers: number;
   totalCableKm: number | string;
@@ -72,6 +78,7 @@ export default function AppHeader(p: Props) {
         </button>
       )}
       <Logo compact />
+      {building && p.projectSlot}
       {!building && (
       <input
         type="text"
@@ -126,9 +133,13 @@ export default function AppHeader(p: Props) {
         <div className="seg shrink-0" title="Рабочее место">
           {(['construction', 'design'] as const).map((w) => (
             <button key={w} type="button" data-active={p.workspace === w}
+                    title={WORKSPACE_SPECS[w].label}
                     onClick={() => p.workspace !== w && p.onWorkspaceChange!(w)}>
               <span className="mr-1">{WORKSPACE_SPECS[w].icon}</span>
-              <span className="hidden sm:inline">{WORKSPACE_SPECS[w].short}</span>
+              {/* Полное «Проектирование» длинное — на узкой шапке остаётся значок. */}
+              <span className={w === 'design' ? 'hidden lg:inline' : 'hidden sm:inline'}>
+                {WORKSPACE_SPECS[w].short}
+              </span>
             </button>
           ))}
         </div>

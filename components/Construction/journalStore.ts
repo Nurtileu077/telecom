@@ -814,17 +814,28 @@ export interface LastContext {
   date?: string;
 }
 
+/**
+ * Подсказка прошлой смены — у каждого проекта своя.
+ *
+ * Вчерашний участок, подрядчик и техника с магистрали, подставленные в
+ * смену сёл, — это смена в чужой ведомости и чужом расчёте с подрядчиком:
+ * поля уже заполнены, и их не перечитывают. У «СНП» ключ прежний.
+ */
+function lastContextKey(): string {
+  return scopedKey(LAST_KEY, currentProjectId());
+}
+
 export function loadLastContext(): LastContext | null {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = localStorage.getItem(LAST_KEY);
+    const raw = window.localStorage.getItem(lastContextKey());
     return raw ? (JSON.parse(raw) as LastContext) : null;
   } catch { return null; }
 }
 
 export function saveLastContext(ctx: LastContext): void {
   if (typeof window === 'undefined') return;
-  try { localStorage.setItem(LAST_KEY, JSON.stringify(ctx)); } catch { /* приватный режим */ }
+  try { window.localStorage.setItem(lastContextKey(), JSON.stringify(ctx)); } catch { /* приватный режим */ }
 }
 
 /** Добавление дневной записи в журнал. */

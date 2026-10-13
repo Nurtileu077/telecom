@@ -44,7 +44,7 @@ import {
 } from '@/components/Construction/journalStore';
 import {
   SNP_PROJECT, loadProjects, saveProjects, currentProject, openProject, projectMeta,
-  addProject, seedContractors, mergeProjectLists, type BuildProject,
+  addProject, renameProject, seedContractors, mergeProjectLists, type BuildProject,
 } from '@/components/Construction/projects';
 import { journalCloudEnabled, listRemoteProjects } from '@/components/Construction/journalRemote';
 import ProjectSwitcher from '@/components/Construction/ProjectSwitcher';
@@ -385,6 +385,27 @@ export default function HomePage() {
     say(note ?? `Открыт проект «${meta.name}»`, note ? 7000 : 2400);
   }, [refreshJournalLayers, say]);
 
+  /**
+   * Переименовать открытый проект.
+   *
+   * Название уезжает и в список, и в журнал проекта: со списком оно
+   * видно в шапке, с журналом — доходит обменом до остальных устройств.
+   */
+  const renameOpenProject = useCallback(() => {
+    const id = buildProject.id;
+    const name = window.prompt('Новое название проекта:', buildProject.name);
+    if (name === null || name.trim() === buildProject.name) return;
+    const res = renameProject(loadProjects(), id, name);
+    if (!res.ok) { say(res.problem, 6000); return; }
+    if (!saveJournal({ ...loadJournal(id), project: res.project }) || !saveProjects(res.list)) {
+      say('Название не сохранилось: в браузере кончилось место.', 7000);
+      return;
+    }
+    setBuildProjects(res.list);
+    setBuildProject(res.project);
+    say(`Проект теперь называется «${res.project.name}»`, 2400);
+  }, [buildProject, say]);
+
   /** Список проектов пополнился из облака: перечитать шапку. */
   const reloadProjects = useCallback(() => {
     setBuildProjects(loadProjects());
@@ -436,6 +457,17 @@ export default function HomePage() {
         + 'Если его уже завели в конторе, получится второй — синхронизируйтесь, прежде чем писать смены.'
       : undefined);
   }, [say, switchProject, reloadProjects]);
+
+  /** Один и тот же переключатель — в шапке карты и в шапке журнала. */
+  const projectSwitcher = (
+    <ProjectSwitcher
+      project={buildProject}
+      projects={buildProjects}
+      onSwitch={switchProject}
+      onCreate={createProject}
+      onRename={renameOpenProject}
+    />
+  );
 
   const handleUpdateArea = useCallback((id: string, coords: [number, number][]) => {
     persist(updateAreaCoords(loadJournal(), id, coords, getActorName() || 'Без имени'));
@@ -1407,6 +1439,7 @@ export default function HomePage() {
       <AppHeader
         workspace={workspace ?? undefined}
         onWorkspaceChange={pickWorkspace}
+        projectSlot={projectSwitcher}
         projectName={net.projectName}
         onProjectNameChange={net.setProjectName}
         projectStatus={net.projectStatus}
@@ -2368,14 +2401,7 @@ export default function HomePage() {
       {showJournal && (
         <ConstructionPanel
           key={buildProject.id}
-          projectSlot={(
-            <ProjectSwitcher
-              project={buildProject}
-              projects={buildProjects}
-              onSwitch={switchProject}
-              onCreate={createProject}
-            />
-          )}
+          projectSlot={projectSwitcher}
           onProjectsChanged={reloadProjects}
           onPlayDay={(date) => { playDay(date); setShowJournal(false); }}
           onShowRoute={showSnpRoute}

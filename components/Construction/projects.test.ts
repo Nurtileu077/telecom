@@ -4,9 +4,13 @@ import {
   projectNameProblem, addProject, seedContractors, newerProject, pickProjectRow,
   loadProjects, saveProjects, currentProjectId, openProject, forgetOpenProject,
   mergeProjectLists, projectsFromRows, duplicateNames, adoptionState, adoptionDue,
-  markAdoptionSeen,
+  markAdoptionSeen, renameProject, projectLabels,
   type BuildProject,
 } from './projects';
+import { saveDraft, loadDraft } from './drafts';
+import { loadLastContext, saveLastContext, type LastContext } from './journalStore';
+import { loadImports, saveImports } from './backup';
+import { loadLastSyncAt, saveLastSyncAt } from './journalRemote';
 import {
   loadJournal, saveJournal, journalKey, newProjectJournal, emptyJournal, mergeJournal,
   DEFAULT_CONTRACTORS,
@@ -20,13 +24,14 @@ import type { DailyWorkEntry } from '@/types/construction';
  */
 function fakeWindow() {
   const store = new Map<string, string>();
-  (globalThis as { window?: unknown }).window = {
-    localStorage: {
-      getItem: (k: string) => store.get(k) ?? null,
-      setItem: (k: string, v: string) => { store.set(k, v); },
-      removeItem: (k: string) => { store.delete(k); },
-    },
+  const localStorage = {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => { store.set(k, v); },
+    removeItem: (k: string) => { store.delete(k); },
   };
+  (globalThis as { window?: unknown }).window = { localStorage };
+  // Отметка обмена читается без window — подставляем и так.
+  (globalThis as { localStorage?: unknown }).localStorage = localStorage;
   return store;
 }
 
@@ -322,5 +327,92 @@ describe('прежний журнал стал «СНП» — сказать о�
     expect(adoptionDue(true)).toBe(true);
     markAdoptionSeen();
     expect(adoptionDue(true)).toBe(false);
+  });
+});
+
+describe('переключатель проектов', () => {
+  it('переименование оставляет тот же проект и ставит время правки', () => {
+    const res = renameProject([SNP_PROJECT, HYPER], HYPER.id, 'Гипертрасса Астана — Алматы',
+      new Date('2026-10-12T04:00:00Z'));
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.project.id).toBe(HYPER.id);
+    expect(res.project.createdAt).toBe(HYPER.createdAt);
+    expect(res.project.updatedAt).toBe('2026-10-12T04:00:00.000Z');
+    expect(res.list.map((p) => p.name)).toEqual(['СНП', 'Гипертрасса Астана — Алматы']);
+  });
+
+  it('«СНП» тоже можно переименовать, номер у него остаётся', () => {
+    const res = renameProject([SNP_PROJECT], SNP_PROJECT_ID, 'СНП 2026 — Транстелеком');
+    expect(res.ok && res.project.id).toBe(SNP_PROJECT_ID);
+  });
+
+  it('в название другого проекта не переименовывает', () => {
+    const res = renameProject([SNP_PROJECT, HYPER], HYPER.id, 'снп');
+    expect(res.ok).toBe(false);
+  });
+
+  it('подписи — просто названия, пока они разные', () => {
+    expect(projectLabels([SNP_PROJECT, HYPER])).toEqual({ snp: 'СНП', 'p-hyper': 'Гипертрасса' });
+  });
+
+  it('две «Гипертрассы» с разных устройств различает по дню заведения', () => {
+    const twin = { ...HYPER, id: 'p-twin', createdAt: '2026-10-06T04:00:00.000Z' };
+    const labels = projectLabels([SNP_PROJECT, HYPER, twin]);
+    expect(labels['p-hyper']).toBe('Гипертрасса · заведён 01.10.2026');
+    expect(labels['p-twin']).toBe('Гипертрасса · заведён 06.10.2026');
+  });
+
+  it('заведённые в один день различает по номеру', () => {
+    const twin = { ...HYPER, id: 'p-twin' };
+    const labels = projectLabels([HYPER, twin]);
+    expect(labels['p-hyper']).not.toBe(labels['p-twin']);
+    expect(labels['p-twin']).toContain('p-twin');
+  });
+});
+
+describe('черновики и подсказки прошлой смены — у своего проекта', () => {
+  const ctx: LastContext = {
+    smu: '', contractor: 'TERRA TECH', oblast: 'Акмолинская область', rayon: 'Зерендинский',
+    uchastok: 'Исаковка', kato: '191', tech: 'МКТ', equipment: { 'кабелеукладчик': 1 },
+  };
+
+  it('недописанная смена сёл не предлагается в Гипертрассе', () => {
+    saveProjects([SNP_PROJECT, HYPER]);
+    saveDraft('day', { uchastok: 'Исаковка', meters: 480 });
+    openProject(HYPER.id);
+    expect(loadDraft('day')).toBeNull();
+    openProject(SNP_PROJECT_ID);
+    expect(loadDraft<{ meters: number }>('day')?.data.meters).toBe(480);
+  });
+
+  it('черновик, начатый до обновления, в «СНП» не теряется', () => {
+    saveDraft('day', { meters: 120 });
+    expect(store.has('optiq-draft-day')).toBe(true);
+  });
+
+  it('вчерашний участок и подрядчик сёл не подставляются в смену магистрали', () => {
+    saveProjects([SNP_PROJECT, HYPER]);
+    saveLastContext(ctx);
+    openProject(HYPER.id);
+    expect(loadLastContext()).toBeNull();
+    saveLastContext({ ...ctx, uchastok: 'Астана — Косшы', contractor: 'Модуль Строй' });
+    openProject(SNP_PROJECT_ID);
+    expect(loadLastContext()?.uchastok).toBe('Исаковка');
+    expect(store.has('optiq-journal-last-v1')).toBe(true);
+  });
+
+  it('время обмена — у проекта, который обменивался', () => {
+    saveProjects([SNP_PROJECT, HYPER]);
+    saveLastSyncAt('2026-10-12T04:40:00.000Z');
+    openProject(HYPER.id);
+    expect(loadLastSyncAt()).toBeNull();
+  });
+
+  it('история загрузок — у своего проекта', () => {
+    saveProjects([SNP_PROJECT, HYPER]);
+    saveImports([{ id: 'i1', at: '2026-10-01T00:00:00.000Z', file: 'сёла.xlsx', counts: {} }]);
+    openProject(HYPER.id);
+    expect(loadImports()).toEqual([]);
   });
 });

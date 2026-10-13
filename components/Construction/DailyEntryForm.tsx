@@ -13,6 +13,7 @@ import {
   suggestContractor, smuList,
 } from './journalStore';
 import PhotoAttach from './PhotoAttach';
+import ProjectBadge from './ProjectBadge';
 import { photosOf } from './photoStore';
 import { routeOfSection } from './routeSection';
 import { proposeStop, shiftsOnRoute, describeStop } from './shiftPlace';
@@ -595,6 +596,7 @@ export default function DailyEntryForm({
           <div className="min-w-0">
             <h3 className="text-sm font-semibold text-[var(--text)]">
               {correcting ? 'Исправить отчёт' : 'Закрыть день'}
+              <ProjectBadge />
             </h3>
             <p className="text-[11px] text-[var(--text-muted)] truncate">
               {correcting

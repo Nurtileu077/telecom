@@ -18,6 +18,10 @@ import type { Contractor } from '@/types/construction';
  * список. Подрядчики переходят с объекта на объект, но «под кем» и в
  * каком районе они работают — у каждого договора своё, поэтому новый
  * проект получает из справочника только сами компании (seedContractors).
+ *
+ * «Проект» здесь — договор стройки, а не «Проектирование»: так их зовут
+ * на объекте («работает на двух проектах»), поэтому рабочее место
+ * проектировщика в шапке названо полным словом, а не «Проект».
  */
 
 export interface BuildProject {
@@ -119,6 +123,57 @@ export function addProject(
   const at = now.toISOString();
   const project: BuildProject = { id, name: name.trim(), createdAt: at, updatedAt: at };
   return { ok: true, list: [...withSnp(list), project], project };
+}
+
+/**
+ * Переименовать проект.
+ *
+ * Номер не меняется — меняется только то, что видно в шапке и в
+ * документах; время правки уезжает с журналом, и обмен донесёт новое
+ * название до остальных устройств.
+ */
+export function renameProject(
+  list: BuildProject[], id: string, name: string, now = new Date(),
+): ProjectEdit {
+  const base = withSnp(list);
+  const old = base.find((p) => p.id === id);
+  if (!old) return { ok: false, problem: 'Такого проекта нет на этом устройстве' };
+  const problem = projectNameProblem(base, name, id);
+  if (problem) return { ok: false, problem };
+  const project: BuildProject = { ...old, name: name.trim(), updatedAt: now.toISOString() };
+  return { ok: true, list: base.map((p) => (p.id === id ? project : p)), project };
+}
+
+/**
+ * Как подписать проекты в переключателе.
+ *
+ * Обычно — названием. Но если без связи один и тот же проект завели на
+ * двух устройствах, в списке окажутся две «Гипертрассы», и выбрать
+ * «не ту» — ровно та ошибка, ради которой переключатель стоит на виду.
+ * Тогда к названию добавляется, когда проект завели.
+ */
+export function projectLabels(list: BuildProject[]): Record<string, string> {
+  const count = new Map<string, number>();
+  for (const p of list) {
+    const k = normProjectName(p.name);
+    count.set(k, (count.get(k) ?? 0) + 1);
+  }
+  const out: Record<string, string> = {};
+  const used = new Map<string, number>();
+  for (const p of list) {
+    if ((count.get(normProjectName(p.name)) ?? 0) < 2) { out[p.id] = p.name; continue; }
+    const day = p.createdAt ? new Date(p.createdAt) : null;
+    out[p.id] = day && Number.isFinite(day.getTime())
+      ? `${p.name} · заведён ${day.toLocaleDateString('ru')}`
+      : `${p.name} · ${p.id}`;
+    used.set(out[p.id], (used.get(out[p.id]) ?? 0) + 1);
+  }
+  // Завели в один день — различаем по номеру: одинаковые строки в
+  // списке ничем не лучше одинаковых названий.
+  for (const p of list) {
+    if ((used.get(out[p.id]) ?? 0) > 1) out[p.id] = `${out[p.id]} · ${p.id}`;
+  }
+  return out;
 }
 
 /** «СНП» есть всегда и стоит первым: в нём прежний журнал. */

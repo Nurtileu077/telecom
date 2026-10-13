@@ -7,6 +7,7 @@ import {
   CREW_KINDS, CREW_KIND_LIST, CREW_STATUS, EQUIPMENT_KINDS,
 } from '@/types/construction';
 import { JournalState, suggestContractor } from './journalStore';
+import ProjectBadge from './ProjectBadge';
 import Glyph from '@/components/Layout/Glyph';
 import { useT } from '@/components/Layout/LangProvider';
 
@@ -120,6 +121,7 @@ export default function CrewForm({ journal, initial, onSave, onRequestPick, onCl
           <div className="min-w-0">
             <h3 className="text-sm font-semibold text-[var(--text)]">
               {initial ? 'Колонна' : 'Новая колонна'}
+              <ProjectBadge />
             </h3>
             <p className="text-[11px] text-[var(--text-muted)] truncate">
               {name || 'Укажите название'} · в строю {onDuty} из {members.length}

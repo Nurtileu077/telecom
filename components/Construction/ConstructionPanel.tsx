@@ -475,7 +475,8 @@ export default function ConstructionPanel({
     const twice = duplicateNames(merged.list);
     if (twice.length) {
       notes.push(`Два проекта с одним названием: ${twice.map((n) => `«${n}»`).join(', ')} — `
-        + 'их завели на разных устройствах, и смены по ним расходятся. Пишите в один.');
+        + 'их завели на разных устройствах, и смены по ним расходятся. Пишите в один, '
+        + 'второй переименуйте в переключателе проектов, чтобы не путать.');
     }
     return notes.length ? ` ${notes.join(' ')}` : '';
   }, [actor, onProjectsChanged]);
