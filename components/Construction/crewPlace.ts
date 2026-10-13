@@ -1,8 +1,12 @@
 import {
   Crew, DailyWorkEntry, AerialWorkEntry, DrillLogEntry, PlanRoute, SnpProgress, MapArea,
+  SettlementOrder,
 } from '@/types/construction';
 import { placeFinder, SnpMapContext } from './snpMap';
-import { routeViews } from './routeStyle';
+import type { RouteView } from './routeStyle';
+import { crewOf } from './shiftPlace';
+import { shiftLines } from './shiftLines';
+import { pointAtDistanceM } from './routeProgress';
 
 /**
  * Колонна встаёт туда, откуда она отчиталась.
@@ -11,6 +15,13 @@ import { routeViews } from './routeStyle';
  * замрут на месте первой расстановки и начнут врать. А отчёт бригада и
  * так сдаёт ежедневно, и в нём написано, на каком участке она работала.
  * Значит, место колонны уже известно: его нужно взять, а не спрашивать.
+ *
+ * Место на линии у каждой колонны своё — тем же счётом, что и закраска
+ * (см. shiftPlace): где кончилась её последняя смена с известным местом.
+ * Раньше точка бралась одна на село, и две бригады, идущие навстречу, на
+ * карте стояли в одной точке, где нет ни одной. А на магистрали между
+ * сёлами КАТО нет вовсе, и «остановились здесь» там молча пропадало: точка
+ * хранилась по селу. Теперь место берётся из самих смен и их линий.
  *
  * Ручная расстановка не отменяется: если колонну передвинули позже, чем
  * пришёл последний отчёт, остаётся рука. Отчёт новее — побеждает отчёт.
@@ -31,6 +42,16 @@ export interface CrewPlacement {
   kato?: string;
   oblast?: string;
   rayon?: string;
+  /** Линия, на которой стоит колонна, и метры от её начала. */
+  routeId?: string;
+  atM?: number;
+  /** Идёт к началу линии. */
+  back?: boolean;
+  /**
+   * Смена, которой кончилось это место: перетащить метку колонны по её
+   * линии — значит поправить «остановились здесь» этой смены.
+   */
+  entryId?: string;
 }
 
 /**
@@ -56,13 +77,13 @@ export interface CrewPlaceContext extends SnpMapContext {
   ground: DailyWorkEntry[];
   aerial: AerialWorkEntry[];
   drills: DrillLogEntry[];
-  /** Докуда дошли по трассе — точка вернее центра села. */
-  sectionProgress?: Record<string, { lat: number; lon: number; date: string; doneM: number }>;
   /** Трассы — по ним видно, куда колонна идёт. */
   planRoutes?: PlanRoute[];
   progress?: SnpProgress[];
   /** Обводки сёл и районов — по ним среди сёл-тёзок видно, чья трасса. */
   areas?: MapArea[];
+  /** Реестр: сёла из него узнаются в названиях трасс так же, как на карте. */
+  orders?: SettlementOrder[];
 }
 
 /** Сопоставление «эта запись — про эту колонну». */
@@ -88,24 +109,32 @@ interface Visit {
   rayon?: string;
   column?: string;
   contractor?: string;
+  /** Смена подземки — по ней ищется место на линии. */
+  ground?: DailyWorkEntry;
 }
 
-function visits(ctx: CrewPlaceContext): Visit[] {
+function visits(ctx: CrewPlaceContext, live: Set<string>): Visit[] {
   const out: Visit[] = [];
   const push = (e: {
     date: string; kato: string; uchastok: string; oblast?: string;
     rayon?: string; column?: string; contractor?: string;
-  }) => {
-    if (!e.date || !e.kato) return;
+  }, ground?: DailyWorkEntry) => {
+    // Без КАТО смена тоже говорит, где колонна, если отмечена на линии:
+    // на магистрали между сёлами КАТО нет вовсе.
+    const onLine = !!ground?.stop?.routeId && live.has(ground.stop.routeId);
+    if (!e.date || (!e.kato && !onLine)) return;
     out.push({
       date: e.date, kato: e.kato, uchastok: e.uchastok,
-      oblast: e.oblast, rayon: e.rayon, column: e.column, contractor: e.contractor,
+      oblast: e.oblast, rayon: e.rayon, column: e.column, contractor: e.contractor, ground,
     });
   };
-  for (const e of ctx.ground) push(e);
+  for (const e of ctx.ground) push(e, e);
   for (const a of ctx.aerial) push(a);
   for (const d of ctx.drills) push(d);
-  return out.sort((a, b) => b.date.localeCompare(a.date));
+  // В один день — подземка с отметкой раньше прочего: по ней место точнее.
+  return out.sort((a, b) => b.date.localeCompare(a.date)
+    || Number(!!b.ground?.stop) - Number(!!a.ground?.stop)
+    || (b.ground?.createdAt ?? '').localeCompare(a.ground?.createdAt ?? ''));
 }
 
 /**
@@ -117,25 +146,38 @@ function reportMoment(date: string): string {
 }
 
 /**
- * Трасса, по которой сейчас идёт колонна, — основная линия села.
- * Отводов и вариантов на селе несколько, но едет колонна по основной.
+ * Места колонн на линиях — одним расчётом на всех: по линии placeShifts
+ * считается один раз, а колонн на ней бывает несколько.
  */
-function tripFinder(ctx: CrewPlaceContext) {
-  const routes = ctx.planRoutes ?? [];
-  if (routes.length === 0) return () => undefined;
-  const views = routeViews(routes, {
-    progress: ctx.progress ?? [], areas: ctx.areas, drills: ctx.drills,
-  });
-  const byKato = new Map<string, (typeof views)[number]>();
-  for (const v of views) {
-    if (v.kato && !v.side) byKato.set(v.kato, v);
-  }
-
-  return (kato: string, doneM?: number): CrewTrip | undefined => {
-    const v = byKato.get(kato);
-    if (!v) return undefined;
-    const left = doneM === undefined ? undefined : Math.max(0, Math.round(v.lengthM - doneM));
-    return { from: v.from, to: v.to, route: v.name, leftM: left };
+function lineFinder(ctx: CrewPlaceContext) {
+  const lines = shiftLines({ ...ctx, planRoutes: ctx.planRoutes ?? [] });
+  return {
+    progress: lines.progress,
+    /** Где на линии стоит колонна этой смены — или null, если места она не называла. */
+    at(e: DailyWorkEntry): {
+      route: PlanRoute; view?: RouteView; atM: number; back: boolean; entryId?: string;
+    } | null {
+      const routeId = lines.lineOf(e);
+      if (!routeId) return null;
+      const pl = lines.placement(routeId);
+      const crew = crewOf(e);
+      const atM = pl?.endByCrew.get(crew);
+      const route = lines.route(routeId);
+      if (!pl || atM === undefined || !route) return null;
+      const mine = pl.placed.filter((p) => p.crew === crew);
+      return {
+        route,
+        view: lines.view(routeId),
+        atM,
+        back: pl.backByCrew.has(crew),
+        entryId: mine[mine.length - 1]?.entryId,
+      };
+    },
+    /** Основная линия села — куда колонна идёт, если места на линии не знаем. */
+    mainOf(kato: string): RouteView | undefined {
+      const id = lines.mainOf(kato);
+      return id ? lines.view(id) : undefined;
+    },
   };
 }
 
@@ -143,9 +185,9 @@ export function placeCrews(
   crews: Crew[],
   ctx: CrewPlaceContext,
 ): (Crew & { placement?: CrewPlacement; trip?: CrewTrip })[] {
-  const findPlace = placeFinder(ctx);
-  const findTrip = tripFinder(ctx);
-  const all = visits(ctx);
+  const lines = lineFinder(ctx);
+  const findPlace = placeFinder({ ...ctx, progress: lines.progress });
+  const all = visits(ctx, new Set((ctx.planRoutes ?? []).map((r) => r.id)));
 
   return crews.map((c) => {
     const last = all.find((v) => matchesCrew(v, c));
@@ -161,18 +203,28 @@ export function placeCrews(
       return { ...c, placement: manual };
     }
 
-    // Продвижение по трассе точнее центра села: колонна стоит там, где
-    // остановилась, а не посередине населённого пункта.
-    const along = ctx.sectionProgress?.[last.kato];
-    const place = along
-      ? { lat: along.lat, lon: along.lon, from: 'drill' as const }
-      : findPlace(last.kato, last.uchastok);
+    // Место на линии точнее центра села: колонна стоит там, где
+    // остановилась, а не посередине населённого пункта. И стоит она там,
+    // где кончилась её смена, — не соседней колонны того же села.
+    const along = last.ground ? lines.at(last.ground) : null;
+    const point = along ? pointAtDistanceM(along.route.coords, along.atM) : null;
+    const place = point
+      ? { lat: point.lat, lon: point.lon }
+      : last.kato ? findPlace(last.kato, last.uchastok) : null;
     if (!place) return manual ? { ...c, placement: manual } : c;
 
     // Откуда вышла: предыдущее село по её же отчётам. Если колонна не
     // переезжала, остаётся начало трассы — оно тоже отвечает на вопрос.
     const prev = all.find((v) => matchesCrew(v, c) && v.kato !== last.kato);
-    const trip = findTrip(last.kato, along?.doneM);
+    const view = along?.view ?? (last.kato ? lines.mainOf(last.kato) : undefined);
+    const back = !!along?.back;
+    const trip: CrewTrip | undefined = view && {
+      // Колонна, идущая к началу линии, идёт к её «откуда».
+      from: back ? view.to : view.from,
+      to: back ? view.from : view.to,
+      route: view.name,
+      leftM: along ? Math.max(0, Math.round(back ? along.atM : view.lengthM - along.atM)) : undefined,
+    };
 
     return {
       ...c,
@@ -187,9 +239,13 @@ export function placeCrews(
       placement: {
         lat: place.lat, lon: place.lon,
         source: along ? 'progress' : 'report',
-        date: along?.date ?? last.date,
-        uchastok: last.uchastok, kato: last.kato,
+        date: last.date,
+        uchastok: last.uchastok, kato: last.kato || undefined,
         oblast: last.oblast, rayon: last.rayon,
+        ...(along ? {
+          routeId: along.route.id, atM: Math.round(along.atM),
+          back: along.back || undefined, entryId: along.entryId,
+        } : {}),
       },
     };
   });

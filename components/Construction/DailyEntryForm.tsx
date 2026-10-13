@@ -394,10 +394,19 @@ export default function DailyEntryForm({
 
   // Считаем от смен своей колонны: вторая колонна на том же селе иначе
   // видела место первой как «прошлая смена кончилась на 9 км».
+  // Куда идёт колонна. По умолчанию — как шла; бригада, идущая навстречу
+  // другой, выбирает «к началу», и её метры откладываются в свою сторону.
+  const [dirChoice, setDirChoice] = useState<boolean | null>(null);
   const proposedStop = useMemo(() => {
     if (correcting || !sectionRoute || totalMeters <= 0) return null;
-    return proposeStop(sectionRoute, routeShifts, totalMeters, date, { contractor, column });
-  }, [correcting, sectionRoute, routeShifts, totalMeters, date, contractor, column]);
+    return proposeStop(
+      sectionRoute, routeShifts, totalMeters, date, { contractor, column }, dirChoice ?? undefined,
+    );
+  }, [correcting, sectionRoute, routeShifts, totalMeters, date, contractor, column, dirChoice]);
+  const sectionEnds = useMemo(
+    () => (sectionRoute ? routeEnds(sectionRoute, placeNames(journal.progress)) : {}),
+    [sectionRoute, journal.progress],
+  );
 
   /** Поставленная рукой точка — куда она легла на линии участка. */
   const picked = useMemo(
@@ -409,16 +418,16 @@ export default function DailyEntryForm({
 
   const stopText = useMemo(() => {
     if (!sectionRoute || !proposedStop) return '';
-    const ends = routeEnds(sectionRoute, placeNames(journal.progress));
     return describeStop({
       routeName: sectionRoute.name || sectionRoute.uchastok || 'трасса',
-      startName: ends.from,
+      startName: sectionEnds.from,
+      endName: sectionEnds.to,
       crewName: crewLabel({ contractor, column }) || undefined,
       proposal: proposedStop,
       addedM: totalMeters,
       picked: picked ? { atM: picked.atM, deviationM: picked.deviationM } : null,
     });
-  }, [sectionRoute, proposedStop, picked, totalMeters, journal.progress, contractor, column]);
+  }, [sectionRoute, sectionEnds, proposedStop, picked, totalMeters, contractor, column]);
 
   // Подрядчик по району — подсказка, а не автозаполнение: район может вести
   // субподрядчик, и решать должен человек.
@@ -607,7 +616,12 @@ export default function DailyEntryForm({
       stop: correcting
         ? (initial?.stop && initial.stop.routeId === sectionRoute?.id ? initial.stop : undefined)
         : stop && stopConfirmed && sectionRoute
-          ? { routeId: sectionRoute.id, lat: stop.lat, lon: stop.lon, manual: !!stopPoint || undefined }
+          ? {
+            routeId: sectionRoute.id, lat: stop.lat, lon: stop.lon, manual: !!stopPoint || undefined,
+            // Направление колонны — в отметке: по нему пойдут и её смены
+            // без отметок, и точка колонны на карте.
+            back: proposedStop?.back || undefined,
+          }
           : undefined,
       createdAt: initial?.createdAt ?? now, updatedAt: now, sync: 'local',
     }),
@@ -918,6 +932,25 @@ export default function DailyEntryForm({
                       ))}
                     </select>
                   </label>
+                )}
+                {/* Направление колонны: две бригады на селе часто идут
+                    навстречу, и метры каждой откладываются в свою сторону. */}
+                {proposedStop && (
+                  <div className="flex items-center gap-1.5 text-[10.5px] text-[var(--text-muted)] flex-wrap">
+                    Идём:
+                    {[false, true].map((b) => (
+                      <button key={String(b)} type="button"
+                              className={`px-1.5 py-0.5 rounded border text-[10.5px] ${
+                                !!proposedStop.back === b
+                                  ? 'border-[var(--accent)] text-[var(--text)]'
+                                  : 'border-[var(--border)]'}`}
+                              onClick={() => { setDirChoice(b); setStopConfirmed(false); }}>
+                        {b
+                          ? `к «${sectionEnds.from || 'началу линии'}»`
+                          : `к «${sectionEnds.to || 'концу линии'}»`}
+                      </button>
+                    ))}
+                  </div>
                 )}
                 {/* Откуда счёт — словами: от начала линии считаем, только
                     пока места не называли, и это допущение, а не знание. */}

@@ -451,3 +451,95 @@ describe('место старым сменам — с карточки трас�
     expect(cannot).not.toContain('Укажите');
   });
 });
+
+/**
+ * Две бригады по селу часто идут навстречу: одна от ОМ, другая от школы.
+ * Пока счёт был один — «от начала линии», — вторая без отметок уходила от
+ * своего места в обратную сторону.
+ */
+describe('колонна идёт навстречу', () => {
+  const A = { contractor: 'Дозер', column: '1-колонна' };
+  const B = { contractor: 'Дозер', column: '2-колонна' };
+  const toStart = (m: number) => ({ stop: { routeId: 'r1', lat: 51, lon: lonAt(m), manual: true, back: true } });
+
+  it('отметка «к началу» кладёт смену за отметкой, а не перед ней', () => {
+    const pl = placeShifts(route(), [shift('2026-09-01', 1000, { ...B, ...toStart(12000) })]);
+    expect(pl.placed[0].fromM).toBeCloseTo(12000, -1);
+    expect(pl.placed[0].toM).toBeCloseTo(13000, -1);
+    expect(pl.placed[0].back).toBe(true);
+    expect(pl.endByCrew.get(crewOf(B))).toBeCloseTo(12000, -1);
+  });
+
+  it('смены без отметки продолжают к началу, а вторая колонна — от начала, каждая своё', () => {
+    const pl = placeShifts(route(), [
+      shift('2026-09-01', 1000, { ...A, ...agreed() }),
+      shift('2026-09-01', 1000, { ...B, ...toStart(12000), createdAt: '2026-09-01T18:00:00.000Z' }),
+      shift('2026-09-02', 500, A),
+      shift('2026-09-02', 700, { ...B, createdAt: '2026-09-02T18:00:00.000Z' }),
+    ]);
+    expect(pl.endByCrew.get(crewOf(A))).toBe(1500);
+    expect(pl.endByCrew.get(crewOf(B))).toBeCloseTo(11300, -1);
+    expect(pl.backByCrew.has(crewOf(B))).toBe(true);
+    expect(pl.backByCrew.has(crewOf(A))).toBe(false);
+  });
+
+  it('«Верно» колонны навстречу кладёт её смены от конца линии', () => {
+    const pl = placeShifts(route(), [
+      shift('2026-09-01', 400, B),
+      shift('2026-09-02', 300, { ...B, stop: { routeId: 'r1', lat: 51, lon: 71, back: true } }),
+    ]);
+    expect(pl.placed.map((p) => [Math.round(p.fromM), Math.round(p.toM)])).toEqual([
+      [Math.round(TOTAL - 400), Math.round(TOTAL)],
+      [Math.round(TOTAL - 700), Math.round(TOTAL - 400)],
+    ]);
+  });
+
+  it('форма колонны навстречу ведёт точку к началу и говорит, что считает от конца', () => {
+    const p = proposeStop(route(), [], 800, '2026-09-01', B, true)!;
+    expect(p.back).toBe(true);
+    expect(p.atM).toBeCloseTo(TOTAL - 800, 3);
+    const text = describeStop({
+      routeName: 'ОМ — Еленовка', startName: 'ОМ', endName: 'Еленовка',
+      proposal: p, addedM: 800, crewName: crewLabel(B),
+    });
+    expect(text).toContain('считаем от её конца («Еленовка») к началу: до сегодня 0 м, за день 800 м');
+    expect(text).toContain('Начали не с конца');
+  });
+
+  it('форма помнит, куда колонна шла, и продолжает в ту же сторону', () => {
+    const ground = [shift('2026-09-01', 1000, { ...B, ...toStart(12000) })];
+    const p = proposeStop(route(), ground, 500, '2026-09-02', B)!;
+    expect(p.back).toBe(true);
+    expect(p.atM).toBeCloseTo(11500, -1);
+  });
+
+  it('точка рукой у колонны навстречу закрашивает кусок за ней', () => {
+    const p = proposeStop(route(), [], 800, '2026-09-01', B, true)!;
+    const text = describeStop({
+      routeName: 'ОМ — Еленовка', proposal: p, addedM: 800,
+      picked: { atM: 7000, deviationM: 5 },
+    });
+    expect(text).toContain('Закрасим с 7,00 км по 7,80 км');
+  });
+
+  it('с карточки трассы «шли от конца» кладёт смены колонны от конца к началу', () => {
+    const b1 = shift('2026-09-01', 1000, B);
+    const b2 = shift('2026-09-02', 500, B);
+    const j = { ...emptyJournal(), planRoutes: [route()], ground: [b1, b2] };
+    const res = placeRunFrom(j, 'r1', b1.id, 'line-end', { author: 'Инженер', from: 'ОМ', to: 'Еленовка' });
+    if ('error' in res) throw new Error(res.error);
+    const pl = placeShifts(res.state.planRoutes[0], res.state.ground);
+    expect(pl.unplaced).toHaveLength(0);
+    expect(pl.endByCrew.get(crewOf(B))).toBeCloseTo(TOTAL - 1500, 3);
+    expect(res.text).toContain('в сторону «ОМ»');
+  });
+
+  it('с точки на карте «начали здесь, шли к началу» кладёт смены к началу', () => {
+    const b1 = shift('2026-09-01', 1000, B);
+    const r = stopForRunStart(route(), b1, { lat: 51, lon: lonAt(9000), back: true })!;
+    expect(r.stop).toMatchObject({ manual: true, back: true });
+    const pl = placeShifts(route(), [{ ...b1, stop: r.stop }]);
+    expect(pl.placed[0].fromM).toBeCloseTo(8000, -1);
+    expect(pl.placed[0].toM).toBeCloseTo(9000, -1);
+  });
+});

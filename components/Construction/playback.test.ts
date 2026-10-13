@@ -169,3 +169,32 @@ describe('дни для просмотра', () => {
     expect(playableDates({ planRoutes: [], ground: rows }, 10)).toHaveLength(10);
   });
 });
+
+describe('движение колонн навстречу и на магистрали', () => {
+  const TOTAL = routeLengthM(line);
+  const lonAt = (m: number) => 71 + (m / TOTAL) * 0.1;
+
+  it('колонна, идущая к началу линии, едет от дальнего края куска к ближнему', () => {
+    const moves = dayMoves({
+      planRoutes: [route()],
+      ground: [ground({
+        column: '2-колонна',
+        stop: { routeId: 'r1', lat: 51, lon: lonAt(5000), manual: true, back: true },
+      })],
+    }, '2026-09-10');
+    expect(moves).toHaveLength(1);
+    expect(moves[0].beforeM).toBeCloseTo(6000, -1);
+    expect(moves[0].from.lon).toBeGreaterThan(moves[0].to.lon);
+  });
+
+  it('смена без КАТО на магистрали тоже едет — по своей отметке', () => {
+    const moves = dayMoves({
+      planRoutes: [route({ id: 't1', name: 'Астана — Алматы', uchastok: undefined })],
+      ground: [ground({
+        kato: '', uchastok: 'Магистраль',
+        stop: { routeId: 't1', lat: 51, lon: lonAt(3000), manual: true },
+      })],
+    }, '2026-09-10');
+    expect(moves.map((m) => m.routeId)).toEqual(['t1']);
+  });
+});

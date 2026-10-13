@@ -51,6 +51,7 @@ import ProjectSwitcher from '@/components/Construction/ProjectSwitcher';
 import { snpMapPoints, type SnpMapPoint } from '@/components/Construction/snpMap';
 import { effectiveProgress } from '@/components/Construction/stageDerive';
 import { placeCrews, type CrewPlacement, type CrewTrip } from '@/components/Construction/crewPlace';
+import type { RunStart } from '@/components/Construction/shiftPlace';
 import { crewsFromJournal } from '@/components/Construction/crewDerive';
 import { areaMapItems, type AreaMapItem } from '@/components/Construction/areaProgress';
 import {
@@ -329,7 +330,7 @@ export default function HomePage() {
   const playDay = useCallback((date: string) => {
     const j = loadJournal();
     setPlaybackDate(date);
-    setPlaybackMoves(dayMoves({ ground: j.ground, planRoutes: j.planRoutes }, date));
+    setPlaybackMoves(dayMoves(j, date));
   }, []);
   const [siteObjects, setSiteObjects] = useState<SiteObject[]>([]);
   // Аварии на карте: открытая горит, место с повтором обведено кольцом.
@@ -752,13 +753,13 @@ export default function HomePage() {
    * оставались штрихом без всякой возможности это исправить.
    */
   const handlePlaceShifts = useCallback(async (
-    routeId: string, entryId: string, how: 'line' | 'pick',
+    routeId: string, entryId: string, how: 'line' | 'line-end' | 'pick' | 'pick-back',
   ) => {
-    let start: { lat: number; lon: number } | 'line' = 'line';
-    if (how === 'pick') {
+    let start: RunStart = how === 'line-end' ? 'line-end' : 'line';
+    if (how === 'pick' || how === 'pick-back') {
       const p = await requestPickOnMap('откуда колонна начала', false);
       if (!p) return;
-      start = p;
+      start = { ...p, back: how === 'pick-back' || undefined };
     }
     // Журнал берём после выбора точки: пока человек целился, могла
     // прийти смена с другого устройства.

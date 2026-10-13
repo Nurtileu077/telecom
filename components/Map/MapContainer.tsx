@@ -271,6 +271,9 @@ function cachedTileLayer(L: any, url: string, opts: any): any {
   return new Cached(url, opts);
 }
 
+/** Откуда колонна начала: от начала линии, от её конца или с точки — и куда пошла. */
+type PlaceHow = 'line' | 'line-end' | 'pick' | 'pick-back';
+
 interface Props {
   districts: District[];
   cables: Cable[];
@@ -406,7 +409,7 @@ interface Props {
    * Назначить место сменам колонны, пройденным без него: от начала линии
    * или от точки, которую укажут на карте.
    */
-  onPlaceShifts?: (routeId: string, entryId: string, how: 'line' | 'pick') => void;
+  onPlaceShifts?: (routeId: string, entryId: string, how: PlaceHow) => void;
   /** Отклонения от проекта — глубина и трасса — как контекст на карте. */
   deviations?: import('@/components/Construction/journalStore').DeviationMapItem[];
   /** Колонны на карте: где стоит бригада, чем занята, каким составом. */
@@ -1997,13 +2000,23 @@ export default function LeafletMap(props: Props) {
             + '</div>'
             + runs.map((run, i) => (
               `<div style="margin-top:4px;font-size:11px;color:#e2e8f0;max-width:260px">${esc(describeRun(run))}</div>`
+              // Две колонны идут по селу навстречу: одна от начала линии,
+              // другая от конца, — у каждой своё направление.
               + '<div style="margin-top:2px;display:flex;gap:6px;flex-wrap:wrap">'
               + `<button onclick="window.__optiqPlaceShifts__('${esc(r.id)}',${i},'line')"
                    style="padding:3px 8px;background:transparent;color:#2dd4bf;border:1px solid #2dd4bf;border-radius:3px;font-size:10px;cursor:pointer">
                    Шли от «${esc(r.from || 'начала линии')}»</button>`
+              + `<button onclick="window.__optiqPlaceShifts__('${esc(r.id)}',${i},'line-end')"
+                   style="padding:3px 8px;background:transparent;color:#2dd4bf;border:1px solid #2dd4bf;border-radius:3px;font-size:10px;cursor:pointer">
+                   Шли от «${esc(r.to || 'конца линии')}»</button>`
+              + '</div>'
+              + '<div style="margin-top:3px;display:flex;gap:6px;flex-wrap:wrap">'
               + `<button onclick="window.__optiqPlaceShifts__('${esc(r.id)}',${i},'pick')"
                    style="padding:3px 8px;background:#2dd4bf;color:#041016;border:none;border-radius:3px;font-size:10px;cursor:pointer;font-weight:600">
-                   📍 Указать, откуда начали</button>`
+                   📍 Начали здесь → «${esc(r.to || 'конец линии')}»</button>`
+              + `<button onclick="window.__optiqPlaceShifts__('${esc(r.id)}',${i},'pick-back')"
+                   style="padding:3px 8px;background:#2dd4bf;color:#041016;border:none;border-radius:3px;font-size:10px;cursor:pointer;font-weight:600">
+                   📍 Начали здесь → «${esc(r.from || 'начало линии')}»</button>`
               + '</div>'
             )).join('')
           : '';
@@ -3578,7 +3591,7 @@ export default function LeafletMap(props: Props) {
     };
     // Номер колонны в карточке, а не id смены: id из загруженной таблицы
     // может нести кавычку, и строка обработчика в разметке сломалась бы.
-    (window as any).__optiqPlaceShifts__ = (routeId: string, i: number, how: 'line' | 'pick') => {
+    (window as any).__optiqPlaceShifts__ = (routeId: string, i: number, how: PlaceHow) => {
       mapRef.current?.closePopup?.();
       const run = (propsRef.current.routeUnplaced ?? [])
         .find((u) => u.routeId === routeId)?.runs[i];

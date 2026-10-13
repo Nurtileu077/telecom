@@ -10,7 +10,7 @@ import { haversineM } from '@/components/Network/KMeans';
 import { splitRoute, joinRoutes, joinedName, splitNames, lineMatch } from './routeEdit';
 import { pointAtDistanceM, routeLengthM, type SectionProgress } from './routeProgress';
 import {
-  shiftsOnRoute, stopPositionM, stopForRunStart, crewLabel, describeRunPlaced,
+  shiftsOnRoute, stopPositionM, stopForRunStart, crewLabel, describeRunPlaced, type RunStart,
 } from './shiftPlace';
 import {
   SNP_PROJECT_ID, currentProjectId, projectMeta, scopedKey, newerProject,
@@ -2534,7 +2534,7 @@ export function placeRunFrom(
   base: JournalState,
   routeId: string,
   entryId: string,
-  start: { lat: number; lon: number } | 'line',
+  start: RunStart,
   ctx: { author: string; to?: string; from?: string },
 ): { state: JournalState; text: string } | { error: string } {
   const route = base.planRoutes.find((r) => r.id === routeId);
@@ -2543,9 +2543,13 @@ export function placeRunFrom(
   const r = stopForRunStart(route, first, start);
   if (!r) return { error: 'На линии меньше двух точек — откладывать смены не по чему.' };
   const crewName = crewLabel(first);
+  // Навстречу — к началу линии: туда и называем направление.
+  const back = !!r.stop.back;
   const where = start === 'line'
     ? `от «${ctx.from || 'начала линии'}»`
-    : `от ${(r.fromM / 1000).toFixed(2).replace('.', ',')} км`;
+    : start === 'line-end'
+      ? `от «${ctx.to || 'конца линии'}»`
+      : `от ${(r.fromM / 1000).toFixed(2).replace('.', ',')} км${back ? ' к началу линии' : ''}`;
   const state = setRunStart(base, entryId, r.stop, {
     author: ctx.author,
     target: route.name || route.uchastok || 'трасса',
@@ -2553,7 +2557,9 @@ export function placeRunFrom(
   });
   return {
     state,
-    text: describeRunPlaced({ crewName, fromM: r.fromM, to: ctx.to, deviationM: r.deviationM }),
+    text: describeRunPlaced({
+      crewName, fromM: r.fromM, to: back ? ctx.from : ctx.to, deviationM: r.deviationM,
+    }),
   };
 }
 

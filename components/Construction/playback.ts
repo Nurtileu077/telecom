@@ -1,7 +1,7 @@
-import { PlanRoute, DailyWorkEntry } from '@/types/construction';
+import { DailyWorkEntry } from '@/types/construction';
 import { pointAtDistanceM } from './routeProgress';
-import { routeOfSection } from './routeSection';
-import { placeShifts, shiftsOnRoute } from './shiftPlace';
+import { placeShifts } from './shiftPlace';
+import { shiftLines, type ShiftLinesContext } from './shiftLines';
 
 /**
  * Вчерашний день в движении.
@@ -38,44 +38,42 @@ function entryMeters(e: DailyWorkEntry): number {
   return m;
 }
 
-export interface PlaybackContext {
-  ground: DailyWorkEntry[];
-  planRoutes: PlanRoute[];
-}
+export type PlaybackContext = ShiftLinesContext;
 
 /**
  * Что происходило в этот день.
  *
  * Движение — это кусок линии, который смены этого дня закрасили на карте:
  * откуда колонна вышла утром и куда пришла вечером считаются тем же
- * правилом, что и закраска (см. shiftPlace). Раньше старт брали как сумму
- * всех прошлых метров от начала линии, и бригада с середины «ехала» по
- * чужим километрам. Участки без трассы пропускаем, и смены, место которых
- * не назвали, тоже: рисовать движение там, где его не было, значит
+ * правилом, что и закраска (см. shiftPlace), и на той же линии (см.
+ * shiftLines). Раньше старт брали как сумму всех прошлых метров от начала
+ * линии, и бригада с середины «ехала» по чужим километрам; линию искали по
+ * имени участка, и тёзка ехал по линии другого села, а смена без КАТО на
+ * магистрали не ехала вовсе. Участки без трассы пропускаем, и смены, место
+ * которых не назвали, тоже: рисовать движение там, где его не было, значит
  * выдумывать маршрут.
  */
 export function dayMoves(ctx: PlaybackContext, date: string): DayMove[] {
   if (!date) return [];
+  const lines = shiftLines(ctx);
 
   const today = new Map<string, DailyWorkEntry[]>();
   for (const e of ctx.ground) {
-    if (!e.kato || e.date !== date) continue;
-    const list = today.get(e.kato) ?? [];
+    if (e.date !== date || entryMeters(e) <= 0) continue;
+    const routeId = lines.lineOf(e);
+    if (!routeId) continue;
+    const list = today.get(routeId) ?? [];
     list.push(e);
-    today.set(e.kato, list);
+    today.set(routeId, list);
   }
 
-  const live = new Set(ctx.planRoutes.map((r) => r.id));
   const out: DayMove[] = [];
-  for (const [kato, entries] of today) {
-    if (entries.every((e) => entryMeters(e) <= 0)) continue;
-    const uchastok = entries[0].uchastok;
-    // Та же трасса, на которой форма смены ставит «остановились здесь».
-    const route = routeOfSection(ctx.planRoutes, uchastok);
+  for (const [routeId, entries] of today) {
+    const route = lines.route(routeId);
     if (!route) continue;
-
-    const shifts = shiftsOnRoute(route.id, kato, ctx.ground, live)
-      .filter((e) => !!e.date && e.date <= date);
+    // Будущие дни в счёт не берём: «Верно», сказанное завтра, сегодняшнего
+    // движения не рисует.
+    const shifts = lines.shiftsOn(routeId).filter((e) => !!e.date && e.date <= date);
     const placed = placeShifts(route, shifts).placed.filter((p) => p.date === date);
     if (placed.length === 0) continue;
 
@@ -89,16 +87,19 @@ export function dayMoves(ctx: PlaybackContext, date: string): DayMove[] {
       if (list) list.push(p); else crews.set(p.crew, [p]);
     }
     for (const mine of crews.values()) {
-      const beforeM = mine[0].fromM;
+      // Идущая к началу линии колонна выходит утром с дальнего края куска.
+      const first = mine[0];
+      const last = mine[mine.length - 1];
+      const beforeM = first.back ? first.toM : first.fromM;
       const from = pointAtDistanceM(route.coords, beforeM);
-      const to = pointAtDistanceM(route.coords, mine[mine.length - 1].toM);
+      const to = pointAtDistanceM(route.coords, last.back ? last.fromM : last.toM);
       if (!from || !to) continue;
-      const who = byId.get(mine[0].entryId) ?? entries[0];
+      const who = byId.get(first.entryId) ?? entries[0];
 
       out.push({
-        kato,
-        uchastok,
-        routeId: route.id,
+        kato: who.kato,
+        uchastok: who.uchastok,
+        routeId,
         from: { lat: from.lat, lon: from.lon },
         to: { lat: to.lat, lon: to.lon },
         meters: mine.reduce((s, p) => s + p.meters, 0),
