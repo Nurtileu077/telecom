@@ -3,7 +3,9 @@ import { getDefaultOrgId } from '@/lib/orgId';
 import { assertSupabaseAccess } from '@/lib/supabaseAccess';
 import { JournalState, emptyJournal } from './journalStore';
 import { mergeJournalStates, MergeStats } from './journalSync';
-import { SNP_PROJECT_ID, cloudRowKey, pickProjectRow } from './projects';
+import {
+  SNP_PROJECT_ID, cloudRowKey, pickProjectRow, projectsFromRows, type BuildProject,
+} from './projects';
 
 /**
  * Облачная сторона журнала стройки.
@@ -114,6 +116,25 @@ export async function pushRemoteJournal(state: JournalState, by: string): Promis
   }, { onConflict: 'org_key' });
   if (error) throw error;
   return now;
+}
+
+/**
+ * Какие проекты заведены в облаке.
+ *
+ * Берём только отметку проекта, без журналов: список нужен, чтобы
+ * телефон узнал о Гипертрассе, заведённой в конторе, а тянуть ради этого
+ * сезон смен по слабой связи незачем. null — облака нет или это
+ * субподрядчик: стол ему закрыт, и проекты ему откроет п. 222.
+ */
+export async function listRemoteProjects(): Promise<BuildProject[] | null> {
+  if (!supabase) return null;
+  await assertSupabaseAccess();
+  if (await isSubcontractorAccount()) return null;
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select('org_key, project:data->project');
+  if (error) throw error;
+  return projectsFromRows(orgKey(), (data ?? []) as { org_key?: unknown; project?: unknown }[]);
 }
 
 export type SyncOutcome =

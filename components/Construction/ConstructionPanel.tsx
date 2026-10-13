@@ -48,7 +48,11 @@ import RequisitesView from './RequisitesView';
 import LangView from '@/components/Layout/LangView';
 import { useT } from '@/components/Layout/LangProvider';
 import { errorLine } from '@/lib/errors';
-import { loadImports, saveImports, noteImport } from './backup';
+import { loadImports, saveImports, noteImport, makeBackup, backupFileName } from './backup';
+import {
+  SNP_PROJECT_ID, loadProjects, saveProjects, mergeProjectLists, duplicateNames,
+  adoptionDue, markAdoptionSeen, type BuildProject,
+} from './projects';
 import { demoJournal } from './demoData';
 import { reminders } from './siteRecords';
 import { hasNews, lastSeenVersion, markVersionSeen } from '@/lib/version';
@@ -87,7 +91,7 @@ import DrillForm from './DrillForm';
 import ObjectsView from './ObjectsView';
 import { protocolDocHtml, protocolFileName, DOC_MIME } from './actDocument';
 import {
-  journalCloudEnabled, syncJournal, loadLastSyncAt, saveLastSyncAt,
+  journalCloudEnabled, syncJournal, loadLastSyncAt, saveLastSyncAt, listRemoteProjects,
 } from './journalRemote';
 import { materialForecast, lowStock } from './materialForecast';
 import { importPlanFile } from './planImport';
@@ -132,11 +136,13 @@ interface Props {
    * ни отмена, ни недописанный обмен не перенесли смену в другой договор.
    */
   projectSlot?: React.ReactNode;
+  /** Список проектов пополнился из облака — шапке пора перечитать. */
+  onProjectsChanged?: () => void;
 }
 
 export default function ConstructionPanel({
   onClose, onRequestPick, editObjectId, onDoneEditObject, onPlayDay, onShowRoute,
-  onShowCoords, hidden = false, projectSlot,
+  onShowCoords, hidden = false, projectSlot, onProjectsChanged,
 }: Props) {
   const { t } = useT();
   const [journal, setJournal] = useState<JournalState>(emptyJournal);
@@ -250,6 +256,23 @@ export default function ConstructionPanel({
     // проколы, руководству — сводка, отчётности — очередь заявок.
     setView(JOURNAL_ROLES[r].home as View);
     setSyncedAt(loadLastSyncAt());
+  }, []);
+
+  /**
+   * Прежний журнал стал «СНП» — сказать один раз.
+   *
+   * Сезон смен лежит только в браузерах, и на каждом устройстве он теперь
+   * «СНП». Чтобы телефон прораба и компьютер в конторе сошлись в одном
+   * «СНП», каждое надо синхронизировать, а перед первым обменом — снять
+   * копию: если что-то пойдёт не так, вернуть будет из чего.
+   */
+  const [adoptNote, setAdoptNote] = useState(false);
+  useEffect(() => {
+    const j = loadJournal();
+    if ((j.project?.id ?? SNP_PROJECT_ID) !== SNP_PROJECT_ID) return;
+    setAdoptNote(adoptionDue(
+      j.ground.length + j.aerial.length + j.drills.length + j.planRoutes.length > 0,
+    ));
   }, []);
 
   // Нажали «Изменить» в попапе объекта — открываем его раздел, иначе
@@ -412,6 +435,52 @@ export default function ConstructionPanel({
   }, []);
 
   /**
+   * Проекты — одни на все устройства.
+   *
+   * Гипертрассу заводят в конторе, а смены по ней пишет прораб с
+   * телефона. После обмена открытого проекта узнаём, какие проекты есть в
+   * облаке, и отправляем туда те, которых там ещё нет, — иначе другое
+   * устройство о них не узнает, и смену запишут в «СНП». Неудача здесь не
+   * отменяет обмен журнала: о ней просто говорим.
+   */
+  const shareProjects = useCallback(async (): Promise<string> => {
+    let remote: BuildProject[] | null;
+    try { remote = await listRemoteProjects(); } catch { return ''; }
+    if (!remote) return '';
+    const notes: string[] = [];
+    const merged = mergeProjectLists(loadProjects(), remote);
+    if (merged.added.length || merged.renamed.length) {
+      if (saveProjects(merged.list)) {
+        onProjectsChanged?.();
+        if (merged.added.length) {
+          notes.push(`Новые проекты из облака: ${merged.added.map((p) => `«${p.name}»`).join(', ')}.`);
+        }
+      } else {
+        notes.push('Список проектов из облака не сохранился: переполнено хранилище браузера.');
+      }
+    }
+    const inCloud = new Set(remote.map((p) => p.id));
+    const sent: string[] = [];
+    const failed: string[] = [];
+    for (const p of merged.list) {
+      if (inCloud.has(p.id)) continue;
+      const res = await syncJournal(loadJournal(p.id), actor);
+      if (res.ok && saveJournal(res.merged)) sent.push(`«${p.name}»`);
+      else failed.push(`«${p.name}»`);
+    }
+    if (sent.length) {
+      notes.push(`Отправлено в облако: ${sent.join(', ')} — на других устройствах появится после их обмена.`);
+    }
+    if (failed.length) notes.push(`Не ушло в облако: ${failed.join(', ')}.`);
+    const twice = duplicateNames(merged.list);
+    if (twice.length) {
+      notes.push(`Два проекта с одним названием: ${twice.map((n) => `«${n}»`).join(', ')} — `
+        + 'их завели на разных устройствах, и смены по ним расходятся. Пишите в один.');
+    }
+    return notes.length ? ` ${notes.join(' ')}` : '';
+  }, [actor, onProjectsChanged]);
+
+  /**
    * Обмен с облаком. Слитое состояние обязательно сохраняем локально —
    * иначе при следующем обмене чужие правки придут заново.
    */
@@ -463,6 +532,9 @@ export default function ConstructionPanel({
       }
       saveLastSyncAt(res.at);
       setSyncedAt(res.at);
+      // Свой журнал сошёлся: «СНП» на этом устройстве — тот же, что везде.
+      if (adoptNote) { markAdoptionSeen(); setAdoptNote(false); }
+      const projectNote = await shareProjects();
       const { pulled, pushed, conflicts, removed } = res.stats;
       const parts = [
         pulled ? `получено ${pulled}` : '',
@@ -485,12 +557,12 @@ export default function ConstructionPanel({
         text: (res.firstPush
           ? 'Журнал впервые выгружен в облако.'
           : parts.length ? `Синхронизировано: ${parts.join(', ')}.` : 'Всё уже совпадало.')
-          + photoNote + photoWarn + otdrNote + otdrWarn,
+          + photoNote + photoWarn + otdrNote + otdrWarn + projectNote,
       });
     } finally {
       setSyncing(false);
     }
-  }, [actor, uploadPendingPhotos, uploadPendingOtdrFiles]);
+  }, [actor, uploadPendingPhotos, uploadPendingOtdrFiles, shareProjects, adoptNote]);
 
   /**
    * Загрузка KML: и проектные трассы, и обводки районов с сёлами.
@@ -1001,6 +1073,33 @@ export default function ConstructionPanel({
           <button type="button" className="btn btn-ghost btn-icon" onClick={onClose} aria-label="Закрыть"><X size={16} /></button>
         </div>
       </div>
+
+      {adoptNote && !demoOn && (
+        <div data-print="hide" role="status"
+             className="flex flex-wrap items-center gap-2 px-3 md:px-4 py-2 border-b border-[var(--accent)]/30
+                        bg-[var(--accent-dim)] text-[12px] text-[var(--text)] shrink-0">
+          <span className="flex-1 min-w-[220px]">
+            Журнал этого устройства теперь — проект «{journal.project?.name ?? 'СНП'}».
+            {cloud
+              ? ' Если журнал ведут на нескольких устройствах — телефон прораба, компьютер в конторе, — '
+                + 'синхронизируйте каждое: все сойдутся в одном проекте, а не заведут второй. '
+                + 'Перед первым обменом снимите копию.'
+              : ' Смены и расчёты по другому договору заводите в своём проекте — список вверху.'}
+          </span>
+          <button type="button" className="btn btn-secondary text-[11px]"
+                  onClick={() => {
+                    downloadText(backupFileName(), JSON.stringify(makeBackup(journal, actor), null, 1),
+                      'application/json;charset=utf-8', false);
+                    setFlash('Копия сохранена');
+                  }}>
+            <FileDown size={13} />Снять копию
+          </button>
+          <button type="button" className="btn btn-ghost text-[11px]"
+                  onClick={() => { markAdoptionSeen(); setAdoptNote(false); }}>
+            Понятно
+          </button>
+        </div>
+      )}
 
       {/* Фильтры */}
       {!empty && (

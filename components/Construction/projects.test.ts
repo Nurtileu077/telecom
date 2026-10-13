@@ -3,6 +3,8 @@ import {
   SNP_PROJECT, SNP_PROJECT_ID, scopedKey, cloudRowKey, projectFromRowKey,
   projectNameProblem, addProject, seedContractors, newerProject, pickProjectRow,
   loadProjects, saveProjects, currentProjectId, openProject, forgetOpenProject,
+  mergeProjectLists, projectsFromRows, duplicateNames, adoptionState, adoptionDue,
+  markAdoptionSeen,
   type BuildProject,
 } from './projects';
 import {
@@ -240,5 +242,85 @@ describe('срез субподрядчика по проекту', () => {
 
   it('две строки без отметки не угадывает', () => {
     expect(pickProjectRow([row(), row()], SNP_PROJECT_ID)).toBe('ambiguous');
+  });
+});
+
+describe('один «СНП» на всех устройствах', () => {
+  it('Гипертрасса, заведённая в конторе, появляется на телефоне', () => {
+    const res = mergeProjectLists([SNP_PROJECT], [SNP_PROJECT, HYPER]);
+    expect(res.list.map((p) => p.id)).toEqual([SNP_PROJECT_ID, HYPER.id]);
+    expect(res.added).toEqual([HYPER]);
+  });
+
+  it('проект, которого в облаке ещё нет, со списка не пропадает', () => {
+    const res = mergeProjectLists([SNP_PROJECT, HYPER], [SNP_PROJECT]);
+    expect(res.list.map((p) => p.id)).toEqual([SNP_PROJECT_ID, HYPER.id]);
+    expect(res.added).toEqual([]);
+  });
+
+  it('переименованный на другом устройстве — тот же проект с новым названием', () => {
+    const renamed = { ...HYPER, name: 'Гипертрасса Астана — Алматы', updatedAt: '2026-10-04T00:00:00.000Z' };
+    const res = mergeProjectLists([SNP_PROJECT, HYPER], [renamed]);
+    expect(res.list).toHaveLength(2);
+    expect(res.list[1].name).toBe('Гипертрасса Астана — Алматы');
+    expect(res.renamed).toEqual([renamed]);
+  });
+
+  it('старое название из облака свежее не перебивает', () => {
+    const fresh = { ...HYPER, name: 'Магистраль Freedom', updatedAt: '2026-10-09T00:00:00.000Z' };
+    const res = mergeProjectLists([SNP_PROJECT, fresh], [HYPER]);
+    expect(res.list[1].name).toBe('Магистраль Freedom');
+    expect(res.renamed).toEqual([]);
+  });
+
+  it('«СНП» из облака с другим временем не становится вторым «СНП»', () => {
+    const res = mergeProjectLists([SNP_PROJECT], [{ ...SNP_PROJECT, name: 'СНП 2026', updatedAt: '2026-10-02T00:00:00.000Z' }]);
+    expect(res.list).toHaveLength(1);
+    expect(res.list[0].name).toBe('СНП 2026');
+  });
+
+  it('строка организации без отметки — это «СНП» с необновлённого устройства', () => {
+    expect(projectsFromRows('org-1', [{ org_key: 'org-1', project: null }])).toEqual([SNP_PROJECT]);
+  });
+
+  it('строку проекта узнаёт по ключу и берёт название из отметки', () => {
+    const rows = [
+      { org_key: 'org-1', project: { id: 'snp', name: 'СНП', createdAt: '', updatedAt: '' } },
+      { org_key: 'org-1:p-hyper', project: { ...HYPER } },
+      { org_key: 'org-2:p-other', project: { id: 'p-other', name: 'Чужой' } },
+    ];
+    expect(projectsFromRows('org-1', rows).map((p) => p.name)).toEqual(['СНП', 'Гипертрасса']);
+  });
+
+  it('проекту без отметки название не выдумывает', () => {
+    expect(projectsFromRows('org-1', [{ org_key: 'org-1:p-x' }])[0].name).toBe('без названия (p-x)');
+  });
+
+  it('два проекта с одним названием с разных устройств называет вслух', () => {
+    const twin = { ...HYPER, id: 'p-twin', name: 'гипертрасса' };
+    expect(duplicateNames([SNP_PROJECT, HYPER, twin])).toEqual(['Гипертрасса']);
+    expect(duplicateNames([SNP_PROJECT, HYPER])).toEqual([]);
+  });
+});
+
+describe('прежний журнал стал «СНП» — сказать один раз', () => {
+  it('там, где журнал вели до деления, — сказать', () => {
+    expect(adoptionState(null, true)).toBe('due');
+  });
+
+  it('на чистом устройстве объяснять нечего', () => {
+    expect(adoptionState(null, false)).toBe('done');
+  });
+
+  it('журнал, пришедший потом обменом, прежним не считается', () => {
+    expect(adoptionDue(false)).toBe(false);
+    expect(adoptionDue(true)).toBe(false);
+  });
+
+  it('после «понятно» больше не показывается', () => {
+    expect(adoptionDue(true)).toBe(true);
+    expect(adoptionDue(true)).toBe(true);
+    markAdoptionSeen();
+    expect(adoptionDue(true)).toBe(false);
   });
 });

@@ -44,8 +44,9 @@ import {
 } from '@/components/Construction/journalStore';
 import {
   SNP_PROJECT, loadProjects, saveProjects, currentProject, openProject, projectMeta,
-  addProject, seedContractors, type BuildProject,
+  addProject, seedContractors, mergeProjectLists, type BuildProject,
 } from '@/components/Construction/projects';
+import { journalCloudEnabled, listRemoteProjects } from '@/components/Construction/journalRemote';
 import ProjectSwitcher from '@/components/Construction/ProjectSwitcher';
 import { snpMapPoints, type SnpMapPoint } from '@/components/Construction/snpMap';
 import { effectiveProgress } from '@/components/Construction/stageDerive';
@@ -368,7 +369,7 @@ export default function HomePage() {
     setBuildProject(currentProject());
   }, []);
 
-  const switchProject = useCallback((id: string) => {
+  const switchProject = useCallback((id: string, note?: string) => {
     openProject(id);
     const meta = projectMeta(id);
     setBuildProject(meta);
@@ -381,17 +382,47 @@ export default function HomePage() {
     setDrawnCoords(null);
     setDrawingRoute(false);
     refreshJournalLayers();
-    say(`Открыт проект «${meta.name}»`, 2400);
+    say(note ?? `Открыт проект «${meta.name}»`, note ? 7000 : 2400);
   }, [refreshJournalLayers, say]);
 
-  const createProject = useCallback(() => {
+  /** Список проектов пополнился из облака: перечитать шапку. */
+  const reloadProjects = useCallback(() => {
+    setBuildProjects(loadProjects());
+    setBuildProject(currentProject());
+  }, []);
+
+  const createProject = useCallback(async () => {
     const name = window.prompt(
       'Новый проект стройки — отдельный договор: свои смены, акты, расценки и платежи.\n\nНазвание:',
       '',
     );
     if (name === null) return;
+    /**
+     * Сначала спросить облако.
+     *
+     * Гипертрассу могли уже завести в конторе. Заведённая второй раз на
+     * телефоне, она станет вторым проектом с тем же названием, и смены
+     * разойдутся по двум журналам. Нет связи — заводим на устройстве и
+     * говорим об этом: ждать связи, чтобы записать смену, нельзя.
+     */
+    let checked = false;
+    if (journalCloudEnabled()) {
+      try {
+        const remote = await Promise.race([
+          listRemoteProjects(),
+          new Promise<null>((resolve) => { window.setTimeout(() => resolve(null), 6000); }),
+        ]);
+        if (remote) {
+          checked = true;
+          const merged = mergeProjectLists(loadProjects(), remote);
+          if (merged.added.length || merged.renamed.length) {
+            if (saveProjects(merged.list)) reloadProjects();
+          }
+        }
+      } catch { /* нет связи или входа — заводим на устройстве */ }
+    }
     const res = addProject(loadProjects(), name);
-    if (!res.ok) { say(res.problem, 5000); return; }
+    if (!res.ok) { say(res.problem, 6000); return; }
     // Журнал — раньше списка: не записался список — проекта просто не
     // видно, а не записался журнал при записанном списке — проект есть,
     // а компаний в его справочнике нет.
@@ -400,8 +431,11 @@ export default function HomePage() {
       say('Проект не заведён: в браузере кончилось место. Снимите копию журнала и освободите память.', 7000);
       return;
     }
-    switchProject(res.project.id);
-  }, [say, switchProject]);
+    switchProject(res.project.id, journalCloudEnabled() && !checked
+      ? `Проект «${res.project.name}» заведён только на этом устройстве: облако не ответило. `
+        + 'Если его уже завели в конторе, получится второй — синхронизируйтесь, прежде чем писать смены.'
+      : undefined);
+  }, [say, switchProject, reloadProjects]);
 
   const handleUpdateArea = useCallback((id: string, coords: [number, number][]) => {
     persist(updateAreaCoords(loadJournal(), id, coords, getActorName() || 'Без имени'));
@@ -2342,6 +2376,7 @@ export default function HomePage() {
               onCreate={createProject}
             />
           )}
+          onProjectsChanged={reloadProjects}
           onPlayDay={(date) => { playDay(date); setShowJournal(false); }}
           onShowRoute={showSnpRoute}
           onShowCoords={(coords) => fitRef.current?.(coords)}

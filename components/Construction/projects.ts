@@ -182,6 +182,97 @@ export function pickProjectRow<R extends { data?: unknown }>(
   return fits[0] ?? null;
 }
 
+// ── Один и тот же проект на всех устройствах ─────────────────────────────────
+
+/**
+ * Список проектов с другого устройства.
+ *
+ * Гипертрассу заводят в конторе, а смены по ней пишет прораб с телефона:
+ * без этого его телефон о проекте не узнает и смена ляжет в «СНП».
+ * Проекты сравниваются по номеру, а не по названию: переименованный
+ * проект — тот же проект. Название берётся то, что правили позже.
+ * Ничего не убирается: проект, которого в облаке ещё нет, просто ещё не
+ * отправлен.
+ */
+export function mergeProjectLists(
+  local: BuildProject[], remote: BuildProject[],
+): { list: BuildProject[]; added: BuildProject[]; renamed: BuildProject[] } {
+  const byId = new Map(withSnp(local).map((p) => [p.id, p]));
+  const added: BuildProject[] = [];
+  const renamed: BuildProject[] = [];
+  for (const r of remote) {
+    const mine = byId.get(r.id);
+    if (!mine) { byId.set(r.id, r); added.push(r); continue; }
+    const pick = newerProject(mine, r)!;
+    if (pick !== mine && pick.name !== mine.name) renamed.push(pick);
+    byId.set(r.id, pick);
+  }
+  return { list: withSnp([...byId.values()]), added, renamed };
+}
+
+/**
+ * Проекты по строкам облака.
+ *
+ * Строка «СНП» могла прийти с устройства, не обновлённого до проектов:
+ * отметки в ней нет, но это «СНП» — по ключу. У строки другого проекта
+ * без отметки названия взять негде; выдумывать его не будем — так и
+ * напишем, что без названия.
+ */
+export function projectsFromRows(
+  org: string, rows: { org_key?: unknown; project?: unknown }[],
+): BuildProject[] {
+  const out: BuildProject[] = [];
+  for (const row of rows) {
+    if (typeof row.org_key !== 'string') continue;
+    const id = projectFromRowKey(org, row.org_key);
+    if (!id) continue;
+    const p = row.project as Partial<BuildProject> | null | undefined;
+    const name = typeof p?.name === 'string' && p.name.trim() ? p.name.trim() : '';
+    if (!name) {
+      out.push(id === SNP_PROJECT_ID
+        ? SNP_PROJECT
+        : { id, name: `без названия (${id})`, createdAt: '', updatedAt: '' });
+      continue;
+    }
+    out.push({
+      id, name,
+      createdAt: typeof p?.createdAt === 'string' ? p.createdAt : '',
+      updatedAt: typeof p?.updatedAt === 'string' ? p.updatedAt : '',
+    });
+  }
+  return out;
+}
+
+/**
+ * Названия, под которыми заведено больше одного проекта.
+ *
+ * Без связи проект могли завести и в конторе, и на телефоне — это два
+ * проекта с одним названием, и смены расходятся по ним. Сказать об этом
+ * надо сразу, пока по второму не записали сезон.
+ */
+export function duplicateNames(list: BuildProject[]): string[] {
+  const seen = new Map<string, string[]>();
+  for (const p of list) {
+    const k = normProjectName(p.name);
+    seen.set(k, [...(seen.get(k) ?? []), p.name]);
+  }
+  return [...seen.values()].filter((v) => v.length > 1).map((v) => v[0]);
+}
+
+/**
+ * Нужно ли сказать, что прежний журнал стал «СНП».
+ *
+ * Говорим один раз и только там, где журнал вели до деления: на чистом
+ * устройстве объяснять нечего. Решение запоминается при первом взгляде —
+ * журнал, пришедший потом обменом, уже не «прежний».
+ */
+export type AdoptionState = 'due' | 'done';
+
+export function adoptionState(stored: string | null, hasData: boolean): AdoptionState {
+  if (stored === 'due' || stored === 'done') return stored;
+  return hasData ? 'due' : 'done';
+}
+
 // ── Хранение на устройстве ───────────────────────────────────────────────────
 
 const LIST_KEY = 'optiq-build-projects-v1';
@@ -254,6 +345,25 @@ export function openProject(id: string): void {
 /** Только для тестов: забыть открытый проект, как при новом запуске. */
 export function forgetOpenProject(): void {
   openId = null;
+}
+
+const ADOPT_KEY = 'optiq-build-projects-adopted-v1';
+
+/** Сказать ли про «СНП» на этом устройстве (и запомнить решение). */
+export function adoptionDue(hasData: boolean): boolean {
+  const s = storage();
+  if (!s) return false;
+  let stored: string | null = null;
+  try { stored = s.getItem(ADOPT_KEY); } catch { /* приватный режим */ }
+  const state = adoptionState(stored, hasData);
+  if (stored !== state) {
+    try { s.setItem(ADOPT_KEY, state); } catch { /* приватный режим */ }
+  }
+  return state === 'due';
+}
+
+export function markAdoptionSeen(): void {
+  try { storage()?.setItem(ADOPT_KEY, 'done'); } catch { /* приватный режим */ }
 }
 
 /** Описание проекта по номеру — из списка на устройстве. */
