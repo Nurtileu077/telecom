@@ -70,7 +70,8 @@ import { errorLine } from '@/lib/errors';
 import { getPhotoBlob } from './photoStore';
 import { downloadText, downloadBlob } from '@/lib/download';
 import { toCsv, csvBlob } from '@/lib/csv';
-import { LAY_METHODS, LAY_METHOD_LABEL } from '@/types/construction';
+import { payrollContractors } from './payroll';
+import { journalCsvRows } from './journalCsv';
 
 /**
  * Документы.
@@ -265,17 +266,19 @@ export default function DocsView({
   );
 
   const registry = useMemo(() => actRegistry(journal.actFields ?? {}), [journal.actFields]);
+  // Подвес — в тех же документах, что и подземка: без него ведомость и
+  // отчёт расходились с фактом на «Руководству» ровно на метры по опорам.
   const sheet = useMemo(
-    () => volumeSheet(journal.ground, { from, to, contractor }),
-    [journal.ground, from, to, contractor],
+    () => volumeSheet(journal.ground, { from, to, contractor }, journal.aerial),
+    [journal.ground, journal.aerial, from, to, contractor],
   );
   const report = useMemo(
-    () => periodReport(journal.ground, { from, to, contractor }),
-    [journal.ground, from, to, contractor],
+    () => periodReport(journal.ground, { from, to, contractor }, journal.aerial),
+    [journal.ground, journal.aerial, from, to, contractor],
   );
   const pace = useMemo(
-    () => paceChange(journal.ground, { from, to, contractor }),
-    [journal.ground, from, to, contractor],
+    () => paceChange(journal.ground, { from, to, contractor }, journal.aerial),
+    [journal.ground, journal.aerial, from, to, contractor],
   );
   // Даты ссылки — те же, что напечатаны в отчёте: при «всё время» начало
   // периода — первая смена, и письмо не должно говорить другое.
@@ -297,9 +300,8 @@ export default function DocsView({
   );
 
   const contractors = useMemo(
-    () => [...new Set(journal.ground.map((e) => e.contractor).filter((v): v is string => !!v))]
-      .sort((a, b) => a.localeCompare(b, 'ru')),
-    [journal.ground],
+    () => payrollContractors(journal.ground, journal.aerial),
+    [journal.ground, journal.aerial],
   );
 
   // Чья какая трасса: к акту Акбулака-2 не должна лечь линия Акбулака-1.
@@ -960,6 +962,10 @@ export default function DocsView({
           {docScope.contractor ? ` · ${docScope.contractor}` : ''}
           {' · '}
           {Math.round(report.meters).toLocaleString('ru')} м за {report.shifts} смен
+          {/* Подвес внутри итога называем: иначе цифра не сходится с
+              ведомостью подземки, и не понять, откуда разница. */}
+          {report.aerialM > 0
+            && ` · из них подвес ${Math.round(report.aerialM).toLocaleString('ru')} м`}
           {/* Простой называем, а не прячем: заказчик спросит, почему метров
               мало, и ответ должен быть в том же отчёте. */}
           {report.idleShifts > 0 && ` · простой — ${report.idleShifts} смен`}
@@ -1009,12 +1015,12 @@ export default function DocsView({
           <button type="button" className="btn btn-ghost text-[11.5px]"
                   onClick={() => {
                     const w = weekRange(to || localDay());
-                    const weekly = periodReport(journal.ground, { ...w, contractor });
+                    const weekly = periodReport(journal.ground, { ...w, contractor }, journal.aerial);
                     save(
                       periodDocFile({ report: weekly, contractor, area }),
                       periodDocPage({
                         report: weekly,
-                        pace: paceChange(journal.ground, { ...w, contractor }),
+                        pace: paceChange(journal.ground, { ...w, contractor }, journal.aerial),
                         contractor,
                         area,
                         author,
@@ -1043,23 +1049,9 @@ export default function DocsView({
                 ? 'CSV для 1С и русского Excel: точка с запятой, запятая в дробях'
                 : 'CSV для Google Таблиц: запятая, точка в дробях'}
               onClick={() => {
-                const rows = journal.ground
-                  .filter((e) => (!from || e.date >= from) && (!to || e.date <= to)
-                    && (!contractor || e.contractor === contractor))
-                  .map((e) => [
-                    e.date, e.oblast, e.rayon ?? '', e.uchastok, e.kato,
-                    e.contractor ?? '', e.column ?? '', e.smu,
-                    ...LAY_METHODS.map((m) => e.byMethod[m] ?? 0),
-                    e.drillM ?? 0, e.drillCount ?? 0, e.blowingM ?? 0,
-                    e.note ?? '', e.downtime ?? '', e.author ?? '',
-                  ]);
-                const headers = [
-                  'Дата', 'Область', 'Район', 'Участок', 'КАТО',
-                  'Подрядчик', 'Колонна', 'СМУ',
-                  ...LAY_METHODS.map((m) => LAY_METHOD_LABEL[m]),
-                  'ГНБ, м', 'Проколов', 'Задувка, м',
-                  'Примечание', 'Простой', 'Автор',
-                ];
+                const { headers, rows } = journalCsvRows(
+                  journal.ground, journal.aerial, { from, to, contractor },
+                );
                 downloadBlob(
                   `Журнал ${from || 'всё'}—${to || 'всё'}.csv`,
                   csvBlob(toCsv(headers, rows, { dialect }), dialect),
@@ -1195,7 +1187,11 @@ export default function DocsView({
                       body: `За период с ${from} по ${to} выполнено `
                         + `${Math.round(report.meters).toLocaleString('ru')} м `
                         + `(${(report.meters / 1000).toFixed(2).replace('.', ',')} км) `
-                        + `за ${report.shifts} смен.\n`
+                        + `за ${report.shifts} смен`
+                        + (report.aerialM > 0
+                          ? `, в том числе подвес кабеля ${Math.round(report.aerialM).toLocaleString('ru')} м`
+                          : '')
+                        + '.\n'
                         + `Участки: ${report.sections.map((x) => x.uchastok).join('; ')}.\n`
                         + 'Просим рассмотреть и принять выполненные работы.',
                     }));

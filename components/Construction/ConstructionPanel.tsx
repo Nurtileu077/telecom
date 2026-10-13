@@ -80,6 +80,7 @@ import SheetImport from './SheetImport';
 import type { QuickParse } from './quickEntry';
 import { planFact } from './entriesTable';
 import { normName } from './areaImport';
+import { aerialMeters } from './aerialWork';
 import { downloadText } from '@/lib/download';
 import ChangeLogView from './ChangeLogView';
 import PassportView from './PassportView';
@@ -837,6 +838,16 @@ export default function ConstructionPanel({
   const drills = useMemo(() => journal.drills.filter((e) => matchesFilter(e, filter)), [journal.drills, filter]);
   const totals = useMemo(() => groundTotals(ground), [ground]);
   const allTotals = useMemo(() => groundTotals(journal.ground), [journal.ground]);
+  // Подвес в сводке — тем же фильтром, что подземка: без него «всего в
+  // журнале» здесь и факт на «Руководству» расходились на метры по опорам.
+  const aerialM = useMemo(
+    () => journal.aerial.filter((e) => matchesFilter(e, filter)).reduce((s, e) => s + aerialMeters(e), 0),
+    [journal.aerial, filter],
+  );
+  const aerialAllM = useMemo(
+    () => journal.aerial.reduce((s, e) => s + aerialMeters(e), 0),
+    [journal.aerial],
+  );
   const byOblast = useMemo(() => metersBy(ground, (e) => e.oblast), [ground]);
   const bySmu = useMemo(() => metersBy(ground, (e) => e.smu), [ground]);
   const days = useMemo(() => metersByDay(ground).slice(-30), [ground]);
@@ -1615,6 +1626,12 @@ export default function ConstructionPanel({
             onRemoveRate={(id) => persist(removeRate(loadJournal(), id))}
             onAddPayment={(p) => persist(upsertPayment(loadJournal(), p))}
             onRemovePayment={(id) => persist(removePayment(loadJournal(), id))}
+            // Субподрядчик смотрит свой срез и журнал не правит.
+            onAssignAerial={JOURNAL_ROLES[role].ownContractorOnly ? undefined : (ids, c) => {
+              if (persist(bulkPatchEntries(loadJournal(), ids, { contractor: c }, actor))) {
+                setFlash(`Подвес записан на ${c}: ${ids.length} ${plural(ids.length, 'запись', 'записи', 'записей')}`);
+              }
+            }}
           />
         ) : view === 'docs' ? (
           <DocsView
@@ -1808,8 +1825,10 @@ export default function ConstructionPanel({
           <div className="flex flex-col gap-4">
             {/* Ключевые цифры */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-              <Kpi label="Проложено за период" value={fmtKm(totals.meters)} unit="км" accent />
-              <Kpi label="Всего в журнале" value={fmtKm(allTotals.meters)} unit="км" />
+              <Kpi label="Проложено за период" value={fmtKm(totals.meters)}
+                   unit={aerialM > 0 ? `км · и подвес ${fmtKm(aerialM)} км` : 'км'} accent />
+              <Kpi label="Всего в журнале" value={fmtKm(allTotals.meters + aerialAllM)}
+                   unit={aerialAllM > 0 ? `км · из них подвес ${fmtKm(aerialAllM)}` : 'км'} />
               <Kpi label="Бестраншейно (ГНБ/ГНП)" value={fmtKm(totals.drillM)} unit={`км · ${totals.drillCount} шт`} />
               {openDevs.length > 0 ? (
                 <button type="button" onClick={() => setView('deviations')} className="text-left">

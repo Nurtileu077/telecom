@@ -3,6 +3,7 @@ import {
   SNP_STAGES,
 } from '@/types/construction';
 import { stageStatus, snpCompletion } from './stageTasks';
+import { aerialMeters } from './aerialWork';
 
 /**
  * Взгляд руководства: план против факта.
@@ -114,7 +115,7 @@ export function regionProgress(ctx: ManagementContext, opts: RegionOptions = {})
   // значит вечно не добирать процент там, где идут по опорам.
   for (const a of ctx.aerial) {
     if (!inScope(a)) continue;
-    row(keyOf({ ...a, name: a.uchastok })).factM += a.totalM ?? 0;
+    row(keyOf({ ...a, name: a.uchastok })).factM += aerialMeters(a);
   }
 
   for (const p of ctx.progress) {
@@ -173,7 +174,7 @@ export function pace(ctx: ManagementContext, window = 14): Pace {
   }
   for (const a of ctx.aerial) {
     if (!a.date) continue;
-    byDay.set(a.date, (byDay.get(a.date) ?? 0) + (a.totalM ?? 0));
+    byDay.set(a.date, (byDay.get(a.date) ?? 0) + aerialMeters(a));
   }
   const days = [...byDay.entries()]
     .filter(([, m]) => m > 0)

@@ -8,11 +8,12 @@ import {
 import type { JournalState } from './journalStore';
 import ExportButton, { type ExportColumn } from '@/components/Layout/ExportButton';
 import {
-  payroll, compareContractors, payrollSummary, meterCost,
+  payroll, compareContractors, payrollSummary, meterCost, payrollContractors,
   PAYABLE_WORKS, rateFor, rateStart, brokenRates, checkRate, payableOption,
   paymentDay, paymentFor, periodBalance, checkPayment,
   type PayLine, type RateDraft, type PaymentDraft, type PerMeter,
 } from './payroll';
+import { unassignedAerial, type UnassignedAerial } from './aerialWork';
 import { useT } from '@/components/Layout/LangProvider';
 import { rangeText, monthName, fmtDay, monthOf } from './moneyPeriod';
 
@@ -41,6 +42,12 @@ interface Props {
   months?: string[];
   /** Выбранный отчётный месяц: новый платёж по умолчанию за него. */
   month?: string;
+  /**
+   * Записать подвес на подрядчика. Без этого подвес из Excel — ничей и в
+   * расчёт не попадает; нет обработчика (субподрядчик смотрит свой срез) —
+   * список показывается без кнопок.
+   */
+  onAssignAerial?: (ids: string[], contractor: string) => void;
 }
 
 const money = (v: number) => `${Math.round(v).toLocaleString('ru')} ₸`;
@@ -64,20 +71,35 @@ const PAY_COLUMNS: ExportColumn<PayLine>[] = [
 
 export default function PayrollView({
   journal, from, to, author, onAddRate, onRemoveRate, onAddPayment, onRemovePayment, onFlash,
-  startDay = 1, months = [], month,
+  startDay = 1, months = [], month, onAssignAerial,
 }: Props) {
   const { t } = useT();
+  // Подрядчик, который весь месяц висел на опорах, тоже здесь: смен
+  // подземки у него может не быть вовсе.
   const contractors = useMemo(
-    () => [...new Set(journal.ground.map((e) => e.contractor).filter((v): v is string => !!v))]
-      .sort((a, b) => a.localeCompare(b, 'ru')),
-    [journal.ground],
+    () => payrollContractors(journal.ground, journal.aerial),
+    [journal.ground, journal.aerial],
   );
   const [who, setWho] = useState<string>('');
   const current = who || contractors[0] || '';
 
   const result = useMemo(
-    () => payroll(current, journal.ground, journal.rates, journal.payments, { from, to, startDay }),
-    [current, journal.ground, journal.rates, journal.payments, from, to, startDay],
+    () => payroll(current, journal.ground, journal.rates, journal.payments,
+      { from, to, startDay }, journal.aerial),
+    [current, journal.ground, journal.aerial, journal.rates, journal.payments, from, to, startDay],
+  );
+
+  // Подвес из Excel приходит без подрядчика и ни в чей расчёт не ложится.
+  // Молча это означало бы «подвес бесплатный» — называем его и даём
+  // записать на того, чья бригада вешала.
+  const aerialOrphans = useMemo(
+    () => unassignedAerial(journal.aerial, { from, to }),
+    [journal.aerial, from, to],
+  );
+  const assignChoices = useMemo(
+    () => [...new Set([...contractors, ...journal.contractors.map((c) => c.name).filter(Boolean)])]
+      .sort((a, b) => a.localeCompare(b, 'ru')),
+    [contractors, journal.contractors],
   );
 
   const deviationsBy = useMemo(() => {
@@ -94,8 +116,8 @@ export default function PayrollView({
 
   const table = useMemo(
     () => compareContractors(journal.ground, journal.rates, journal.payments, deviationsBy,
-      { from, to, startDay }),
-    [journal.ground, journal.rates, journal.payments, deviationsBy, from, to, startDay],
+      { from, to, startDay }, journal.aerial),
+    [journal.ground, journal.aerial, journal.rates, journal.payments, deviationsBy, from, to, startDay],
   );
 
   // Черновик расценки: открыт — значит, человек её сейчас заполняет.
@@ -200,16 +222,24 @@ export default function PayrollView({
     }
   }
 
+  const orphans = (
+    <AerialOrphans groups={aerialOrphans} choices={assignChoices} onAssign={onAssignAerial} />
+  );
+
   if (contractors.length === 0) {
     return (
-      <div className="p-6 text-center text-[13px] text-[var(--text-muted)]">
-        В журнале пока нет смен с подрядчиком — считать нечего.
+      <div className="p-3 space-y-3">
+        <div className="p-6 text-center text-[13px] text-[var(--text-muted)]">
+          В журнале пока нет смен с подрядчиком — считать нечего.
+        </div>
+        {orphans}
       </div>
     );
   }
 
   return (
     <div className="p-3 space-y-3">
+      {orphans}
       <div className="flex gap-1 flex-wrap">
         {contractors.map((c) => (
           <button
@@ -232,6 +262,8 @@ export default function PayrollView({
           <span className="text-[11px] text-[var(--text-muted)]">
             {rangeText({ from: result.from, to: result.to })} ·{' '}
             {result.shifts} смен · {Math.round(result.meters).toLocaleString('ru')} м
+            {result.aerialM > 0
+              && ` (из них подвес ${Math.round(result.aerialM).toLocaleString('ru')} м)`}
             {result.idleShifts > 0 && ` · простой — ${result.idleShifts} смен`}
           </span>
           <span className="ml-auto inline-flex gap-1">
@@ -362,7 +394,7 @@ export default function PayrollView({
         {result.meters > 0 && (
           <div className="rounded-md bg-[var(--bg-canvas)] px-2 py-1.5 space-y-0.5 text-[11px]">
             <div className="text-[var(--text-muted)]">
-              Метр прокладки:{' '}
+              {result.aerialM > 0 ? 'Метр по способу:' : 'Метр прокладки:'}{' '}
               {cost.byMethod.map((m, i) => (
                 <span key={m.method}>
                   {i > 0 && ' · '}
@@ -373,11 +405,15 @@ export default function PayrollView({
                 </span>
               ))}
             </div>
-            <PerMeterLine label="Метр трассы целиком — прокладка, ГНБ, задувка, переходы"
-                          value={cost.work} />
+            <PerMeterLine
+              label={result.aerialM > 0
+                ? 'Метр трассы целиком — прокладка, подвес, ГНБ, задувка, переходы'
+                : 'Метр трассы целиком — прокладка, ГНБ, задувка, переходы'}
+              value={cost.work}
+            />
             <PerMeterLine label="С материалом по нынешней цене закупки" value={cost.total} />
             <div className="text-[10.5px] text-[var(--text-muted)]">
-              Делим на протянутые метры — по ним и платят.
+              Делим на протянутые метры — в грунт и на опоры: по ним и платят.
             </div>
           </div>
         )}
@@ -661,6 +697,78 @@ export default function PayrollView({
           </p>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Подвес без подрядчика — по участкам, с выбором, чей он.
+ *
+ * Подрядчика не угадываем ни по области, ни по соседней смене: бригады
+ * переходят между участками, и угаданный подрядчик — это деньги не тому.
+ */
+function AerialOrphans({ groups, choices, onAssign }: {
+  groups: UnassignedAerial[];
+  choices: string[];
+  onAssign?: (ids: string[], contractor: string) => void;
+}) {
+  const [pick, setPick] = useState<Record<string, string>>({});
+  if (groups.length === 0) return null;
+  const total = groups.reduce((s, g) => s + g.meters, 0);
+  const span = (g: UnassignedAerial) => (!g.from ? 'без даты'
+    : g.from === g.to ? fmtDay(g.from) : `${fmtDay(g.from)} — ${fmtDay(g.to)}`);
+  return (
+    <div className="rounded-lg border border-[var(--warn)]/40 bg-[var(--warn)]/10 p-3 space-y-1.5 text-[11.5px]">
+      <div className="flex items-start gap-1.5 text-[var(--warn)]">
+        <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+        <span>
+          Подвес без подрядчика — {Math.round(total).toLocaleString('ru')} м за период:
+          в расчёт не попал ни к кому.
+          <span className="block text-[var(--text-muted)]">
+            В листе прораба «DATA ПОДВЕС» подрядчика нет. Выберите, чья бригада
+            вешала, — метры лягут в его расчёт строкой «Подвес кабеля», по расценке на подвес.
+          </span>
+        </span>
+      </div>
+      {groups.map((g) => (
+        <div key={g.uchastok} className="flex items-center gap-2 flex-wrap">
+          <span className="min-w-0 flex-1 truncate text-[var(--text)]"
+                title={`${g.ids.length} записей подвеса`}>
+            {g.uchastok}
+            <span className="text-[var(--text-muted)]">
+              {' · '}{Math.round(g.meters).toLocaleString('ru')} м · {span(g)}
+            </span>
+          </span>
+          {onAssign && (
+            <>
+              {/* Поле, а не список: подрядчик подвеса может ещё ни разу не
+                  встречаться в журнале — его имя пишут так же, как в смене. */}
+              <input
+                value={pick[g.uchastok] ?? ''}
+                list="aerial-contractors"
+                placeholder="Чей подвес?"
+                onChange={(e) => setPick((p) => ({ ...p, [g.uchastok]: e.target.value }))}
+                aria-label={`Подрядчик подвеса: ${g.uchastok}`}
+                className="w-40 bg-[var(--bg-canvas)] border border-[var(--border)] rounded px-2 py-1 text-[11.5px] text-[var(--text)]"
+              />
+              <button
+                type="button"
+                className="btn btn-ghost text-[11px]"
+                disabled={!pick[g.uchastok]?.trim()}
+                onClick={() => {
+                  const c = pick[g.uchastok]?.trim();
+                  if (c) onAssign(g.ids, c);
+                }}
+              >
+                Записать
+              </button>
+            </>
+          )}
+        </div>
+      ))}
+      <datalist id="aerial-contractors">
+        {choices.map((c) => <option key={c} value={c} />)}
+      </datalist>
     </div>
   );
 }

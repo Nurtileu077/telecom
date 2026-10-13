@@ -9,6 +9,7 @@ import { JournalState, fmtKm, fmtMeters, MATERIAL_LABEL, plural } from './journa
 import { getPhotoBlob } from './photoStore';
 import { photoGeoNote } from './photoGeo';
 import { isIdleShift } from './entriesTable';
+import { aerialMeters } from './aerialWork';
 import type { FieldPhoto } from '@/types/construction';
 
 /**
@@ -82,7 +83,7 @@ export default function DayReport({ journal, date, oblast, onClose, onPlay }: Pr
       }
     }
 
-    const aerialM = aerial.reduce((s, a) => s + (a.totalM ?? 0), 0);
+    const aerialM = aerial.reduce((s, a) => s + aerialMeters(a), 0);
     const drillM = drills.reduce((s, d) => s + (d.meters ?? 0), 0);
     const drillCount = drills.reduce((s, d) => s + (d.count || 0), 0);
 
@@ -256,7 +257,7 @@ export default function DayReport({ journal, date, oblast, onClose, onPlay }: Pr
                     <span className="ml-auto text-[var(--warn)] shrink-0">простой</span>
                   ) : (
                     <span className="ml-auto font-mono text-[var(--text-muted)] shrink-0">
-                      {e.kind === 'ground' ? fmtKm(entryMeters(e.byMethod)) : fmtKm(e.totalM ?? 0)} км
+                      {e.kind === 'ground' ? fmtKm(entryMeters(e.byMethod)) : fmtKm(aerialMeters(e))} км
                     </span>
                   )}
                 </div>

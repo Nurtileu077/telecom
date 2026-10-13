@@ -1,9 +1,10 @@
 import {
   DailyWorkEntry, LayMethod, LAY_METHODS, LAY_METHOD_LABEL,
-  MaterialKind, MATERIAL_KINDS, MATERIAL_UNIT,
+  MaterialKind, MATERIAL_KINDS, MATERIAL_UNIT, type AerialWorkEntry,
 } from '@/types/construction';
 import { esc, ACT_DOC_CSS, fmtDate } from './actDocument';
 import { entryMeters } from './entriesTable';
+import { aerialIn, aerialMeters, aerialVolumeRows } from './aerialWork';
 
 /**
  * Ведомость объёмов и то, что из неё вырастает.
@@ -29,10 +30,18 @@ export interface VolumeSheet {
   from: string;
   to: string;
   rows: VolumeRow[];
+  /** Всего протянуто: в грунт и на опоры вместе — как факт на «Руководству». */
   totalM: number;
+  /** Из них проложено в грунт. */
+  groundM: number;
+  /** Из них подвешено. */
+  aerialM: number;
   /** По каким участкам собрано. */
   sections: string[];
+  /** Смены подземки и записи подвеса вместе. */
   shifts: number;
+  /** Из них записей подвеса. */
+  aerialShifts: number;
 }
 
 export interface VolumeFilter {
@@ -55,9 +64,18 @@ function inFilter(e: DailyWorkEntry, f: VolumeFilter): boolean {
  *
  * Пустые строки не показываем: ведомость, где половина позиций нулевая,
  * читается хуже короткой. Чего не делали — того в ведомости нет.
+ *
+ * Подвес — в той же ведомости. Раньше его здесь не было вовсе, и село,
+ * которое тянут по опорам, сдавалось заказчику без трёх километров,
+ * которые «Руководству» уже числило сделанными.
  */
-export function volumeSheet(rows: DailyWorkEntry[], filter: VolumeFilter = {}): VolumeSheet {
+export function volumeSheet(
+  rows: DailyWorkEntry[],
+  filter: VolumeFilter = {},
+  aerial: AerialWorkEntry[] = [],
+): VolumeSheet {
   const list = rows.filter((e) => inFilter(e, filter));
+  const air = aerialIn(aerial, filter);
 
   const byMethod = new Map<LayMethod, number>();
   const materials = new Map<MaterialKind, number>();
@@ -98,21 +116,29 @@ export function volumeSheet(rows: DailyWorkEntry[], filter: VolumeFilter = {}): 
   if (blowingM > 0) {
     out.push({ key: 'blowingM', label: 'Задувка ОК', unit: 'м', quantity: blowingM });
   }
+  const airRows = aerialVolumeRows(air);
+  out.push(...airRows.cable);
   for (const m of MATERIAL_KINDS) {
     const v = materials.get(m) ?? 0;
     if (v > 0) out.push({ key: `mat-${m}`, label: m, unit: MATERIAL_UNIT[m], quantity: v });
   }
+  out.push(...airRows.materials);
 
-  const dates = list.map((e) => e.date).filter(Boolean).sort();
+  const groundM = list.reduce((s, e) => s + entryMeters(e), 0);
+  const aerialM = air.reduce((s, e) => s + aerialMeters(e), 0);
+  const dates = [...list, ...air].map((e) => e.date).filter(Boolean).sort();
   return {
     from: filter.from || dates[0] || '',
     to: filter.to || dates[dates.length - 1] || '',
     rows: out,
-    totalM: list.reduce((s, e) => s + entryMeters(e), 0),
-    sections: [...new Set(list.map((e) => e.uchastok).filter(Boolean))].sort(
+    totalM: groundM + aerialM,
+    groundM,
+    aerialM,
+    sections: [...new Set([...list, ...air].map((e) => e.uchastok).filter(Boolean))].sort(
       (a, b) => a.localeCompare(b, 'ru'),
     ),
-    shifts: list.length,
+    shifts: list.length + air.length,
+    aerialShifts: air.length,
   };
 }
 
@@ -200,12 +226,21 @@ export function volumeDocHtml(input: VolumeDocInput): string {
       + '</tr>';
   }).join('');
 
+  // Подвес итожим отдельно от прокладки и вместе с ней: «итого
+  // проложено» с подвесом внутри заказчик прочтёт как метры в грунте, а
+  // без него — не сверит с фактом, который видит руководство.
+  const meterRow = (label: string, v: number) => '<tr><td class="val"></td>'
+    + `<td class="lbl b">${esc(label)}</td>`
+    + `<td class="val b">м</td><td class="val b">${qty(v)}</td></tr>`;
   const totalRow = withMoney
     ? '<tr><td class="val"></td><td class="lbl b">Итого</td>'
       + '<td class="val"></td><td class="val"></td><td class="val"></td>'
       + `<td class="val b">${money(cost!.total)}</td></tr>`
-    : '<tr><td class="val"></td><td class="lbl b">Итого проложено</td>'
-      + `<td class="val b">м</td><td class="val b">${qty(sheet.totalM)}</td></tr>`;
+    : sheet.aerialM > 0
+      ? (sheet.groundM > 0 ? meterRow('Итого проложено в грунт', sheet.groundM) : '')
+        + meterRow('Итого подвешено', sheet.aerialM)
+        + meterRow('Всего протянуто', sheet.totalM)
+      : meterRow('Итого проложено', sheet.totalM);
 
   const period = sheet.from === sheet.to
     ? fmtDate(sheet.from)
@@ -218,7 +253,9 @@ export function volumeDocHtml(input: VolumeDocInput): string {
     + (input.customer ? `<p>Заказчик: <span class="b">${esc(input.customer)}</span></p>` : '')
     + (sheet.sections.length
       ? `<p>Участки: ${esc(sheet.sections.join('; '))}</p>` : '')
-    + `<p>Смен в периоде: ${sheet.shifts}</p>`
+    + `<p>Смен в периоде: ${sheet.shifts}`
+    + (sheet.aerialShifts ? ` (из них на подвесе — ${sheet.aerialShifts})` : '')
+    + '</p>'
     + '<table class="act"><tr>'
     + '<td class="val b">№</td><td class="lbl b">Наименование работ</td>'
     + head

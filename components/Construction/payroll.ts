@@ -1,8 +1,10 @@
 import {
   DailyWorkEntry, LayMethod, LAY_METHODS, LAY_METHOD_LABEL,
   WorkRate, Payment, PaymentKind, PAYMENT_KIND_LABEL, MATERIAL_KINDS, type MaterialKind,
+  type AerialWorkEntry,
 } from '@/types/construction';
 import { entryMeters, isIdleShift, weekStart } from './entriesTable';
+import { aerialIn, aerialMeters } from './aerialWork';
 import { normName } from './areaImport';
 import type { MaterialPrices } from './materialCost';
 import { monthRange, monthName, monthOf, fmtDay } from './moneyPeriod';
@@ -26,6 +28,9 @@ export const PAYABLE_WORKS: { key: string; label: string; unit: 'м' | 'шт' }[
   { key: 'drillCount', label: 'Переходов ГНБ / ГНП', unit: 'шт' },
   { key: 'blowingM', label: 'Задувка ОК', unit: 'м' },
   { key: 'openCrossings', label: 'Открытые переходы', unit: 'шт' },
+  // Подвес оплачивают по метрам подвешенного кабеля — «по протянутым
+  // километрам», как и прокладку; опоры и зажимы отдельно не расцениваются.
+  { key: 'aerialM', label: 'Подвес кабеля', unit: 'м' },
 ];
 
 export const PAYABLE_LABEL = new Map(PAYABLE_WORKS.map((w) => [w.key, w.label]));
@@ -143,8 +148,9 @@ export function checkRate(
   };
 }
 
-/** Сколько единиц этой работы в смене. */
-export function workQuantity(e: DailyWorkEntry, work: string): number {
+/** Сколько единиц этой работы в смене или записи подвеса. */
+export function workQuantity(e: DailyWorkEntry | AerialWorkEntry, work: string): number {
+  if (e.kind === 'aerial') return work === 'aerialM' ? aerialMeters(e) : 0;
   if (LAY_METHODS.includes(work as LayMethod)) return e.byMethod[work as LayMethod] ?? 0;
   if (work === 'drillM') return e.drillM ?? 0;
   if (work === 'drillCount') return e.drillCount ?? 0;
@@ -201,14 +207,20 @@ export interface PayrollResult {
    * долг на начало плюс начисленное минус аванс, удержания и оплаты.
    */
   due: number;
-  /** Смены с работой — по ним «метров за смену» в сравнении подрядчиков. */
+  /** Смены с работой, и подземки, и подвеса, — по ним «метров за смену». */
   shifts: number;
   /**
    * Смены простоя: за них по метрам не начисляется, но и потерять их
    * нельзя — спор «почему так мало» начинается именно с них.
    */
   idleShifts: number;
+  /**
+   * Протянуто за период: в грунт и на опоры. По этим метрам платят
+   * субподрядчику, на них и делится цена метра.
+   */
   meters: number;
+  /** Из них подвешено. */
+  aerialM: number;
   /** Расход материала по сменам периода — для полной цены метра. */
   materials: Partial<Record<MaterialKind, number>>;
 }
@@ -252,7 +264,11 @@ interface Accrual {
 }
 
 /** Что начислено по сменам: количество, оценённое количество и сумма по видам. */
-function accrue(entries: DailyWorkEntry[], rates: WorkRate[], contractor: string): Accrual {
+function accrue(
+  entries: (DailyWorkEntry | AerialWorkEntry)[],
+  rates: WorkRate[],
+  contractor: string,
+): Accrual {
   const acc: Accrual = {
     qty: new Map(), pricedQty: new Map(), sums: new Map(),
     // Какие цены встретились за период: одна — её и показываем, несколько —
@@ -328,15 +344,22 @@ export function payroll(
   rates: WorkRate[],
   payments: Payment[],
   filter: PayrollFilter = {},
+  aerial: AerialWorkEntry[] = [],
 ): PayrollResult {
   const own = rows.filter((e) => (e.contractor || '') === contractor);
   const mine = own.filter((e) => inPeriod(e.date, filter));
-  const lines = linesOf(accrue(mine, rates, contractor));
+  // Подвес подрядчика — в том же расчёте. Раньше его не было ни в сумме, ни
+  // в метрах: бригада, неделю висевшая на опорах, выглядела простаивающей.
+  const ownAir = aerialIn(aerial, { contractor }).filter((e) => !!e.contractor);
+  const mineAir = ownAir.filter((e) => inPeriod(e.date, filter));
+  const lines = linesOf(accrue([...mine, ...mineAir], rates, contractor));
 
   // Всё, что было до периода, — одним итогом. Смена без даты сюда тоже
   // попадает: расценки на «никакой день» нет, и она будет названа
   // неоценённой, а не потеряна.
-  const earlier = filter.from ? own.filter((e) => (e.date || '') < filter.from!) : [];
+  const earlier = filter.from
+    ? [...own, ...ownAir].filter((e) => (e.date || '') < filter.from!)
+    : [];
   const earlierLines = linesOf(accrue(earlier, rates, contractor));
 
   const startDay = filter.startDay ?? 1;
@@ -354,7 +377,8 @@ export function payroll(
   const deductions = sumOf(money, 'deduction');
   const paid = sumOf(money, 'payment');
   const opening = earlierLines.reduce((s, l) => s + (l.sum ?? 0), 0) - sumOf(before);
-  const dates = mine.map((e) => e.date).filter(Boolean).sort();
+  const dates = [...mine, ...mineAir].map((e) => e.date).filter(Boolean).sort();
+  const aerialM = mineAir.reduce((s, e) => s + aerialMeters(e), 0);
 
   return {
     contractor,
@@ -371,9 +395,12 @@ export function payroll(
     due: opening + accrued - advances - deductions - paid,
     // Дождливая неделя не должна делать подрядчика «медленнее» в
     // сравнении: средние — по сменам, в которые работали.
-    shifts: mine.filter((e) => !isIdleShift(e)).length,
+    // Запись подвеса — рабочий день бригады на опорах: простоя в листе
+    // «DATA ПОДВЕС» не пишут.
+    shifts: mine.filter((e) => !isIdleShift(e)).length + mineAir.length,
     idleShifts: mine.filter(isIdleShift).length,
-    meters: mine.reduce((s, e) => s + entryMeters(e), 0),
+    meters: mine.reduce((s, e) => s + entryMeters(e), 0) + aerialM,
+    aerialM,
     materials: materialsOf(mine),
   };
 }
@@ -394,9 +421,9 @@ export function periodBalance(r: PayrollResult): number {
   return r.accrued - r.advances - r.deductions - r.paid;
 }
 
-/** Цена метра одним способом прокладки. */
+/** Цена метра одним способом прокладки — или подвеса. */
 export interface MethodMeterPrice {
-  method: LayMethod;
+  method: LayMethod | 'aerialM';
   label: string;
   /** Протянуто этим способом за период. */
   meters: number;
@@ -446,9 +473,9 @@ export interface MeterCost {
  */
 export function meterCost(r: PayrollResult, prices: MaterialPrices = {}): MeterCost {
   const byMethod: MethodMeterPrice[] = r.lines
-    .filter((l) => LAY_METHODS.includes(l.work as LayMethod))
+    .filter((l) => LAY_METHODS.includes(l.work as LayMethod) || l.work === 'aerialM')
     .map((l) => ({
-      method: l.work as LayMethod,
+      method: l.work as LayMethod | 'aerialM',
       label: l.label,
       meters: l.quantity,
       pricedMeters: l.pricedQuantity,
@@ -470,17 +497,21 @@ export function meterCost(r: PayrollResult, prices: MaterialPrices = {}): MeterC
   const used = MATERIAL_KINDS.filter((m) => (r.materials[m] ?? 0) > 0);
   const noPrice = used.filter((m) => !((prices[m] ?? 0) > 0));
   const matSum = used.reduce((s, m) => s + (r.materials[m] ?? 0) * (prices[m] ?? 0), 0);
+  // Опоры, зажимы и арматуру подвеса закупочными ценами не ведём: метры
+  // подвеса в делителе есть, а их материала в сумме нет — значит, цена с
+  // материалом только «не меньше», и сказать это нужно словами.
+  const airGap = (r.aerialM ?? 0) > 0 ? ['материал подвеса — цен закупки на него нет'] : [];
   const material: PerMeter = r.meters <= 0
     ? { value: null, complete: false, missing: noMeters }
     : used.length === 0
       // Расход не записан — это не «материал бесплатный».
-      ? { value: null, complete: false, missing: ['расход материала в сменах не записан'] }
+      ? { value: null, complete: false, missing: ['расход материала в сменах не записан', ...airGap] }
       : matSum <= 0
-        ? { value: null, complete: false, missing: [`нет цены: ${noPrice.join(', ')}`] }
+        ? { value: null, complete: false, missing: [`нет цены: ${noPrice.join(', ')}`, ...airGap] }
         : {
           value: matSum / r.meters,
-          complete: noPrice.length === 0,
-          missing: noPrice.length ? [`нет цены: ${noPrice.join(', ')}`] : [],
+          complete: noPrice.length === 0 && airGap.length === 0,
+          missing: [...(noPrice.length ? [`нет цены: ${noPrice.join(', ')}`] : []), ...airGap],
         };
 
   const total: PerMeter = work.value === null
@@ -534,10 +565,11 @@ export function compareContractors(
   payments: Payment[],
   deviationsBy: Map<string, number>,
   filter: PayrollFilter = {},
+  aerial: AerialWorkEntry[] = [],
 ): ContractorSummary[] {
-  const names = [...new Set(rows.map((e) => e.contractor).filter((v): v is string => !!v))];
+  const names = payrollContractors(rows, aerial);
   return names.map((contractor) => {
-    const r = payroll(contractor, rows, rates, payments, filter);
+    const r = payroll(contractor, rows, rates, payments, filter, aerial);
     const w = meterCost(r).work;
     return {
       contractor,
@@ -551,6 +583,22 @@ export function compareContractors(
       deviations: deviationsBy.get(contractor) ?? 0,
     };
   }).sort((a, b) => b.meters - a.meters);
+}
+
+/**
+ * С кем считаемся: у кого есть смены подземки или записи подвеса.
+ *
+ * Подрядчик, который весь месяц висел на опорах, без этого не появлялся в
+ * «Расчётах» вовсе — смен подземки у него нет.
+ */
+export function payrollContractors(
+  rows: Pick<DailyWorkEntry, 'contractor'>[],
+  aerial: Pick<AerialWorkEntry, 'contractor'>[] = [],
+): string[] {
+  return [...new Set([...rows, ...aerial]
+    .map((e) => e.contractor)
+    .filter((v): v is string => !!v?.trim()))]
+    .sort((a, b) => a.localeCompare(b, 'ru'));
 }
 
 export interface MoneyGap {

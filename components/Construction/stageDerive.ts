@@ -2,6 +2,7 @@ import {
   SnpProgress, SnpStage, SNP_STAGES, StageState, StageStatus,
   SettlementOrder, DailyWorkEntry, AerialWorkEntry, DrillLogEntry,
 } from '@/types/construction';
+import { aerialMeters } from './aerialWork';
 
 /**
  * Этапы, посчитанные из журнала.
@@ -62,7 +63,7 @@ export function factsByKato(ctx: DeriveContext): Map<string, Fact> {
   for (const a of ctx.aerial) {
     if (!a.kato) continue;
     const f = row(a.kato);
-    f.aerialM += a.totalM ?? 0;
+    f.aerialM += aerialMeters(a);
     stamp(f, a.date);
   }
   for (const d of ctx.drills) {

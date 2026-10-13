@@ -1,9 +1,10 @@
 import { localDay } from '@/lib/localDay';
 import {
-  DailyWorkEntry, SnpProgress, SNP_STAGES, SNP_STAGE_SPECS,
+  DailyWorkEntry, SnpProgress, SNP_STAGES, SNP_STAGE_SPECS, type AerialWorkEntry,
 } from '@/types/construction';
 import { esc, ACT_DOC_CSS, fmtDate } from './actDocument';
-import { entryMeters, groupByWeek, weekStart, isIdleShift } from './entriesTable';
+import { entryMeters, groupByWeek, weekStart, weekLabel, isIdleShift } from './entriesTable';
+import { aerialIn, aerialMeters } from './aerialWork';
 import { stageStatus } from './stageTasks';
 import { normName } from './areaImport';
 
@@ -31,7 +32,10 @@ function inPeriod(e: DailyWorkEntry, f: PeriodFilter): boolean {
 
 export interface SectionLine {
   uchastok: string;
+  /** Всего протянуто на участке: в грунт и на опоры. */
   meters: number;
+  /** Из них подвешено. */
+  aerialM: number;
   /** Смены с работой. */
   shifts: number;
   /** Смены простоя на участке: участок, где весь период лил дождь, тоже в отчёте. */
@@ -42,9 +46,19 @@ export interface SectionLine {
 export interface PeriodReport {
   from: string;
   to: string;
+  /**
+   * Всего протянуто — подземка и подвес вместе, как факт на «Руководству».
+   * Отчёт без подвеса заказчик сверял с цифрой руководства и не сходился.
+   */
   meters: number;
-  /** Смены, в которые работали. По ним — средние. */
+  /** Из них проложено в грунт. */
+  groundM: number;
+  /** Из них подвешено. */
+  aerialM: number;
+  /** Смены, в которые работали, — и подземки, и подвеса. По ним — средние. */
   shifts: number;
+  /** Из них записей подвеса. */
+  aerialShifts: number;
   /**
    * Смены простоя: работ не было, причина названа. Это не пропуск и не
    * пустая строка — бригада стояла на объекте, и заказчик должен видеть
@@ -99,9 +113,14 @@ function daysBetween(from: string, to: string): string[] {
   return out;
 }
 
-export function periodReport(rows: DailyWorkEntry[], filter: PeriodFilter = {}): PeriodReport {
+export function periodReport(
+  rows: DailyWorkEntry[],
+  filter: PeriodFilter = {},
+  aerial: AerialWorkEntry[] = [],
+): PeriodReport {
   const list = rows.filter((e) => inPeriod(e, filter));
-  const dates = list.map((e) => e.date).filter(Boolean).sort();
+  const air = aerialIn(aerial, filter);
+  const dates = [...list, ...air].map((e) => e.date).filter(Boolean).sort();
   const from = filter.from || dates[0] || '';
   const to = filter.to || dates[dates.length - 1] || '';
 
@@ -126,7 +145,7 @@ export function periodReport(rows: DailyWorkEntry[], filter: PeriodFilter = {}):
     const shown = e.uchastok?.trim() || '—';
     const key = normName(shown) || '—';
     const line = bySection.get(key)
-      ?? { uchastok: shown, meters: 0, shifts: 0, idleShifts: 0, contractors: [] as string[] };
+      ?? { uchastok: shown, meters: 0, aerialM: 0, shifts: 0, idleShifts: 0, contractors: [] as string[] };
     const idle = isIdleShift(e);
     line.meters += entryMeters(e);
     if (idle) line.idleShifts += 1; else line.shifts += 1;
@@ -150,10 +169,43 @@ export function periodReport(rows: DailyWorkEntry[], filter: PeriodFilter = {}):
     if (reason && e.date) note(downtime, reason, e.date);
   }
 
-  const meters = list.reduce((s, e) => s + entryMeters(e), 0);
-  const weeks = groupByWeek(list).map((w) => ({
-    week: w.week, label: w.label, meters: w.meters,
-  }));
+  // Подвес — те же участки и те же дни. Запись подвеса — день работы
+  // бригады на опорах: простоя в листе «DATA ПОДВЕС» не пишут, поэтому
+  // каждая запись — рабочая смена.
+  let aerialM = 0;
+  for (const a of air) {
+    const shown = a.uchastok?.trim() || '—';
+    const key = normName(shown) || '—';
+    const line = bySection.get(key)
+      ?? { uchastok: shown, meters: 0, aerialM: 0, shifts: 0, idleShifts: 0, contractors: [] as string[] };
+    const v = aerialMeters(a);
+    line.meters += v;
+    line.aerialM += v;
+    line.shifts += 1;
+    if (a.contractor && !line.contractors.includes(a.contractor)) {
+      line.contractors.push(a.contractor);
+    }
+    bySection.set(key, line);
+    if (!a.oblast?.trim()) {
+      noOblast.meters += v;
+      noOblast.shifts += 1;
+    }
+    aerialM += v;
+    shifts += 1;
+    if (a.date) { recorded.add(a.date); worked.add(a.date); }
+  }
+
+  const groundM = list.reduce((s, e) => s + entryMeters(e), 0);
+  const meters = groundM + aerialM;
+  const byWeek = new Map<string, number>();
+  for (const w of groupByWeek(list)) byWeek.set(w.week, w.meters);
+  for (const a of air) {
+    const k = weekStart(a.date);
+    byWeek.set(k, (byWeek.get(k) ?? 0) + aerialMeters(a));
+  }
+  const weeks = [...byWeek.entries()]
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([week, v]) => ({ week, label: week ? weekLabel(week) : 'Без даты', meters: v }));
   const byDays = (acc: Map<string, Set<string>>) => [...acc.entries()]
     .map(([reason, days]) => ({ reason, days: days.size }))
     .sort((a, b) => b.days - a.days);
@@ -162,7 +214,10 @@ export function periodReport(rows: DailyWorkEntry[], filter: PeriodFilter = {}):
     from,
     to,
     meters,
+    groundM,
+    aerialM,
     shifts,
+    aerialShifts: air.length,
     idleShifts,
     days: worked.size,
     // Средние — по сменам и дням с работой: неделя дождя не делает
@@ -187,7 +242,11 @@ export interface PaceChange {
   change: number;
 }
 
-export function paceChange(rows: DailyWorkEntry[], filter: PeriodFilter): PaceChange | null {
+export function paceChange(
+  rows: DailyWorkEntry[],
+  filter: PeriodFilter,
+  aerial: AerialWorkEntry[] = [],
+): PaceChange | null {
   if (!filter.from || !filter.to) return null;
   const span = daysBetween(filter.from, filter.to).length;
   if (span === 0) return null;
@@ -197,12 +256,12 @@ export function paceChange(rows: DailyWorkEntry[], filter: PeriodFilter): PaceCh
   const prevFrom = new Date(prevTo);
   prevFrom.setUTCDate(prevFrom.getUTCDate() - (span - 1));
 
-  const current = periodReport(rows, filter).meters;
+  const current = periodReport(rows, filter, aerial).meters;
   const previous = periodReport(rows, {
     ...filter,
     from: prevFrom.toISOString().slice(0, 10),
     to: prevTo.toISOString().slice(0, 10),
-  }).meters;
+  }, aerial).meters;
 
   if (previous === 0) return null;
   return { previousM: previous, currentM: current, change: (current - previous) / previous };
@@ -262,6 +321,9 @@ export function periodDocHtml(input: PeriodDocInput): string {
   // Графа простоя — только когда он был: пустая колонка нулей в каждом
   // отчёте читается как «простоев не бывает», а это не так.
   const withIdle = r.idleShifts > 0;
+  // Графа подвеса — тоже только когда он был. Сам он в «Метрах» уже есть:
+  // графа говорит, сколько из них на опорах.
+  const withAir = r.aerialM > 0;
 
   const sections = r.sections.map((s, i) => '<tr>'
     + `<td class="val">${i + 1}</td>`
@@ -269,6 +331,7 @@ export function periodDocHtml(input: PeriodDocInput): string {
     + `<td class="val">${esc(s.contractors.join(', ') || '—')}</td>`
     + `<td class="val">${s.shifts}</td>`
     + (withIdle ? `<td class="val">${s.idleShifts || ''}</td>` : '')
+    + (withAir ? `<td class="val">${s.aerialM ? Math.round(s.aerialM).toLocaleString('ru') : ''}</td>` : '')
     + `<td class="val">${Math.round(s.meters).toLocaleString('ru')}</td>`
     + '</tr>').join('');
 
@@ -311,6 +374,14 @@ export function periodDocHtml(input: PeriodDocInput): string {
   const done = r.shifts > 0
     ? `<p>Выполнено: <span class="b">${esc(km(r.meters))}</span> (${esc(m(r.meters))}) `
       + `за ${r.shifts} смен в ${r.days} рабочих дней.</p>`
+      // Подвес внутри «выполнено» называем: метры в грунте и на опорах
+      // заказчик принимает разными актами и сверяет порознь.
+      + (withAir && r.groundM > 0
+        ? `<p>В том числе проложено в грунт ${esc(km(r.groundM))}, `
+          + `подвешено ${esc(km(r.aerialM))} (${r.aerialShifts} смен на подвесе).</p>`
+        : withAir
+          ? `<p>Всё выполненное — подвес кабеля (${r.aerialShifts} смен на подвесе).</p>`
+          : '')
       + `<p>В среднем ${esc(m(r.perShift))} за смену, ${esc(m(r.perDay))} за рабочий день.</p>`
     : '<p>Работы в период не велись.</p>';
   const unplaced = noOblastNote(r, input.area);
@@ -330,12 +401,13 @@ export function periodDocHtml(input: PeriodDocInput): string {
     + '<td class="val b">№</td><td class="lbl b">Участок</td>'
     + '<td class="val b">Подрядчик</td><td class="val b">Смен</td>'
     + (withIdle ? '<td class="val b">Простой, смен</td>' : '')
-    + '<td class="val b">Метры</td>'
+    + (withAir ? '<td class="val b">Из них подвес, м</td><td class="val b">Всего, м</td>' : '<td class="val b">Метры</td>')
     + '</tr>'
     + sections
     + '<tr><td class="val"></td><td class="lbl b">Итого</td><td class="val"></td>'
     + `<td class="val b">${r.shifts}</td>`
     + (withIdle ? `<td class="val b">${r.idleShifts}</td>` : '')
+    + (withAir ? `<td class="val b">${Math.round(r.aerialM).toLocaleString('ru')}</td>` : '')
     + `<td class="val b">${Math.round(r.meters).toLocaleString('ru')}</td></tr>`
     + '</table>'
     + weeks

@@ -127,7 +127,7 @@ export function weekStart(date: string): string {
   return d.toISOString().slice(0, 10);
 }
 
-function weekLabel(monday: string): string {
+export function weekLabel(monday: string): string {
   const a = new Date(`${monday}T00:00:00Z`);
   const b = new Date(a.getTime() + 6 * 24 * 3600 * 1000);
   const fmt = (d: Date, withMonth: boolean) => d.toLocaleDateString('ru', {
