@@ -76,7 +76,8 @@ export default function RouteDrawForm({
    * схема по факту называла меньше — два экрана, две длины одного участка.
    */
   const joint = useMemo(() => {
-    if (!parent || kind !== 'deviation' || coords.length < 2) return null;
+    // Линия без длины — ещё не обход: молчим, а не говорим «концы далеко».
+    if (!parent || kind !== 'deviation' || coords.length < 2 || !(lengthM >= 1)) return null;
     const { placed } = placeDeviations(parent.coords, [{
       id: 'draft', kind: 'route', date: '', oblast: '', uchastok, kato: '',
       lengthM: Math.round(lengthM), reason: '', author: '', createdAt: '', updatedAt: '',
