@@ -7,11 +7,17 @@ import {
 } from './sectionAct';
 import {
   actDocBody, actDocHtml, actFileName, ACT_DOC_CSS,
-  ActKind, ACT_KIND_SPECS, DOC_MIME, ActDocInput,
-  fixationDocHtml, fixationFileName,
+  ActKind, ACT_KIND_SPECS, ActDocInput,
+  fixationDocHtml, fixationFileName, protocolDocHtml, protocolFileName,
 } from './actDocument';
 import { prepareSectionAct, sectionActDocInput } from './actInput';
 import { supervisionDocHtml, supervisionFileName } from './supervisionLog';
+import { DEVIATION_KIND_LABEL, isDeviationClosed, type Deviation } from '@/types/construction';
+import { DOC_FORMAT_LABEL } from './docxExport';
+import { sectionDoc, deviationDoc, type DocScope } from './docShare';
+import { currentProjectId, projectMeta } from './projects';
+import { useDocOutput } from './useDocOutput';
+import { FormatChips, LinkLifeChips, LinkPanel, ShareButton } from './DocOutputControls';
 
 /**
  * Закрытие участка: АСР и ОСР по бланкам заказчика, заполненные из журнала.
@@ -28,6 +34,12 @@ import { supervisionDocHtml, supervisionFileName } from './supervisionLog';
 interface Props {
   journal: JournalState;
   onChangeFields: (uchastok: string, fields: SectionActManual) => void;
+  onFlash?: (text: string) => void;
+  /**
+   * Подрядчик, которым сужен журнал у субподрядчика. Его акт — не акт
+   * всех: ссылка на него своя, как и на «Документах».
+   */
+  onlyContractor?: string;
 }
 
 const RECULT: Recultivation[] = ['выполнена', 'не выполнена'];
@@ -36,7 +48,7 @@ const PAVEMENT: PavementRestore[] = [
   'не требуется', 'не предусмотрено проектом',
 ];
 
-export default function SectionClosing({ journal, onChangeFields }: Props) {
+export default function SectionClosing({ journal, onChangeFields, onFlash, onlyContractor }: Props) {
   const sections = useMemo(() => {
     const s = new Set<string>();
     for (const e of journal.ground) if (e.uchastok) s.add(e.uchastok);
@@ -67,38 +79,39 @@ export default function SectionClosing({ journal, onChangeFields }: Props) {
   const docInput = (k: ActKind): ActDocInput => sectionActDocInput(prep, k);
 
   /**
-   * Акт файлом. Word-совместимый HTML: открывается как документ, правится
-   * и уходит в письме — печать в PDF для этого не годится.
+   * Файл, PDF или ссылка — тем же кодом, что на «Документах».
+   *
+   * Раньше отсюда уходил только старый HTML с расширением .doc: на
+   * телефоне куратора он не открывается, а Word, PDF и ссылка были
+   * только на «Документах». Формат выбирается здесь же и общий с ними.
    */
-  /** Один способ отдать документ файлом — для всех бланков сразу. */
-  const download = (html: string, name: string) => {
-    // BOM — иначе Word открывает кириллицу кракозябрами.
-    const blob = new Blob(['﻿', html], { type: DOC_MIME });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = name;
-    document.body.appendChild(a);
-    a.click();
-    // Якорь убираем не сразу: если удалить его в тот же тик, браузер
-    // успевает потерять имя файла и сохраняет документ как «download».
-    setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 1000);
-  };
+  const out = useDocOutput(onFlash);
 
-  const downloadAct = (k: ActKind) => {
-    if (nothingToSign) return;
-    download(actDocHtml(docInput(k)), actFileName(k, uchastok, fields.actDate));
-  };
+  // Ссылка акта — по областям смен самого участка, как у акта скрытых
+  // работ: акт того же села не получает вторую ссылку оттого, что его
+  // собрали при другой выбранной области.
+  const scope: DocScope = useMemo(() => {
+    const id = journal.project?.id ?? currentProjectId();
+    return {
+      projectId: id,
+      projectName: journal.project?.name ?? projectMeta(id).name,
+      contractor: onlyContractor || undefined,
+    };
+  }, [journal.project, onlyContractor]);
+  const oblasts = useMemo(() => entries.map((e) => e.oblast), [entries]);
+  const shareOf = (docKind: string, label: string) => sectionDoc(scope, docKind, label, uchastok, oblasts);
+
+  const actHtml = (k: ActKind) => actDocHtml(docInput(k));
 
   /**
    * Акт фиксации участка. Берём тот же первый вариант, что и в
    * освидетельствовании: основной по проектной глубине, а если весь
    * участок прошёл с отклонением — его, с фактической глубиной.
    */
-  const downloadFixation = () => {
-    if (nothingToSign) return;
+  const fixationHtml = (): string | null => {
+    if (nothingToSign) return null;
     const v = totals.variants[0];
-    download(fixationDocHtml({
+    return fixationDocHtml({
       uchastok,
       oblast: first?.oblast,
       rayon: first?.rayon,
@@ -112,22 +125,29 @@ export default function SectionClosing({ journal, onChangeFields }: Props) {
       dateFrom: totals.dateFrom,
       dateTo: totals.dateTo,
       tusm: fields.tusm,
-    }), fixationFileName(uchastok, fields.actDate));
+    });
   };
 
   /** Тетрадь технадзора за период работ — из тех же дневных записей. */
-  const downloadSupervision = () => {
-    download(supervisionDocHtml({
-      entries,
-      deviations: devs,
-      from: totals.dateFrom,
-      to: totals.dateTo,
-      contractor: docContractorName,
-      oblast: first?.oblast,
-      rayon: first?.rayon,
-      uchastok,
-    }), supervisionFileName(uchastok, totals.dateFrom, totals.dateTo));
-  };
+  const supervisionHtml = () => supervisionDocHtml({
+    entries,
+    deviations: devs,
+    from: totals.dateFrom,
+    to: totals.dateTo,
+    contractor: docContractorName,
+    oblast: first?.oblast,
+    rayon: first?.rayon,
+    uchastok,
+  });
+
+  /**
+   * Протокол мобильной группы — у каждого отклонения участка свой.
+   *
+   * Без него участок не закрыть, и его номер уходит в акт: держать
+   * протоколы рядом с актом, а не только в «Отклонениях», значит не
+   * искать их по другому экрану, когда закрывают село.
+   */
+  const protocolHtml = (d: Deviation) => protocolDocHtml({ deviation: d, protocol: d.protocol });
 
   if (sections.length === 0) {
     return (
@@ -157,30 +177,89 @@ export default function SectionClosing({ journal, onChangeFields }: Props) {
             </button>
           ))}
         </div>
-        <button type="button" className="btn text-[11px]"
-                disabled={nothingToSign}
-                title={nothingToSign
-                  ? 'По участку нет объёмов прокладки — акт составлять не из чего'
-                  : `Скачать ${ACT_KIND_SPECS[kind].short} — открывается в Word`}
-                onClick={() => downloadAct(kind)}>
-          <FileDown size={14} />Скачать {ACT_KIND_SPECS[kind].short}
-        </button>
-        <button type="button" className="btn text-[11px]"
-                disabled={nothingToSign}
-                title="Акт фиксации участка: границы, протяжённость, фактическая глубина"
-                onClick={downloadFixation}>
-          <FileDown size={14} />Акт фиксации
-        </button>
-        <button type="button" className="btn text-[11px]"
-                disabled={entries.length === 0}
-                title="Тетрадь технадзора по форме КТ/33.07.25 за период работ по участку"
-                onClick={downloadSupervision}>
-          <FileDown size={14} />Тетрадь
-        </button>
+        <span className="inline-flex items-center">
+          <button type="button" className="btn text-[11px]"
+                  disabled={nothingToSign || out.busy}
+                  title={nothingToSign
+                    ? 'По участку нет объёмов прокладки — акт составлять не из чего'
+                    : `Скачать ${ACT_KIND_SPECS[kind].short} — ${DOC_FORMAT_LABEL[out.format]}`}
+                  onClick={() => void out.save(actFileName(kind, uchastok, fields.actDate), actHtml(kind))}>
+            <FileDown size={14} />Скачать {ACT_KIND_SPECS[kind].short}
+          </button>
+          <ShareButton out={out} compact disabled={nothingToSign}
+                       doc={shareOf(kind === 'ASR' ? 'аср' : 'оср', ACT_KIND_SPECS[kind].short)}
+                       html={() => (nothingToSign ? null : actHtml(kind))} />
+        </span>
+        <span className="inline-flex items-center">
+          <button type="button" className="btn text-[11px]"
+                  disabled={nothingToSign || out.busy}
+                  title="Акт фиксации участка: границы, протяжённость, фактическая глубина"
+                  onClick={() => {
+                    const html = fixationHtml();
+                    if (html) void out.save(fixationFileName(uchastok, fields.actDate), html);
+                  }}>
+            <FileDown size={14} />Акт фиксации
+          </button>
+          <ShareButton out={out} compact disabled={nothingToSign}
+                       doc={shareOf('акт фиксации', 'Акт фиксации участка')}
+                       html={fixationHtml} />
+        </span>
+        <span className="inline-flex items-center">
+          <button type="button" className="btn text-[11px]"
+                  disabled={entries.length === 0 || out.busy}
+                  title="Тетрадь технадзора по форме КТ/33.07.25 за период работ по участку"
+                  onClick={() => void out.save(
+                    supervisionFileName(uchastok, totals.dateFrom, totals.dateTo), supervisionHtml(),
+                  )}>
+            <FileDown size={14} />Тетрадь
+          </button>
+          <ShareButton out={out} compact disabled={entries.length === 0}
+                       doc={shareOf('тетрадь технадзора', 'Тетрадь технадзора')}
+                       html={supervisionHtml} />
+        </span>
         <button type="button" className="btn btn-primary text-[11px]" onClick={() => window.print()}>
           <Printer size={14} />Печать
         </button>
       </div>
+
+      {/* Формат и ссылка — те же, что на «Документах»: выбранный там Word
+          действует и здесь. */}
+      <div className="no-print flex flex-col gap-2">
+        <FormatChips out={out} />
+        <LinkLifeChips out={out} />
+        <LinkPanel out={out} onFlash={onFlash} />
+      </div>
+
+      {devs.length > 0 && (
+        <div className="no-print rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-2.5 flex flex-col gap-1.5">
+          <div className="text-[11.5px] font-medium text-[var(--text)]">
+            Протоколы мобильной группы по участку
+          </div>
+          {devs.map((d) => (
+            <div key={d.id} className="flex items-center gap-2 text-[11.5px]">
+              <span className="min-w-0 flex-1 truncate">
+                <span className="text-[var(--text)]">{DEVIATION_KIND_LABEL[d.kind]}</span>
+                <span className="text-[var(--text-muted)]">
+                  {' · '}{d.lengthM.toLocaleString('ru')} м
+                  {d.date ? ` · ${new Date(`${d.date}T00:00:00Z`).toLocaleDateString('ru')}` : ''}
+                </span>
+                {' · '}
+                {isDeviationClosed(d) && d.protocol
+                  ? <span className="text-[var(--success)]">№{d.protocol.number}</span>
+                  : <span className="text-[var(--warn)]">не оформлен — бланк под подпись</span>}
+              </span>
+              <button type="button" className="btn btn-ghost btn-icon"
+                      disabled={out.busy}
+                      title={`Скачать протокол — ${DOC_FORMAT_LABEL[out.format]}`}
+                      aria-label="Скачать протокол мобильной группы"
+                      onClick={() => void out.save(protocolFileName(d), protocolHtml(d))}>
+                <FileDown size={14} />
+              </button>
+              <ShareButton out={out} compact doc={deviationDoc(scope, d)} html={() => protocolHtml(d)} />
+            </div>
+          ))}
+        </div>
+      )}
 
       {nothingToSign && (
         <div className="no-print flex items-start gap-2 p-2.5 rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] text-[12px] text-[var(--text-muted)]">

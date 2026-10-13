@@ -120,3 +120,94 @@ export function sectionDoc(
     title: `${label}, ${name || 'участок не назван'}${tail(scope, places.length ? [places.join(', ')] : [])}`,
   };
 }
+
+/**
+ * Документ «на сегодня» — справка о готовности и подобные.
+ *
+ * Дат у неё нет: она всегда о текущем положении, и ссылка одна на всё
+ * время — собрали заново, и по той же ссылке уже новая справка. Область и
+ * подрядчик её сужают так же, как отчёт, и в адрес входят.
+ */
+export function stateDoc(scope: DocScope, kind: string, label: string): SharedDoc {
+  const oblast = clean(scope.oblast);
+  return {
+    address: { project: scope.projectId, kind, parts: [oblast, clean(scope.contractor)] },
+    title: `${label}${tail(scope, oblast ? [oblast] : [])}`,
+  };
+}
+
+/**
+ * Исполнительная схема трассы.
+ *
+ * Схема — по линии, а не по участку: у одного села бывает две трассы, и
+ * у каждой свой лист. Вид — по факту или по проекту с отклонениями —
+ * тоже в адресе: заказчик, которому отдали схему по проекту, не должен
+ * однажды открыть по той же ссылке другую.
+ */
+export function routeDoc(
+  scope: DocScope,
+  route: { id: string; name?: string },
+  mode: string,
+  modeLabel?: string,
+): SharedDoc {
+  const name = clean(route.name) || 'трасса без названия';
+  return {
+    address: {
+      project: scope.projectId,
+      kind: 'исполнительная схема',
+      parts: [route.id, clean(mode), clean(scope.contractor)],
+    },
+    title: `Исполнительная схема, ${name}${modeLabel ? ` (${clean(modeLabel)})` : ''}${tail(scope, [])}`,
+  };
+}
+
+/**
+ * Протокол измерений — по участку или по одной муфте.
+ *
+ * Протокол всех муфт участка и протокол одной из них — разные документы:
+ * отдав куратору одну муфту, нельзя, чтобы по той же ссылке однажды
+ * открылась пачка.
+ */
+export function measureDoc(
+  scope: DocScope,
+  section: string,
+  oblasts: (string | undefined)[],
+  mufta?: { id: string; name?: string },
+): SharedDoc {
+  const base = sectionDoc(scope, 'протокол измерений', 'Протокол измерений', section, oblasts);
+  if (!mufta) return base;
+  // Имя муфты — только в заголовке: переименуют её — ссылка, уже
+  // отданная куратору, открываться не перестанет.
+  const named = sectionDoc(
+    scope, 'протокол измерений', 'Протокол измерений',
+    `${clean(section) || 'участок не назван'}, ${clean(mufta.name) || 'муфта'}`, oblasts,
+  );
+  return {
+    address: { ...base.address, parts: [...base.address.parts, mufta.id] },
+    title: named.title,
+  };
+}
+
+/**
+ * Протокол мобильной группы — по отклонению.
+ *
+ * На одном участке их бывает несколько, и у каждого своя дата и свой
+ * номер: адрес — по отклонению, а не по участку, иначе второй протокол
+ * лёг бы поверх первого, уже отправленного.
+ */
+export function deviationDoc(
+  scope: DocScope,
+  d: { id: string; uchastok?: string; date?: string; oblast?: string },
+): SharedDoc {
+  const where = clean(d.uchastok) || 'участок не назван';
+  const oblast = clean(d.oblast);
+  return {
+    address: {
+      project: scope.projectId,
+      kind: 'протокол мобильной группы',
+      parts: [d.id, clean(scope.contractor)],
+    },
+    title: `Протокол мобильной группы, ${where}${d.date ? `, ${ruDay(d.date)}` : ''}`
+      + tail(scope, oblast ? [oblast] : []),
+  };
+}

@@ -81,7 +81,7 @@ import type { QuickParse } from './quickEntry';
 import { planFact } from './entriesTable';
 import { normName } from './areaImport';
 import { aerialMeters } from './aerialWork';
-import { downloadText } from '@/lib/download';
+import { downloadText, downloadBlob } from '@/lib/download';
 import ChangeLogView from './ChangeLogView';
 import PassportView from './PassportView';
 import IncidentsView from './IncidentsView';
@@ -99,7 +99,9 @@ import TodayView from './TodayView';
 import DrillsView from './DrillsView';
 import DrillForm from './DrillForm';
 import ObjectsView from './ObjectsView';
-import { protocolDocHtml, protocolFileName, DOC_MIME } from './actDocument';
+import { protocolDocHtml, protocolFileName } from './actDocument';
+import { buildDocFile, builtNote } from './docOutput';
+import { loadDocFormat } from './docxExport';
 import {
   journalCloudEnabled, syncJournal, loadLastSyncAt, saveLastSyncAt, listRemoteProjects,
 } from './journalRemote';
@@ -1537,6 +1539,8 @@ export default function ConstructionPanel({
         ) : view === 'closing' ? (
           <SectionClosing
             journal={scoped}
+            onFlash={setFlash}
+            onlyContractor={JOURNAL_ROLES[role].ownContractorOnly ? ownContractor || undefined : undefined}
             onChangeFields={(uch, f) => {
               const base = loadJournal();
               persist({ ...base, actFields: { ...base.actFields, [uch]: f } });
@@ -1735,6 +1739,7 @@ export default function ConstructionPanel({
         ) : view === 'deviations' ? (
           <DeviationsList
             rows={devs}
+            onFlash={setFlash}
             onAdd={() => { setEditingDev(null); setDevFormOpen(true); }}
             onEdit={(d) => { setEditingDev(d); setDevFormOpen(true); }}
             onDelete={handleDeleteDeviation}
@@ -2078,23 +2083,28 @@ function CrewsList({ rows, derived, onAdd, onEdit, onDelete, onAdopt }: {
  * Пустой бланк заполнять руками незачем: обстоятельства уже записаны в
  * карточке отклонения. Оформленный протокол выгружается с номером и
  * решением, неоформленный — бланком с прочерками под подпись.
+ *
+ * В том виде, что выбран на «Документах» и в «Закрытии»: раньше здесь
+ * всегда выходил старый .doc, который на телефоне не открывается.
  */
-function downloadProtocol(d: Deviation) {
-  const html = protocolDocHtml({ deviation: d, protocol: d.protocol });
-  // BOM — иначе Word открывает кириллицу кракозябрами.
-  const blob = new Blob(['\ufeff', html], { type: DOC_MIME });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = protocolFileName(d);
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+async function downloadProtocol(d: Deviation, onFlash?: (t: string) => void) {
+  const format = loadDocFormat();
+  try {
+    const built = await buildDocFile(
+      format, protocolFileName(d), protocolDocHtml({ deviation: d, protocol: d.protocol }),
+    );
+    downloadBlob(built.file, built.blob);
+    onFlash?.(builtNote(built));
+  } catch (e) {
+    onFlash?.(format === 'pdf'
+      ? 'PDF не собрался. Сохраните в Word — документ тот же.'
+      : errorLine(e, 'собрать протокол'));
+  }
 }
 
-function DeviationsList({ rows, onAdd, onEdit, onDelete }: {
+function DeviationsList({ rows, onAdd, onEdit, onDelete, onFlash }: {
   rows: Deviation[];
+  onFlash?: (t: string) => void;
   onAdd: () => void;
   onEdit: (d: Deviation) => void;
   onDelete: (id: string) => void;
@@ -2165,8 +2175,8 @@ function DeviationsList({ rows, onAdd, onEdit, onDelete }: {
                   <FileWarning size={12} />Протокол мобильной группы не оформлен
                 </span>
               )}
-              <button type="button" onClick={() => downloadProtocol(d)}
-                      title="Скачать протокол мобильной группы — откроется в Word"
+              <button type="button" onClick={() => { void downloadProtocol(d, onFlash); }}
+                      title="Скачать протокол мобильной группы — в формате, выбранном на «Документах»"
                       className="btn btn-ghost btn-icon ml-auto text-[var(--text-muted)] hover:text-[var(--accent)]">
                 <FileDown size={14} />
               </button>

@@ -2,7 +2,7 @@
 import { localDay } from '@/lib/localDay';
 import { useMemo, useState } from 'react';
 import {
-  FileDown, Package, AlertTriangle, Check, Hash, Loader2, Copy,
+  FileDown, Package, AlertTriangle, Check, Hash, Loader2,
   Link as LinkIcon,
 } from 'lucide-react';
 import type { JournalState } from './journalStore';
@@ -53,22 +53,17 @@ import { placeNames, routeViews, directionHint } from './routeStyle';
 import {
   loadBilingual, saveBilingual, loadTerms, BILINGUAL_LABEL, type Bilingual,
 } from './bilingual';
+import { buildDocx, docxFileName } from './docxExport';
 import {
-  buildDocx, docxFileName, loadDocFormat, saveDocFormat,
-  DOC_FORMATS, DOC_FORMAT_LABEL, DOC_FORMAT_HINT, type DocFormat,
-} from './docxExport';
-import { htmlToPdfBlob, pdfFileName } from '@/lib/pdf';
-import { shareDocument } from '@/lib/supabase';
-import { journalCloudEnabled } from './journalRemote';
-import { periodDoc, sectionDoc, type DocScope, type SharedDoc } from './docShare';
+  periodDoc, sectionDoc, stateDoc, routeDoc, measureDoc, type DocScope,
+} from './docShare';
 import { rangeText } from './moneyPeriod';
 import { currentProjectId, projectMeta } from './projects';
-import {
-  LINK_LIVES, DEFAULT_LINK_LIFE, lifeByKey, linkMessage, validFor,
-} from '@/lib/docLink';
 import { errorLine } from '@/lib/errors';
 import { getPhotoBlob } from './photoStore';
-import { downloadText, downloadBlob } from '@/lib/download';
+import { downloadBlob } from '@/lib/download';
+import { useDocOutput } from './useDocOutput';
+import { FormatChips, LinkLifeChips, LinkPanel, ShareButton } from './DocOutputControls';
 import { toCsv, csvBlob } from '@/lib/csv';
 import { payrollContractors } from './payroll';
 import { journalCsvRows } from './journalCsv';
@@ -131,8 +126,6 @@ interface Props {
    */
   onlyContractor?: string;
 }
-
-const DOC_MIME = 'application/msword;charset=utf-8';
 
 /** Участок в KML и в журнале пишут по-разному — сверяем нестрого. */
 const normLoose = (v: string | undefined) => normName(v ?? '');
@@ -214,7 +207,10 @@ export default function DocsView({
   onChangeActFields, onReverseRoute, onSwapRouteEnds, places: mapPlaces,
   oblast, onlyContractor, routeBind,
 }: Props) {
-  const [busy, setBusy] = useState(false);
+  // Сохранить, отдать ссылкой, формат и срок ссылки — тем же кодом, что и
+  // в «Закрытии»: два экрана не должны отдавать один акт по-разному.
+  const out = useDocOutput(onFlash);
+  const { busy, setBusy, cloudReady, save, share } = out;
   // Что в последнем пакете осталось неотмеченным или не вошло. Строка-
   // вспышка гаснет за две секунды, а при нескольких участках её не успеть
   // прочесть — акты с пустой графой уже в архиве, и заметить это, как и
@@ -228,12 +224,6 @@ export default function DocsView({
   // По факту или по проекту с отклонениями — заказчики просят по-разному,
   // и выбор помнится на устройстве, как и формат файла.
   const [schemeMode, setSchemeMode] = useState<SchemeMode>(() => loadSchemeMode());
-  const [linkLife, setLinkLife] = useState(DEFAULT_LINK_LIFE.key);
-  // Без облака ссылку давать неоткуда: документ останется файлом.
-  const cloudReady = journalCloudEnabled();
-  const [link, setLink] = useState<
-    { url: string; until: string; text: string; subject: string } | null
-  >(null);
 
   // Чем сужены документы этого экрана: из этого строится и адрес ссылки,
   // и её заголовок (см. docShare.ts). Проект — тот, чей журнал открыт, а
@@ -248,7 +238,6 @@ export default function DocsView({
       contractor: contractor || onlyContractor || undefined,
     };
   }, [journal.project, area, contractor, onlyContractor]);
-  const [format, setFormat] = useState<DocFormat>(() => loadDocFormat());
   const [lang, setLang] = useState<Bilingual>(() => loadBilingual());
   const docTerms = useMemo(() => loadTerms(), []);
 
@@ -395,89 +384,6 @@ export default function DocsView({
   }, [schemeRoute, progressNow, journal.areas, places]);
 
   /**
-   * Сохранить документ.
-   *
-   * HTML с расширением .doc открывается только настольным Вордом, да и
-   * тот ругается. Тот же документ, собранный настоящим пакетом,
-   * открывается Вордом на телефоне и Гугл-Документами — а куратор
-   * читает его из машины.
-   */
-  async function save(name: string, html: string, landscape = false) {
-    if (format === 'doc') {
-      downloadText(name, html, DOC_MIME);
-      onFlash?.(`Файл собран: ${name}`);
-      return;
-    }
-    if (format === 'pdf') {
-      // Снимок страницы делает браузер, и на длинном документе это
-      // занимает секунды: без отметки о работе кнопка выглядит нажатой
-      // впустую, и её жмут ещё раз.
-      setBusy(true);
-      try {
-        const file = pdfFileName(name);
-        downloadBlob(file, await htmlToPdfBlob(html, ACT_DOC_CSS, { landscape }));
-        onFlash?.(`Файл собран: ${file}`);
-      } catch {
-        onFlash?.('PDF не собрался. Сохраните в Word — документ тот же.');
-      } finally {
-        setBusy(false);
-      }
-      return;
-    }
-    const file = docxFileName(name);
-    downloadBlob(file, await buildDocx(html, { landscape }));
-    onFlash?.(`Файл собран: ${file}`);
-  }
-
-  /**
-   * Собрать документ тем же способом, что и на сохранение.
-   *
-   * Отдельно от самого сохранения, потому что ссылке нужен не скачанный
-   * файл, а его содержимое: имя и способ должны совпадать, иначе по
-   * ссылке уйдёт не то, что отдали вложением.
-   */
-  async function buildFile(
-    name: string, html: string, landscape: boolean,
-  ): Promise<{ blob: Blob; ext: string }> {
-    if (format === 'doc') {
-      return { blob: new Blob([html], { type: DOC_MIME }), ext: 'doc' };
-    }
-    if (format === 'pdf') {
-      return { blob: await htmlToPdfBlob(html, ACT_DOC_CSS, { landscape }), ext: 'pdf' };
-    }
-    return { blob: await buildDocx(html, { landscape }), ext: 'docx' };
-  }
-
-  /**
-   * Отдать ссылкой, а не файлом.
-   *
-   * Акт уходит вложением, потом в нём находят ошибку, отправляют второй —
-   * и у заказчика их два, а какой верный, видно только по дате письма.
-   * Ссылка одна, и по ней всегда то, что лежит сейчас.
-   */
-  async function share(doc: SharedDoc, html: string, landscape = false) {
-    setBusy(true);
-    try {
-      const subject = doc.title;
-      const { blob, ext } = await buildFile(subject, html, landscape);
-      const life = lifeByKey(linkLife);
-      const { url, until } = await shareDocument(doc.address, ext, blob, life);
-      const text = linkMessage(subject, url, life, until);
-      setLink({ url, until, text, subject });
-      try {
-        await navigator.clipboard.writeText(text);
-        onFlash?.(`Ссылка скопирована, ${validFor(until, new Date())}`);
-      } catch {
-        onFlash?.('Ссылка готова — скопируйте её ниже');
-      }
-    } catch (e) {
-      onFlash?.(errorLine(e, 'собрать ссылку'));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  /**
    * Документ в архив.
    *
    * В архив кладём Word, даже когда по одному сохраняют в PDF: снимок
@@ -485,7 +391,7 @@ export default function DocsView({
    * пакет собирают, чтобы отправить его сейчас.
    */
   async function putDoc(folder: ZipFolder, name: string, html: string) {
-    if (format === 'doc') folder.file(name, html);
+    if (out.format === 'doc') folder.file(name, html);
     else folder.file(docxFileName(name), await buildDocx(html));
   }
 
@@ -809,6 +715,23 @@ export default function DocsView({
 
   const cost = costSheet(sheet, prices);
 
+  /** Лист схемы — один и тот же для файла и для ссылки. */
+  const schemePage = (): string | null => (scheme
+    ? schemeDocPage({
+      scheme,
+      lang,
+      terms: docTerms,
+      // Номер акта того участка, к которому относится
+      // трасса, — по тому же правилу, что и объекты.
+      number: schemeAct?.number,
+      date: to,
+      contractor,
+      customer: partyNames.customer,
+      oblast: schemeObjects.own[0]?.oblast,
+      rayon: schemeObjects.own[0]?.rayon,
+    })
+    : null);
+
   return (
     <div className="p-3 space-y-3">
       {/*
@@ -863,93 +786,12 @@ export default function DocsView({
         </div>
       )}
 
-      {/* Формат — общий для всех документов на этом экране. */}
-      <div className="flex items-center gap-1.5 flex-wrap">
-        <span className="text-[11px] text-[var(--text-muted)]">Сохранять как</span>
-        {DOC_FORMATS.map((f) => (
-          <button
-            key={f}
-            type="button"
-            onClick={() => { setFormat(f); saveDocFormat(f); }}
-            title={DOC_FORMAT_HINT[f]}
-            className={`chip ${f === format ? 'chip-on' : ''}`}
-          >
-            {DOC_FORMAT_LABEL[f]}
-          </button>
-        ))}
-        <span className="w-full text-[10.5px] text-[var(--text-muted)]">
-          {DOC_FORMAT_HINT[format]}
-        </span>
-      </div>
+      {/* Формат — общий для всех документов, и с «Закрытием» тоже. */}
+      <FormatChips out={out} />
 
       {/* Ссылка вместо файла */}
-      {cloudReady && (
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-[11px] text-[var(--text-muted)]">Ссылка живёт</span>
-          {LINK_LIVES.map((l) => (
-            <button
-              key={l.key}
-              type="button"
-              onClick={() => setLinkLife(l.key)}
-              title={l.hint}
-              className={`chip ${l.key === linkLife ? 'chip-on' : ''}`}
-            >
-              {l.label}
-            </button>
-          ))}
-          <span className="w-full text-[10.5px] text-[var(--text-muted)]">
-            Заказчику не нужен вход: ссылка подписанная. Срок нужен потому, что
-            письма пересылают, а папки «Загрузки» живут годами.
-          </span>
-        </div>
-      )}
-
-      {link && (
-        <div className="rounded-lg border border-[var(--accent)]/40 bg-[var(--accent-dim)]
-                        p-3 space-y-2">
-          <div className="flex items-baseline gap-2">
-            <LinkIcon size={13} className="text-[var(--accent)]" />
-            <span className="text-[12.5px] font-semibold text-[var(--text)] min-w-0 flex-1 truncate">
-              {link.subject}
-            </span>
-            <span className="text-[10.5px] text-[var(--text-muted)] shrink-0">
-              {validFor(link.until, new Date())}
-            </span>
-          </div>
-          <textarea
-            readOnly
-            value={link.text}
-            rows={4}
-            onFocus={(e) => e.currentTarget.select()}
-            aria-label="Письмо со ссылкой"
-            className="w-full bg-[var(--bg-canvas)] border border-[var(--border)] rounded
-                       px-2 py-1.5 text-[11px] text-[var(--text)] font-mono"
-          />
-          <div className="flex gap-1.5 flex-wrap">
-            <button type="button" className="btn btn-ghost text-[11px]"
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(link.text);
-                        onFlash?.('Скопировано');
-                      } catch {
-                        onFlash?.('Выделите текст и скопируйте вручную');
-                      }
-                    }}>
-              <Copy size={13} />Скопировать письмо
-            </button>
-            <button type="button" className="btn btn-ghost text-[11px]"
-                    onClick={() => setLink(null)}>
-              Закрыть
-            </button>
-          </div>
-          <div className="text-[10.5px] text-[var(--text-muted)] leading-snug">
-            Соберёте документ заново — по этой же ссылке будет новая версия.
-            Перезапрашивать её заказчику не нужно. Отчёт за другие даты, по
-            другой области, подрядчику или проекту получает свою ссылку и эту
-            не заменит.
-          </div>
-        </div>
-      )}
+      <LinkLifeChips out={out} />
+      <LinkPanel out={out} onFlash={onFlash} />
 
       {/* Пакет */}
       <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-3 space-y-2">
@@ -993,6 +835,9 @@ export default function DocsView({
                   onClick={() => save(volumeDocFile({ sheet }), volumeDocPage({ sheet, contractor }))}>
             <FileDown size={14} />Ведомость объёмов
           </button>
+          <ShareButton out={out} compact disabled={sheet.rows.length === 0}
+                       doc={periodDoc(docScope, sheet.from, sheet.to, 'ведомость объёмов', 'Ведомость объёмов')}
+                       html={() => volumeDocPage({ sheet, contractor })} />
           <button type="button" className="btn btn-ghost text-[11.5px]"
                   disabled={!anyShift}
                   onClick={() => save(
@@ -1036,6 +881,9 @@ export default function DocsView({
                     wordPage('Справка о готовности', readinessDocHtml(readiness)))}>
             <FileDown size={14} />Справка по сёлам
           </button>
+          <ShareButton out={out} compact disabled={readiness.length === 0}
+                       doc={stateDoc(docScope, 'справка о готовности', 'Справка о готовности по сёлам')}
+                       html={() => wordPage('Справка о готовности', readinessDocHtml(readiness))} />
           {/* Бухгалтерия в 1С, руководитель в Google Таблицах. Писать
               интеграцию с каждым — годы; отдать таблицу, которую они и
               так читают, — один файл. */}
@@ -1151,6 +999,9 @@ export default function DocsView({
                   )}>
             <FileDown size={14} />КС-2
           </button>
+          <ShareButton out={out} compact disabled={cost.total === 0}
+                       doc={periodDoc(docScope, sheet.from, sheet.to, 'кс-2', 'КС-2')}
+                       html={() => volumeDocPage({ sheet, cost, contractor, customer: partyNames.customer })} />
         </div>
         {cost.unpriced.length > 0 && (
           <div className="text-[11px] text-[var(--warn)]">
@@ -1318,17 +1169,29 @@ export default function DocsView({
                     </div>
                   );
                 })()}
-                <button type="button" className="btn btn-ghost text-[11.5px]"
-                        disabled={protocolSet.length === 0}
-                        onClick={() => {
-                          // Рефлектограмму снимают на объекте, цифры переписывают
-                          // в тетрадь, потом в Word — и на каждом переписывании
-                          // теряется волокно. Все они уже в журнале сварки.
-                          const doc = protocolDoc();
-                          if (doc) save(doc.name, doc.html);
-                        }}>
-                  <FileDown size={14} />Протокол измерений
-                </button>
+                <div className="flex gap-1.5 flex-wrap">
+                  <button type="button" className="btn btn-ghost text-[11.5px]"
+                          disabled={protocolSet.length === 0}
+                          onClick={() => {
+                            // Рефлектограмму снимают на объекте, цифры переписывают
+                            // в тетрадь, потом в Word — и на каждом переписывании
+                            // теряется волокно. Все они уже в журнале сварки.
+                            const doc = protocolDoc();
+                            if (doc) save(doc.name, doc.html);
+                          }}>
+                    <FileDown size={14} />Протокол измерений
+                  </button>
+                  <ShareButton out={out} disabled={protocolSet.length === 0}
+                               doc={measureDoc(
+                                 { ...docScope, contractor: onlyContractor || undefined },
+                                 section,
+                                 hiddenInput?.rows.map((e) => e.oblast) ?? [],
+                                 chosenOne
+                                   ? { id: protocolSet[0].objectId, name: protocolSet[0].name }
+                                   : undefined,
+                               )}
+                               html={() => protocolDoc()?.html ?? null} />
+                </div>
               </>
             )}
           </div>
@@ -1386,25 +1249,17 @@ export default function DocsView({
               </select>
               <button type="button" className="btn btn-ghost text-[11.5px]"
                       disabled={!scheme}
-                      onClick={() => scheme && save(
-                        schemeFileName(scheme.route, to),
-                        schemeDocPage({
-                          scheme,
-                          lang,
-                          terms: docTerms,
-                          // Номер акта того участка, к которому относится
-                          // трасса, — по тому же правилу, что и объекты.
-                          number: schemeAct?.number,
-                          date: to,
-                          contractor,
-                          customer: partyNames.customer,
-                          oblast: schemeObjects.own[0]?.oblast,
-                          rayon: schemeObjects.own[0]?.rayon,
-                        }),
-                        true,
-                      )}>
+                      onClick={() => {
+                        const html = schemePage();
+                        if (scheme && html) void save(schemeFileName(scheme.route, to), html, true);
+                      }}>
                 <FileDown size={14} />Схема
               </button>
+              <ShareButton out={out} compact disabled={!scheme} landscape
+                           doc={schemeRoute
+                             ? routeDoc(docScope, schemeRoute, schemeMode, SCHEME_MODE_LABEL[schemeMode])
+                             : null}
+                           html={schemePage} />
             </div>
             {/* С какого конца начинается лист — спрашивают первым делом:
                 схема, начатая от села, когда бригада шла от магистрали,

@@ -50,7 +50,19 @@ export interface DocImage {
   caption?: string;
 }
 
-export type DocBlock = DocParagraph | DocTable | DocImage;
+/**
+ * Разрыв страницы.
+ *
+ * Основной АСР и акты по отклонениям идут листами подряд, каждый с новой
+ * страницы, — их подписывают по отдельности. Без разрыва в .docx второй
+ * акт начинался посреди листа первого, и подпись одного оказывалась на
+ * странице другого.
+ */
+export interface DocPageBreak {
+  type: 'pagebreak';
+}
+
+export type DocBlock = DocParagraph | DocTable | DocImage | DocPageBreak;
 
 // ── Разбор нашего HTML ───────────────────────────────────────────────────────
 
@@ -70,7 +82,9 @@ export function unescapeHtml(s: string): string {
  */
 export function parseRuns(inner: string): DocRun[] {
   const runs: DocRun[] = [];
-  const re = /<span\b[^>]*class="[^"]*\bb\b[^"]*"[^>]*>([\s\S]*?)<\/span>|<br\s*\/?>/gi;
+  // Жирное бывает и классом, и тегом: акт фиксации выделяет «глубина
+  // меньше проектной» тегом <b>, и в .docx это предупреждение терялось.
+  const re = /<span\b[^>]*class="[^"]*\bb\b[^"]*"[^>]*>([\s\S]*?)<\/span>|<(?:b|strong)\b[^>]*>([\s\S]*?)<\/(?:b|strong)>|<br\s*\/?>/gi;
   let last = 0;
   let m: RegExpExecArray | null;
 
@@ -92,8 +106,9 @@ export function parseRuns(inner: string): DocRun[] {
   // eslint-disable-next-line no-cond-assign
   while ((m = re.exec(inner)) !== null) {
     plain(inner.slice(last, m.index));
-    if (m[1] !== undefined) {
-      const text = unescapeHtml(m[1].replace(/<[^>]+>/g, ''))
+    const boldInner = m[1] ?? m[2];
+    if (boldInner !== undefined) {
+      const text = unescapeHtml(boldInner.replace(/<[^>]+>/g, ''))
         .replace(/[\t\r\n]+/g, ' ')
         .replace(/ {2,}/g, ' ');
       if (text) runs.push({ text, bold: true });
@@ -188,7 +203,9 @@ export function parseDocHtml(html: string): DocBlock[] {
     + '|<table\\b([^>]*)>([\\s\\S]*?)<\\/table>'
     // Снимок с подписью: в фотоотчёте они и есть весь документ, и без
     // них .docx уходит пустым листом с заголовком.
-    + '|<div\\b[^>]*class="[^"]*\\bph\\b[^"]*"[^>]*>([\\s\\S]*?)<\\/div>',
+    + '|<div\\b[^>]*class="[^"]*\\bph\\b[^"]*"[^>]*>([\\s\\S]*?)<\\/div>'
+    // Лист, который в печати начинается с новой страницы.
+    + '|(<div\\b[^>]*page-break-before\\s*:\\s*always[^>]*>)',
     'gi',
   );
   let m: RegExpExecArray | null;
@@ -199,6 +216,10 @@ export function parseDocHtml(html: string): DocBlock[] {
       blocks.push({ type: 'h1', runs: parseRuns(m[1]), align: 'center' });
     } else if (m[3] !== undefined) {
       const cls = m[2] ?? '';
+      // Пустой абзац с разрывом — так протоколы по муфтам разведены по листам.
+      if (/page-break-before\s*:\s*always/i.test(cls) && blocks.length > 0) {
+        blocks.push({ type: 'pagebreak' });
+      }
       const runs = parseRuns(m[3]);
       if (runs.length === 0) continue;
       blocks.push({
@@ -220,6 +241,9 @@ export function parseDocHtml(html: string): DocBlock[] {
       const caption = parseRuns(inner).map((r) => r.text).join('').replace(/\s+/g, ' ').trim();
       if (src) blocks.push({ type: 'image', src, caption: caption || undefined });
       else if (caption) blocks.push({ type: 'p', runs: [{ text: caption }], align: 'center' });
+    } else if (m[7] !== undefined) {
+      // Разрыв в самом начале документа дал бы пустой первый лист.
+      if (blocks.length > 0) blocks.push({ type: 'pagebreak' });
     }
   }
   return blocks;
@@ -426,6 +450,7 @@ export function documentXml(
   // подпись назад.
   const byBlock = new Map(media.map((m, i) => [m.blockIndex, { m, n: i + 1 }]));
   const body = blocks.map((b, blockIndex) => {
+    if (b.type === 'pagebreak') return '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
     if (b.type === 'table') return tableXml(b);
     if (b.type === 'image') {
       const hit = byBlock.get(blockIndex);
@@ -582,7 +607,7 @@ export const DOC_FORMAT_LABEL: Record<DocFormat, string> = {
 
 export const DOC_FORMAT_HINT: Record<DocFormat, string> = {
   docx: 'Открывается и на телефоне, и в Гугл-Документах. Можно править.',
-  pdf: 'Открывается везде и выглядит одинаково. Править нельзя — и это к лучшему, когда документ ушёл.',
+  pdf: 'Открывается везде и выглядит одинаково, листы пронумерованы, текст ищется и копируется. Править нельзя — и это к лучшему, когда документ ушёл.',
   doc: 'Старый формат: открывает только настольный Word, и тот с оговоркой.',
 };
 

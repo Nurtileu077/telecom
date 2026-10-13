@@ -609,6 +609,9 @@ export interface ProtocolDocInput {
  * Протокол мобильной группы: документ, без которого отклонение не закрыть.
  * Выпускается по факту выезда — систему он интересует как ссылка из акта,
  * а людям нужен бланк с уже вписанными обстоятельствами.
+ *
+ * Строка под подпись — подчёркиваниями, а не рамкой ячейки: в .docx и
+ * Гугл-Документах стили рамки теряются, и место под подпись пропадало.
  */
 export function protocolDocHtml(input: ProtocolDocInput): string {
   const d = input.deviation;
@@ -631,7 +634,6 @@ export function protocolDocHtml(input: ProtocolDocInput): string {
   .body { margin-top: 10pt; font-size: 11pt; text-align: justify; }
   table.sign { margin-top: 28pt; }
   table.sign td { width: 33%; font-size: 10pt; padding-right: 10pt; }
-  .line { display: inline-block; border-bottom: 0.5pt solid #000; width: 90%; }
   .sub { font-size: 8pt; color: #444; }
 </style></head>
 <body>
@@ -668,9 +670,9 @@ export function protocolDocHtml(input: ProtocolDocInput): string {
   </p>
   <table class="sign">
     <tr>
-      <td>Представитель подрядчика<br/><span class="line">&nbsp;</span><br/><span class="sub">подпись, Ф.И.О.</span></td>
-      <td>Представитель технадзора<br/><span class="line">&nbsp;</span><br/><span class="sub">подпись, Ф.И.О.</span></td>
-      <td>Представитель заказчика<br/><span class="line">&nbsp;</span><br/><span class="sub">подпись, Ф.И.О.</span></td>
+      <td>Представитель подрядчика<br/>____________________<br/><span class="sub">подпись, Ф.И.О.</span></td>
+      <td>Представитель технадзора<br/>____________________<br/><span class="sub">подпись, Ф.И.О.</span></td>
+      <td>Представитель заказчика<br/>____________________<br/><span class="sub">подпись, Ф.И.О.</span></td>
     </tr>
   </table>
 </body></html>`;

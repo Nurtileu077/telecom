@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { pageBreaks, pdfPageCount, pdfFileName, stylesOf, A4_PX } from './pdf';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { inflateSync } from 'node:zlib';
+import { jsPDF } from 'jspdf';
+import {
+  pageBreaks, pdfPageCount, pdfFileName, stylesOf, A4_PX,
+  scopeCss, linesOfWords, placeRuns, pageLabel, registerTextFont, addTextLayer, addPageLabel,
+  PDF_TEXT_FONT_URL, type WordBox,
+} from './pdf';
 
 /**
  * Резать ровно по высоте листа нельзя: разрез попадает в середину строки
@@ -142,5 +150,168 @@ describe('stylesOf', () => {
 
   it('атрибуты тега не мешают', () => {
     expect(stylesOf('<style type="text/css" media="print">.a{}</style>')).toContain('.a{}');
+  });
+});
+
+/**
+ * Стили акта фиксации и тетради написаны для отдельного файла: «td {
+ * border }», «body { font }». Вставленные как есть, они на время сборки
+ * обводили рамкой все таблицы приложения.
+ */
+describe('scopeCss', () => {
+  const css = `
+  @page { size: A4 landscape; margin: 1.5cm; }
+  body { font-family: "Times New Roman", serif; }
+  h1, td.k { font-size: 12pt; }
+  .act-doc .ph img { width: 100%; }
+  body.act-doc p { margin: 0; }
+  @media print { .no-print { display: none; } }`;
+  const out = scopeCss(css, '.pdf-scope', '.pdf-root');
+
+  it('правила документа привязывает к документу', () => {
+    expect(out).toContain('.pdf-scope h1, .pdf-scope td.k { font-size: 12pt; }');
+    expect(out).toContain('.pdf-scope .act-doc .ph img');
+  });
+
+  it('«body» становится самим документом, а не страницей приложения', () => {
+    expect(out).toContain('.pdf-scope > .pdf-root { font-family');
+    expect(out).toContain('.pdf-scope > .pdf-root.act-doc p');
+    expect(out).not.toMatch(/(^|[\s,}])body\b/);
+  });
+
+  it('правила печати снимку не нужны', () => {
+    expect(out).not.toContain('@page');
+    expect(out).not.toContain('no-print');
+  });
+
+  it('ни одного правила без привязки не остаётся', () => {
+    for (const rule of out.split('\n').filter(Boolean)) expect(rule.startsWith('.pdf-scope')).toBe(true);
+  });
+});
+
+/** Слова строки «Акт фиксации участка» и переноса «прокладки». */
+function word(text: string, word: string, left: number, top: number, w: number, h = 16): WordBox {
+  const start = text.indexOf(word);
+  return { start, end: start + word.length, left, top, right: left + w, bottom: top + h };
+}
+
+describe('linesOfWords', () => {
+  const text = 'Акт фиксации участка  прокладки';
+
+  it('слова одной строки — одна строка, с пробелами между ними', () => {
+    const runs = linesOfWords(text, [
+      word(text, 'Акт', 0, 0, 30), word(text, 'фиксации', 36, 0, 70), word(text, 'участка', 112, 1, 60),
+    ]);
+    expect(runs).toEqual([{ text: 'Акт фиксации участка', x: 0, y: 0, w: 172, h: 17 }]);
+  });
+
+  it('перенос абзаца начинает новую строку', () => {
+    const runs = linesOfWords(text, [
+      word(text, 'Акт', 0, 0, 30), word(text, 'фиксации', 36, 0, 70),
+      word(text, 'участка', 112, 0, 60), word(text, 'прокладки', 0, 20, 80),
+    ]);
+    expect(runs.map((r) => r.text)).toEqual(['Акт фиксации участка', 'прокладки']);
+    expect(runs[1]).toMatchObject({ x: 0, y: 20 });
+  });
+
+  it('невидимое слово строку не рвёт и в неё не попадает', () => {
+    const runs = linesOfWords(text, [word(text, 'Акт', 0, 0, 0), word(text, 'фиксации', 36, 0, 70)]);
+    expect(runs.map((r) => r.text)).toEqual(['фиксации']);
+  });
+});
+
+describe('placeRuns', () => {
+  const run = (y: number, h = 20) => ({ text: 'Итого', x: 100, y, w: 50, h });
+
+  it('строку кладёт на лист, где её середина, и считает от верха листа', () => {
+    const placed = placeRuns([run(10), run(1005), run(1975)], [0, 1000, 2000], 2500, 0.1, 12);
+    expect(placed.map((p) => p.page)).toEqual([0, 1, 1]);
+    expect(placed[1].yMm).toBeCloseTo(12 + 0.5, 5);
+    expect(placed[0].xMm).toBeCloseTo(12 + 10, 5);
+  });
+
+  it('то, что за пределами снимка, не кладёт никуда', () => {
+    expect(placeRuns([run(3000)], [0, 1000], 2000, 0.1, 12)).toEqual([]);
+  });
+});
+
+describe('номер листа', () => {
+  it('одностраничный документ не нумерует', () => {
+    expect(pageLabel(0, 1)).toBe('');
+  });
+
+  it('считает с единицы и называет, сколько всего', () => {
+    expect(pageLabel(0, 5)).toBe('1 / 5');
+    expect(pageLabel(4, 5)).toBe('5 / 5');
+  });
+});
+
+/**
+ * Настоящий jsPDF со шрифтом из public/fonts: в браузере здесь проверить
+ * нельзя, а сломанный шрифт или опция, которой нет в этой версии, молча
+ * дали бы PDF без текста.
+ */
+describe('текст в PDF выделяется', () => {
+  const font = readFileSync(join(process.cwd(), 'public', PDF_TEXT_FONT_URL)).toString('base64');
+
+  function cmaps(bytes: Buffer): string {
+    const out: string[] = [];
+    const re = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+    const bin = bytes.toString('latin1');
+    let m = re.exec(bin);
+    while (m) {
+      const raw = Buffer.from(m[1], 'latin1');
+      let text: string;
+      try { text = inflateSync(raw).toString('latin1'); } catch { text = raw.toString('latin1'); }
+      out.push(text);
+      m = re.exec(bin);
+    }
+    return out.join('\n');
+  }
+
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  registerTextFont(doc, font);
+  addTextLayer(doc, [
+    { page: 0, text: 'Акт № 17 Зеренда — қазақ 1 200 ₸', xMm: 20, yMm: 30, wMm: 90, hMm: 5 },
+  ]);
+  addPageLabel(doc, pageLabel(0, 3), 210, 297);
+  const streams = cmaps(Buffer.from(doc.output('arraybuffer')));
+
+  it('текст лежит невидимым поверх снимка', () => {
+    expect(streams).toMatch(/\b3 Tr\b/);
+  });
+
+  it('буквы, казахские буквы, тенге и номер переводятся обратно в текст', () => {
+    // Таблица ToUnicode: без неё выделенное копируется пустыми квадратами.
+    for (const code of ['0410', '0417', '049b', '20b8', '2116']) {
+      expect(streams.toLowerCase()).toContain(`<${code}>`);
+    }
+  });
+
+  it('номер листа стоит видимым текстом', () => {
+    expect(streams).toContain('(1 / 3) Tj');
+  });
+});
+
+describe('новый лист там, где его требует документ', () => {
+  it('акт по отклонению в PDF начинается с нового листа, а не посреди основного', () => {
+    const stops = Array.from({ length: 40 }, (_, i) => (i + 1) * 100);
+    const starts = pageBreaks(3000, 1000, stops, [1250]);
+    expect(starts).toContain(1250);
+    // До разрыва основной акт режется как обычно, по строкам.
+    expect(starts.filter((s) => s < 1250)).toEqual([0, 1000]);
+  });
+
+  it('разрыв в самом начале или за концом пустого листа не даёт', () => {
+    expect(pageBreaks(800, 1000, [], [0, 900, 5000])).toEqual([0]);
+    expect(pageBreaks(800, 1000, [], [0, 500])).toEqual([0, 500]);
+  });
+
+  it('листы после разрыва ничего не теряют', () => {
+    const total = 2600;
+    const starts = pageBreaks(total, 1000, [], [700, 1500]);
+    const ends = [...starts.slice(1), total];
+    expect(starts).toEqual([0, 700, 1500, 2500]);
+    expect(ends.reduce((s, e, i) => s + (e - starts[i]), 0)).toBe(total);
   });
 });
