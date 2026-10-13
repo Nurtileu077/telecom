@@ -457,6 +457,11 @@ export interface PlanRoute {
   name: string;
   /** Папка KML — обычно там лежит участок или населённый пункт. */
   folder?: string;
+  /**
+   * Путь папок KML целиком: «Акмолинская область / Зерендинский район /
+   * Акбулак». По нему среди сёл-тёзок видно, какого района трасса.
+   */
+  path?: string[];
   uchastok?: string;
   coords: [number, number][];
   /** Длина по координатам, метры. */
@@ -491,6 +496,14 @@ export interface PlanRoute {
    * вариант бывает длиннее основной.
    */
   main?: boolean;
+  /**
+   * Село трассы — указал человек.
+   *
+   * КАТО в KML нет, и село узнаётся по имени, а одноимённых сёл много.
+   * Когда ни папки, ни обводки не говорят, какой это Акбулак, спрашиваем
+   * на карточке трассы, и ответ хранится здесь.
+   */
+  kato?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -1131,7 +1144,7 @@ export type ChangeKind =
   | 'route_split' | 'route_join' | 'route_reverse' | 'route_ends'
   | 'area_add' | 'area_edit' | 'area_rename' | 'area_delete'
   | 'entry_delete' | 'entry_restore' | 'entry_bulk' | 'entry_dispute'
-  | 'shift_place' | 'route_main';
+  | 'shift_place' | 'route_main' | 'route_village';
 
 export interface ChangeLogEntry {
   id: string;

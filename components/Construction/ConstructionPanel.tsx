@@ -37,6 +37,7 @@ import {
 } from './pointKind';
 import { placeCrews } from './crewPlace';
 import { routeViews, routeTitle, journalPlaces } from './routeStyle';
+import { namesakeNote } from './routeVillage';
 import { buildKml, kmlFileName } from './kmlExport';
 import ChecksView from './ChecksView';
 import TimesheetView from './TimesheetView';
@@ -625,9 +626,15 @@ export default function ConstructionPanel({
         ? ` Не разобрано координат: ${res.stats.droppedCoords}.`
         : '';
       const turnNote = planLoadNote(turns.notes);
+      // Сёла-тёзки — спрашиваем при загрузке: молча привязанная к чужому
+      // Акбулаку трасса всплыла бы закраской чужих метров.
+      const loaded = new Set(res.routes.map((r) => r.id));
+      const twinNote = namesakeNote(routeViews(next.planRoutes.filter((r) => loaded.has(r.id)), {
+        progress: effectiveProgress(next.progress, next), areas: next.areas, drills: next.drills,
+      }));
       setSyncNote({
-        tone: turns.warn ? 'warn' : 'ok',
-        text: `Загружено: ${parts.join(', ')}.${dropped}${turnNote}`,
+        tone: turns.warn || twinNote ? 'warn' : 'ok',
+        text: `Загружено: ${parts.join(', ')}.${dropped}${turnNote}${twinNote}`,
       });
 
       // Точки сами не раскладываем: в одном файле это столбы, в другом —
@@ -847,7 +854,9 @@ export default function ConstructionPanel({
   // У каких сёл трасса вообще есть: кнопка «посмотреть трассу», которая
   // ничего не показывает, хуже отсутствующей.
   const routeKatos = useMemo(() => {
-    const views = routeViews(scoped.planRoutes, { progress: live.progress });
+    const views = routeViews(scoped.planRoutes, {
+      progress: live.progress, areas: scoped.areas, drills: scoped.drills,
+    });
     return new Set(views.map((v) => v.kato).filter((k): k is string => !!k));
   }, [scoped.planRoutes, live.progress]);
 
@@ -861,7 +870,7 @@ export default function ConstructionPanel({
    */
   const handleExportKml = useCallback(() => {
     const views = routeViews(scoped.planRoutes, {
-      progress: live.progress,
+      progress: live.progress, areas: scoped.areas, drills: scoped.drills,
     });
     const byId = new Map(views.map((v) => [v.id, v]));
     const xml = buildKml({

@@ -21,6 +21,11 @@ export interface KmlRawLine {
   coords: [number, number][]; // [lat, lon]
   name: string;
   folder: string;
+  /**
+   * Путь папок целиком. По одной последней папке («Акбулак») не понять,
+   * какой это Акбулак: тёзок много, а район лежит папкой выше.
+   */
+  folderPath?: string[];
 }
 
 /**
@@ -218,7 +223,7 @@ function makeKmlParser(kmlText: string, opts: ParseOpts = {}): {
     lineEls.forEach((el) => {
       const cs = parseCoordList(el.textContent ?? '');
       if (cs.length >= 2) {
-        lines.push({ coords: cs, name: name || desc, folder });
+        lines.push({ coords: cs, name: name || desc, folder, folderPath });
         structuredLines.push({
           coords: cs, name: name || desc, folderPath, fileDistrict: fallback, extData,
         });

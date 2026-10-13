@@ -303,25 +303,45 @@ export default function DailyEntryForm({
   // у другой линии села — смена на ней (`lineChoice`).
   const lines = useMemo(() => {
     const progress = effectiveProgress(journal.progress, journal);
-    const views = routeViews(journal.planRoutes, { progress, areas: journal.areas });
+    const views = routeViews(journal.planRoutes, {
+      progress, areas: journal.areas, drills: journal.drills,
+    });
     const katoByRouteId = new Map(views.filter((v) => v.kato).map((v) => [v.id, v.kato as string]));
-    return { katoByRouteId, ...lineIndex(journal.planRoutes, katoByRouteId, journal.ground) };
+    const namesakeIds = new Set(views.filter((v) => v.namesakes?.length).map((v) => v.id));
+    return { katoByRouteId, namesakeIds, ...lineIndex(journal.planRoutes, katoByRouteId, journal.ground) };
   }, [journal]);
   const [lineChoice, setLineChoice] = useState<string | null>(null);
+  // Линия чужого села по имени не годится: у Акбулака из соседнего района
+  // то же имя, и смены одного двигали бы колонну по линии другого. Ничья
+  // линия села-тёзки — тоже: чья она, скажет человек на её карточке.
+  const byNameOk = useMemo(() => {
+    const k = kato.trim();
+    return journal.planRoutes.filter((r) => {
+      const own = lines.katoByRouteId.get(r.id);
+      if (own) return !k || own === k;
+      return !lines.namesakeIds.has(r.id);
+    });
+  }, [journal.planRoutes, lines, kato]);
   const villageLines = useMemo(() => {
     const k = kato.trim();
-    return journal.planRoutes.filter((r) => (k && lines.katoByRouteId.get(r.id) === k)
+    return byNameOk.filter((r) => (k && lines.katoByRouteId.get(r.id) === k)
       || sectionMatchesRoute(uchastok, r));
-  }, [journal.planRoutes, lines, kato, uchastok]);
+  }, [byNameOk, lines, kato, uchastok]);
+  /** Трассы с тем же именем есть, но они у сёл-тёзок и ничьи — сказать. */
+  const namesakeHint = useMemo(() => {
+    const hits = journal.planRoutes.filter((r) => lines.namesakeIds.has(r.id)
+      && sectionMatchesRoute(uchastok, r));
+    return hits.length > 0 && villageLines.length === 0;
+  }, [journal.planRoutes, lines, uchastok, villageLines]);
   const sectionRoute = useMemo(() => {
-    const byName = routeOfSection(journal.planRoutes, uchastok);
+    const byName = routeOfSection(byNameOk, uchastok);
     const k = kato.trim() || undefined;
     const id = (lineChoice && villageLines.some((r) => r.id === lineChoice) ? lineChoice : null)
       ?? crewLineIn(journal.ground, { contractor, column }, k, lines.live, date)
       ?? (k ? lines.mainByKato.get(k) : undefined);
     return (id ? journal.planRoutes.find((r) => r.id === id) : undefined) ?? byName;
   }, [journal.planRoutes, journal.ground, uchastok, kato, contractor, column, date,
-    lines, lineChoice, villageLines]);
+    lines, lineChoice, villageLines, byNameOk]);
 
   /**
    * Замер с карты: по трассе участка, если клики на ней, иначе по любой
@@ -864,6 +884,13 @@ export default function DailyEntryForm({
             {/* Где остановились. Считаем по метражу вдоль трассы и
                 спрашиваем: угадать точнее человека система не может, но
                 предложить точку и сэкономить ему вечер — вполне. */}
+            {namesakeHint && totalMeters > 0 && (
+              <div className="text-[10.5px] text-[var(--warn)] leading-snug">
+                Трасса «{uchastok}» есть, но у сёл-тёзок, и чья она — не понять ни по
+                папкам, ни по обводкам. Укажите село на карточке трассы на карте —
+                тогда здесь появится «остановились здесь».
+              </div>
+            )}
             {stop && (
               <div className="rounded-lg border p-2.5 flex flex-col gap-1.5"
                    style={{

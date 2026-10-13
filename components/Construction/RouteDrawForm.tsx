@@ -57,7 +57,9 @@ export default function RouteDrawForm({
   const parent = useMemo(() => {
     if (!uchastok) return null;
     const progress = effectiveProgress(journal.progress, journal);
-    const views = routeViews(journal.planRoutes, { progress });
+    const views = routeViews(journal.planRoutes, {
+      progress, areas: journal.areas, drills: journal.drills,
+    });
     const key = normName(uchastok);
     return views.find((v) => [v.snp, v.to, v.from, v.name]
       .some((n) => n && normName(n) === key)) ?? null;

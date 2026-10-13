@@ -76,7 +76,7 @@ export async function importPlanRoutes(file: File): Promise<PlanImportResult> {
 }
 
 function buildRoutes(
-  lines: { coords: [number, number][]; name: string; folder: string }[],
+  lines: { coords: [number, number][]; name: string; folder: string; folderPath?: string[] }[],
   source: string,
 ): PlanImportResult {
   const now = new Date().toISOString();
@@ -94,6 +94,8 @@ function buildRoutes(
       id: `plan-${source}-${i}`,
       name: l.name?.trim() || `Трасса ${i + 1}`,
       folder: l.folder?.trim() || undefined,
+      // Путь папок — чтобы среди сёл-тёзок узнать район трассы.
+      path: l.folderPath?.length ? l.folderPath : undefined,
       uchastok: l.folder?.trim() || undefined,
       coords,
       lengthM: polylineLengthM(coords),

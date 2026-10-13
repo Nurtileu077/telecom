@@ -1,5 +1,5 @@
 import {
-  Crew, DailyWorkEntry, AerialWorkEntry, DrillLogEntry, PlanRoute, SnpProgress,
+  Crew, DailyWorkEntry, AerialWorkEntry, DrillLogEntry, PlanRoute, SnpProgress, MapArea,
 } from '@/types/construction';
 import { placeFinder, SnpMapContext } from './snpMap';
 import { routeViews } from './routeStyle';
@@ -61,6 +61,8 @@ export interface CrewPlaceContext extends SnpMapContext {
   /** Трассы — по ним видно, куда колонна идёт. */
   planRoutes?: PlanRoute[];
   progress?: SnpProgress[];
+  /** Обводки сёл и районов — по ним среди сёл-тёзок видно, чья трасса. */
+  areas?: MapArea[];
 }
 
 /** Сопоставление «эта запись — про эту колонну». */
@@ -121,7 +123,9 @@ function reportMoment(date: string): string {
 function tripFinder(ctx: CrewPlaceContext) {
   const routes = ctx.planRoutes ?? [];
   if (routes.length === 0) return () => undefined;
-  const views = routeViews(routes, { progress: ctx.progress ?? [] });
+  const views = routeViews(routes, {
+    progress: ctx.progress ?? [], areas: ctx.areas, drills: ctx.drills,
+  });
   const byKato = new Map<string, (typeof views)[number]>();
   for (const v of views) {
     if (v.kato && !v.side) byKato.set(v.kato, v);

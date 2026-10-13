@@ -1128,7 +1128,9 @@ export function loadPlanRoutes(base: JournalState, routes: PlanRoute[]): PlanLoa
     // Основную линию села назначал человек, и файл о ней не знает: та же
     // линия остаётся основной, пришедшая под её номером чужая — нет.
     const main = old.main && match !== 'other' ? true : undefined;
-    byId.set(r.id, { ...r, coords, reversed, endsSwapped, main });
+    // Село трассы среди тёзок тоже выбирал человек — по той же причине.
+    const kato = match !== 'other' ? old.kato : undefined;
+    byId.set(r.id, { ...r, coords, reversed, endsSwapped, main, kato });
     // Счёт пошёл с другого конца — посчитанные точки колонн вслед за ним.
     if (lineMatch(old.coords, coords) === 'flipped') {
       sectionProgress = realignProgress(
@@ -1307,6 +1309,42 @@ export function setMainRoute(
     kind: 'route_main',
     target: prev.name || prev.uchastok || 'трасса',
     detail: 'смены без отметки ложатся на неё',
+    routeId: id,
+  });
+}
+
+/**
+ * Чья это трасса — какого села.
+ *
+ * Среди сёл-тёзок трассу к селу привязать по имени нельзя: Акбулак не
+ * один. Если ни папки района, ни обводки, ни проколы не сказали, какой
+ * это Акбулак, — говорит человек, и ответ остаётся на трассе. `kato`
+ * пустой — снова решать по имени и месту.
+ */
+export function bindRouteVillage(
+  base: JournalState,
+  id: string,
+  kato: string | undefined,
+  author: string,
+  label?: string,
+): JournalState {
+  const prev = base.planRoutes.find((r) => r.id === id);
+  if (!prev || (prev.kato ?? undefined) === (kato || undefined)) return base;
+  const now = new Date().toISOString();
+  const next: JournalState = {
+    ...base,
+    planRoutes: base.planRoutes.map((r) => (
+      r.id === id ? { ...r, kato: kato || undefined, updatedAt: now } : r
+    )),
+    updatedAt: now,
+  };
+  return logChange(next, {
+    at: now,
+    author,
+    kind: 'route_village',
+    target: prev.name || prev.uchastok || 'трасса',
+    detail: kato ? `трасса села ${label ? `«${label}»` : kato}` : 'село снова по имени и месту',
+    kato: kato || undefined,
     routeId: id,
   });
 }

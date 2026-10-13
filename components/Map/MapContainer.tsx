@@ -32,6 +32,7 @@ import { pointAtDistanceM } from '@/components/Construction/routeProgress';
 import {
   describeRun, unplacedNote as unplacedText,
 } from '@/components/Construction/shiftPlace';
+import { villageLabel, BIND_HOW_TEXT } from '@/components/Construction/routeVillage';
 import {
   arrowsAlong, lengthLabels, routePaint, hatchDash, METHOD_DASH, formatMeters, bearingDeg,
   clusterPoints, mapLegend, UNPLACED_COLOR,
@@ -399,6 +400,8 @@ interface Props {
   onSwapRouteEnds?: (id: string) => void;
   /** Сделать линию основной в её селе: смены без отметки ложатся на неё. */
   onSetMainRoute?: (id: string) => void;
+  /** Чья трасса среди сёл-тёзок: КАТО села и его подпись для журнала изменений. */
+  onBindRouteVillage?: (id: string, kato: string, label: string) => void;
   /**
    * Назначить место сменам колонны, пройденным без него: от начала линии
    * или от точки, которую укажут на карте.
@@ -2021,6 +2024,34 @@ export default function LeafletMap(props: Props) {
                    Сделать основной линией села</button></div>`
               : '')
           : '';
+        // Сёла-тёзки. Акбулак не один: по имени трасса легла бы на оба
+        // села сразу. Чей он, решили по обводке, району или проколам — так
+        // и сказано; не решили — спрашиваем, и до ответа трасса ничья.
+        const choices = r.villageChoices ?? [];
+        const canBind = !!propsRef.current.onBindRouteVillage;
+        const bindButtons = (list: typeof choices, prefix: string) => (canBind
+          ? '<div style="margin-top:3px;display:flex;gap:6px;flex-wrap:wrap">'
+            + list.map((c) => (
+              `<button onclick="window.__optiqBindVillage__('${esc(r.id)}',${choices.indexOf(c)})"
+                 style="padding:3px 8px;background:transparent;color:#fbbf24;border:1px solid #fbbf24;border-radius:3px;font-size:10px;cursor:pointer">
+                 ${esc(prefix + villageLabel(c))}</button>`
+            )).join('')
+            + '</div>'
+          : '');
+        const villageNote = r.namesakes?.length
+          ? `<div style="margin-top:4px;font-size:11px;color:#fbbf24;max-width:260px">`
+            + esc(`Сёла-тёзки: ${r.namesakes.map(villageLabel).join(', ')}. Чья это трасса — не понять `
+              + 'ни по папкам района, ни по обводкам сёл, ни по проколам. Пока не укажете, '
+              + 'этап села её не красит и смены по имени на неё не ложатся.')
+            + '</div>'
+            + bindButtons(r.namesakes, 'Трасса села ')
+          : r.snp && choices.length > 1 && r.bound
+            ? `<div style="margin-top:4px;font-size:11px;color:#cbd5e1;max-width:260px">`
+              + esc(`Село трассы: ${villageLabel(choices.find((c) => c.kato === r.kato) ?? { kato: r.kato ?? '', snp: r.snp })}`
+                + ` — ${BIND_HOW_TEXT[r.bound]}. Тёзок с этим именем ${choices.length}.`)
+              + '</div>'
+              + bindButtons(choices.filter((c) => c.kato !== r.kato), 'Нет, села ')
+            : '';
         line.bindTooltip(
           `${esc(title)} · ${esc(stageLabel)}${r.lengthM ? ` · ${(r.lengthM / 1000).toFixed(2)} км` : ''}`
           + (hatchArr
@@ -2033,6 +2064,7 @@ export default function LeafletMap(props: Props) {
           + (r.name && r.name !== title
             ? `<br/><span style="color:#64748b;font-size:11px">${esc(r.name)}</span>` : '')
           + `<div style="margin-top:4px;color:${planOnly ? PLAN_LINE_COLOR : r.color};font-size:12px">${esc(stageLabel)}</div>`
+          + villageNote
           + mainNote
           + unplacedNote
           + (r.snp ? `<span style="font-size:11px">${esc(r.snp)}</span><br/>` : '')
@@ -3536,6 +3568,14 @@ export default function LeafletMap(props: Props) {
       mapRef.current?.closePopup?.();
       propsRef.current.onSetMainRoute?.(id);
     };
+    // Номер села в списке тёзок, а не КАТО: строка обработчика в разметке
+    // не должна зависеть от того, что пришло из реестра.
+    (window as any).__optiqBindVillage__ = (routeId: string, i: number) => {
+      mapRef.current?.closePopup?.();
+      const r = (propsRef.current.planRoutes ?? []).find((x) => x.id === routeId);
+      const c = r?.villageChoices?.[i];
+      if (c) propsRef.current.onBindRouteVillage?.(routeId, c.kato, villageLabel(c));
+    };
     // Номер колонны в карточке, а не id смены: id из загруженной таблицы
     // может нести кавычку, и строка обработчика в разметке сломалась бы.
     (window as any).__optiqPlaceShifts__ = (routeId: string, i: number, how: 'line' | 'pick') => {
@@ -3554,6 +3594,7 @@ export default function LeafletMap(props: Props) {
       delete (window as any).__optiqReverseRoute__;
       delete (window as any).__optiqSwapRouteEnds__;
       delete (window as any).__optiqSetMainRoute__;
+      delete (window as any).__optiqBindVillage__;
       delete (window as any).__optiqPlaceShifts__;
       delete (window as any).__optiqOpenPhoto__;
       delete (window as any).__optiqEditObject__;

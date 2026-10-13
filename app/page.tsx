@@ -70,7 +70,7 @@ import {
   addPlanRoutes, addDeviation, updateRouteCoords, deleteRoute,
   removePlanSource, removeAreaSource, updateAreaCoords, renameArea, removeArea,
   addDrawnArea, upsertObject, splitPlanRoute, joinPlanRoutes,
-  reversePlanRoute, swapRouteEnds, placeRunFrom, setMainRoute,
+  reversePlanRoute, swapRouteEnds, placeRunFrom, setMainRoute, bindRouteVillage,
 } from '@/components/Construction/journalStore';
 import { polylineLengthM } from '@/components/Construction/planImport';
 import {
@@ -236,12 +236,12 @@ export default function HomePage() {
     // Этапы считаем из журнала: на карте должно быть видно положение дел,
     // даже если доску никто руками не вёл.
     const progress = effectiveProgress(j.progress, j);
-    setSnpPoints(snpMapPoints(progress, { drills: j.drills, planRoutes: j.planRoutes }));
+    setSnpPoints(snpMapPoints(progress, { drills: j.drills, planRoutes: j.planRoutes, areas: j.areas }));
     setAreas(areaMapItems(j.areas, progress));
     // Цвет трассы — от того, как далеко по ней зашли: считаем здесь, чтобы
     // карта получала готовый вид, а не лезла в журнал сама. Обводки сёл —
     // чтобы карточка видела, не лежит ли начало счёта посреди села.
-    const views = routeViews(j.planRoutes, { progress, areas: j.areas });
+    const views = routeViews(j.planRoutes, { progress, areas: j.areas, drills: j.drills });
     setPlanRoutes(views);
     // Отрезки по способам: из дневных метров и отметок «остановились
     // здесь» — там, где копали, а не от начала линии.
@@ -569,9 +569,18 @@ export default function HomePage() {
    * Основная линия села — та, на которую ложатся смены без отметки.
    * Прочие линии того же села карта знает по привязке к селу.
    */
+  /** Чья трасса среди сёл-тёзок — сказал человек на её карточке. */
+  const handleBindRouteVillage = useCallback((id: string, kato: string, label: string) => {
+    const ok = persist(bindRouteVillage(loadJournal(), id, kato, getActorName() || 'Без имени', label));
+    refreshJournalLayers();
+    if (ok) say(`Трасса — села ${label}: этап и смены этого села теперь на ней`);
+  }, [refreshJournalLayers]);
+
   const handleSetMainRoute = useCallback((id: string) => {
     const j = loadJournal();
-    const views = routeViews(j.planRoutes, { progress: effectiveProgress(j.progress, j), areas: j.areas });
+    const views = routeViews(j.planRoutes, {
+      progress: effectiveProgress(j.progress, j), areas: j.areas, drills: j.drills,
+    });
     const kato = views.find((v) => v.id === id)?.kato;
     if (!kato) return;
     const siblings = views.filter((v) => v.kato === kato).map((v) => v.id);
@@ -1824,6 +1833,7 @@ export default function HomePage() {
             onReverseRoute={building ? handleReverseRoute : undefined}
             onSwapRouteEnds={building ? handleSwapRouteEnds : undefined}
             onSetMainRoute={building ? handleSetMainRoute : undefined}
+            onBindRouteVillage={building ? handleBindRouteVillage : undefined}
             onPlaceShifts={building ? handlePlaceShifts : undefined}
             siteObjects={conLayers.objects ? siteObjects : EMPTY_LAYER}
             incidents={conLayers.incidents ? incidents : EMPTY_LAYER}

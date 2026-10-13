@@ -1,8 +1,9 @@
 import {
   SnpProgress, SnpStage, SNP_STAGES, StageStatus,
-  DrillLogEntry, PlanRoute, prevStage,
+  DrillLogEntry, PlanRoute, MapArea, prevStage,
 } from '@/types/construction';
 import { stageState, stageStatus, snpCompletion } from './stageTasks';
+import { routeViews } from './routeStyle';
 
 /**
  * Этапы на карте.
@@ -61,6 +62,12 @@ function centroid(pts: { lat: number; lon: number }[]): { lat: number; lon: numb
 export interface SnpMapContext {
   drills?: DrillLogEntry[];
   planRoutes?: PlanRoute[];
+  /**
+   * Сёла журнала: по ним трасса узнаёт своё село, а среди тёзок — по
+   * обводкам, папкам района и проколам (см. routeVillage).
+   */
+  progress?: SnpProgress[];
+  areas?: MapArea[];
 }
 
 /**
@@ -95,29 +102,66 @@ export function placeFinder(ctx: SnpMapContext = {}): (kato: string, snp?: strin
     if (list.length) byKato.set(d.kato, list);
   }
 
-  // Проектные трассы ключуем по имени: КАТО в KML не бывает.
+  // Середина трассы ближе к селу, чем её край: край уходит в поле.
+  const mid = (coords: [number, number][]) => {
+    const m = coords[Math.floor(coords.length / 2)];
+    return { lat: m[0], lon: m[1] };
+  };
+
+  // Трассы — по селу, к которому они привязаны. Раньше ключом было имя,
+  // и два Акбулака из разных районов складывали свои трассы в одну
+  // кучу: точка села вставала посередине между ними, где нет ни того,
+  // ни другого.
+  const routes = (ctx.planRoutes ?? []).filter((r) => r.coords.length > 0);
+  const views = routeViews(routes, {
+    progress: ctx.progress ?? [], areas: ctx.areas, drills: ctx.drills,
+  });
+  const routeById = new Map(routes.map((r) => [r.id, r]));
+  const boundByKato = new Map<string, { lat: number; lon: number }[]>();
   const byName = new Map<string, { lat: number; lon: number }[]>();
-  for (const r of ctx.planRoutes ?? []) {
+  for (const v of views) {
+    const r = routeById.get(v.id);
+    if (!r) continue;
+    if (v.kato) {
+      const list = boundByKato.get(v.kato) ?? [];
+      list.push(mid(r.coords));
+      boundByKato.set(v.kato, list);
+      continue;
+    }
+    // Трасса ничья, потому что её село — тёзка другого: по имени её не
+    // берём никому, иначе снова склеим.
+    if (v.namesakes?.length) continue;
     const label = normName(r.uchastok || r.folder || r.name || '');
-    if (label.length < 3 || r.coords.length === 0) continue;
+    if (label.length < 3) continue;
     const list = byName.get(label) ?? [];
-    // Середина трассы ближе к селу, чем её край: край уходит в поле.
-    const mid = r.coords[Math.floor(r.coords.length / 2)];
-    list.push({ lat: mid[0], lon: mid[1] });
+    list.push(mid(r.coords));
     byName.set(label, list);
+  }
+
+  // Имена, которые носят несколько сёл журнала: по имени их не ищем.
+  const namesakes = new Set<string>();
+  const seen = new Set<string>();
+  for (const p of ctx.progress ?? []) {
+    const key = normName(p.snp);
+    if (!key) continue;
+    if (seen.has(key)) namesakes.add(key); else seen.add(key);
   }
 
   return (kato: string, snp?: string): KatoPlace | null => {
     const drill = centroid(byKato.get(kato) ?? []);
     if (drill) return { ...drill, from: 'drill' };
 
+    const bound = centroid(boundByKato.get(kato) ?? []);
+    if (bound) return { ...bound, from: 'plan' };
+
     const key = normName(snp ?? '');
-    if (key.length < 3) return null;
+    if (key.length < 3 || namesakes.has(key)) return null;
     let hits = byName.get(key);
     if (!hits && key.length >= 4) {
       // Частичное совпадение — только когда имя длинное: короткие
       // основы («Уй», «Ащы») склеивают разные сёла в одну точку.
       for (const [name, list] of byName) {
+        if (namesakes.has(name)) continue;
         if (name.includes(key) || key.includes(name)) { hits = list; break; }
       }
     }
@@ -127,7 +171,7 @@ export function placeFinder(ctx: SnpMapContext = {}): (kato: string, snp?: strin
 }
 
 export function snpMapPoints(progress: SnpProgress[], ctx: SnpMapContext = {}): SnpMapPoint[] {
-  const findPlace = placeFinder(ctx);
+  const findPlace = placeFinder({ ...ctx, progress: ctx.progress ?? progress });
 
   const out: SnpMapPoint[] = [];
   for (const p of progress) {

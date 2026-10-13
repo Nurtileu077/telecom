@@ -1,11 +1,12 @@
 import {
-  PlanRoute, SnpProgress, SnpStage, SNP_STAGES, MapArea,
+  PlanRoute, SnpProgress, SnpStage, SNP_STAGES, MapArea, DrillLogEntry,
 } from '@/types/construction';
 import { stageStatus } from './stageTasks';
 import { normName, PLACE_PREFIX } from './areaImport';
 import { effectiveProgress, type DeriveContext } from './stageDerive';
 import { routeLengthM } from './routeProgress';
 import { mainRouteByKato } from './routeMain';
+import { villageIndex, routeVillage, type BindHow, type VillageRef } from './routeVillage';
 
 /**
  * Как выглядит трасса на карте.
@@ -73,6 +74,15 @@ export interface RouteView {
   side?: boolean;
   /** Основная назначена человеком, а не выбрана по длине. */
   mainSet?: boolean;
+  /** Как узнали село трассы — см. routeVillage. */
+  bound?: BindHow;
+  /**
+   * Сёла-тёзки, между которыми выбрать не вышло: трасса ничья, и её
+   * карточка спрашивает, чья она.
+   */
+  namesakes?: VillageRef[];
+  /** Все сёла с именем трассы, если их больше одного, — для выбора на карточке. */
+  villageChoices?: VillageRef[];
 }
 
 /**
@@ -368,17 +378,15 @@ export interface RouteStyleContext {
    * Без них сёла берутся из `progress`.
    */
   places?: Set<string>;
+  /** Проколы с поля — по ним среди сёл-тёзок видно, чья трасса. */
+  drills?: DrillLogEntry[];
 }
 
 export function routeViews(routes: PlanRoute[], ctx: RouteStyleContext): RouteView[] {
-  const byName = new Map<string, SnpProgress | null>();
-  for (const p of ctx.progress) {
-    const key = normName(p.snp);
-    if (!key) continue;
-    // Одноимённые сёла в индекс не берём: покрасить трассу по чужой
-    // стройке хуже, чем оставить её серой.
-    byName.set(key, byName.has(key) ? null : p);
-  }
+  const byKato = new Map(ctx.progress.map((p) => [p.kato, p]));
+  // Одноимённые сёла по имени не берём: покрасить трассу по чужой стройке
+  // хуже, чем оставить её проектом. Чья она — решает routeVillage.
+  const index = villageIndex({ progress: ctx.progress, areas: ctx.areas, drills: ctx.drills });
   const known = ctx.places ?? placeNames(ctx.progress);
   const villages = villageOutlines(ctx.areas ?? []);
 
@@ -387,13 +395,8 @@ export function routeViews(routes: PlanRoute[], ctx: RouteStyleContext): RouteVi
     const ends = routeEnds(r, known);
 
     // Село ищем по обоим концам: трасса принадлежит тому, куда её ведут.
-    const candidates = [ends.to, ends.from, r.uchastok, r.folder]
-      .filter((v): v is string => !!v);
-    let snp: SnpProgress | null = null;
-    for (const c of candidates) {
-      const hit = byName.get(normName(c));
-      if (hit) { snp = hit; break; }
-    }
+    const bind = routeVillage(r, [ends.to, ends.from, r.uchastok, r.folder], index);
+    const snp: SnpProgress | null = bind.village ? byKato.get(bind.village.kato) ?? null : null;
 
     const stage = snp ? furthestStage(snp) : null;
     return {
@@ -417,6 +420,9 @@ export function routeViews(routes: PlanRoute[], ctx: RouteStyleContext): RouteVi
       startIn: villageAt(villages, r.coords[0]),
       endIn: r.coords.length > 1 ? villageAt(villages, r.coords[r.coords.length - 1]) : undefined,
       mainSet: r.main || undefined,
+      bound: snp ? bind.how : undefined,
+      namesakes: bind.namesakes,
+      villageChoices: bind.choices,
     };
   });
 
