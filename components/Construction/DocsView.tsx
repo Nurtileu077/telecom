@@ -11,7 +11,7 @@ import {
   volumeSheet, costSheet, volumeDocPage, volumeDocFile, type WorkPrices,
 } from './volumeDocs';
 import {
-  periodReport, paceChange, periodDocPage, periodDocFile,
+  periodReport, paceChange, periodDocPage, periodDocFile, noOblastNote,
   snpReadiness, readinessDocHtml, weekRange,
 } from './periodReports';
 import { actDocHtml, actFileName, ACT_DOC_CSS, esc, type ActKind } from './actDocument';
@@ -906,6 +906,18 @@ export default function DocsView({
               мало, и ответ должен быть в том же отчёте. */}
           {report.idleShifts > 0 && ` · простой — ${report.idleShifts} смен`}
         </div>
+        {/* Тот же случай, что оговорён в самом отчёте: смены без области
+            вошли в отчёт области. Видно до отправки — можно проставить
+            область в сменах, а не объяснять заказчику после. */}
+        {area && report.noOblast.shifts + report.noOblast.idleShifts > 0 && (
+          <div className="text-[11px] text-[var(--warn)]"
+               title={noOblastNote(report, area)}>
+            Без области — {report.noOblast.shifts + report.noOblast.idleShifts} смен,{' '}
+            {Math.round(report.noOblast.meters).toLocaleString('ru')} м: отчёт это
+            оговорит. Те же смены войдут и в отчёт любой другой области, пока
+            область не проставлена в самой смене.
+          </div>
+        )}
         <div className="flex gap-1.5 flex-wrap">
           <button type="button" className="btn btn-primary text-[11.5px]"
                   onClick={pack} disabled={busy || report.shifts === 0}>

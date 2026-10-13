@@ -121,6 +121,49 @@ describe('periodDocHtml', () => {
   });
 });
 
+describe('смены без области в отчёте области', () => {
+  // Журнал, суженный областью, такие смены держит (scopeJournal): Excel
+  // без колонки «область» приходит с пустым полем.
+  const rows = [
+    ...ROWS,
+    e({ id: 'n1', date: '2026-07-22', oblast: '', byMethod: { 'бар': 1200 } }),
+    e({ id: 'n2', date: '2026-07-24', oblast: '', byMethod: {}, downtime: 'дождь' }),
+  ];
+  const report = periodReport(rows, { from: '2026-07-20', to: '2026-07-26' });
+
+  it('отчёт считает их отдельно, не вычитая из общего', () => {
+    expect(report.noOblast).toEqual({ shifts: 1, idleShifts: 1, meters: 1200 });
+    expect(report.meters).toBe(3200);
+  });
+
+  it('отчёт по области со сменой без области не выдаёт её метры за метры области молча', () => {
+    const html = periodDocHtml({ report, area: 'Акмолинская область' });
+    expect(html).toContain('Область: <span class="b">Акмолинская область</span>');
+    expect(html).toContain(
+      'В том числе смен без указанной области: 2 (1 200 м), из них простоя — 1.',
+    );
+    expect(html).toContain('по журналу не подтверждено');
+  });
+
+  it('когда без области все смены — так и говорит, а не «в том числе»', () => {
+    const all = periodReport(rows.map((r) => ({ ...r, oblast: '' })));
+    const html = periodDocHtml({ report: all, area: 'Акмолинская область' });
+    expect(html).toContain('Область не записана ни в одной смене отчёта');
+    expect(html).not.toContain('В том числе');
+  });
+
+  it('отчёт по всем областям про них не оговаривается — он область не называет', () => {
+    expect(periodDocHtml({ report })).not.toContain('без указанной области');
+  });
+
+  it('у отчёта области, где у всех смен область есть, оговорки нет', () => {
+    const own = periodReport(ROWS, { from: '2026-07-20', to: '2026-07-26' });
+    expect(own.noOblast).toEqual({ shifts: 0, idleShifts: 0, meters: 0 });
+    expect(periodDocHtml({ report: own, area: 'Акмолинская область' }))
+      .not.toContain('без указанной области');
+  });
+});
+
 describe('snpReadiness', () => {
   const progress: SnpProgress[] = [
     {

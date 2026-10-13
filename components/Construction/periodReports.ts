@@ -71,6 +71,17 @@ export interface PeriodReport {
   idleReasons: { reason: string; days: number }[];
   /** Что мешало в рабочие дни: причины, записанные в сменах с работой. */
   downtime: { reason: string; days: number }[];
+  /**
+   * Смены, в которых область не записана, — они уже входят в цифры выше.
+   *
+   * Журнал, суженный областью, такие смены не отбрасывает: про них не
+   * известно, что они чужие (см. `scopeJournal`). Но и что они свои —
+   * тоже: поле области в смене необязательное, а Excel без колонки
+   * «область» приходит с пустым. Отчёт, подписанный «Акмолинская
+   * область», без этой строки выдал бы их метры за акмолинские, а те же
+   * метры легли бы и в отчёт Мангистау.
+   */
+  noOblast: { shifts: number; idleShifts: number; meters: number };
 }
 
 /** Все даты периода — чтобы увидеть не только сделанное, но и пустые дни. */
@@ -101,8 +112,9 @@ export function periodReport(rows: DailyWorkEntry[], filter: PeriodFilter = {}):
   const idleReasons = new Map<string, Set<string>>();
   let shifts = 0;
   let idleShifts = 0;
+  const noOblast = { shifts: 0, idleShifts: 0, meters: 0 };
 
-  const note = (acc: Map<string, Set<string>>, reason: string, date: string) => {
+  const note =(acc: Map<string, Set<string>>, reason: string, date: string) => {
     const set = acc.get(reason) ?? new Set<string>();
     set.add(date);
     acc.set(reason, set);
@@ -122,6 +134,10 @@ export function periodReport(rows: DailyWorkEntry[], filter: PeriodFilter = {}):
       line.contractors.push(e.contractor);
     }
     bySection.set(key, line);
+    if (!e.oblast?.trim()) {
+      noOblast.meters += entryMeters(e);
+      if (idle) noOblast.idleShifts += 1; else noOblast.shifts += 1;
+    }
     if (e.date) recorded.add(e.date);
     const reason = e.downtime?.trim();
     if (idle) {
@@ -159,6 +175,7 @@ export function periodReport(rows: DailyWorkEntry[], filter: PeriodFilter = {}):
     idleDays: daysBetween(from, to).filter((d) => !recorded.has(d)),
     idleReasons: byDays(idleReasons),
     downtime: byDays(downtime),
+    noOblast,
   };
 }
 
@@ -207,6 +224,29 @@ export interface PeriodDocInput {
    */
   area?: string;
   author?: string;
+}
+
+/**
+ * Строка о сменах без области — для отчёта, который назван отчётом
+ * области. Пусто, когда таких смен нет или отчёт по всем областям: там
+ * он ничего про область не утверждает, и оговаривать нечего.
+ *
+ * Метры из отчёта не вычитаем: смены без области журнал области
+ * показывает (потерять запись фильтром хуже), и цифра в документе должна
+ * совпадать с цифрой на экране. Вместо этого называем, сколько в ней
+ * того, что к области приписано не по записи.
+ */
+export function noOblastNote(r: PeriodReport, area?: string): string {
+  if (!area?.trim()) return '';
+  const n = r.noOblast.shifts + r.noOblast.idleShifts;
+  if (n === 0) return '';
+  if (n === r.shifts + r.idleShifts) {
+    return 'Область не записана ни в одной смене отчёта: что работы велись '
+      + 'в этой области, по журналу не подтверждено.';
+  }
+  const idle = r.noOblast.idleShifts ? `, из них простоя — ${r.noOblast.idleShifts}` : '';
+  return `В том числе смен без указанной области: ${n} (${m(r.noOblast.meters)})${idle}. `
+    + 'Область в них не записана: что они из этой области, по журналу не подтверждено.';
 }
 
 /**
@@ -273,10 +313,12 @@ export function periodDocHtml(input: PeriodDocInput): string {
       + `за ${r.shifts} смен в ${r.days} рабочих дней.</p>`
       + `<p>В среднем ${esc(m(r.perShift))} за смену, ${esc(m(r.perDay))} за рабочий день.</p>`
     : '<p>Работы в период не велись.</p>';
+  const unplaced = noOblastNote(r, input.area);
 
   return `<h1>${esc(title)}</h1>`
     + `<p class="center">за период ${esc(fmtDate(r.from))} — ${esc(fmtDate(r.to))}</p>`
     + (input.area?.trim() ? `<p>Область: <span class="b">${esc(input.area.trim())}</span></p>` : '')
+    + (unplaced ? `<p>${esc(unplaced)}</p>` : '')
     + (input.contractor ? `<p>Подрядчик: <span class="b">${esc(input.contractor)}</span></p>` : '')
     + done
     + pace
