@@ -15,7 +15,7 @@ import {
 import PhotoAttach from './PhotoAttach';
 import ProjectBadge from './ProjectBadge';
 import { photosOf } from './photoStore';
-import { routeOfSection, sectionMatchesRoute } from './routeSection';
+import { routeOfSection, sectionMatchesRoute, routesForVillages } from './routeSection';
 import {
   proposeStop, shiftsOnRoute, describeStop, crewLabel, lineForPoint,
 } from './shiftPlace';
@@ -317,11 +317,7 @@ export default function DailyEntryForm({
   // линия села-тёзки — тоже: чья она, скажет человек на её карточке.
   const byNameOk = useMemo(() => {
     const k = kato.trim();
-    return journal.planRoutes.filter((r) => {
-      const own = lines.katoByRouteId.get(r.id);
-      if (own) return !k || own === k;
-      return !lines.namesakeIds.has(r.id);
-    });
+    return routesForVillages(journal.planRoutes, lines, new Set(k ? [k] : []));
   }, [journal.planRoutes, lines, kato]);
   const villageLines = useMemo(() => {
     const k = kato.trim();

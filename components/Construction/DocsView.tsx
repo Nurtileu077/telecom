@@ -43,7 +43,9 @@ import {
   schemeDeviationsFor, loadSchemeMode, saveSchemeMode,
   SCHEME_MODES, SCHEME_MODE_LABEL, SCHEME_MODE_HINT, type SchemeMode,
 } from './schemeDeviations';
-import { routeOfSection, sectionForRoute, sectionMatchesRoute } from './routeSection';
+import {
+  sectionForRoute, sectionMatchesRoute, routeOfSectionAct, routeBinding, type RouteBinding,
+} from './routeSection';
 import { routeLengthM } from './routeProgress';
 import { withDefaults, missingForPayment, binLooksWrong } from './requisites';
 import { normName } from './areaImport';
@@ -109,6 +111,12 @@ interface Props {
    * без этого лист называл бы начало линии не тем селом, что карта.
    */
   places?: Set<string>;
+  /**
+   * Чья какая трасса — по всему журналу, как на карте. В суженном журнале
+   * тёзки из другой области не видно, и его линия легла бы на это село по
+   * имени. Без неё привязка считается по `journal`.
+   */
+  routeBind?: RouteBinding;
   /**
    * Область, которой сужен `journal`; пусто — все. Сам журнал уже сужен,
    * а здесь она нужна, чтобы назвать её в отчёте и дать отчёту своей
@@ -202,7 +210,7 @@ type ZipFolder = { file: (name: string, data: string | Blob) => unknown };
 export default function DocsView({
   journal, from, to, contractor, author, onFlash, onOpenSection, onSetActNumber,
   onChangeActFields, onReverseRoute, onSwapRouteEnds, places: mapPlaces,
-  oblast, onlyContractor,
+  oblast, onlyContractor, routeBind,
 }: Props) {
   const [busy, setBusy] = useState(false);
   // Что в последнем пакете осталось неотмеченным или не вошло. Строка-
@@ -293,6 +301,14 @@ export default function DocsView({
     [journal.ground],
   );
 
+  // Чья какая трасса: к акту Акбулака-2 не должна лечь линия Акбулака-1.
+  const bind = useMemo(
+    () => routeBind ?? routeBinding(routeViews(journal.planRoutes, {
+      progress: progressNow, areas: journal.areas, drills: journal.drills,
+    })),
+    [routeBind, journal.planRoutes, progressNow, journal.areas, journal.drills],
+  );
+
   /**
    * Трасса под схему.
    *
@@ -304,10 +320,11 @@ export default function DocsView({
     const byId = journal.planRoutes.find((r) => r.id === schemeRouteId);
     if (byId) return byId;
     // Трассу участка ищем тем же правилом, что форма смены и пакет:
-    // участок «Акбеит» и трасса «ОМ — Акбеит» без папки — одно и то же.
-    return routeOfSection(journal.planRoutes, report.sections[0]?.uchastok)
+    // участок «Акбеит» и трасса «ОМ — Акбеит» без папки — одно и то же,
+    // а линия села-тёзки — нет.
+    return routeOfSectionAct(journal.planRoutes, journal.ground, report.sections[0]?.uchastok, bind)
       ?? journal.planRoutes[0];
-  }, [journal.planRoutes, schemeRouteId, report.sections]);
+  }, [journal.planRoutes, journal.ground, schemeRouteId, report.sections, bind]);
 
   // Объекты берём только своего участка: на соседнем стоят свои муфты, и
   // на схеме они окажутся чужими отметками с правдоподобным метражом.
@@ -588,7 +605,10 @@ export default function DocsView({
          * экране: иначе приложение к акту и файл «Схема» по одной трассе
          * расходились — одно брало муфту, другое теряло.
          */
-        const own = routeOfSection(journal.planRoutes, uchastok);
+        // Линия села-тёзки чужая, хоть и подходит по имени: Акбулак не
+        // один, и схема Акбулака-1 к акту Акбулака-2 — это чужая
+        // протяжённость в подписанном документе.
+        const own = routeOfSectionAct(journal.planRoutes, journal.ground, uchastok, bind);
         const attachment = own
           ? (() => {
             const objs = schemeObjectsFor(journal.objects, own);

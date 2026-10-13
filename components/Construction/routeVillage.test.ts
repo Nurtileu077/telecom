@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import type { PlanRoute, SnpProgress, MapArea, DrillLogEntry } from '@/types/construction';
+import type { PlanRoute, SnpProgress, MapArea, DrillLogEntry, DailyWorkEntry } from '@/types/construction';
 import { routeVillage, villageIndex, villageLabel, namesakeNote } from './routeVillage';
 import { routeViews } from './routeStyle';
 import { placeFinder, snpMapPoints } from './snpMap';
 import { routeLengthM } from './routeProgress';
 import { emptyJournal, bindRouteVillage, loadPlanRoutes } from './journalStore';
+import { routeBinding, routeOfSectionAct } from './routeSection';
 
 const now = '2026-10-01T00:00:00.000Z';
 
@@ -145,5 +146,42 @@ describe('село трассы в журнале', () => {
     const j = { ...emptyJournal(), planRoutes: [route('r1', NEAR_ZERENDA, { kato: '111' })] };
     const again = loadPlanRoutes(j, [route('r1', NEAR_ZERENDA)]).state;
     expect(again.planRoutes[0].kato).toBe('111');
+  });
+});
+
+describe('схема к акту среди тёзок', () => {
+  const shift = (kato: string, uchastok = 'Акбулак'): DailyWorkEntry => ({
+    kind: 'ground', id: `g${kato}${uchastok}`, date: '2026-09-01', smu: '',
+    oblast: 'Акмолинская', uchastok, kato, byMethod: { 'кабелеукладчик': 500 }, materials: {},
+    createdAt: now, updatedAt: now,
+  });
+
+  it('к акту Акбулака-2 не ложится основная линия Акбулака-1', () => {
+    // У Акбулака-1 линию назначили основной — раньше её получали акты обоих.
+    const routes = [
+      route('r1', NEAR_ZERENDA, { kato: '111', main: true }),
+      route('r2', NEAR_BURABAY, { kato: '222' }),
+    ];
+    const bind = routeBinding(routeViews(routes, { progress }));
+    expect(routeOfSectionAct(routes, [shift('222')], 'Акбулак', bind)?.id).toBe('r2');
+    expect(routeOfSectionAct(routes, [shift('111')], 'Акбулак', bind)?.id).toBe('r1');
+  });
+
+  it('своей трассы нет — акт без схемы, а не с линией тёзки', () => {
+    const routes = [route('r1', NEAR_ZERENDA, { kato: '111' })];
+    const bind = routeBinding(routeViews(routes, { progress }));
+    expect(routeOfSectionAct(routes, [shift('222')], 'Акбулак', bind)).toBeNull();
+  });
+
+  it('ничья трасса тёзок к акту не прикладывается, пока не скажут, чья она', () => {
+    const routes = [route('r1', NEAR_ZERENDA)];
+    const bind = routeBinding(routeViews(routes, { progress }));
+    expect(routeOfSectionAct(routes, [shift('111')], 'Акбулак', bind)).toBeNull();
+  });
+
+  it('село без тёзок — трасса по имени, как раньше', () => {
+    const routes = [route('r3', NEAR_ZERENDA, { name: 'ОМ — Еленовка' })];
+    const bind = routeBinding(routeViews(routes, { progress }));
+    expect(routeOfSectionAct(routes, [shift('333', 'Еленовка')], 'Еленовка', bind)?.id).toBe('r3');
   });
 });

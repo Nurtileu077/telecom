@@ -1,6 +1,7 @@
-import type { PlanRoute } from '@/types/construction';
+import type { PlanRoute, DailyWorkEntry } from '@/types/construction';
 import { placeTokens, containsRun } from './routeStyle';
 import { routeForSection } from './routeProgress';
+import { entriesOfSection } from './sectionAct';
 
 /**
  * Участок и трасса.
@@ -43,6 +44,75 @@ export function sectionMatchesRoute(section: string | undefined, route: RouteNam
 export function routeOfSection(routes: PlanRoute[], section: string | undefined): PlanRoute | null {
   if (placeTokens(section).length === 0) return null;
   return routeForSection(routes, (r) => sectionMatchesRoute(section, r));
+}
+
+/** Чья какая трасса — по привязке к сёлам (routeStyle.routeViews → routeVillage). */
+export interface RouteBinding {
+  /** id трассы → КАТО её села. */
+  katoByRouteId: Map<string, string>;
+  /** Трассы сёл-тёзок, чьё село не решено: они ничьи. */
+  namesakeIds: Set<string>;
+}
+
+export function routeBinding(
+  views: { id: string; kato?: string; namesakes?: unknown[] }[],
+): RouteBinding {
+  return {
+    katoByRouteId: new Map(views.filter((v) => v.kato).map((v) => [v.id, v.kato as string])),
+    namesakeIds: new Set(views.filter((v) => v.namesakes?.length).map((v) => v.id)),
+  };
+}
+
+/**
+ * Трассы, которые участку годятся по имени.
+ *
+ * Акбулак не один, и по имени участка подходят линии обоих. Линия,
+ * привязанная к другому селу, не годится; ничья линия тёзок — тоже: чья
+ * она, скажет человек на её карточке. `katos` — сёла смен участка; пусто —
+ * село смен не известно, и годится любая привязанная.
+ */
+export function routesForVillages(
+  routes: PlanRoute[],
+  bind: RouteBinding,
+  katos: Set<string>,
+): PlanRoute[] {
+  return routes.filter((r) => {
+    const own = bind.katoByRouteId.get(r.id);
+    if (own) return katos.size === 0 || katos.has(own);
+    return !bind.namesakeIds.has(r.id);
+  });
+}
+
+/**
+ * Трасса участка с учётом сёл-тёзок — для схемы и приложения к акту.
+ *
+ * Схема к акту искала трассу по одному имени: к акту Акбулака-2 ложилась
+ * линия Акбулака-1 со своей протяжённостью, а когда у одного из них
+ * назначили основную линию, её получали акты обоих. Отбираем тем же
+ * правилом, что форма смены (`routesForVillages`); подходящей нет — null,
+ * и акт уходит без схемы, а не с чужой.
+ */
+export function routeOfSectionIn(
+  routes: PlanRoute[],
+  section: string | undefined,
+  bind: RouteBinding,
+  katos: Iterable<string | undefined>,
+): PlanRoute | null {
+  const set = new Set<string>();
+  for (const k of katos) if (k?.trim()) set.add(k.trim());
+  return routeOfSection(routesForVillages(routes, bind, set), section);
+}
+
+/** Трасса под схему акта участка: сёла — из смен этого участка. */
+export function routeOfSectionAct(
+  routes: PlanRoute[],
+  ground: DailyWorkEntry[],
+  uchastok: string | undefined,
+  bind: RouteBinding,
+): PlanRoute | null {
+  if (!uchastok) return null;
+  const katos = entriesOfSection(ground, uchastok).map((e) => e.kato);
+  return routeOfSectionIn(routes, uchastok, bind, katos);
 }
 
 /**

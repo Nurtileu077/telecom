@@ -99,6 +99,7 @@ import { materialForecast, lowStock } from './materialForecast';
 import { importPlanFile } from './planImport';
 import { pendingTasks, seedProgress, handoffTasks } from './stageTasks';
 import { effectiveProgress } from './stageDerive';
+import { routeBinding } from './routeSection';
 import {
   LAY_METHOD_LABEL, MATERIAL_UNIT, JOURNAL_ROLES, JOURNAL_ROLE_LIST, DEVIATION_KIND_LABEL,
   CREW_KINDS, CREW_STATUS, SNP_STAGE_SPECS,
@@ -841,6 +842,15 @@ export default function ConstructionPanel({
   // как карта, иначе лист и карта называли бы начало линии по-разному.
   const mapPlaces = useMemo(() => journalPlaces(journal), [journal]);
 
+  // Чья какая трасса — тоже по всему журналу: в суженном областью журнале
+  // тёзки из соседней области не видно, и её линия легла бы на это село по
+  // имени — а схема с ней ушла бы приложением к акту.
+  const routeBind = useMemo(() => routeBinding(routeViews(journal.planRoutes, {
+    progress: effectiveProgress(journal.progress, journal),
+    areas: journal.areas,
+    drills: journal.drills,
+  })), [journal]);
+
   // Колонны, которых нет в справочнике, но которые видно по журналу:
   // заводить их руками — работа ради работы.
   const autoCrews = useMemo(() => crewsFromJournal(scoped), [scoped]);
@@ -1564,6 +1574,7 @@ export default function ConstructionPanel({
           <DocsView
             journal={scoped}
             places={mapPlaces}
+            routeBind={routeBind}
             from={filter.from ?? ''}
             to={filter.to ?? anchor ?? ''}
             // Чем сужен `scoped`: отчёт области и отчёт подрядчика должны
