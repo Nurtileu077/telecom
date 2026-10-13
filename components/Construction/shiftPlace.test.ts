@@ -106,6 +106,50 @@ describe('где на линии копали', () => {
     expect(pl.endM).toBeCloseTo(TOTAL, 3);
   });
 
+  it('метры, не влезшие в линию, уходят за её конец, а не теряются', () => {
+    // Колонна стоит за 500 м до конца, в смене без отметки — 1 200 м.
+    const pl = placeShifts(route(), [
+      shift('2026-09-01', 800, atMap(TOTAL - 500)),
+      shift('2026-09-02', 1200),
+    ]);
+    const second = pl.placed.find((p) => p.toM > TOTAL - 501 && p.date === '2026-09-02');
+    expect(second?.toM).toBeCloseTo(TOTAL, 3);
+    expect(pl.unplaced).toHaveLength(1);
+    expect(pl.unplaced[0]).toMatchObject({ date: '2026-09-02', pastEnd: true });
+    expect(pl.unplaced[0].meters).toBeCloseTo(700, 0);
+    // Сколько записано, столько и видно: на линии и за её концом.
+    const onLine = pl.placed.reduce((s, p) => s + (p.toM - p.fromM), 0);
+    expect(onLine + pl.unplaced[0].meters).toBeCloseTo(800 + 1200, 0);
+  });
+
+  it('колонна уже у конца линии — вся следующая смена за концом, и способы её названы', () => {
+    const pl = placeShifts(route(), [
+      shift('2026-09-01', 800, atMap(TOTAL)),
+      shift('2026-09-02', 0, { byMethod: { 'бар': 200, 'вручную': 100 } }),
+    ]);
+    expect(pl.placed).toHaveLength(1);
+    expect(pl.unplaced).toEqual([expect.objectContaining({
+      meters: 300, pastEnd: true, byMethod: { 'бар': 200, 'вручную': 100 },
+    })]);
+  });
+
+  it('колонна навстречу ушла за начало линии — остаток помечен как за началом', () => {
+    const pl = placeShifts(route(), [
+      shift('2026-09-01', 300, { stop: { routeId: 'r1', lat: 51, lon: lonAt(400), manual: true, back: true } }),
+      shift('2026-09-02', 1000),
+    ]);
+    expect(pl.unplaced[0]).toMatchObject({ pastEnd: true, back: true });
+    expect(pl.unplaced[0].meters).toBeCloseTo(600, 0);
+  });
+
+  it('за концом линии — отдельной строкой колонны, не вместе с началом пути', () => {
+    const lost = shift('2026-08-30', 400);
+    const pl = placeShifts(route(), [lost, shift('2026-09-01', 800, atMap(TOTAL - 100)), shift('2026-09-02', 500)]);
+    const runs = unplacedRuns(pl, [lost]);
+    expect(runs.map((r) => [r.firstEntryId === lost.id, !!r.pastEnd])).toEqual([[true, false], [false, true]]);
+    expect(describeRun(runs[1])).toContain('Колонна дошла до конца линии: ещё 400 м из 1 смены');
+  });
+
   it('в один день смены идут в порядке записи, а не в порядке списка', () => {
     const later = shift('2026-09-01', 300, { createdAt: '2026-09-01T18:00:00.000Z' });
     const first = shift('2026-09-01', 700, { createdAt: '2026-09-01T09:00:00.000Z', ...agreed() });

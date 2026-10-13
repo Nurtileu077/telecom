@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import type { DailyWorkEntry, PlanRoute, SnpProgress } from '@/types/construction';
-import { sideByName, pickMainRoute, lineOfUnmarked, mainRouteByKato, crewLineIn } from './routeMain';
+import {
+  sideByName, pickMainRoute, lineOfUnmarked, mainRouteByKato, crewLineIn, lineStem, mainGroup,
+} from './routeMain';
 import { routeWork } from './routeSegments';
-import { routeViews } from './routeStyle';
+import { routeViews, lineLook, mainLineNote, STAGE_LINE_COLOR } from './routeStyle';
 import { routeLengthM } from './routeProgress';
 import { lineForPoint } from './shiftPlace';
-import { emptyJournal, setMainRoute, loadPlanRoutes } from './journalStore';
+import { emptyJournal, setMainRoute, loadPlanRoutes, splitPlanRoute, placeRunFrom } from './journalStore';
 
 const now = '2026-10-01T00:00:00.000Z';
 
@@ -135,5 +137,99 @@ describe('линии села на карте', () => {
     const j = { ...emptyJournal(), planRoutes: [MAIN, { ...SCHOOL, main: true }] };
     const again = loadPlanRoutes(j, [{ ...SCHOOL }]).state;
     expect(again.planRoutes.find((r) => r.id === 'school')?.main).toBe(true);
+  });
+});
+
+describe('разрезанная трасса села — одна основная линия', () => {
+  const progress: SnpProgress[] = [{
+    kato: '191', snp: 'Еленовка', stages: { mkt: { status: 'in_progress' } }, updatedAt: now,
+  }];
+  /** Основную режут на 5-м км: стык бригад. */
+  const cut = (main?: boolean) => splitPlanRoute(
+    { ...emptyJournal(), planRoutes: [{ ...MAIN, main }, ALT, SCHOOL] }, 'main', 5000, 'Инженер',
+  ).planRoutes;
+
+  it('номера половин в имени линию не меняют', () => {
+    expect(lineStem('ОМ — Еленовка (1)')).toBe(lineStem('ОМ — Еленовка'));
+    expect(lineStem('ОМ — Ёленовка (1) (2)')).toBe('ом — еленовка');
+    expect(lineStem('Трасса 1')).not.toBe(lineStem('Трасса 2'));
+  });
+
+  it('разрезанная пополам трасса села обе половины красит', () => {
+    const views = routeViews(cut(), { progress });
+    const halves = views.filter((v) => v.id.startsWith('main-'));
+    expect(halves).toHaveLength(2);
+    for (const v of halves) {
+      expect(v.side).toBeUndefined();
+      expect(v.color).toBe(STAGE_LINE_COLOR.mkt);
+      expect(lineLook(v, () => false).planOnly).toBe(false);
+    }
+    // Отвод и вариант остаются не основными.
+    expect(views.filter((v) => v.side).map((v) => v.id).sort()).toEqual(['alt', 'school']);
+    // Смены без отметки — на длинную половину, она в группе первая.
+    expect(halves.find((v) => v.id === 'main-a')?.mainGroup).toEqual(['main-a', 'main-b']);
+  });
+
+  it('половины назначенной основной обе основные', () => {
+    const views = routeViews(cut(true), { progress });
+    expect(views.filter((v) => !v.side).map((v) => v.id).sort()).toEqual(['main-a', 'main-b']);
+  });
+
+  it('одна трасса, нарисованная в KML двумя кусками под одним именем, — одна основная линия', () => {
+    const a = line('k1', 'ОМ — Еленовка', [[51, 71], [51, 71.06]]);
+    const b = line('k2', 'ОМ — Еленовка', [[51, 71.06], [51, 71.1]]);
+    expect(mainGroup([a, b, SCHOOL]).map((r) => r.id)).toEqual(['k1', 'k2']);
+  });
+
+  it('копают на одной половине — вторая без работ остаётся проектом и названа куском основной', () => {
+    const views = routeViews(cut(), { progress });
+    const b = views.find((v) => v.id === 'main-b')!;
+    const look = lineLook(b, (id) => id === 'main-a');
+    expect(look).toEqual({ planOnly: true, idleLabel: 'кусок основной линии села — работ на нём не отмечено' });
+    const text = mainLineNote(b, (id) => views.find((v) => v.id === id)?.name ?? '');
+    expect(text).toContain('Кусок основной линии села');
+    expect(text).not.toContain('Не основная');
+  });
+
+  it('одноимённые куски на деле разные линии — человек разводит их кнопкой', () => {
+    const a = line('k1', 'Еленовка', [[51, 71], [51, 71.06]]);
+    const b = line('k2', 'Еленовка', [[51, 71.06], [51.02, 71.06]]);
+    const j = { ...emptyJournal(), planRoutes: [a, b] };
+    const next = setMainRoute(j, 'k1', ['k1', 'k2'], 'Инженер');
+    const views = routeViews(next.planRoutes, { progress });
+    expect(views.find((v) => v.id === 'k2')?.side).toBe(true);
+  });
+
+  it('колонна дошла до места разреза — остаток смены за концом, и точкой его кладут на вторую половину', () => {
+    const planRoutes = cut();
+    const head = planRoutes.find((r) => r.id === 'main-a')!;
+    const tail = planRoutes.find((r) => r.id === 'main-b')!;
+    const headM = routeLengthM(head.coords);
+    const end = head.coords[head.coords.length - 1];
+    // Отметка рукой за 200 м до разреза, назавтра 700 м без отметки.
+    const marked = shift('2026-10-05', 600, {
+      stop: { routeId: 'main-a', lat: 51, lon: 71 + ((headM - 200) / headM) * (end[1] - 71), manual: true },
+    });
+    const next = shift('2026-10-06', 700);
+    const ground = [marked, next];
+    const kato = new Map(planRoutes.map((r) => [r.id, '191']));
+    const work = routeWork(planRoutes, kato, ground);
+    const onHead = work.unplaced.find((u) => u.routeId === 'main-a');
+    expect(onHead?.pastEnd?.endM).toBeCloseTo(500, -1);
+    expect(onHead?.meters).toBe(0);
+    const run = onHead?.runs.find((r) => r.pastEnd);
+    expect(run?.firstEntryId).toBe(next.id);
+
+    // Точку ставят у начала второй половины — с карточки первой.
+    const j = { ...emptyJournal(), planRoutes, ground, progress };
+    const res = placeRunFrom(j, 'main-a', next.id, { lat: tail.coords[0][0], lon: tail.coords[0][1] + 0.0001 }, {
+      author: 'Инженер',
+    });
+    if ('error' in res) throw new Error(res.error);
+    expect(res.state.ground.find((e) => e.id === next.id)?.stop?.routeId).toBe('main-b');
+    expect(res.text).toContain('«ОМ — Еленовка (2)»');
+    const after = routeWork(planRoutes, kato, res.state.ground);
+    expect(after.unplaced.find((u) => u.routeId === 'main-a')).toBeUndefined();
+    expect(after.segments.some((sg) => sg.routeId === 'main-b')).toBe(true);
   });
 });

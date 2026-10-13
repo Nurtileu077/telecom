@@ -5,7 +5,7 @@ import { stageStatus } from './stageTasks';
 import { normName, PLACE_PREFIX } from './areaImport';
 import { effectiveProgress, type DeriveContext } from './stageDerive';
 import { routeLengthM } from './routeProgress';
-import { mainRouteByKato } from './routeMain';
+import { mainGroupByKato } from './routeMain';
 import { villageIndex, routeVillage, type BindHow, type VillageRef } from './routeVillage';
 
 /**
@@ -72,6 +72,12 @@ export interface RouteView {
    * отметили работу, это проект (см. routeMain).
    */
   side?: boolean;
+  /**
+   * Основная линия села из нескольких кусков (разрезана, нарисована
+   * частями): id всех кусков, первым — тот, на который ложатся смены без
+   * отметки. Один кусок — не задано.
+   */
+  mainGroup?: string[];
   /** Основная назначена человеком, а не выбрана по длине. */
   mainSet?: boolean;
   /** Как узнали село трассы — см. routeVillage. */
@@ -426,15 +432,68 @@ export function routeViews(routes: PlanRoute[], ctx: RouteStyleContext): RouteVi
     };
   });
 
-  // Одна линия села основная, прочие — отводы и варианты.
-  const mains = mainRouteByKato(
+  // Основная линия села — со всеми своими кусками; прочие — отводы и
+  // варианты. Половина разрезанной линии — не отвод.
+  const groups = mainGroupByKato(
     routes,
     new Map(views.filter((v) => v.kato).map((v) => [v.id, v.kato as string])),
   );
   for (const v of views) {
-    if (v.kato && mains.get(v.kato) !== v.id) v.side = true;
+    if (!v.kato) continue;
+    const group = groups.get(v.kato) ?? [];
+    if (!group.includes(v.id)) v.side = true;
+    else if (group.length > 1) v.mainGroup = group;
   }
   return views;
+}
+
+/**
+ * Как показать линию, на которой работ не отмечено, — одно правило для
+ * карты и выгрузки KML.
+ *
+ * Этап села красит его основную линию, но не отвод и не вариант: смены
+ * без отметки на них не ложатся. Кусок основной линии, на котором ничего
+ * не лежит, когда на соседнем куске уже копают, — тоже проект: иначе этап
+ * закрасил бы его целиком, хотя смены легли рядом. Пока работ на линии
+ * села не отмечено нигде, основная красится этапом вся, как и раньше.
+ *
+ * `worked` — есть ли на линии работа (закраска или штрих), по routeWork.
+ */
+export function lineLook(
+  v: Pick<RouteView, 'id' | 'side' | 'dashed' | 'mainGroup'>,
+  worked: (routeId: string) => boolean,
+): { planOnly: boolean; idleLabel?: string } {
+  if (worked(v.id)) return { planOnly: false };
+  if (v.side) return { planOnly: true, idleLabel: 'не основная линия села — работ по ней не отмечено' };
+  if (v.mainGroup?.some((id) => id !== v.id && worked(id))) {
+    return { planOnly: true, idleLabel: 'кусок основной линии села — работ на нём не отмечено' };
+  }
+  return { planOnly: v.dashed };
+}
+
+/**
+ * Что сказать на карточке про основную линию села; null — линия у села
+ * одна, и выбирать не из чего.
+ */
+export function mainLineNote(
+  v: Pick<RouteView, 'id' | 'side' | 'mainSet' | 'mainGroup'>,
+  nameOf: (routeId: string) => string,
+): string | null {
+  if (v.side) {
+    return 'Не основная линия села: смены без отметки на неё не ложатся — только отмеченные на ней.';
+  }
+  const group = v.mainGroup;
+  if (group && group.length > 1) {
+    const others = group.filter((id) => id !== v.id).map((id) => `«${nameOf(id)}»`).join(', ');
+    return group[0] === v.id
+      ? `Основная линия села вместе с ${others} — куски одной линии. Смены без отметки ложатся `
+        + 'на этот кусок; на другие — отмеченные на них и те, что продолжают отметку там.'
+      : `Кусок основной линии села, вместе с ${others}. Смены без отметки ложатся на «${nameOf(group[0])}»; `
+        + 'на этот кусок — отмеченные на нём и те, что продолжают отметку здесь.';
+  }
+  return v.mainSet
+    ? 'Основная линия села: смены без отметки ложатся на неё.'
+    : 'Основная линия села (самая длинная из не названных вариантом или отводом): смены без отметки ложатся на неё.';
 }
 
 /** Подпись «Шортанды → Камышенка» или просто название. */

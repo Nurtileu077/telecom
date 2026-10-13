@@ -11,7 +11,7 @@ import { splitRoute, joinRoutes, joinedName, splitNames, lineMatch } from './rou
 import { pointAtDistanceM, routeLengthM, type SectionProgress } from './routeProgress';
 import {
   shiftsOnRoute, stopPositionM, stopForRunStart, crewLabel, crewOf, describeRunPlaced,
-  type RunStart,
+  lineForPoint, type RunStart,
 } from './shiftPlace';
 import { shiftLines } from './shiftLines';
 import { stopMismatch, describeStopMismatch } from './stopCheck';
@@ -2542,30 +2542,47 @@ export function placeRunFrom(
   start: RunStart,
   ctx: { author: string; to?: string; from?: string },
 ): { state: JournalState; text: string } | { error: string } {
-  const route = base.planRoutes.find((r) => r.id === routeId);
+  const asked = base.planRoutes.find((r) => r.id === routeId);
   const first = base.ground.find((e) => e.id === entryId);
-  if (!route || !first) return { error: 'Трассы или смены уже нет — обновите карту.' };
+  if (!asked || !first) return { error: 'Трассы или смены уже нет — обновите карту.' };
+  // Точку ставят и на другой линии того же села: колонна дошла до конца
+  // половины разрезанной трассы и пошла дальше — место её метрам на
+  // продолжении, а не у конца этой линии. Берём линию села под точкой.
+  let route = asked;
+  if (typeof start === 'object') {
+    const lines = shiftLines(base);
+    const kato = lines.view(asked.id)?.kato;
+    const village = kato
+      ? lines.views.filter((v) => v.kato === kato)
+        .map((v) => lines.route(v.id))
+        .filter((r): r is PlanRoute => !!r && r.coords.length > 1)
+      : [];
+    const id = lineForPoint(start, village.length ? village : [asked], asked.id);
+    route = base.planRoutes.find((r) => r.id === id) ?? asked;
+  }
+  const other = route.id !== asked.id;
   const r = stopForRunStart(route, first, start);
   if (!r) return { error: 'На линии меньше двух точек — откладывать смены не по чему.' };
   const crewName = crewLabel(first);
   // Навстречу — к началу линии: туда и называем направление.
   const back = !!r.stop.back;
+  const lineName = route.name || route.uchastok || 'трасса';
   const where = start === 'line'
     ? `от «${ctx.from || 'начала линии'}»`
     : start === 'line-end'
       ? `от «${ctx.to || 'конца линии'}»`
-      : `от ${(r.fromM / 1000).toFixed(2).replace('.', ',')} км${back ? ' к началу линии' : ''}`;
+      : `от ${(r.fromM / 1000).toFixed(2).replace('.', ',')} км${back ? ' к началу линии' : ''}`
+        + (other ? ` линии «${lineName}»` : '');
   const state = setRunStart(base, entryId, r.stop, {
     author: ctx.author,
-    target: route.name || route.uchastok || 'трасса',
+    target: lineName,
     detail: `${crewName ? `«${crewName}», ` : ''}смены с ${first.date.split('-').reverse().join('.')} ${where}`,
   });
-  return {
-    state,
-    text: describeRunPlaced({
-      crewName, fromM: r.fromM, to: back ? ctx.from : ctx.to, deviationM: r.deviationM,
-    }),
-  };
+  const text = describeRunPlaced({
+    // Концы, что пришли с карточки, — той линии, а не этой.
+    crewName, fromM: r.fromM, to: other ? undefined : back ? ctx.from : ctx.to, deviationM: r.deviationM,
+  });
+  return { state, text: other ? `${text} Точка у линии «${lineName}» — смены легли на неё.` : text };
 }
 
 /**

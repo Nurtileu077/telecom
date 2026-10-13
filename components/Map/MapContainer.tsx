@@ -18,7 +18,7 @@ import {
   SITE_OBJECT_SPECS, MUFTA_STATES, siteObjectColor,
 } from '@/types/construction';
 import {
-  routeTitle, countFromText, directionHint, PLAN_LINE_COLOR, STAGE_LINE_COLOR,
+  routeTitle, countFromText, directionHint, PLAN_LINE_COLOR, STAGE_LINE_COLOR, lineLook, mainLineNote,
 } from '@/components/Construction/routeStyle';
 import { moveToBounds } from './smoothMove';
 import { GLYPH_FALLBACK, isGlyphName } from '@/lib/glyphs';
@@ -1952,6 +1952,14 @@ export default function LeafletMap(props: Props) {
       const unplacedByRoute = new Map(
         (propsRef.current.routeUnplaced ?? []).map((u) => [u.routeId, u]),
       );
+      // На каких линиях есть работа — закраска или штрих. Кусок основной
+      // линии без работ, когда на соседнем уже копают, — проект (lineLook).
+      const workedIds = new Set<string>();
+      for (const sg of segments) if (sg.toM - sg.fromM > 0.5) workedIds.add(sg.routeId);
+      for (const [id, u] of unplacedByRoute) {
+        if (u.meters > 0 || (u.pastEnd?.endM ?? 0) + (u.pastEnd?.startM ?? 0) > 0) workedIds.add(id);
+      }
+      const routeNameById = new Map(routes.map((x) => [x.id, x.name]));
       // Сколько линий у каждого села: про основную говорим, только когда
       // есть из чего выбирать.
       const linesByKato = new Map<string, number>();
@@ -1982,7 +1990,9 @@ export default function LeafletMap(props: Props) {
         // готовность, которой нет: «где сделано» — вопрос, который задают
         // глазами, а не процентом.
         const paint = routePaint(r.coords, piecesByRoute.get(r.id) ?? [], unplaced?.meters ?? 0);
-        const worked = paint.doneM > 0.5 || paint.unplacedM > 0;
+        // Метры за концом линии на ней не лежат, но работа на ней была.
+        const beyondM = (unplaced?.pastEnd?.endM ?? 0) + (unplaced?.pastEnd?.startM ?? 0);
+        const worked = paint.doneM > 0.5 || paint.unplacedM > 0 || beyondM > 0;
         const partial = !asBase && worked && !paint.full;
         // Штрих доли без места. По этапу пройденная целиком линия красится
         // вся — место уже неважно; по способу — нет: где какой способ,
@@ -1996,7 +2006,9 @@ export default function LeafletMap(props: Props) {
         // Отвод и вариант этап села не красит: смены без отметки на них не
         // ложатся, и пока по линии не отметили работу, это проект. Раньше
         // этап закрашивал все линии села, и карта показывала втрое больше.
-        const planOnly = (r.dashed || !!r.side) && !worked;
+        // Кусок основной линии без работ, когда копают на соседнем, — тоже.
+        const look = lineLook(r, (id) => (id === r.id ? worked : workedIds.has(id)));
+        const planOnly = look.planOnly;
 
         const line = L.polyline(r.coords, {
           color: asBase ? '#475569' : partial || planOnly ? PLAN_LINE_COLOR : worked ? workColor : r.color,
@@ -2009,9 +2021,8 @@ export default function LeafletMap(props: Props) {
           dashArray: undefined,
         });
         const title = routeTitle(r);
-        const stageLabel = r.side && !worked
-          ? 'не основная линия села — работ по ней не отмечено'
-          : r.stage ? SNP_STAGE_SPECS[r.stage].label : 'работ не было';
+        const stageLabel = look.idleLabel
+          ?? (r.stage ? SNP_STAGE_SPECS[r.stage].label : 'работ не было');
         // Сколько пройдено неизвестно где — словами и с тем, как это
         // исправить: штрих сам по себе ничего не объясняет. Совет «отметьте
         // в смене» для закрытых смен невыполним — форма ставит отметку
@@ -2019,14 +2030,32 @@ export default function LeafletMap(props: Props) {
         // колоннам: откуда колонна начала, оттуда её смены и лягут.
         const canPlace = !!propsRef.current.onPlaceShifts;
         const runs = canPlace ? unplaced?.runs ?? [] : [];
-        const unplacedNote = hatchArr
-          ? `<div style="margin-top:4px;font-size:11px;color:#cbd5e1;max-width:260px">`
-            + esc(unplacedText(unplaced?.meters ?? paint.unplacedM, {
-              canPlace: canPlace && runs.length > 0, to: r.to,
-            }))
-            + '</div>'
-            + runs.map((run, i) => (
-              `<div style="margin-top:4px;font-size:11px;color:#e2e8f0;max-width:260px">${esc(describeRun(run))}</div>`
+        // Штрих — метры где-то на линии; за её концом — отдельной строкой
+        // колонны: раньше они обрезались концом линии и пропадали молча.
+        const unplacedNote = hatchArr || beyondM > 0
+          ? (hatchArr
+            ? `<div style="margin-top:4px;font-size:11px;color:#cbd5e1;max-width:260px">`
+              + esc(unplacedText(unplaced?.meters ?? paint.unplacedM, {
+                canPlace: canPlace && runs.some((run) => !run.pastEnd), to: r.to,
+              }))
+              + '</div>'
+            : '')
+            + (beyondM > 0 && runs.length === 0
+              ? `<div style="margin-top:4px;font-size:11px;color:#cbd5e1;max-width:260px">`
+                + esc(`Колонна дошла до конца линии: ещё ${formatMeters(beyondM)} легли за её концом — где, не названо.`)
+                + '</div>'
+              : '')
+            + runs.filter((run) => run.pastEnd || hatchArr).map((run) => [run, runs.indexOf(run)] as const)
+              .map(([run, i]) => (run.pastEnd
+              // Метры за концом линии: «шли от начала» к ним не относится —
+              // колонна пошла дальше, и точку ставят там, на продолжении.
+              ? `<div style="margin-top:4px;font-size:11px;color:#e2e8f0;max-width:260px">${esc(describeRun(run))}</div>`
+                + '<div style="margin-top:2px;display:flex;gap:6px;flex-wrap:wrap">'
+                + `<button onclick="window.__optiqPlaceShifts__('${esc(r.id)}',${i},'pick')"
+                     style="padding:3px 8px;background:#2dd4bf;color:#041016;border:none;border-radius:3px;font-size:10px;cursor:pointer;font-weight:600">
+                     📍 Пошла дальше отсюда</button>`
+                + '</div>'
+              : `<div style="margin-top:4px;font-size:11px;color:#e2e8f0;max-width:260px">${esc(describeRun(run))}</div>`
               // Две колонны идут по селу навстречу: одна от начала линии,
               // другая от конца, — у каждой своё направление.
               + '<div style="margin-top:2px;display:flex;gap:6px;flex-wrap:wrap">'
@@ -2050,18 +2079,20 @@ export default function LeafletMap(props: Props) {
         // Какая линия села основная — на неё ложатся смены без своей
         // отметки. Выбрана по длине, а не человеком, — так и сказано, и
         // поправить можно здесь же.
-        const mainNote = r.kato && (linesByKato.get(r.kato) ?? 0) > 1
+        // Куски одной основной линии (разрезана, нарисована частями) — не
+        // отводы: так и сказано. Если одноимённые куски на деле разные
+        // линии, человек разведёт их той же кнопкой.
+        const mainText = r.kato && (linesByKato.get(r.kato) ?? 0) > 1
+          ? mainLineNote(r, (id) => routeNameById.get(id) || 'трасса')
+          : null;
+        const mainNote = mainText
           ? `<div style="margin-top:4px;font-size:11px;color:#cbd5e1;max-width:260px">`
-            + (r.side
-              ? 'Не основная линия села: смены без отметки на неё не ложатся — только отмеченные на ней.'
-              : r.mainSet
-                ? 'Основная линия села: смены без отметки ложатся на неё.'
-                : 'Основная линия села (самая длинная из не названных вариантом или отводом): смены без отметки ложатся на неё.')
+            + esc(mainText)
             + '</div>'
-            + (r.side && propsRef.current.onSetMainRoute
+            + ((r.side || r.mainGroup) && propsRef.current.onSetMainRoute
               ? `<div style="margin-top:3px"><button onclick="window.__optiqSetMainRoute__('${esc(r.id)}')"
                    style="padding:3px 8px;background:transparent;color:#2dd4bf;border:1px solid #2dd4bf;border-radius:3px;font-size:10px;cursor:pointer">
-                   Сделать основной линией села</button></div>`
+                   ${r.side ? 'Сделать основной линией села' : 'Основная — только эта линия'}</button></div>`
               : '')
           : '';
         // Сёла-тёзки. Акбулак не один: по имени трасса легла бы на оба
@@ -2109,7 +2140,8 @@ export default function LeafletMap(props: Props) {
           `${esc(title)} · ${esc(stageLabel)}${r.lengthM ? ` · ${(r.lengthM / 1000).toFixed(2)} км` : ''}`
           + (hatchArr
             ? ` · ещё ${formatMeters(unplaced?.meters ?? paint.unplacedM)} пройдено, место не указано`
-            : ''),
+            : '')
+          + (beyondM > 0 ? ` · ${formatMeters(beyondM)} за концом линии` : ''),
           { sticky: true, className: 'text-xs' },
         );
         line.bindPopup(
@@ -2272,6 +2304,35 @@ export default function LeafletMap(props: Props) {
                   background:#0c1018cc;color:#cbd5e1;
                   font-size:9px;font-family:ui-monospace,monospace;
                 ">${esc(lb.text)}</div>`,
+              }),
+            }));
+          }
+        }
+
+        // Метры за концом линии — у того конца, за который ушла колонна.
+        // Линия закрашена до конца, и без этой подписи по ней не видно, что
+        // пройдено больше, чем на ней уместилось.
+        if (beyondM > 0 && onScreen) {
+          const over: [number, [number, number]][] = [
+            [unplaced?.pastEnd?.endM ?? 0, r.coords[r.coords.length - 1]],
+            [unplaced?.pastEnd?.startM ?? 0, r.coords[0]],
+          ];
+          for (const [m, at] of over) {
+            if (m <= 0 || !at) continue;
+            group.addLayer(L.marker(at, {
+              interactive: false,
+              zIndexOffset: 310,
+              icon: L.divIcon({
+                className: '',
+                iconSize: [0, 0],
+                iconAnchor: [0, 0],
+                html: `<div style="
+                  transform:translate(8px,8px);white-space:nowrap;
+                  padding:1px 5px;border-radius:4px;
+                  background:#0c1018dd;border:1px dashed ${UNPLACED_COLOR};
+                  color:#e2e8f0;font-size:10px;
+                  font-family:ui-monospace,monospace;
+                ">+${esc(formatMeters(m))} за концом линии</div>`,
               }),
             }));
           }

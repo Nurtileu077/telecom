@@ -50,6 +50,62 @@ export function pickMainRoute<T extends Choosable>(routes: T[]): T | null {
 }
 
 /**
+ * Имя линии без номеров половин.
+ *
+ * «Разрезать» делит линию на «ОМ — Еленовка (1)» и «ОМ — Еленовка (2)», а
+ * повторный разрез — на «(1) (1)» и «(1) (2)»: это одна линия, порезанная
+ * по стыку бригад или границе СМУ. Так же одна трасса бывает нарисована
+ * в KML несколькими кусками под одним именем.
+ */
+export function lineStem(name: string | undefined): string {
+  let s = (name ?? '').toLowerCase().replace(/ё/g, 'е').trim();
+  for (;;) {
+    const t = s.replace(/\s*\(\d+\)\s*$/, '');
+    if (t === s) break;
+    s = t;
+  }
+  return s.replace(/\s+/g, ' ');
+}
+
+/**
+ * Основная линия села целиком — все её куски, первой та, на которую
+ * ложатся смены без отметки (`pickMainRoute`).
+ *
+ * Пока основной могла быть одна линия, разрезанная пополам трасса села
+ * отдавала основную длинной половине, а вторая синела «не основная линия
+ * — работ не отмечено», хотя это та же линия. Не основной линию делает
+ * название («вариант», «отвод») или выбор человека, а не то, что её
+ * разрезали. Назначил человек — основная ровно то, что он назначил:
+ * половины назначенной линии метку наследуют, а одноимённые разные линии
+ * он разведёт той же кнопкой.
+ */
+export function mainGroup<T extends Choosable>(routes: T[]): T[] {
+  const primary = pickMainRoute(routes);
+  if (!primary) return [];
+  const marked = routes.filter((r) => r.main);
+  if (marked.length) return [primary, ...marked.filter((r) => r !== primary)];
+  const stem = lineStem(primary.name);
+  if (!stem) return [primary];
+  const side = sideByName(primary);
+  return [primary, ...routes.filter((r) => r !== primary
+    && sideByName(r) === side && lineStem(r.name) === stem)];
+}
+
+function groupsByKato(
+  routes: Choosable[],
+  katoByRouteId: Map<string, string>,
+): Map<string, Choosable[]> {
+  const groups = new Map<string, Choosable[]>();
+  for (const r of routes) {
+    const kato = katoByRouteId.get(r.id);
+    if (!kato) continue;
+    const list = groups.get(kato);
+    if (list) list.push(r); else groups.set(kato, [r]);
+  }
+  return groups;
+}
+
+/**
  * Основная линия каждого села — по привязке трасс к сёлам (`routeViews`).
  *
  * Ключ — КАТО, значение — id линии.
@@ -58,17 +114,23 @@ export function mainRouteByKato(
   routes: Choosable[],
   katoByRouteId: Map<string, string>,
 ): Map<string, string> {
-  const groups = new Map<string, Choosable[]>();
-  for (const r of routes) {
-    const kato = katoByRouteId.get(r.id);
-    if (!kato) continue;
-    const list = groups.get(kato);
-    if (list) list.push(r); else groups.set(kato, [r]);
-  }
   const out = new Map<string, string>();
-  for (const [kato, list] of groups) {
+  for (const [kato, list] of groupsByKato(routes, katoByRouteId)) {
     const main = pickMainRoute(list);
     if (main) out.set(kato, main.id);
+  }
+  return out;
+}
+
+/** Куски основной линии каждого села (см. mainGroup): КАТО → id, первой — основная. */
+export function mainGroupByKato(
+  routes: Choosable[],
+  katoByRouteId: Map<string, string>,
+): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const [kato, list] of groupsByKato(routes, katoByRouteId)) {
+    const group = mainGroup(list);
+    if (group.length) out.set(kato, group.map((r) => r.id));
   }
   return out;
 }

@@ -172,8 +172,9 @@ function builtHere(
     .filter((p) => p.fromM - 1 <= best!.atM && best!.atM <= p.toM + 1)
     .sort((a, b) => a.date.localeCompare(b.date))[0];
   // Линии нет места (меньше двух точек) — место ни одной смены не известно.
+  // Метры за концом линии лежат не на ней: здесь они копать не могли.
   const unknownIds = pl
-    ? new Set(pl.unplaced.map((u) => u.entryId))
+    ? new Set(pl.unplaced.filter((u) => !u.pastEnd).map((u) => u.entryId))
     : new Set(lineShifts.map((e) => e.id));
   return {
     shift: cover ? byId.get(cover.entryId) : undefined,

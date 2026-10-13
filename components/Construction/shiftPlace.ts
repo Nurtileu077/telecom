@@ -1,4 +1,4 @@
-import type { DailyWorkEntry, PlanRoute, ShiftStop } from '@/types/construction';
+import { LAY_METHODS, type DailyWorkEntry, type PlanRoute, type ShiftStop } from '@/types/construction';
 import { routeLengthM, pointAtDistanceM, type SectionProgress } from './routeProgress';
 import { nearestOnRoute } from './measureTool';
 import { SHIFT_SNAP_M } from './shiftMeasure';
@@ -43,6 +43,29 @@ function metersOf(e: DailyWorkEntry): number {
   let m = 0;
   for (const v of Object.values(e.byMethod ?? {})) m += v ?? 0;
   return m;
+}
+
+/** На сколько смена может не влезть в линию, не считаясь ушедшей за конец. */
+const PAST_END_SLACK_M = 1;
+
+/**
+ * Метры по способам за первыми `skipM` метрами смены.
+ *
+ * Внутри смены способы ложатся на линию в постоянном порядке (см.
+ * routeSegments.methodSegments) — тем же порядком отсчитываем, какие из
+ * них не влезли в линию.
+ */
+function methodsBeyond(byMethod: DailyWorkEntry['byMethod'], skipM: number): DailyWorkEntry['byMethod'] {
+  const out: DailyWorkEntry['byMethod'] = {};
+  let skip = Math.max(0, skipM);
+  for (const m of LAY_METHODS) {
+    const v = byMethod[m] ?? 0;
+    if (v <= 0) continue;
+    const used = Math.min(v, skip);
+    skip -= used;
+    if (v - used > 0) out[m] = v - used;
+  }
+  return out;
 }
 
 /**
@@ -92,6 +115,14 @@ export interface UnplacedShift {
   crew: string;
   meters: number;
   byMethod: DailyWorkEntry['byMethod'];
+  /**
+   * Колонна дошла до конца линии, а метры смены не кончились: это остаток
+   * за концом. Где он лёг — на продолжении, на соседней линии, — не
+   * названо; смена может быть и наполовину на линии.
+   */
+  pastEnd?: boolean;
+  /** Для `pastEnd`: колонна шла к началу линии и ушла за её начало. */
+  back?: boolean;
 }
 
 export interface RoutePlacement {
@@ -147,6 +178,31 @@ export function placeShifts(
   const drop = (e: DailyWorkEntry, crew: string) => {
     unplaced.push({ entryId: e.id, date: e.date, crew, meters: metersOf(e), byMethod: e.byMethod });
   };
+  /**
+   * Смена, продолжающая ход колонны: без отметки или по «Верно».
+   *
+   * Раньше она обрезалась концом линии, и метры, не влезшие в линию,
+   * пропадали молча — ни закраской, ни штрихом. Так терялись смены на
+   * половине разрезанной трассы: колонна доходила до места разреза и шла
+   * дальше, а линия кончалась. Остаток за концом теперь — «без места» с
+   * пометкой `pastEnd`: штрих показывает, что пройдено больше, чем легло.
+   */
+  const carry = (e: DailyWorkEntry, crew: string, startM: number, m: number, back: boolean) => {
+    const a = clamp(startM);
+    const fit = Math.min(m, back ? a : totalM - a);
+    const rest = m - fit;
+    // Метр — округление длины по эллипсоиду, а не работа за концом линии.
+    if (rest <= PAST_END_SLACK_M) return put(e, crew, a, m, back);
+    let end = a;
+    if (fit > PAST_END_SLACK_M) end = put(e, crew, a, fit, back);
+    else cursor.set(crew, a);
+    unplaced.push({
+      entryId: e.id, date: e.date, crew, meters: rest,
+      byMethod: methodsBeyond(e.byMethod, fit), pastEnd: true,
+      ...(back ? { back: true } : {}),
+    });
+    return end;
+  };
 
   for (const e of list) {
     const crew = crewOf(e);
@@ -178,14 +234,14 @@ export function placeShifts(
       // если колонна идёт к началу): значит, колонна шла оттуда — и в эту
       // смену, и во все свои до неё на этой линии.
       let from = back ? totalM : 0;
-      for (const p of waiting) from = put(p, crew, from, metersOf(p), back);
+      for (const p of waiting) from = carry(p, crew, from, metersOf(p), back);
       pending.delete(crew);
-      put(e, crew, from, m, back);
+      carry(e, crew, from, m, back);
       continue;
     }
 
     if (at !== undefined) {
-      put(e, crew, at, m, back);
+      carry(e, crew, at, m, back);
       continue;
     }
     pending.set(crew, [...waiting, e]);
@@ -221,21 +277,29 @@ export interface UnplacedRun {
   toDate: string;
   shifts: number;
   meters: number;
+  /**
+   * Колонна дошла до конца линии, и это метры за концом (см.
+   * UnplacedShift.pastEnd). «Шли от начала линии» к ним не относится:
+   * место им — на продолжении, туда и ставят точку.
+   */
+  pastEnd?: boolean;
 }
 
 /**
  * Что из пройденного осталось без места — по колоннам.
  *
  * Место назначают первой смене колонны: остальные без отметок продолжают
- * её сами, тем же правилом, что и закраска. Без места остаются только
- * смены, которые колонна прошла до своей первой отметки, — поэтому
- * первая из них всегда и есть начало пути.
+ * её сами, тем же правилом, что и закраска. Без места остаются смены,
+ * которые колонна прошла до своей первой отметки, — поэтому первая из них
+ * всегда и есть начало пути, — и метры за концом линии: они отдельной
+ * строкой, потому что начало пути у них не здесь.
  */
 export function unplacedRuns(pl: RoutePlacement, shifts: DailyWorkEntry[]): UnplacedRun[] {
   const byId = new Map(shifts.map((e) => [e.id, e]));
   const runs = new Map<string, UnplacedRun>();
   for (const u of pl.unplaced) {
-    const run = runs.get(u.crew);
+    const key = `${u.crew}#${u.pastEnd ? 'end' : ''}`;
+    const run = runs.get(key);
     if (run) {
       run.shifts += 1;
       run.meters += u.meters;
@@ -243,7 +307,7 @@ export function unplacedRuns(pl: RoutePlacement, shifts: DailyWorkEntry[]): Unpl
       continue;
     }
     const e = byId.get(u.entryId);
-    runs.set(u.crew, {
+    runs.set(key, {
       crew: u.crew,
       crewName: e ? crewLabel(e) : '',
       firstEntryId: u.entryId,
@@ -251,6 +315,7 @@ export function unplacedRuns(pl: RoutePlacement, shifts: DailyWorkEntry[]): Unpl
       toDate: u.date,
       shifts: 1,
       meters: u.meters,
+      ...(u.pastEnd ? { pastEnd: true } : {}),
     });
   }
   return [...runs.values()];
@@ -580,6 +645,12 @@ export function describeRun(run: UnplacedRun): string {
   const n = run.shifts;
   const shiftsWord = n % 10 === 1 && n % 100 !== 11 ? 'смена'
     : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'смены' : 'смен';
+  if (run.pastEnd) {
+    const of = n % 10 === 1 && n % 100 !== 11 ? 'смены' : 'смен';
+    return `${run.crewName ? `«${run.crewName}»` : 'Колонна'} дошла до конца линии: ещё ${meters(run.meters)} из ${n} ${of} (${days}) `
+      + 'легли за её концом — на продолжении или на другой линии, где именно, не названо. '
+      + 'Укажите на карте, откуда колонна пошла дальше.';
+  }
   return `${who}: ${n} ${shiftsWord}, ${meters(run.meters)} (${days})`;
 }
 

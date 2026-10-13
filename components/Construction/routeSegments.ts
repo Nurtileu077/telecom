@@ -155,10 +155,18 @@ export function segmentTotals(
 /** Пройдено по трассе, а где — не названо. */
 export interface RouteUnplaced {
   routeId: string;
+  /** Пройдено где-то на этой линии — штрих. */
   meters: number;
   byMethod: Partial<Record<LayMethod, number>>;
   /** Сколько таких смен. */
   shifts: number;
+  /**
+   * Метры за концом линии: колонна дошла до конца, а смена не кончилась.
+   * На этой линии их нет, и штрихом по ней они не рисуются — карта
+   * подписывает их у того конца, за который ушли (`endM` — за последней
+   * точкой, `startM` — за первой).
+   */
+  pastEnd?: { endM: number; startM: number };
   /** По колоннам — чтобы назначить место с карточки трассы. */
   runs: UnplacedRun[];
 }
@@ -212,17 +220,25 @@ export function routeWork(
     mismatches.push(...placementMismatches(r.id, pl, shifts, crewLabel));
     if (pl.unplaced.length) {
       const byMethod: Partial<Record<LayMethod, number>> = {};
-      for (const u of pl.unplaced) {
+      const here = pl.unplaced.filter((u) => !u.pastEnd);
+      for (const u of here) {
         for (const m of LAY_METHODS) {
           const v = u.byMethod[m] ?? 0;
           if (v > 0) byMethod[m] = (byMethod[m] ?? 0) + v;
         }
       }
+      let endM = 0;
+      let startM = 0;
+      for (const u of pl.unplaced) {
+        if (!u.pastEnd) continue;
+        if (u.back) startM += u.meters; else endM += u.meters;
+      }
       unplaced.push({
         routeId: r.id,
-        meters: pl.unplaced.reduce((s, u) => s + u.meters, 0),
+        meters: here.reduce((s, u) => s + u.meters, 0),
         byMethod,
-        shifts: pl.unplaced.length,
+        shifts: here.length,
+        ...(endM + startM > 0 ? { pastEnd: { endM, startM } } : {}),
         runs: unplacedRuns(pl, shifts),
       });
     }
