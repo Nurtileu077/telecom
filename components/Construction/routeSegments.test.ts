@@ -155,14 +155,18 @@ describe('работа по всем трассам', () => {
   });
 
   it('метры без места считаются отдельно — по трассе и по способам', () => {
+    const first = day('2026-09-10', { 'кабелеукладчик': 600, 'бар': 100 });
     const work = routeWork([route()], new Map([['r1', '191']]), [
-      day('2026-09-10', { 'кабелеукладчик': 600, 'бар': 100 }),
+      first,
       day('2026-09-11', { 'бар': 300 }),
     ]);
     expect(work.segments).toHaveLength(0);
-    expect(work.unplaced).toEqual([{
+    expect(work.unplaced).toMatchObject([{
       routeId: 'r1', meters: 1000, byMethod: { 'кабелеукладчик': 600, 'бар': 400 }, shifts: 2,
     }]);
+    // Карточке трассы — с какой смены колонне назначать место.
+    expect(work.unplaced[0].runs.map((r) => [r.firstEntryId, r.shifts, r.meters]))
+      .toEqual([[first.id, 2, 1000]]);
   });
 
   it('смена, отмеченная на основной линии, отвод того же села не красит', () => {

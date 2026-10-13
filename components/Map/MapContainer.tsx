@@ -30,6 +30,9 @@ import {
 } from '@/components/Construction/incidents';
 import { pointAtDistanceM } from '@/components/Construction/routeProgress';
 import {
+  describeRun, unplacedNote as unplacedText,
+} from '@/components/Construction/shiftPlace';
+import {
   arrowsAlong, lengthLabels, routePaint, hatchDash, METHOD_DASH, formatMeters, bearingDeg,
   clusterPoints, mapLegend, UNPLACED_COLOR,
 } from '@/components/Construction/mapDecor';
@@ -394,6 +397,11 @@ interface Props {
   onReverseRoute?: (id: string) => void;
   /** Подписи концов наоборот: название написано против хода работ. */
   onSwapRouteEnds?: (id: string) => void;
+  /**
+   * Назначить место сменам колонны, пройденным без него: от начала линии
+   * или от точки, которую укажут на карте.
+   */
+  onPlaceShifts?: (routeId: string, entryId: string, how: 'line' | 'pick') => void;
   /** Отклонения от проекта — глубина и трасса — как контекст на карте. */
   deviations?: import('@/components/Construction/journalStore').DeviationMapItem[];
   /** Колонны на карте: где стоит бригада, чем занята, каким составом. */
@@ -1965,12 +1973,29 @@ export default function LeafletMap(props: Props) {
         const title = routeTitle(r);
         const stageLabel = r.stage ? SNP_STAGE_SPECS[r.stage].label : 'работ не было';
         // Сколько пройдено неизвестно где — словами и с тем, как это
-        // исправить: штрих сам по себе ничего не объясняет.
+        // исправить: штрих сам по себе ничего не объясняет. Совет «отметьте
+        // в смене» для закрытых смен невыполним — форма ставит отметку
+        // только новой, — поэтому место им назначают прямо здесь, по
+        // колоннам: откуда колонна начала, оттуда её смены и лягут.
+        const canPlace = !!propsRef.current.onPlaceShifts;
+        const runs = canPlace ? unplaced?.runs ?? [] : [];
         const unplacedNote = hatchArr
           ? `<div style="margin-top:4px;font-size:11px;color:#cbd5e1;max-width:260px">`
-            + `Ещё ${esc(formatMeters(unplaced?.meters ?? paint.unplacedM))} пройдено, но где — `
-            + 'в сменах не указано: на линии это штрих. Отметьте в смене «остановились здесь» — '
-            + 'закрасится там, где копали.</div>'
+            + esc(unplacedText(unplaced?.meters ?? paint.unplacedM, {
+              canPlace: canPlace && runs.length > 0, to: r.to,
+            }))
+            + '</div>'
+            + runs.map((run, i) => (
+              `<div style="margin-top:4px;font-size:11px;color:#e2e8f0;max-width:260px">${esc(describeRun(run))}</div>`
+              + '<div style="margin-top:2px;display:flex;gap:6px;flex-wrap:wrap">'
+              + `<button onclick="window.__optiqPlaceShifts__('${esc(r.id)}',${i},'line')"
+                   style="padding:3px 8px;background:transparent;color:#2dd4bf;border:1px solid #2dd4bf;border-radius:3px;font-size:10px;cursor:pointer">
+                   Шли от «${esc(r.from || 'начала линии')}»</button>`
+              + `<button onclick="window.__optiqPlaceShifts__('${esc(r.id)}',${i},'pick')"
+                   style="padding:3px 8px;background:#2dd4bf;color:#041016;border:none;border-radius:3px;font-size:10px;cursor:pointer;font-weight:600">
+                   📍 Указать, откуда начали</button>`
+              + '</div>'
+            )).join('')
           : '';
         line.bindTooltip(
           `${esc(title)} · ${esc(stageLabel)}${r.lengthM ? ` · ${(r.lengthM / 1000).toFixed(2)} км` : ''}`
@@ -3500,6 +3525,14 @@ export default function LeafletMap(props: Props) {
       mapRef.current?.closePopup?.();
       propsRef.current.onSwapRouteEnds?.(id);
     };
+    // Номер колонны в карточке, а не id смены: id из загруженной таблицы
+    // может нести кавычку, и строка обработчика в разметке сломалась бы.
+    (window as any).__optiqPlaceShifts__ = (routeId: string, i: number, how: 'line' | 'pick') => {
+      mapRef.current?.closePopup?.();
+      const run = (propsRef.current.routeUnplaced ?? [])
+        .find((u) => u.routeId === routeId)?.runs[i];
+      if (run) propsRef.current.onPlaceShifts?.(routeId, run.firstEntryId, how);
+    };
     return () => {
       delete (window as any).__deleteSub__;
       delete (window as any).__showBranchSub__;
@@ -3509,6 +3542,7 @@ export default function LeafletMap(props: Props) {
       delete (window as any).__optiqJoinRoute__;
       delete (window as any).__optiqReverseRoute__;
       delete (window as any).__optiqSwapRouteEnds__;
+      delete (window as any).__optiqPlaceShifts__;
       delete (window as any).__optiqOpenPhoto__;
       delete (window as any).__optiqEditObject__;
     };

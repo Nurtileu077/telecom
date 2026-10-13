@@ -1,4 +1,4 @@
-import type { DailyWorkEntry, PlanRoute } from '@/types/construction';
+import type { DailyWorkEntry, PlanRoute, ShiftStop } from '@/types/construction';
 import { routeLengthM, pointAtDistanceM, type SectionProgress } from './routeProgress';
 import { nearestOnRoute } from './measureTool';
 import { SHIFT_SNAP_M } from './shiftMeasure';
@@ -24,6 +24,8 @@ import { normName } from './areaImport';
  *   но где — неизвестно, и карта так и показывает: долей по всей линии, а
  *   не закраской от начала. Закраска от начала с пометкой «место не
  *   указано» всё равно рисует место — глаз читает цвет, а не пометку.
+ *   Назвать место задним числом можно с карточки трассы: откуда колонна
+ *   начала — это отметка первой из этих смен (см. stopForRunStart).
  *
  * Пока смены не пишут «с ПК по ПК», это всё, что о месте известно.
  */
@@ -174,6 +176,108 @@ export function placeShifts(
     endByCrew: cursor,
     totalM,
   };
+}
+
+/** Смены одной колонны, пройденные без места, — с первой из них и кладём. */
+export interface UnplacedRun {
+  crew: string;
+  /** «1-колонна (Дозер)»; пусто — колонну в сменах не называли. */
+  crewName: string;
+  firstEntryId: string;
+  fromDate: string;
+  toDate: string;
+  shifts: number;
+  meters: number;
+}
+
+/**
+ * Что из пройденного осталось без места — по колоннам.
+ *
+ * Место назначают первой смене колонны: остальные без отметок продолжают
+ * её сами, тем же правилом, что и закраска. Без места остаются только
+ * смены, которые колонна прошла до своей первой отметки, — поэтому
+ * первая из них всегда и есть начало пути.
+ */
+export function unplacedRuns(pl: RoutePlacement, shifts: DailyWorkEntry[]): UnplacedRun[] {
+  const byId = new Map(shifts.map((e) => [e.id, e]));
+  const runs = new Map<string, UnplacedRun>();
+  for (const u of pl.unplaced) {
+    const run = runs.get(u.crew);
+    if (run) {
+      run.shifts += 1;
+      run.meters += u.meters;
+      if (u.date > run.toDate) run.toDate = u.date;
+      continue;
+    }
+    const e = byId.get(u.entryId);
+    runs.set(u.crew, {
+      crew: u.crew,
+      crewName: e ? crewLabel(e) : '',
+      firstEntryId: u.entryId,
+      fromDate: u.date,
+      toDate: u.date,
+      shifts: 1,
+      meters: u.meters,
+    });
+  }
+  return [...runs.values()];
+}
+
+/**
+ * Отметка для первой смены колонны, если колонна начала в этой точке.
+ *
+ * Старым сменам «остановились здесь» никто уже не поставит: в тот вечер
+ * формы с ней не было, а быстрая строка и таблица её не ставят вовсе.
+ * Зато инженер знает, откуда колонна пошла: «от школы», «от ОМ». Этого
+ * хватает — первая смена кончается на свои метры дальше, остальные идут
+ * следом.
+ *
+ * `start === 'line'` — шли от начала линии: это согласие со счётом, как
+ * «Верно» в форме, и при развороте линии оно уходит вслед за счётом.
+ * Точка на карте — это место, и отметка ставится как поставленная рукой.
+ */
+export function stopForRunStart(
+  route: Pick<PlanRoute, 'id' | 'coords'>,
+  first: DailyWorkEntry,
+  start: { lat: number; lon: number } | 'line',
+): { stop: ShiftStop; fromM: number; deviationM: number } | null {
+  if (route.coords.length < 2) return null;
+  const totalM = routeLengthM(route.coords);
+  const m = metersOf(first);
+  if (start === 'line') {
+    const at = pointAtDistanceM(route.coords, Math.min(totalM, m));
+    if (!at) return null;
+    return { stop: { routeId: route.id, lat: at.lat, lon: at.lon }, fromM: 0, deviationM: 0 };
+  }
+  const hit = nearestOnRoute(start, route.coords);
+  if (!hit) return null;
+  const at = pointAtDistanceM(route.coords, Math.min(totalM, hit.atM + m));
+  if (!at) return null;
+  return {
+    stop: { routeId: route.id, lat: at.lat, lon: at.lon, manual: true },
+    fromM: hit.atM,
+    deviationM: hit.deviationM,
+  };
+}
+
+/**
+ * Что сказать после того, как место назначили.
+ *
+ * Точку ставят пальцем по карте, и промах мимо линии надо назвать:
+ * место берём ближайшее на линии, а человек мог целиться в соседнюю.
+ */
+export function describeRunPlaced(o: {
+  crewName: string;
+  fromM: number;
+  to?: string;
+  deviationM: number;
+}): string {
+  const who = o.crewName ? `«${o.crewName}»` : 'колонны';
+  const toward = o.to ? ` в сторону «${o.to}»` : '';
+  const off = o.deviationM > SHIFT_SNAP_M
+    ? ` Точка в ${meters(o.deviationM)} от линии — взято ближайшее место на ней.`
+    : '';
+  return `Смены ${who} легли от ${km(o.fromM)}${toward}.${off}`;
 }
 
 /**
@@ -360,4 +464,38 @@ export function describeStop(s: StopTextInput): string {
   return `По трассе «${s.routeName}»: ${who}, на этой линии ещё не отмечали — `
     + `считаем от её начала${start}: до сегодня ${meters(p.beforeM)}, за день ${meters(s.addedM)}${end}.${others} `
     + 'Начали не с начала — укажите на карте, где остановились: закрасим там, где копали.';
+}
+
+/** Строка колонны на карточке трассы: чья, сколько и за какие дни. */
+export function describeRun(run: UnplacedRun): string {
+  const who = run.crewName ? `«${run.crewName}»` : 'Колонна не названа';
+  const days = run.fromDate === run.toDate
+    ? day(run.fromDate)
+    : `${day(run.fromDate)}–${day(run.toDate)}`;
+  const n = run.shifts;
+  const shiftsWord = n % 10 === 1 && n % 100 !== 11 ? 'смена'
+    : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'смены' : 'смен';
+  return `${who}: ${n} ${shiftsWord}, ${meters(run.meters)} (${days})`;
+}
+
+/**
+ * Пояснение к штриху на карточке трассы.
+ *
+ * Раньше оно советовало «отметьте в смене «остановились здесь»», а для
+ * уже закрытых смен это невыполнимо: форма ставит отметку только новой
+ * смене. Советуем то, что можно сделать, а где сделать нельзя — так и
+ * говорим.
+ *
+ * `to` — куда идёт счёт: смены лягут от точки начала в эту сторону, и
+ * если колонна шла навстречу, линию надо сперва развернуть.
+ */
+export function unplacedNote(m: number, o: { canPlace: boolean; to?: string }): string {
+  const head = `Ещё ${meters(m)} пройдено, но где — в сменах не указано: на линии это штрих.`;
+  if (!o.canPlace) {
+    return `${head} Назначить место можно в рабочем месте «Стройка», с этой же карточки.`;
+  }
+  const toward = o.to ? ` в сторону «${o.to}»` : ' по счёту линии';
+  return `${head} Укажите, откуда колонна начала: её смены лягут подряд от этого места${toward}. `
+    + 'Шла навстречу — сперва «Считать с другого конца». '
+    + 'Новым сменам место ставят в форме смены: «остановились здесь».';
 }

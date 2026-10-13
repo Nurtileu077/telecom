@@ -30,6 +30,7 @@ const CHANGE_TEXT: Record<string, string> = {
   route_join: 'трассы склеены',
   route_reverse: 'счёт трассы развёрнут',
   route_ends: 'подписи концов поменяны',
+  shift_place: 'место смен указано',
   area_add: 'обводка нарисована',
   area_edit: 'обводка изменена',
   area_rename: 'обводка переименована',
@@ -93,7 +94,7 @@ export function changeFeed(j: JournalState): FeedItem[] {
       rayon: c.rayon,
       kato: c.kato,
       changeId: c.id,
-      restorable: !!c.before?.length,
+      restorable: !!c.before?.length || (c.kind === 'shift_place' && !!c.entryId),
     });
   }
 

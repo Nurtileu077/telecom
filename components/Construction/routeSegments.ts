@@ -2,7 +2,9 @@ import {
   PlanRoute, DailyWorkEntry, LayMethod, LAY_METHODS, LAY_METHOD_LABEL,
 } from '@/types/construction';
 import { pointAtDistanceM, segMeters } from './routeProgress';
-import { placeShifts, shiftIndex, type PlacedShift } from './shiftPlace';
+import {
+  placeShifts, shiftIndex, unplacedRuns, type PlacedShift, type UnplacedRun,
+} from './shiftPlace';
 
 /**
  * Трасса кусками: где шли баром, где кабелеукладчиком, где по колодцам.
@@ -161,6 +163,8 @@ export interface RouteUnplaced {
   byMethod: Partial<Record<LayMethod, number>>;
   /** Сколько таких смен. */
   shifts: number;
+  /** По колоннам — чтобы назначить место с карточки трассы. */
+  runs: UnplacedRun[];
 }
 
 export interface RouteWork {
@@ -212,6 +216,7 @@ export function routeWork(
         meters: pl.unplaced.reduce((s, u) => s + u.meters, 0),
         byMethod,
         shifts: pl.unplaced.length,
+        runs: unplacedRuns(pl, shifts),
       });
     }
   }

@@ -2,11 +2,14 @@ import { describe, it, expect } from 'vitest';
 import type { DailyWorkEntry, PlanRoute } from '@/types/construction';
 import {
   placeShifts, shiftsOnRoute, proposeStop, stopPositionM, describeStop, crewOf, crewLabel,
+  unplacedRuns, describeRun, unplacedNote, stopForRunStart,
 } from './shiftPlace';
 import { routeLengthM, pointAtDistanceM } from './routeProgress';
 import {
-  emptyJournal, reversePlanRoute, setSectionProgress, type JournalState,
+  emptyJournal, reversePlanRoute, setSectionProgress, placeRunFrom, restoreShape,
+  type JournalState,
 } from './journalStore';
+import { changeFeed } from './changeLog';
 import { mergeJournalStates } from './journalSync';
 
 const now = '2026-09-18T00:00:00.000Z';
@@ -332,5 +335,119 @@ describe('точка колонны после разворота трассы',
   it('без смен с отметками — прежний счёт от начала', () => {
     expect(stopPositionM(route(), [shift('2026-09-01', 1000)], { date: '2026-09-01', doneM: 1000 }))
       .toBe(1000);
+  });
+});
+
+/**
+ * Форма ставит «остановились здесь» только новой смене. Смены, закрытые
+ * раньше, пришедшие из быстрой строки или таблицы, оставались штрихом, и
+ * карточка трассы советовала отметить их в смене — что невыполнимо.
+ */
+describe('место старым сменам — с карточки трассы', () => {
+  const A = { contractor: 'Дозер', column: '1-колонна' };
+  const B = { contractor: 'Дозер', column: '2-колонна' };
+  function journal(ground: DailyWorkEntry[]): JournalState {
+    return { ...emptyJournal(), planRoutes: [route()], ground };
+  }
+  const placedOf = (j: JournalState) => placeShifts(j.planRoutes[0], j.ground);
+  const ok = (r: ReturnType<typeof placeRunFrom>) => {
+    if ('error' in r) throw new Error(r.error);
+    return r;
+  };
+
+  it('без места смены собраны по колоннам, с первой сменой каждой', () => {
+    const a1 = shift('2026-09-01', 800, A);
+    const b1 = shift('2026-09-01', 300, { ...B, createdAt: '2026-09-01T18:00:00.000Z' });
+    const a2 = shift('2026-09-02', 700, A);
+    const ground = [a1, b1, a2];
+    const runs = unplacedRuns(placeShifts(route(), ground), ground);
+    expect(runs.map((r) => [r.crewName, r.firstEntryId, r.shifts, r.meters])).toEqual([
+      ['1-колонна (Дозер)', a1.id, 2, 1500],
+      ['2-колонна (Дозер)', b1.id, 1, 300],
+    ]);
+    expect(describeRun(runs[0])).toBe('«1-колонна (Дозер)»: 2 смены, 1\u00a0500 м (01.09.2026–02.09.2026)');
+  });
+
+  it('указали, откуда колонна начала, — её смены ложатся подряд от этого места', () => {
+    const a1 = shift('2026-09-01', 1000, A);
+    const a2 = shift('2026-09-02', 1000, A);
+    const a3 = shift('2026-09-03', 500, A);
+    const res = ok(placeRunFrom(journal([a1, a2, a3]), 'r1', a1.id, { lat: 51.0003, lon: lonAt(6000) }, {
+      author: 'Инженер', to: 'Еленовка',
+    }));
+    const pl = placedOf(res.state);
+    expect(pl.unplaced).toHaveLength(0);
+    expect(pl.placed.map((p) => Math.round(p.fromM / 100) * 100)).toEqual([6000, 7000, 8000]);
+    expect(pl.endM).toBeCloseTo(8500, -1);
+    expect(res.text).toBe('Смены «1-колонна (Дозер)» легли от 6,00 км в сторону «Еленовка».');
+  });
+
+  it('«шли от начала линии» кладёт смены колонны от начала', () => {
+    const a1 = shift('2026-09-01', 1000, A);
+    const a2 = shift('2026-09-02', 400, A);
+    const res = ok(placeRunFrom(journal([a1, a2]), 'r1', a1.id, 'line', { author: 'Инженер' }));
+    expect(placedOf(res.state).placed.map((p) => [p.fromM, p.toM])).toEqual([[0, 1000], [1000, 1400]]);
+  });
+
+  it('смены до отметки рукой получают место, если назначить его первой', () => {
+    // Раньше отметка рукой навсегда отправляла все смены до неё в «без места».
+    const a1 = shift('2026-09-01', 1000, A);
+    const a2 = shift('2026-09-02', 1000, A);
+    const a3 = shift('2026-09-03', 500, { ...A, ...atMap(12000) });
+    const j = journal([a1, a2, a3]);
+    expect(placedOf(j).unplaced.map((u) => u.entryId)).toEqual([a1.id, a2.id]);
+    const res = ok(placeRunFrom(j, 'r1', a1.id, { lat: 51, lon: lonAt(2000) }, { author: 'Инженер' }));
+    const pl = placedOf(res.state);
+    expect(pl.unplaced).toHaveLength(0);
+    expect(pl.placed.map((p) => Math.round(p.fromM / 100) * 100)).toEqual([2000, 3000, 11500]);
+  });
+
+  it('место одной колонны не трогает другую', () => {
+    const a1 = shift('2026-09-01', 1000, A);
+    const b1 = shift('2026-09-02', 500, B);
+    const res = ok(placeRunFrom(journal([a1, b1]), 'r1', a1.id, 'line', { author: 'Инженер' }));
+    expect(placedOf(res.state).unplaced.map((u) => u.entryId)).toEqual([b1.id]);
+  });
+
+  it('назначенное место видно в журнале изменений, и его можно вернуть', () => {
+    const a1 = shift('2026-09-01', 1000, A);
+    const res = ok(placeRunFrom(journal([a1]), 'r1', a1.id, 'line', { author: 'Инженер', from: 'ОМ' }));
+    const item = changeFeed(res.state).find((i) => i.text.startsWith('место смен указано'))!;
+    expect(item.text).toBe('место смен указано — «1-колонна (Дозер)», смены с 01.09.2026 от «ОМ»');
+    expect(item.restorable).toBe(true);
+    const back = restoreShape(res.state, item.changeId!, 'Инженер');
+    expect(back.ground[0].stop).toBeUndefined();
+    expect(placedOf(back).unplaced).toHaveLength(1);
+  });
+
+  it('место назначенное на одном устройстве доходит до другого', () => {
+    const a1 = shift('2026-09-01', 1000, A);
+    const base = journal([a1]);
+    const there = ok(placeRunFrom(base, 'r1', a1.id, 'line', { author: 'Инженер' })).state;
+    const merged = mergeJournalStates(base, there).merged;
+    expect(placedOf(merged).unplaced).toHaveLength(0);
+  });
+
+  it('смену удалили, пока карточка была открыта, — так и сказано', () => {
+    const r = placeRunFrom(journal([]), 'r1', 'нет-такой', 'line', { author: 'Инженер' });
+    expect(r).toEqual({ error: 'Трассы или смены уже нет — обновите карту.' });
+  });
+
+  it('промах мимо линии назван, место берётся ближайшее на ней', () => {
+    const a1 = shift('2026-09-01', 1000, A);
+    const hit = stopForRunStart(route(), a1, { lat: 51.01, lon: lonAt(3000) })!;
+    expect(hit.deviationM).toBeGreaterThan(1000);
+    const res = ok(placeRunFrom(journal([a1]), 'r1', a1.id, { lat: 51.01, lon: lonAt(3000) }, { author: 'И' }));
+    expect(res.text).toContain('от линии — взято ближайшее место на ней');
+  });
+
+  it('карточка не советует отметить в смене то, что форма уже не даст', () => {
+    const can = unplacedNote(2400, { canPlace: true, to: 'Еленовка' });
+    expect(can).toContain('Ещё 2\u00a0400 м пройдено');
+    expect(can).toContain('Укажите, откуда колонна начала: её смены лягут подряд от этого места в сторону «Еленовка»');
+    expect(can).not.toContain('Отметьте в смене');
+    const cannot = unplacedNote(2400, { canPlace: false });
+    expect(cannot).toContain('Назначить место можно в рабочем месте «Стройка»');
+    expect(cannot).not.toContain('Укажите');
   });
 });

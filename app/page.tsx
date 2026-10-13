@@ -53,7 +53,9 @@ import { effectiveProgress } from '@/components/Construction/stageDerive';
 import { placeCrews, type CrewPlacement, type CrewTrip } from '@/components/Construction/crewPlace';
 import { crewsFromJournal } from '@/components/Construction/crewDerive';
 import { areaMapItems, type AreaMapItem } from '@/components/Construction/areaProgress';
-import { routeViews, type RouteView } from '@/components/Construction/routeStyle';
+import {
+  routeViews, routeEnds, placeNames, type RouteView,
+} from '@/components/Construction/routeStyle';
 import { dayMoves, playableDates, type DayMove } from '@/components/Construction/playback';
 import {
   routeWork, type RouteSegment, type RouteUnplaced,
@@ -68,7 +70,7 @@ import {
   addPlanRoutes, addDeviation, updateRouteCoords, deleteRoute,
   removePlanSource, removeAreaSource, updateAreaCoords, renameArea, removeArea,
   addDrawnArea, upsertObject, splitPlanRoute, joinPlanRoutes,
-  reversePlanRoute, swapRouteEnds,
+  reversePlanRoute, swapRouteEnds, placeRunFrom,
 } from '@/components/Construction/journalStore';
 import { polylineLengthM } from '@/components/Construction/planImport';
 import {
@@ -682,10 +684,17 @@ export default function HomePage() {
    */
   const pickResolverRef = useRef<((p: { lat: number; lon: number } | null) => void) | null>(null);
   const [pickLabel, setPickLabel] = useState<string | null>(null);
+  /**
+   * Вернуть ли журнал после выбора точки. Форма ждёт точку в спрятанном
+   * журнале, а карточка трассы — на самой карте: открывать ей журнал
+   * значит закрыть ту карту, на которой только что показали место.
+   */
+  const pickReturnRef = useRef(true);
 
-  const requestPickOnMap = useCallback((label: string) => (
+  const requestPickOnMap = useCallback((label: string, returnToJournal = true) => (
     new Promise<{ lat: number; lon: number } | null>((resolve) => {
       pickResolverRef.current = resolve;
+      pickReturnRef.current = returnToJournal;
       setPickLabel(label);
     })
   ), []);
@@ -694,7 +703,7 @@ export default function HomePage() {
     const resolve = pickResolverRef.current;
     pickResolverRef.current = null;
     setPickLabel(null);
-    setShowJournal(true);
+    if (pickReturnRef.current) setShowJournal(true);
     resolve?.(null);
   }, []);
 
@@ -710,6 +719,36 @@ export default function HomePage() {
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [pickLabel, cancelPick]);
+
+  /**
+   * Место сменам, пройденным без него, — с карточки трассы.
+   *
+   * Форма ставит «остановились здесь» только новой смене, а смены,
+   * закрытые раньше, пришедшие из быстрой строки или таблицы, так и
+   * оставались штрихом без всякой возможности это исправить.
+   */
+  const handlePlaceShifts = useCallback(async (
+    routeId: string, entryId: string, how: 'line' | 'pick',
+  ) => {
+    let start: { lat: number; lon: number } | 'line' = 'line';
+    if (how === 'pick') {
+      const p = await requestPickOnMap('откуда колонна начала', false);
+      if (!p) return;
+      start = p;
+    }
+    // Журнал берём после выбора точки: пока человек целился, могла
+    // прийти смена с другого устройства.
+    const j = loadJournal();
+    const route = j.planRoutes.find((r) => r.id === routeId);
+    const ends = route ? routeEnds(route, placeNames(j.progress)) : {};
+    const res = placeRunFrom(j, routeId, entryId, start, {
+      author: getActorName() || 'Без имени', from: ends.from, to: ends.to,
+    });
+    if ('error' in res) { say(res.error, 4000); return; }
+    const ok = persist(res.state);
+    refreshJournalLayers();
+    if (ok) say(res.text, 4000);
+  }, [requestPickOnMap, refreshJournalLayers, persist, say]);
 
   /** Перетащили колонну на карте — сохраняем новое место. */
   const handleMoveCrew = useCallback((id: string, lat: number, lon: number) => {
@@ -1090,7 +1129,7 @@ export default function HomePage() {
       const resolve = pickResolverRef.current;
       pickResolverRef.current = null;
       setPickLabel(null);
-      setShowJournal(true);
+      if (pickReturnRef.current) setShowJournal(true);
       resolve({ lat, lon });
       return;
     }
@@ -1769,6 +1808,7 @@ export default function HomePage() {
             onJoinRoute={building ? handleJoinRoute : undefined}
             onReverseRoute={building ? handleReverseRoute : undefined}
             onSwapRouteEnds={building ? handleSwapRouteEnds : undefined}
+            onPlaceShifts={building ? handlePlaceShifts : undefined}
             siteObjects={conLayers.objects ? siteObjects : EMPTY_LAYER}
             incidents={conLayers.incidents ? incidents : EMPTY_LAYER}
             showFlow={building && conLayers.flow}

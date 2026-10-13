@@ -4,12 +4,14 @@ import {
   LAY_METHOD_LABEL, Deviation, isDeviationClosed, needsProtocol,
   Crew, crewOnDuty, crewEquipmentCount, MaterialDelivery, PlanRoute,
   SnpProgress, SnpStage, StageState, MapArea, SiteObject, ChangeLogEntry,
-  CableDrum, FieldPhoto, SpliceRecord, Incident, normalizeRole, WorkRate, Payment,
+  CableDrum, FieldPhoto, SpliceRecord, Incident, normalizeRole, WorkRate, Payment, ShiftStop,
 } from '@/types/construction';
 import { haversineM } from '@/components/Network/KMeans';
 import { splitRoute, joinRoutes, joinedName, splitNames, lineMatch } from './routeEdit';
 import { pointAtDistanceM, type SectionProgress } from './routeProgress';
-import { shiftsOnRoute, stopPositionM } from './shiftPlace';
+import {
+  shiftsOnRoute, stopPositionM, stopForRunStart, crewLabel, describeRunPlaced,
+} from './shiftPlace';
 import {
   SNP_PROJECT_ID, currentProjectId, projectMeta, scopedKey, newerProject,
   type BuildProject,
@@ -1488,6 +1490,13 @@ export function restoreShape(
   author: string,
 ): JournalState {
   const ch = (base.changes ?? []).find((c) => c.id === changeId);
+  if (ch?.kind === 'shift_place' && ch.entryId) {
+    return setRunStart(base, ch.entryId, ch.stopBefore, {
+      author,
+      target: ch.target,
+      detail: `возвращено как было на ${new Date(ch.at).toLocaleString('ru')}`,
+    });
+  }
   if (!ch?.before?.length) return base;
   if (ch.areaId) return restoreArea(base, changeId, author);
   if (!ch.routeId) return base;
@@ -2394,6 +2403,79 @@ export function removeSiteRecord(base: JournalState, id: string): JournalState {
     records: base.records.filter((r) => r.id !== id),
     deleted: [...base.deleted, { id, at: now }],
     updatedAt: now,
+  };
+}
+
+/**
+ * Назначить место смене задним числом — с карточки трассы.
+ *
+ * Смены, закрытые до отметки «остановились здесь» (и все, что пришли из
+ * быстрой строки или таблицы), места не имеют, и форма им его уже не
+ * даст: отметку ставят в тот вечер. Назначают его первой смене колонны —
+ * остальные продолжают её сами. Цифры смены это не меняет, поэтому и
+ * заявки на исправление не нужно; но правка ложится в журнал изменений
+ * с прежней отметкой, и её можно вернуть.
+ */
+export function setRunStart(
+  base: JournalState,
+  entryId: string,
+  stop: ShiftStop | undefined,
+  ctx: { author: string; target: string; detail: string },
+): JournalState {
+  const prev = base.ground.find((e) => e.id === entryId);
+  if (!prev) return base;
+  const now = new Date().toISOString();
+  const next: JournalState = {
+    ...base,
+    ground: base.ground.map((e) => (e.id === entryId ? { ...e, stop, updatedAt: now } : e)),
+    updatedAt: now,
+  };
+  return logChange(next, {
+    at: now,
+    author: ctx.author,
+    kind: 'shift_place',
+    target: ctx.target,
+    detail: ctx.detail,
+    oblast: prev.oblast,
+    rayon: prev.rayon,
+    kato: prev.kato,
+    routeId: stop?.routeId ?? prev.stop?.routeId,
+    entryId,
+    stopBefore: prev.stop,
+  });
+}
+
+/**
+ * Колонна начала здесь — от начала линии или от точки на карте.
+ *
+ * Отметку получает первая смена колонны без места: остальные продолжат
+ * её сами. Ошибку говорим словами — смену могли удалить, пока карточка
+ * трассы была открыта.
+ */
+export function placeRunFrom(
+  base: JournalState,
+  routeId: string,
+  entryId: string,
+  start: { lat: number; lon: number } | 'line',
+  ctx: { author: string; to?: string; from?: string },
+): { state: JournalState; text: string } | { error: string } {
+  const route = base.planRoutes.find((r) => r.id === routeId);
+  const first = base.ground.find((e) => e.id === entryId);
+  if (!route || !first) return { error: 'Трассы или смены уже нет — обновите карту.' };
+  const r = stopForRunStart(route, first, start);
+  if (!r) return { error: 'На линии меньше двух точек — откладывать смены не по чему.' };
+  const crewName = crewLabel(first);
+  const where = start === 'line'
+    ? `от «${ctx.from || 'начала линии'}»`
+    : `от ${(r.fromM / 1000).toFixed(2).replace('.', ',')} км`;
+  const state = setRunStart(base, entryId, r.stop, {
+    author: ctx.author,
+    target: route.name || route.uchastok || 'трасса',
+    detail: `${crewName ? `«${crewName}», ` : ''}смены с ${first.date.split('-').reverse().join('.')} ${where}`,
+  });
+  return {
+    state,
+    text: describeRunPlaced({ crewName, fromM: r.fromM, to: ctx.to, deviationM: r.deviationM }),
   };
 }
 

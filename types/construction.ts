@@ -1121,7 +1121,8 @@ export type ChangeKind =
   | 'route_edit' | 'route_delete' | 'route_add'
   | 'route_split' | 'route_join' | 'route_reverse' | 'route_ends'
   | 'area_add' | 'area_edit' | 'area_rename' | 'area_delete'
-  | 'entry_delete' | 'entry_restore' | 'entry_bulk' | 'entry_dispute';
+  | 'entry_delete' | 'entry_restore' | 'entry_bulk' | 'entry_dispute'
+  | 'shift_place';
 
 export interface ChangeLogEntry {
   id: string;
@@ -1148,6 +1149,13 @@ export interface ChangeLogEntry {
    * отметка «развёрнута» останется, и счёт пойдёт не с того конца.
    */
   reversedBefore?: boolean;
+  /**
+   * Смена, которой назначили место с карточки трассы, и её прежняя
+   * отметка. Промахнулись мимо линии или не тем концом — вернуть можно
+   * только то, что записано.
+   */
+  entryId?: string;
+  stopBefore?: ShiftStop;
 }
 
 /** Роль внутри журнала: кто вносит и кто подтверждает исправления. */
