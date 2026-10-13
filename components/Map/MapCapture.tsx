@@ -288,7 +288,12 @@ export default function MapCapture({
                     <b>{g.title}</b>
                     {g.items.map((it) => (
                       <span key={it.label} className="ps-legend-item">
-                        <i style={{ background: it.color }} />
+                        {/* Снимки на листе — тоже рамкой: заливка
+                            сделала бы сплошную и пунктирную метку
+                            одинаковыми кружками. */}
+                        <i style={it.outline
+                          ? { background: '#ffffff', border: `0.5mm ${it.outline} ${it.color}`, borderRadius: '0.6mm' }
+                          : { background: it.color }} />
                         {it.label}
                       </span>
                     ))}

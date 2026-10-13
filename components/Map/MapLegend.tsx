@@ -39,6 +39,20 @@ function Swatch({ item }: { item: LegendItem }) {
     );
   }
   const common = { background: item.color };
+  if (item.kind === 'square' && item.outline) {
+    // Как метка снимка на карте: тёмный квадрат в рамке. Залитый квадрат
+    // не показал бы разницы между сплошной рамкой и пунктиром.
+    return (
+      <span
+        className="shrink-0 w-[12px] h-[12px] rounded-[2px]"
+        style={{
+          background: '#0c1018',
+          border: `2px ${item.outline} ${item.color}`,
+          opacity: item.outline === 'dashed' ? 0.75 : 1,
+        }}
+      />
+    );
+  }
   if (item.kind === 'square') {
     return <span className="shrink-0 w-[10px] h-[10px] rounded-[2px]" style={common} />;
   }

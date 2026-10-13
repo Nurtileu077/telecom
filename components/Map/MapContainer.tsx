@@ -35,7 +35,7 @@ import {
 import { villageLabel, BIND_HOW_TEXT } from '@/components/Construction/routeVillage';
 import {
   arrowsAlong, lengthLabels, routePaint, hatchDash, METHOD_DASH, formatMeters, bearingDeg,
-  clusterPoints, mapLegend, UNPLACED_COLOR,
+  clusterPoints, mapLegend, UNPLACED_COLOR, PHOTO_MARK_COLOR, photoMarkOutline,
 } from '@/components/Construction/mapDecor';
 import type { ConstructionLayers } from '@/components/Construction/mapLayers';
 import {
@@ -1887,9 +1887,9 @@ export default function LeafletMap(props: Props) {
             iconAnchor: [11, 11],
             html: `<div style="
               width:20px;height:20px;border-radius:4px;
-              background:#0c1018ee;border:2px ${geo.atShot ? 'solid' : 'dashed'} #fbbf24;
+              background:#0c1018ee;border:2px ${photoMarkOutline(geo.atShot)} ${PHOTO_MARK_COLOR};
               display:flex;align-items:center;justify-content:center;
-              font-size:10px;line-height:1;box-shadow:0 0 6px #fbbf2455;
+              font-size:10px;line-height:1;box-shadow:0 0 6px ${PHOTO_MARK_COLOR}55;
               ${geo.atShot ? '' : 'opacity:0.75;'}
             ">📷</div>`,
           }),

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   bearingDeg, locateOnRoute, arrowsAlong, formatMeters, lengthLabels,
   mapLegend, scaleBar, METHOD_DASH, clusterPoints, routePaint, hatchDash,
+  photoMarkOutline, PHOTO_MARK_COLOR,
 } from './mapDecor';
 import { routeLengthM } from './routeProgress';
 import { DEFAULT_CONSTRUCTION_LAYERS } from './mapLayers';
@@ -197,6 +198,36 @@ describe('mapLegend', () => {
    * Синий квадрат «ККС — досюда по колодцам» ставил расчёт, а не человек
    * с объекта, и он мог стоять за километр от настоящего колодца.
    */
+  /**
+   * Легенда подписывала все снимки «координаты из EXIF», а карта тем
+   * временем рисовала пунктиром снимки с координатами телефона — точку,
+   * взятую, может быть, вечером в вагончике. Легенда говорила ровно то,
+   * против чего сделан пунктир.
+   */
+  it('не говорит, что координаты всех снимков из EXIF', () => {
+    const items = mapLegend(DEFAULT_CONSTRUCTION_LAYERS, 'stage').flatMap((g) => g.items);
+    for (const it of items) {
+      expect(`${it.label} ${it.note ?? ''}`).not.toMatch(/EXIF/i);
+    }
+  });
+
+  it('объясняет и сплошную, и пунктирную метку снимка — теми же рамками, что на карте', () => {
+    const photos = mapLegend(DEFAULT_CONSTRUCTION_LAYERS, 'stage')
+      .flatMap((g) => g.items).filter((i) => i.label.startsWith('Снимок'));
+    const solid = photos.find((i) => i.outline === photoMarkOutline(true));
+    const dashed = photos.find((i) => i.outline === photoMarkOutline(false));
+    expect(solid?.label).toBe('Снимок, место съёмки');
+    // На распечатке примечаний нет — смысл пунктира должен быть в подписи.
+    expect(dashed?.label).toBe('Снимок, место не подтверждено');
+    expect(dashed?.outline).toBe('dashed');
+    for (const p of photos) expect(p.color).toBe(PHOTO_MARK_COLOR);
+  });
+
+  it('слой снимков выключен — про снимки ни строки', () => {
+    const items = mapLegend({ ...DEFAULT_CONSTRUCTION_LAYERS, photos: false }, 'stage').flatMap((g) => g.items);
+    expect(items.some((i) => i.label.startsWith('Снимок'))).toBe(false);
+  });
+
   it('ККС в легенде — тот, что отметил человек, а не «досюда по колодцам»', () => {
     for (const mode of ['stage', 'method'] as const) {
       const kks = mapLegend(DEFAULT_CONSTRUCTION_LAYERS, mode)

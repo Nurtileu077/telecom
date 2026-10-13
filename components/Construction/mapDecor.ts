@@ -253,8 +253,23 @@ export interface LegendItem {
   kind: 'line' | 'dot' | 'square' | 'diamond' | 'pin';
   color: string;
   dash?: string;
+  /** Значок — рамка этого цвета на тёмном, а не заливка: так рисуются снимки. */
+  outline?: 'solid' | 'dashed';
   label: string;
   note?: string;
+}
+
+/** Цвет рамки метки снимка — общий для карты и легенды. */
+export const PHOTO_MARK_COLOR = '#fbbf24';
+
+/**
+ * Рамка метки снимка: сплошная — точка и есть место съёмки, пунктир — нет.
+ *
+ * Одна функция на карту и легенду: если карта начнёт рисовать иначе, а
+ * легенда останется прежней, она будет объяснять не то, что на экране.
+ */
+export function photoMarkOutline(atShot: boolean): 'solid' | 'dashed' {
+  return atShot ? 'solid' : 'dashed';
 }
 
 export interface LegendGroup {
@@ -323,7 +338,28 @@ export function mapLegend(
   if (layers.crews) marks.push({ kind: 'dot', color: '#2dd4bf', label: 'Колонна' });
   if (layers.deviations) marks.push({ kind: 'dot', color: '#f97316', label: 'Отклонение' });
   if (layers.incidents) marks.push({ kind: 'dot', color: '#f87171', label: 'Авария' });
-  if (layers.photos) marks.push({ kind: 'square', color: '#fbbf24', label: 'Снимок', note: 'координаты из EXIF' });
+  if (layers.photos) {
+    // Раньше тут стояло «координаты из EXIF» про все снимки. Но у снимка с
+    // телефона, который вырезает место из файла, координаты берутся у
+    // телефона при добавлении — а это может быть вагончик вечером. Такие
+    // метки карта рисует пунктиром, и легенда обязана сказать, что пунктир
+    // места съёмки не подтверждает. На распечатке приписок нет, поэтому
+    // смысл несёт сама подпись, а не только примечание.
+    marks.push(
+      {
+        kind: 'square', color: PHOTO_MARK_COLOR, outline: photoMarkOutline(true),
+        label: 'Снимок, место съёмки', note: 'сплошная рамка',
+      },
+      {
+        kind: 'square', color: PHOTO_MARK_COLOR, outline: photoMarkOutline(false),
+        label: 'Снимок, место не подтверждено',
+        // Причин несколько (телефон спросили через полдня, точка в снимке
+        // старая, погрешность в сотни метров) — перечислять их здесь
+        // значит пропустить какую-то; каждая названа в карточке снимка.
+        note: 'пунктир; почему — в карточке снимка',
+      },
+    );
+  }
   if (marks.length) out.push({ title: 'Отметки', items: marks });
 
   if (layers.areas || layers.snp) {
