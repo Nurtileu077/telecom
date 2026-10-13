@@ -6,6 +6,8 @@ import { findOverlaps } from './overlaps';
 import { formatMeters } from './mapDecor';
 import { journalRouteWork } from './routeSegments';
 import { journalMarksIssues } from './entryChecks';
+import { crewLabel } from './shiftPlace';
+import { entryMeters } from './entriesTable';
 
 /**
  * Проверки по тому, что загружено.
@@ -51,10 +53,17 @@ export default function ChecksView({
 
   // Отметки «остановились здесь», разошедшиеся с метрами смен: поправку
   // точки должно быть видно и назавтра, а не только в форме в тот вечер.
+  const work = useMemo(() => journalRouteWork(journal), [journal]);
   const mismatches = useMemo(
-    () => journalRouteWork(journal).mismatches
-      .slice().sort((a, b) => b.date.localeCompare(a.date)),
-    [journal],
+    () => work.mismatches.slice().sort((a, b) => b.date.localeCompare(a.date)),
+    [work],
+  );
+  // Смены без КАТО и без отметки, которым не нашлось линии: пройдены, а на
+  // карте их нет нигде — ни закраской, ни штрихом. Раньше они пропадали
+  // молча; здесь их видно, и в смене можно указать КАТО или место.
+  const lineless = useMemo(
+    () => work.lineless.slice().sort((a, b) => b.date.localeCompare(a.date)),
+    [work],
   );
 
   // Метки трубы против метров. Форма сверяет их до сохранения, но смены из
@@ -137,6 +146,45 @@ export default function ChecksView({
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Смены, не легшие ни на одну трассу. */}
+      {lineless.length > 0 && (
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-3 space-y-1.5">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={16} className="text-[var(--warn)]" />
+            <div className="text-[13px] font-semibold text-[var(--text)]">
+              Смены не легли ни на одну трассу: {lineless.length}
+            </div>
+          </div>
+          <div className="text-[11.5px] text-[var(--text-muted)]">
+            У них нет ни КАТО, ни отметки «остановились здесь», а трассу участка
+            не нашли ни по колонне, ни по имени. Метры в отчётах есть, а на карте —
+            нет. Укажите в смене село или поставьте место на карте.
+          </div>
+          {lineless.slice(0, 15).map((e) => (
+            <div key={e.id} className="flex items-start gap-2">
+              <span className="text-[11.5px] text-[var(--text)] min-w-0 flex-1">
+                <span className="block text-[10.5px] text-[var(--text-muted)] truncate">
+                  {e.date ? new Date(`${e.date}T00:00:00Z`).toLocaleDateString('ru') : '—'}
+                  {crewLabel(e) ? ` · ${crewLabel(e)}` : ''}
+                </span>
+                {e.uchastok || 'участок не указан'} — {formatMeters(entryMeters(e))}
+              </span>
+              {onOpenEntry && (
+                <button type="button" className="btn btn-ghost btn-icon shrink-0"
+                        title="Открыть смену" onClick={() => onOpenEntry(e.id)}>
+                  <Pencil size={14} />
+                </button>
+              )}
+            </div>
+          ))}
+          {lineless.length > 15 && (
+            <div className="text-[10.5px] text-[var(--text-muted)]">
+              И ещё {lineless.length - 15} — сначала показаны последние.
+            </div>
+          )}
         </div>
       )}
 

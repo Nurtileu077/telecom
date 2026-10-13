@@ -8,7 +8,8 @@ import {
 } from './shiftPlace';
 import { placementMismatches, type ShiftMismatch } from './stopCheck';
 import { shiftLines, type ShiftLinesContext } from './shiftLines';
-import { lineIndex } from './routeMain';
+import { lineIndex, linelessShifts } from './routeMain';
+import { sectionLineFinder } from './routeSection';
 
 /**
  * Трасса кусками: где шли баром, где кабелеукладчиком, где по колодцам.
@@ -181,6 +182,12 @@ export interface RouteWork {
    * на 3 %: показываются на карточке трассы и в «Проверках».
    */
   mismatches: ShiftMismatch[];
+  /**
+   * Смены без КАТО и без отметки, для которых не нашлось линии ни по
+   * колонне, ни по имени участка: на карте их нет нигде, и «Проверки»
+   * называют их поимённо.
+   */
+  lineless: DailyWorkEntry[];
 }
 
 /**
@@ -199,8 +206,13 @@ export function routeWork(
   routes: PlanRoute[],
   katoByRouteId: Map<string, string>,
   ground: DailyWorkEntry[],
+  /** Ничьи трассы сёл-тёзок (routeViews → namesakes): смене без КАТО по имени они не годятся. */
+  namesakeIds: Set<string> = new Set(),
 ): RouteWork {
-  const { live, lineOf } = lineIndex(routes, katoByRouteId, ground);
+  const index = lineIndex(
+    routes, katoByRouteId, ground, sectionLineFinder(routes, { katoByRouteId, namesakeIds }),
+  );
+  const { live, lineOf } = index;
   const onRoute = shiftIndex(ground, live, lineOf);
   const katoByStop = new Map<string, string>();
   for (const e of ground) {
@@ -243,7 +255,7 @@ export function routeWork(
       });
     }
   }
-  return { segments, unplaced, mismatches };
+  return { segments, unplaced, mismatches, lineless: linelessShifts(ground, index) };
 }
 
 /**
@@ -257,5 +269,6 @@ export function journalRouteWork(j: ShiftLinesContext): RouteWork {
     j.planRoutes,
     new Map(views.filter((v) => v.kato).map((v) => [v.id, v.kato as string])),
     j.ground,
+    new Set(views.filter((v) => v.namesakes?.length).map((v) => v.id)),
   );
 }

@@ -6,6 +6,7 @@ import { routeViews, type RouteView } from './routeStyle';
 import { effectiveProgress } from './stageDerive';
 import { lineIndex } from './routeMain';
 import { placeShifts, shiftIndex, type RoutePlacement } from './shiftPlace';
+import { sectionLineFinder, routeBinding } from './routeSection';
 
 /**
  * На какой линии лежит каждая смена — одним расчётом для карты, точки
@@ -57,7 +58,9 @@ export function shiftLines(ctx: ShiftLinesContext): ShiftLines {
   const viewById = new Map(views.map((v) => [v.id, v]));
   const routeById = new Map(routes.map((r) => [r.id, r]));
   const katoByRouteId = new Map(views.filter((v) => v.kato).map((v) => [v.id, v.kato as string]));
-  const lines = lineIndex(routes, katoByRouteId, ctx.ground);
+  // Смена без КАТО — магистраль — ищет линию по колонне на участке, а не
+  // по селу; иначе она не ложилась никуда (см. routeMain.lineOfUnmarked).
+  const lines = lineIndex(routes, katoByRouteId, ctx.ground, sectionLineFinder(routes, routeBinding(views)));
   const onRoute = shiftIndex(ctx.ground, lines.live, lines.lineOf);
   const cache = new Map<string, RoutePlacement>();
 

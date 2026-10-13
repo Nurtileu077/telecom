@@ -155,33 +155,58 @@ function chronological(a: DailyWorkEntry, b: DailyWorkEntry): number {
  * привязанных трасс в ответе нет: такие смены по-прежнему ищут трассу по
  * селу.
  *
+ * У магистрали между сёлами КАТО нет вовсе. Пока линия смены искалась
+ * только по селу, смена на магистрали без отметки не ложилась никуда: ни
+ * закраски, ни штриха, ни движения колонны, а назавтра форма не видела её
+ * метров и «Верно» ставило колонну позади настоящего места. Такая смена
+ * продолжает линию, где её колонна последний раз отметилась на этом же
+ * участке; не отмечалась — линию участка по имени (`byName`), если она
+ * одна. Ни того ни другого — смена остаётся без линии, и её показывают
+ * «Проверки» (`linelessShifts`), а не теряют.
+ *
  * Ключ — id смены, значение — id линии.
  */
 export function lineOfUnmarked(
   ground: DailyWorkEntry[],
   mainByKato: Map<string, string>,
   liveRouteIds?: Set<string>,
+  byName?: (uchastok: string) => string | null,
 ): Map<string, string> {
   const out = new Map<string, string>();
   const crewLine = new Map<string, string>();
+  const crewSectionLine = new Map<string, string>();
   for (const e of [...ground].sort(chronological)) {
     const own = e.stop?.routeId;
     if (own && (!liveRouteIds || liveRouteIds.has(own))) {
       if (e.kato) crewLine.set(`${crewKey(e)}#${e.kato}`, own);
+      const section = sectionKey(e);
+      if (section) crewSectionLine.set(`${crewKey(e)}@${section}`, own);
       continue;
     }
-    if (!e.kato) continue;
-    const line = crewLine.get(`${crewKey(e)}#${e.kato}`) ?? mainByKato.get(e.kato);
+    if (e.kato) {
+      const line = crewLine.get(`${crewKey(e)}#${e.kato}`) ?? mainByKato.get(e.kato);
+      if (line) out.set(e.id, line);
+      continue;
+    }
+    const section = sectionKey(e);
+    if (!section) continue;
+    const line = crewSectionLine.get(`${crewKey(e)}@${section}`) ?? byName?.(e.uchastok) ?? null;
     if (line) out.set(e.id, line);
   }
   return out;
+}
+
+/** Участок смены для сверки: «Магистраль Акбулак — Жалтыр» и «магистраль акбулак-жалтыр» — одно. */
+function sectionKey(e: Pick<DailyWorkEntry, 'uchastok'>): string {
+  return normName(e.uchastok ?? '');
 }
 
 /**
  * На какой линии эта колонна сейчас в этом селе — для формы смены.
  *
  * Последняя отметка колонны в этом селе на живой линии; не было — null,
- * и форма берёт основную.
+ * и форма берёт основную. Без КАТО — магистраль — последняя отметка
+ * колонны на этом участке (`uchastok`), тем же правилом, что закраска.
  */
 export function crewLineIn(
   ground: DailyWorkEntry[],
@@ -189,12 +214,15 @@ export function crewLineIn(
   kato: string | undefined,
   liveRouteIds: Set<string>,
   beforeDate?: string,
+  uchastok?: string,
 ): string | null {
-  if (!kato) return null;
+  const section = kato ? '' : normName(uchastok ?? '');
+  if (!kato && !section) return null;
   const key = crewKey(crew);
   let best: DailyWorkEntry | null = null;
   for (const e of ground) {
-    if (e.kato !== kato || !e.stop?.routeId || !liveRouteIds.has(e.stop.routeId)) continue;
+    if (!e.stop?.routeId || !liveRouteIds.has(e.stop.routeId)) continue;
+    if (kato ? e.kato !== kato : sectionKey(e) !== section) continue;
     if (crewKey(e) !== key) continue;
     if (beforeDate && (e.date ?? '') > beforeDate) continue;
     if (!best || chronological(best, e) < 0) best = e;
@@ -211,12 +239,37 @@ export interface LineIndex {
   lineOf: Map<string, string>;
 }
 
+/**
+ * `byName` — линия участка по имени для смен без КАТО (см. lineOfUnmarked;
+ * собирает routeSection.sectionLineFinder).
+ */
 export function lineIndex(
   routes: Choosable[],
   katoByRouteId: Map<string, string>,
   ground: DailyWorkEntry[],
+  byName?: (uchastok: string) => string | null,
 ): LineIndex {
   const live = new Set(routes.map((r) => r.id));
   const mainByKato = mainRouteByKato(routes, katoByRouteId);
-  return { live, mainByKato, lineOf: lineOfUnmarked(ground, mainByKato, live) };
+  return { live, mainByKato, lineOf: lineOfUnmarked(ground, mainByKato, live, byName) };
+}
+
+/**
+ * Смены, которые не легли ни на одну линию: без КАТО, без отметки, и
+ * линии участка не нашлось ни по колонне, ни по имени. Пройдены, а на
+ * карте их нет нигде — поэтому их перечисляют «Проверки».
+ */
+export function linelessShifts(
+  ground: DailyWorkEntry[],
+  index: Pick<LineIndex, 'live' | 'lineOf'>,
+): DailyWorkEntry[] {
+  return ground.filter((e) => {
+    if (e.kato) return false;
+    let m = 0;
+    for (const v of Object.values(e.byMethod ?? {})) m += v ?? 0;
+    if (m <= 0) return false;
+    const own = e.stop?.routeId;
+    if (own && index.live.has(own)) return false;
+    return !index.lineOf.has(e.id);
+  });
 }

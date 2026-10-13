@@ -253,6 +253,7 @@ export default function HomePage() {
       j.planRoutes,
       new Map(views.filter((v) => v.kato).map((v) => [v.id, v.kato as string])),
       j.ground,
+      new Set(views.filter((v) => v.namesakes?.length).map((v) => v.id)),
     );
     setRouteSegs(work.segments);
     setRouteUnplaced(work.unplaced);

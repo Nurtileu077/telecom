@@ -2,11 +2,13 @@ import { describe, it, expect } from 'vitest';
 import type { DailyWorkEntry, PlanRoute, SnpProgress } from '@/types/construction';
 import {
   sideByName, pickMainRoute, lineOfUnmarked, mainRouteByKato, crewLineIn, lineStem, mainGroup,
+  lineIndex,
 } from './routeMain';
+import { sectionLineFinder } from './routeSection';
 import { routeWork } from './routeSegments';
 import { routeViews, lineLook, mainLineNote, STAGE_LINE_COLOR } from './routeStyle';
 import { routeLengthM } from './routeProgress';
-import { lineForPoint } from './shiftPlace';
+import { lineForPoint, proposeStop, shiftsOnRoute } from './shiftPlace';
 import { emptyJournal, setMainRoute, loadPlanRoutes, splitPlanRoute, placeRunFrom } from './journalStore';
 
 const now = '2026-10-01T00:00:00.000Z';
@@ -231,5 +233,64 @@ describe('разрезанная трасса села — одна основн
     const after = routeWork(planRoutes, kato, res.state.ground);
     expect(after.unplaced.find((u) => u.routeId === 'main-a')).toBeUndefined();
     expect(after.segments.some((sg) => sg.routeId === 'main-b')).toBe(true);
+  });
+});
+
+describe('магистраль без КАТО', () => {
+  /** Магистраль между сёлами, на восток около 14 км; КАТО у неё нет. */
+  const TRUNK = line('trunk', 'Акбулак — Жалтыр', [[52, 70], [52, 70.2]], { uchastok: undefined });
+  const SECTION = 'Магистраль Акбулак — Жалтыр';
+  const onTrunk = (date: string, meters: number, over: Partial<DailyWorkEntry> = {}) =>
+    shift(date, meters, { kato: '', uchastok: SECTION, ...over });
+  const none = new Map<string, string>();
+
+  it('смена без отметки на магистрали продолжает колонну, а не пропадает', () => {
+    const agreed = onTrunk('2026-10-01', 900, { stop: { routeId: 'trunk', lat: 52, lon: 70 } });
+    const next = onTrunk('2026-10-02', 600);
+    const work = routeWork([TRUNK], none, [agreed, next]);
+    expect(work.lineless).toEqual([]);
+    const painted = work.segments.filter((sg) => sg.routeId === 'trunk')
+      .reduce((m, sg) => m + (sg.toM - sg.fromM), 0);
+    expect(painted).toBeCloseTo(1500, 0);
+    // Назавтра форма видит и её метры: колонна стоит на 1,5 км, а не на 0,9.
+    const idx = lineIndex([TRUNK], none, [agreed, next], sectionLineFinder([TRUNK], { katoByRouteId: none, namesakeIds: new Set() }));
+    const shifts = shiftsOnRoute('trunk', undefined, [agreed, next], idx.live, idx.lineOf);
+    const p = proposeStop(TRUNK, shifts, 400, '2026-10-03', { contractor: 'Дозер', column: '1-колонна' });
+    expect(p?.beforeM).toBeCloseTo(1500, 0);
+  });
+
+  it('колонна отметилась на магистрали — следующая смена без КАТО идёт по той же линии, хотя по имени подходят и другие', () => {
+    const marked = onTrunk('2026-10-01', 500, { stop: { routeId: 'trunk', lat: 52, lon: 70.02, manual: true } });
+    const next = onTrunk('2026-10-02', 300);
+    // По имени участка нашлась бы другая линия — отметка колонны сильнее.
+    const lineOf = lineOfUnmarked([marked, next], new Map(), new Set(['trunk', 'village']), () => 'village');
+    expect(lineOf.get(next.id)).toBe('trunk');
+    expect(crewLineIn([marked], { contractor: 'Дозер', column: '1-колонна' }, undefined, new Set(['trunk', 'village']), undefined, SECTION))
+      .toBe('trunk');
+  });
+
+  it('колонна здесь ещё не отмечалась — линия участка по имени, где совпало полнее всего', () => {
+    const village = line('village', 'ОМ — Акбулак', [[52, 69.9], [52, 70]], { uchastok: 'Акбулак' });
+    const kato = new Map([['village', '111']]);
+    const find = sectionLineFinder([TRUNK, village], { katoByRouteId: kato, namesakeIds: new Set() });
+    expect(find(SECTION)).toBe('trunk');
+    const work = routeWork([TRUNK, village], kato, [onTrunk('2026-10-01', 700)]);
+    // Место не названо — штрих на магистрали, а не пропажа.
+    expect(work.unplaced.map((u) => [u.routeId, u.meters])).toEqual([['trunk', 700]]);
+  });
+
+  it('по имени участка подходят линии двух сёл-тёзок — без КАТО не выбираем, смена в «Проверках»', () => {
+    const a = line('a', 'ОМ — Акбулак', [[52, 69], [52, 69.05]]);
+    const b = line('b', 'ОМ — Акбулак', [[53, 70], [53, 70.05]]);
+    const kato = new Map([['a', '111'], ['b', '222']]);
+    const lost = shift('2026-10-01', 400, { kato: '', uchastok: 'Акбулак' });
+    const work = routeWork([a, b], kato, [lost]);
+    expect(work.lineless.map((e) => e.id)).toEqual([lost.id]);
+    expect(work.unplaced).toEqual([]);
+  });
+
+  it('линии участка нет совсем — смена в «Проверках», а не теряется', () => {
+    const lost = shift('2026-10-01', 400, { kato: '', uchastok: 'Неизвестный участок' });
+    expect(routeWork([TRUNK], none, [lost]).lineless.map((e) => e.id)).toEqual([lost.id]);
   });
 });

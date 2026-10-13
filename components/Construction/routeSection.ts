@@ -34,6 +34,18 @@ export function sectionMatchesRoute(section: string | undefined, route: RouteNam
   });
 }
 
+/** Сколько слов места совпало у участка с трассой; 0 — участок не её. */
+function matchScore(section: string | undefined, route: RouteNaming): number {
+  const s = placeTokens(section);
+  let best = 0;
+  for (const field of [route.uchastok, route.folder, route.name]) {
+    const t = placeTokens(field);
+    if (containsRun(s, t)) best = Math.max(best, t.length);
+    else if (containsRun(t, s)) best = Math.max(best, s.length);
+  }
+  return best;
+}
+
 /**
  * Трасса участка — та, вдоль которой идут его смены.
  *
@@ -101,6 +113,39 @@ export function routeOfSectionIn(
   const set = new Set<string>();
   for (const k of katos) if (k?.trim()) set.add(k.trim());
   return routeOfSection(routesForVillages(routes, bind, set), section);
+}
+
+/**
+ * Линия участка по имени — для смены без КАТО (магистраль между сёлами).
+ *
+ * Без КАТО не известно, какое это село, поэтому годится только линия,
+ * которая по имени участка находится однозначно: подходящие линии
+ * привязаны к двум разным сёлам (Акбулак не один) — не выбираем никакую,
+ * смена остаётся без линии и видна в «Проверках». Ничьи линии тёзок не
+ * годятся тоже.
+ */
+export function sectionLineFinder(
+  routes: PlanRoute[],
+  bind: RouteBinding,
+): (uchastok: string) => string | null {
+  const cache = new Map<string, string | null>();
+  return (uchastok) => {
+    const key = placeTokens(uchastok).join(' ');
+    if (!key) return null;
+    const hit = cache.get(key);
+    if (hit !== undefined) return hit;
+    // «Магистраль Акбулак — Жалтыр» по словам подходит и линии «ОМ —
+    // Акбулак»: берём только те, что совпали полнее всех.
+    const scored = routesForVillages(routes, bind, new Set())
+      .map((r) => ({ r, score: matchScore(uchastok, r) }))
+      .filter((x) => x.score > 0);
+    const top = Math.max(0, ...scored.map((x) => x.score));
+    const fit = scored.filter((x) => x.score === top).map((x) => x.r);
+    const katos = new Set(fit.map((r) => bind.katoByRouteId.get(r.id)).filter(Boolean));
+    const id = katos.size > 1 ? null : routeForSection(fit, () => true)?.id ?? null;
+    cache.set(key, id);
+    return id;
+  };
 }
 
 /** Трасса под схему акта участка: сёла — из смен этого участка. */

@@ -892,6 +892,7 @@ export default function ConstructionPanel({
       scoped.planRoutes,
       new Map(views.filter((v) => v.kato).map((v) => [v.id, v.kato as string])),
       scoped.ground,
+      new Set(views.filter((v) => v.namesakes?.length).map((v) => v.id)),
     );
     const routeLines = kmlRouteLines(scoped.planRoutes, views, work);
     const xml = buildKml({

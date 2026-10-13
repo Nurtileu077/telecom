@@ -15,7 +15,9 @@ import {
 import PhotoAttach from './PhotoAttach';
 import ProjectBadge from './ProjectBadge';
 import { photosOf } from './photoStore';
-import { routeOfSection, sectionMatchesRoute, routesForVillages } from './routeSection';
+import {
+  routeOfSection, sectionMatchesRoute, routesForVillages, sectionLineFinder,
+} from './routeSection';
 import {
   proposeStop, shiftsOnRoute, describeStop, crewLabel, lineForPoint,
 } from './shiftPlace';
@@ -309,7 +311,12 @@ export default function DailyEntryForm({
     });
     const katoByRouteId = new Map(views.filter((v) => v.kato).map((v) => [v.id, v.kato as string]));
     const namesakeIds = new Set(views.filter((v) => v.namesakes?.length).map((v) => v.id));
-    return { katoByRouteId, namesakeIds, ...lineIndex(journal.planRoutes, katoByRouteId, journal.ground) };
+    // Смена без КАТО — магистраль — ищет линию по колонне на участке и по
+    // имени участка, тем же расчётом, что закраска.
+    const byName = sectionLineFinder(journal.planRoutes, { katoByRouteId, namesakeIds });
+    return {
+      katoByRouteId, namesakeIds, ...lineIndex(journal.planRoutes, katoByRouteId, journal.ground, byName),
+    };
   }, [journal]);
   const [lineChoice, setLineChoice] = useState<string | null>(null);
   // Линия чужого села по имени не годится: у Акбулака из соседнего района
@@ -334,7 +341,7 @@ export default function DailyEntryForm({
     const byName = routeOfSection(byNameOk, uchastok);
     const k = kato.trim() || undefined;
     const id = (lineChoice && villageLines.some((r) => r.id === lineChoice) ? lineChoice : null)
-      ?? crewLineIn(journal.ground, { contractor, column }, k, lines.live, date)
+      ?? crewLineIn(journal.ground, { contractor, column }, k, lines.live, date, uchastok)
       ?? (k ? lines.mainByKato.get(k) : undefined);
     return (id ? journal.planRoutes.find((r) => r.id === id) : undefined) ?? byName;
   }, [journal.planRoutes, journal.ground, uchastok, kato, contractor, column, date,
