@@ -179,13 +179,13 @@ function IncidentCard({ incident, journal, open, onToggle, onEdit, onRemove, onC
   onRemove: () => void;
   onClose: () => void;
 }) {
+  // Журнал целиком: смену под аварией ищем по месту на линии, а для этого
+  // нужны трассы, их сёла и места смен — тем же счётом, что на карте.
+  // Считаем, только когда карточку раскрыли: места смен по всем линиям —
+  // не бесплатный счёт, а аварий в списке десятки.
   const ctx = useMemo(
-    () => incidentContext(incident, {
-      ground: journal.ground,
-      deviations: journal.deviations,
-      objects: journal.objects,
-    }),
-    [incident, journal.ground, journal.deviations, journal.objects],
+    () => (open ? incidentContext(incident, journal) : null),
+    [open, incident, journal],
   );
   const history = useMemo(
     () => nearbyIncidents(journal.incidents, incident.lat, incident.lon, 300, incident.id),
@@ -249,7 +249,7 @@ function IncidentCard({ incident, journal, open, onToggle, onEdit, onRemove, onC
         </span>
       </div>
 
-      {open && (
+      {open && ctx && (
         <div className="flex flex-col gap-1 pt-1.5 border-t border-[var(--border)]">
           <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-[var(--text-muted)]">
             {ctx.depthM !== undefined ? (
@@ -260,22 +260,47 @@ function IncidentCard({ incident, journal, open, onToggle, onEdit, onRemove, onC
             ) : (
               <span>глубина не записана</span>
             )}
-            {ctx.method && <span>{ctx.method}</span>}
+            {ctx.routeName && ctx.atM !== undefined && (
+              <span>
+                на линии «{ctx.routeName}», {(ctx.atM / 1000).toFixed(2).replace('.', ',')} км
+              </span>
+            )}
+            {ctx.method && (
+              <span>
+                {ctx.method}
+                {ctx.methodMixed && ' (в смене несколько способов — где какой, не записано)'}
+              </span>
+            )}
             {ctx.contractor && <span>{ctx.contractor}</span>}
+            {ctx.column && <span>{ctx.column}</span>}
             {ctx.builtAt && (
-              <span>построено {new Date(`${ctx.builtAt}T00:00:00Z`).toLocaleDateString('ru')}</span>
+              <span>
+                {ctx.builtTo ? 'строили ' : 'построено '}
+                {new Date(`${ctx.builtAt}T00:00:00Z`).toLocaleDateString('ru')}
+                {ctx.builtTo && `–${new Date(`${ctx.builtTo}T00:00:00Z`).toLocaleDateString('ru')}`}
+              </span>
             )}
             {ctx.object && (
               <span>рядом {ctx.object.name || ctx.object.kind}</span>
             )}
           </div>
+          {/* По селу, а не по месту — так и сказано: иначе последняя смена
+              села выдавалась за ту, что копала здесь. */}
+          {ctx.builtFrom === 'village' && (
+            <p className="text-[11px] text-[var(--warn)]">
+              Какая смена копала именно здесь, не известно: место смен на линии не
+              названо. {ctx.crews?.length
+                ? `Работали: ${ctx.crews.join('; ')}.`
+                : 'Выше — то, что было одно на всё село.'}
+            </p>
+          )}
           {ctx.deviation && (
             <div className="flex items-start gap-1.5 text-[11px] text-[var(--warn)]">
               <AlertTriangle size={12} className="shrink-0 mt-0.5" />
               <span>Здесь было отклонение: {ctx.deviation}</span>
             </div>
           )}
-          {!ctx.method && !ctx.contractor && (
+          {!ctx.builtFrom && (
             <p className="text-[11px] text-[var(--text-muted)]">
               По этому месту в журнале стройки записей нет — ни села, ни участка
               не удалось сопоставить.

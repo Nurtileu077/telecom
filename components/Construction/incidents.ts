@@ -1,8 +1,11 @@
 import {
-  Incident, IncidentCause, DailyWorkEntry, Deviation, SiteObject,
+  Incident, IncidentCause, DailyWorkEntry, Deviation, SiteObject, PlanRoute, LayMethod,
   LAY_METHODS, LAY_METHOD_LABEL, DESIGN_DEPTH_M,
 } from '@/types/construction';
 import { haversineM } from '@/components/Network/KMeans';
+import { nearestOnRoute } from './measureTool';
+import { shiftLines, type ShiftLinesContext } from './shiftLines';
+import { crewLabel, crewOf } from './shiftPlace';
 
 /**
  * Аварии и то, что о них уже известно.
@@ -68,29 +71,114 @@ export interface IncidentContext {
   depthFrom?: 'отклонение' | 'объект' | 'проект';
   /** Каким способом клали. */
   method?: string;
+  /** В смене несколько способов, и где какой — не записано. */
+  methodMixed?: boolean;
   /** Кто вёл работы. */
   contractor?: string;
-  /** Когда строили. */
+  /** Колонна. */
+  column?: string;
+  /** Когда строили; с `builtTo` — с какого по какой день. */
   builtAt?: string;
+  builtTo?: string;
+  /**
+   * Откуда известно, как строили: 'place' — смена, закрасившая это место
+   * на линии; 'village' — по селу: место смен на линии не названо, и
+   * сказать можно только то, что в селе было одно на всех.
+   */
+  builtFrom?: 'place' | 'village';
+  /** Линия под аварией и место на ней, метры от начала. */
+  routeName?: string;
+  atM?: number;
+  /**
+   * Кто работал в селе, когда по месту смену не найти, — «1-колонна
+   * (Дозер), 01.07–20.07». Без «это они», только кто там был.
+   */
+  crews?: string[];
   /** Причина отклонения, если здесь оно было. */
   deviation?: string;
   /** Ближайший объект сети. */
   object?: SiteObject;
 }
 
-export interface IncidentContextInput {
+export interface IncidentContextInput extends Partial<Omit<ShiftLinesContext, 'ground'>> {
   ground: DailyWorkEntry[];
   deviations: Deviation[];
   objects: SiteObject[];
 }
 
+/** Как далеко от линии авария ещё считается аварией на ней — промах телефона. */
+export const INCIDENT_ON_LINE_M = 100;
+
+const dayRu = (iso: string) => iso.split('-').reverse().join('.');
+
+function methodsOf(e: DailyWorkEntry): LayMethod[] {
+  return LAY_METHODS.filter((m) => (e.byMethod[m] ?? 0) > 0);
+}
+
+/** Кто работал: «1-колонна (Дозер), 01.07.2026–20.07.2026». */
+function crewsOf(shifts: DailyWorkEntry[]): string[] {
+  const by = new Map<string, { name: string; from: string; to: string }>();
+  for (const e of shifts) {
+    const name = crewLabel(e) || e.smu || 'колонна не названа';
+    const key = crewOf(e) + e.smu;
+    const prev = by.get(key);
+    if (!prev) { by.set(key, { name, from: e.date, to: e.date }); continue; }
+    if (e.date < prev.from) prev.from = e.date;
+    if (e.date > prev.to) prev.to = e.date;
+  }
+  return [...by.values()]
+    .sort((a, b) => a.from.localeCompare(b.from))
+    .map((c) => `${c.name}, ${c.from === c.to ? dayRu(c.from) : `${dayRu(c.from)}–${dayRu(c.to)}`}`);
+}
+
+/**
+ * Смена, закрасившая место аварии.
+ *
+ * Обрыв на 3-м км, а карточка называла последнюю смену села — её способ,
+ * подрядчика и день, хотя 3-й км копали другие и раньше. Место смены на
+ * линии знает закраска (см. shiftPlace), и авария берёт оттуда же: линия
+ * рядом с точкой аварии, место на ней и смена, которая его закрасила.
+ */
+function builtHere(
+  i: Incident,
+  ctx: IncidentContextInput,
+): { shift?: DailyWorkEntry; routeName: string; atM: number; lineShifts: DailyWorkEntry[] } | null {
+  const routes = ctx.planRoutes ?? [];
+  if (routes.length === 0) return null;
+  let best: { route: PlanRoute; atM: number; dev: number } | null = null;
+  for (const r of routes) {
+    const hit = nearestOnRoute({ lat: i.lat, lon: i.lon }, r.coords);
+    if (hit && hit.deviationM <= INCIDENT_ON_LINE_M && (!best || hit.deviationM < best.dev)) {
+      best = { route: r, atM: hit.atM, dev: hit.deviationM };
+    }
+  }
+  if (!best) return null;
+  const lines = shiftLines({ ...ctx, planRoutes: routes });
+  const pl = lines.placement(best.route.id);
+  const lineShifts = lines.shiftsOn(best.route.id);
+  const byId = new Map(lineShifts.map((e) => [e.id, e]));
+  // Место закрашено несколькими сменами (отметка разошлась с метрами) —
+  // берём первую: трубу кладут один раз, позднее — это счёт, а не работа.
+  const cover = (pl?.placed ?? [])
+    .filter((p) => p.fromM - 1 <= best!.atM && best!.atM <= p.toM + 1)
+    .sort((a, b) => a.date.localeCompare(b.date))[0];
+  return {
+    shift: cover ? byId.get(cover.entryId) : undefined,
+    routeName: best.route.name || best.route.uchastok || 'трасса',
+    atM: best.atM,
+    lineShifts,
+  };
+}
+
 /**
  * Что известно про это место по журналу стройки.
  *
- * Ищем по двум признакам: по координатам (отклонения и объекты сняты с
- * точкой) и по селу (дневные записи точки не имеют, но КАТО у них есть).
- * Чего не нашли — того не пишем: «глубина 1,2 м» без основания в такой
- * карточке опаснее пустоты.
+ * Глубину и отклонение ищем по координатам — они сняты с точкой. Как
+ * строили — по смене, закрасившей это место на линии. Если место смен не
+ * названо, говорим только то, что в селе было одно на всех (один способ,
+ * один подрядчик), а иначе перечисляем, кто там работал, — без «это
+ * они». Чего не нашли — того не пишем: «глубина 1,2 м» или «копал такой-то»
+ * без основания в такой карточке опаснее пустоты.
  */
 export function incidentContext(
   i: Incident,
@@ -130,24 +218,45 @@ export function incidentContext(
     }
   }
 
-  // Как строили: по селу. Берём последнюю смену с метрами — она и есть
-  // та, что дошла до этого места.
-  const here = ctx.ground
-    .filter((e) => (i.kato && e.kato === i.kato)
-      || (!!i.uchastok && e.uchastok.trim().toLowerCase() === i.uchastok.trim().toLowerCase()))
-    .filter((e) => LAY_METHODS.some((m) => (e.byMethod[m] ?? 0) > 0))
-    .sort((a, b) => b.date.localeCompare(a.date))[0];
-
+  const laid = (e: DailyWorkEntry) => methodsOf(e).length > 0;
+  const here = builtHere(i, ctx);
+  let built = false;
   if (here) {
-    const best = LAY_METHODS
-      .map((m) => ({ m, v: here.byMethod[m] ?? 0 }))
-      .sort((a, b) => b.v - a.v)[0];
-    if (best?.v) out.method = LAY_METHOD_LABEL[best.m];
-    out.contractor = here.contractor || here.smu || undefined;
-    out.builtAt = here.date;
+    out.routeName = here.routeName;
+    out.atM = Math.round(here.atM);
+  }
+  if (here?.shift) {
+    const e = here.shift;
+    const methods = methodsOf(e);
+    out.method = methods.map((m) => LAY_METHOD_LABEL[m]).join(' / ');
+    out.methodMixed = methods.length > 1 || undefined;
+    out.contractor = e.contractor || e.smu || undefined;
+    out.column = e.column || undefined;
+    out.builtAt = e.date;
+    out.builtFrom = 'place';
+    built = true;
+  } else {
+    // Место смен на линии не названо — по линии, а нет линии — по селу.
+    const pool = (here?.lineShifts.length ? here.lineShifts : ctx.ground.filter((e) => (
+      (i.kato && e.kato === i.kato)
+      || (!!i.uchastok && e.uchastok.trim().toLowerCase() === i.uchastok.trim().toLowerCase())
+    ))).filter(laid);
+    if (pool.length) {
+      built = true;
+      out.builtFrom = 'village';
+      const methods = new Set(pool.flatMap(methodsOf));
+      if (methods.size === 1) out.method = LAY_METHOD_LABEL[[...methods][0]];
+      const who = new Set(pool.map((e) => e.contractor || e.smu || ''));
+      if (who.size === 1 && [...who][0]) out.contractor = [...who][0];
+      const dates = pool.map((e) => e.date).sort();
+      out.builtAt = dates[0];
+      if (dates[dates.length - 1] !== dates[0]) out.builtTo = dates[dates.length - 1];
+      const crews = crewsOf(pool);
+      if (crews.length > 1) out.crews = crews;
+    }
   }
 
-  if (out.depthM === undefined && (here || obj)) {
+  if (out.depthM === undefined && (built || obj)) {
     // Проектная глубина — не факт, а ожидание. Так и подписываем.
     out.depthM = DESIGN_DEPTH_M;
     out.depthFrom = 'проект';

@@ -4,8 +4,9 @@ import {
   problemSpots, incidentStats, SAME_SPOT_M,
 } from './incidents';
 import type {
-  Incident, DailyWorkEntry, Deviation, SiteObject,
+  Incident, DailyWorkEntry, Deviation, SiteObject, PlanRoute,
 } from '@/types/construction';
+import { routeLengthM } from './routeProgress';
 
 const now = '2026-09-18T00:00:00.000Z';
 
@@ -135,5 +136,75 @@ describe('карта проблемных мест', () => {
     expect(s.open).toBe(1);
     expect(s.avgHours).toBe(3);
     expect(s.byCause[0]).toEqual({ cause: 'экскаватор', count: 2 });
+  });
+});
+
+/**
+ * Обрыв на 3-м км, а карточка называла «кабелеукладчик, подрядчик такой-то,
+ * 12.08» — последнюю смену села, хотя 3-й км в июле копали вручную другие.
+ */
+describe('авария находит свою смену', () => {
+  const LINE: [number, number][] = [[51.5, 71.5], [51.5, 71.7]];
+  const TOTAL = routeLengthM(LINE);
+  const lonAt = (m: number) => 71.5 + (m / TOTAL) * 0.2;
+  const route: PlanRoute = {
+    id: 'r1', name: 'ОМ — Еленовка', uchastok: 'Еленовка', coords: LINE, lengthM: TOTAL,
+    source: 'тест', createdAt: now, updatedAt: now,
+  };
+  const progress = [{ kato: '191', snp: 'Еленовка', stages: {}, updatedAt: now }];
+  const july = g({
+    id: 'july', date: '2026-07-10', contractor: 'Дозер', column: '2-колонна',
+    byMethod: { 'вручную': 1500 },
+    stop: { routeId: 'r1', lat: 51.5, lon: lonAt(3500), manual: true },
+  });
+  const august = g({
+    id: 'aug', date: '2026-08-12', contractor: 'TERRA TECH', column: '1-колонна',
+    byMethod: { 'кабелеукладчик': 2000 },
+    stop: { routeId: 'r1', lat: 51.5, lon: lonAt(9000), manual: true },
+  });
+
+  it('обрыв на 3-м км берёт смену, закрасившую 3-й км, а не последнюю смену села', () => {
+    const c = incidentContext(inc({ lat: 51.5003, lon: lonAt(3000) }), ctx({
+      ground: [july, august], planRoutes: [route], progress,
+    }));
+    expect(c.builtFrom).toBe('place');
+    expect(c.method).toBe('Ручным способом');
+    expect(c.contractor).toBe('Дозер');
+    expect(c.column).toBe('2-колонна');
+    expect(c.builtAt).toBe('2026-07-10');
+    expect(c.routeName).toBe('ОМ — Еленовка');
+    expect(c.atM).toBeGreaterThan(2900);
+    expect(c.atM).toBeLessThan(3100);
+  });
+
+  it('место смен на линии не названо — последнюю смену села за копавшую здесь не выдаём', () => {
+    const c = incidentContext(inc({ lat: 51.5, lon: lonAt(3000) }), ctx({
+      ground: [{ ...july, stop: undefined }, { ...august, stop: undefined }],
+      planRoutes: [route], progress,
+    }));
+    expect(c.builtFrom).toBe('village');
+    expect(c.method).toBeUndefined();
+    expect(c.contractor).toBeUndefined();
+    expect(c.crews).toEqual(['2-колонна (Дозер), 10.07.2026', '1-колонна (TERRA TECH), 12.08.2026']);
+    expect(c.builtAt).toBe('2026-07-10');
+    expect(c.builtTo).toBe('2026-08-12');
+  });
+
+  it('в смене два способа — оба названы, а где какой — не выдумываем', () => {
+    const mixed = { ...july, byMethod: { 'вручную': 700, 'бар': 800 } };
+    const c = incidentContext(inc({ lat: 51.5, lon: lonAt(3000) }), ctx({
+      ground: [mixed], planRoutes: [route], progress,
+    }));
+    expect(c.method).toBe('Бар / Ручным способом');
+    expect(c.methodMixed).toBe(true);
+  });
+
+  it('авария в стороне от линий — линию не выдумываем, сведения по селу', () => {
+    const c = incidentContext(inc({ lat: 51.6, lon: lonAt(3000) }), ctx({
+      ground: [july], planRoutes: [route], progress,
+    }));
+    expect(c.routeName).toBeUndefined();
+    expect(c.builtFrom).toBe('village');
+    expect(c.contractor).toBe('Дозер');
   });
 });
