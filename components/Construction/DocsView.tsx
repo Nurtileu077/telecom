@@ -44,7 +44,7 @@ import {
   SCHEME_MODES, SCHEME_MODE_LABEL, SCHEME_MODE_HINT, type SchemeMode,
 } from './schemeDeviations';
 import {
-  sectionForRoute, sectionMatchesRoute, routeOfSectionAct, routeBinding, type RouteBinding,
+  sectionForRoute, routeOfSectionAct, actOfRoute, routeBinding, type RouteBinding,
 } from './routeSection';
 import { routeLengthM } from './routeProgress';
 import { withDefaults, missingForPayment, binLooksWrong } from './requisites';
@@ -356,11 +356,14 @@ export default function DocsView({
     [journal.planRoutes],
   );
 
-  // Акт участка этой трассы — по тому же правилу, что и объекты: его
-  // номер встаёт в шапку листа.
+  // Акт участка этой трассы — его номер встаёт в шапку листа. По одному
+  // имени у трассы Акбулака-2 вставал номер акта Акбулака-1: сёла-тёзки
+  // различаем тем же правилом, что приложение к акту.
   const schemeAct = useMemo(
-    () => (schemeRoute ? registry.find((r) => sectionMatchesRoute(r.uchastok, schemeRoute)) : undefined),
-    [registry, schemeRoute],
+    () => (schemeRoute
+      ? actOfRoute(registry, schemeRoute, journal.planRoutes, journal.ground, bind)
+      : undefined),
+    [registry, schemeRoute, journal.planRoutes, journal.ground, bind],
   );
 
   const scheme = useMemo(

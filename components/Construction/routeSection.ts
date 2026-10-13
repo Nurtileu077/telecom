@@ -161,6 +161,33 @@ export function routeOfSectionAct(
 }
 
 /**
+ * Акт, к которому трасса идёт схемой, — его номер встаёт в шапку листа.
+ *
+ * Номер искали по одному имени: у схемы трассы Акбулака-2 в шапке вставал
+ * номер акта Акбулака-1, если тот стоял в реестре выше, — чужой номер на
+ * листе, который подписывают. Сначала берём акт, к которому эта трасса
+ * прикладывается приложением (`routeOfSectionAct`); такого нет — отвод
+ * или кусок разрезанной линии — акт, подходящий по имени, если сёла его
+ * смен этой трассе не чужие. Не нашли — номера нет, а не чужой.
+ */
+export function actOfRoute<T extends { uchastok: string }>(
+  acts: T[],
+  route: PlanRoute,
+  routes: PlanRoute[],
+  ground: DailyWorkEntry[],
+  bind: RouteBinding,
+): T | undefined {
+  const exact = acts.find((a) => routeOfSectionAct(routes, ground, a.uchastok, bind)?.id === route.id);
+  if (exact) return exact;
+  return acts.find((a) => {
+    if (!sectionMatchesRoute(a.uchastok, route)) return false;
+    const katos = new Set<string>();
+    for (const e of entriesOfSection(ground, a.uchastok)) if (e.kato?.trim()) katos.add(e.kato.trim());
+    return routesForVillages([route], bind, katos).length > 0;
+  });
+}
+
+/**
  * Какой участок поставить объекту у этой трассы.
  *
  * Тот, под которым по ней чаще всего пишут смены: по нему же акт ищет

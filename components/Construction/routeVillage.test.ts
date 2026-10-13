@@ -5,7 +5,7 @@ import { routeViews } from './routeStyle';
 import { placeFinder, snpMapPoints } from './snpMap';
 import { routeLengthM } from './routeProgress';
 import { emptyJournal, bindRouteVillage, loadPlanRoutes } from './journalStore';
-import { routeBinding, routeOfSectionAct } from './routeSection';
+import { routeBinding, routeOfSectionAct, actOfRoute } from './routeSection';
 
 const now = '2026-10-01T00:00:00.000Z';
 
@@ -183,5 +183,43 @@ describe('схема к акту среди тёзок', () => {
     const routes = [route('r3', NEAR_ZERENDA, { name: 'ОМ — Еленовка' })];
     const bind = routeBinding(routeViews(routes, { progress }));
     expect(routeOfSectionAct(routes, [shift('333', 'Еленовка')], 'Еленовка', bind)?.id).toBe('r3');
+  });
+
+  // Реестр актов идёт от новых к старым: акт Акбулака-1 стоит выше.
+  const acts = [
+    { uchastok: 'Акбулак Зеренда', number: '7' },
+    { uchastok: 'Акбулак Бурабай', number: '8' },
+  ];
+  const ground = [shift('111', 'Акбулак Зеренда'), shift('222', 'Акбулак Бурабай')];
+
+  it('в шапке схемы Акбулака-2 номер его акта, а не акта Акбулака-1, что выше в реестре', () => {
+    const routes = [
+      route('r1', NEAR_ZERENDA, { kato: '111' }),
+      route('r2', NEAR_BURABAY, { kato: '222' }),
+    ];
+    const bind = routeBinding(routeViews(routes, { progress }));
+    expect(actOfRoute(acts, routes[1], routes, ground, bind)?.number).toBe('8');
+    expect(actOfRoute(acts, routes[0], routes, ground, bind)?.number).toBe('7');
+  });
+
+  it('у отвода номер акта своего села, хоть приложением к акту идёт основная', () => {
+    const routes = [
+      route('r1', NEAR_ZERENDA, { kato: '111' }),
+      route('r2', NEAR_BURABAY, { kato: '222' }),
+      route('school', [[53.0, 70.02], [53.01, 70.02]], {
+        kato: '222', name: 'Отвод к школе', uchastok: 'Акбулак',
+      }),
+    ];
+    const bind = routeBinding(routeViews(routes, { progress }));
+    expect(actOfRoute(acts, routes[2], routes, ground, bind)?.number).toBe('8');
+  });
+
+  it('акт есть только у тёзки — номера на схеме нет, а не чужой', () => {
+    const routes = [
+      route('r1', NEAR_ZERENDA, { kato: '111' }),
+      route('r2', NEAR_BURABAY, { kato: '222' }),
+    ];
+    const bind = routeBinding(routeViews(routes, { progress }));
+    expect(actOfRoute([acts[0]], routes[1], routes, ground, bind)).toBeUndefined();
   });
 });
