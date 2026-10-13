@@ -622,7 +622,8 @@ body {
    согласовывать трассу с акимом и дорожниками надо на листе, который
    можно положить на капот. Печатается не «страница как есть», а лист с
    рамкой, масштабом, легендой и датой — без масштаба распечатка не
-   документ, а картинка. */
+   документ, а картинка. Размер листа здесь — по умолчанию: печать карты
+   кладёт рядом своё правило с выбранным A4 или A3. */
 .optiq-print-sheet { display: none; }
 
 @media print {
@@ -652,11 +653,49 @@ body {
   .optiq-print-sheet .ps-title { font-size: 12pt; font-weight: 700; }
   .optiq-print-sheet .ps-meta { font-size: 8pt; color: #475569; white-space: nowrap; }
 
-  .optiq-print-sheet .ps-map {
+  /* Карта занимает ровно столько миллиметров, сколько посчитано под
+     масштаб: растянуть её «на всю ширину» значит соврать в цифре 1:N. */
+  .optiq-print-sheet .ps-mapbox {
+    position: relative;
+    flex: none;
+    align-self: center;
+    border: 0.3mm solid #475569;
+    box-sizing: content-box;
+    break-inside: avoid;
+  }
+  .optiq-print-sheet .ps-mapbox .ps-map {
+    display: block;
     width: 100%;
-    max-height: 160mm;
+    height: 100%;
+  }
+  .optiq-print-sheet .ps-grid {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+  .optiq-print-sheet .ps-map-free {
+    width: 100%;
+    max-height: 140mm;
     object-fit: contain;
     border: 0.3mm solid #94a3b8;
+  }
+  .optiq-print-sheet {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .optiq-print-sheet .ps-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 6mm;
+  }
+  .optiq-print-sheet .ps-scale {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5mm;
+    font-size: 8pt;
+    white-space: nowrap;
   }
 
   .optiq-print-sheet .ps-legend {
@@ -676,6 +715,7 @@ body {
   .optiq-print-sheet .ps-foot {
     font-size: 7.5pt; color: #64748b;
     border-top: 0.2mm solid #cbd5e1; padding-top: 1.5mm;
+    display: flex; flex-direction: column; gap: 0.5mm;
   }
 }
 

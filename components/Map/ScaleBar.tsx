@@ -3,17 +3,19 @@ import { useEffect, useState } from 'react';
 import { scaleBar } from '@/components/Construction/mapDecor';
 
 /**
- * Масштабная линейка.
+ * Масштабная линейка на экране.
  *
  * Без неё расстояние на карте оценивают на глаз, а глаз на спутнике
  * ошибается в разы: одна и та же картинка может быть полем на километр и
- * двором на тридцать метров. Линейку смотрят и на экране, и на распечатке.
+ * двором на тридцать метров.
+ *
+ * На печать эта линейка не идёт: она лежит поверх карты, а снимают карту
+ * под ней, да и снимок на листе растягивается. Лист рисует свою линейку
+ * в миллиметрах бумаги — см. printSheet.ts.
  */
 
 interface Props {
   map: any;
-  /** Подпись линейки наружу: её просит печатный лист. */
-  onLabel?: (label: string) => void;
   className?: string;
 }
 
@@ -24,7 +26,7 @@ function metersPerPixel(lat: number, zoom: number): number {
 
 const MAX_PX = 92;
 
-export default function ScaleBar({ map, onLabel, className }: Props) {
+export default function ScaleBar({ map, className }: Props) {
   const [mpp, setMpp] = useState<number | null>(null);
 
   useEffect(() => {
@@ -46,12 +48,6 @@ export default function ScaleBar({ map, onLabel, className }: Props) {
   }, [map]);
 
   const bar = mpp && Number.isFinite(mpp) ? scaleBar(mpp, MAX_PX) : null;
-
-  // Наружу отдаём из эффекта, а не прямо в разметке: запись во время
-  // отрисовки — это побочное действие там, где его не ждут.
-  const label = bar?.label;
-  useEffect(() => { if (label) onLabel?.(label); }, [label, onLabel]);
-
   if (!bar) return null;
 
   return (

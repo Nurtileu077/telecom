@@ -762,8 +762,6 @@ export default function LeafletMap(props: Props) {
   const shapeDraftRef = useRef<any>(null);
   /** Где последний раз щёлкнули по трассе — там её и режут. */
   const lastRouteClickRef = useRef<{ id: string; lat: number; lon: number } | null>(null);
-  /** Подпись масштабной линейки — её просит печатный лист. */
-  const scaleLabelRef = useRef<string | null>(null);
   /** Ручки правки трассы — отдельная группа, чтобы не мешать слоям. */
   const routeEditGroupRef = useRef<any>(null);
   const objectGroupRef = useRef<any>(null);
@@ -3680,7 +3678,6 @@ export default function LeafletMap(props: Props) {
       {mapReady && (
         <ScaleBar
           map={mapRef.current}
-          onLabel={(l) => { scaleLabelRef.current = l; }}
           className="absolute left-2 md:left-3 bottom-[calc(8px+env(safe-area-inset-bottom))] z-[400]"
         />
       )}
@@ -3691,9 +3688,27 @@ export default function LeafletMap(props: Props) {
         <MapCapture
           className="absolute bottom-[calc(58px+env(safe-area-inset-bottom))] md:bottom-auto md:top-[104px] left-2 md:left-auto md:right-3 z-[400]"
           getMapEl={() => containerRef.current}
+          getView={() => {
+            // Масштаб листа считается от того, что сняли: середина, зум,
+            // рамка и размер карты на экране в момент нажатия.
+            const map = mapRef.current;
+            const el = containerRef.current;
+            if (!map || !el) return null;
+            try {
+              const b = map.getBounds();
+              return {
+                lat: map.getCenter().lat,
+                zoom: map.getZoom(),
+                north: b.getNorth(), south: b.getSouth(),
+                east: b.getEast(), west: b.getWest(),
+                widthPx: el.clientWidth, heightPx: el.clientHeight,
+              };
+            } catch {
+              return null;
+            }
+          }}
           title={props.printTitle || 'Optiq — карта стройки'}
           legend={legendGroups}
-          scaleLabel={scaleLabelRef.current ?? undefined}
         />
       )}
 
