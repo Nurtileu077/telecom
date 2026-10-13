@@ -1945,6 +1945,10 @@ export default function LeafletMap(props: Props) {
       const unplacedByRoute = new Map(
         (propsRef.current.routeUnplaced ?? []).map((u) => [u.routeId, u]),
       );
+      // Сколько линий у каждого села: про основную говорим, только когда
+      // есть из чего выбирать.
+      const linesByKato = new Map<string, number>();
+      for (const r of routes) if (r.kato) linesByKato.set(r.kato, (linesByKato.get(r.kato) ?? 0) + 1);
       const mismatchesByRoute = new Map<string, string[]>();
       for (const mm of propsRef.current.routeMismatches ?? []) {
         const list = mismatchesByRoute.get(mm.routeId) ?? [];
@@ -2039,7 +2043,7 @@ export default function LeafletMap(props: Props) {
         // Какая линия села основная — на неё ложатся смены без своей
         // отметки. Выбрана по длине, а не человеком, — так и сказано, и
         // поправить можно здесь же.
-        const mainNote = r.kato
+        const mainNote = r.kato && (linesByKato.get(r.kato) ?? 0) > 1
           ? `<div style="margin-top:4px;font-size:11px;color:#cbd5e1;max-width:260px">`
             + (r.side
               ? 'Не основная линия села: смены без отметки на неё не ложатся — только отмеченные на ней.'
