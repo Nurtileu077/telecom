@@ -103,6 +103,7 @@ const DRILL_COLOR: Record<'ГНБ' | 'ГНП', string> = {
   'ГНП': '#fb923c',
 };
 import GpsLocateButton from '@/components/Map/GpsLocateButton';
+import { fixQuality, fixLabel, fixStyle, zoomForAccuracy } from '@/components/Map/gpsFix';
 import OfflineTilesButton from '@/components/Map/OfflineTilesButton';
 import {
   getTile, deleteTile, ancestorPiece, MAX_FALLBACK_UP,
@@ -3726,22 +3727,55 @@ export default function LeafletMap(props: Props) {
       <GpsLocateButton
         className="absolute bottom-[calc(118px+env(safe-area-inset-bottom))] md:bottom-auto md:top-14 right-2 md:right-3 z-[400]"
         onLocated={(lat, lon, accuracyM) => {
-          propsRef.current.flyToRef?.current?.(lat, lon, 18);
+          // Приближение — под круг погрешности, а не всегда 18-й: при
+          // ±800 м крупная карта показывает чужой двор как «ваше место».
+          const size = mapRef.current?.getSize?.();
+          const viewport = size ? Math.min(size.x, size.y) : 400;
+          propsRef.current.flyToRef?.current?.(lat, lon, zoomForAccuracy(accuracyM, lat, viewport));
           import('leaflet').then((L) => {
             const map = mapRef.current;
             if (!map) return;
             gpsMarkerRef.current?.remove();
             gpsCircleRef.current?.remove();
+            gpsCircleRef.current = null;
+            const quality = fixQuality(accuracyM);
+            const style = fixStyle(quality);
+            const label = fixLabel(accuracyM);
+            // Полая точка при плохом сигнале: яркая сплошная читается как
+            // «я ровно здесь», а этого телефон как раз не знает.
+            const dot = style.solidDot
+              ? `background:${style.color};border:2px solid #fff;box-shadow:0 0 8px ${style.color}`
+              : `background:transparent;border:2px solid ${style.color}`;
             const icon = L.divIcon({
               className: '',
-              html: '<div style="width:14px;height:14px;border-radius:50%;background:#38bdf8;border:2px solid #fff;box-shadow:0 0 8px #38bdf8"></div>',
+              html: `<div style="width:14px;height:14px;border-radius:50%;${dot}"></div>`,
               iconSize: [14, 14],
               iconAnchor: [7, 7],
             });
             gpsMarkerRef.current = L.marker([lat, lon], { icon }).addTo(map)
-              .bindPopup('<b>Вы здесь</b>');
-            if (accuracyM && accuracyM < 200) {
-              gpsCircleRef.current = L.circle([lat, lon], { radius: accuracyM, color: '#38bdf8', fillOpacity: 0.08, weight: 1 }).addTo(map);
+              .bindPopup(`<b>${esc(label.short)}</b>`
+                + (label.note ? `<div style="max-width:220px;margin-top:4px">${esc(label.note)}</div>` : ''));
+            // Круг — всегда, когда погрешность известна: раньше его
+            // прятали как раз тогда, когда он нужнее всего.
+            if (quality !== 'unknown' && accuracyM) {
+              gpsCircleRef.current = L.circle([lat, lon], {
+                radius: accuracyM,
+                color: style.color,
+                fillColor: style.color,
+                fillOpacity: quality === 'poor' ? 0.12 : 0.08,
+                weight: quality === 'poor' ? 2 : 1,
+                dashArray: style.dashArray,
+                interactive: false,
+              }).addTo(map);
+            }
+            // Сомнительную точку объясняем сразу, не дожидаясь касания. Но
+            // после перелёта: подсказка, открытая на лету, сдвигает карту и
+            // обрывает перелёт на полпути.
+            if (quality !== 'good') {
+              const marker = gpsMarkerRef.current;
+              const open = () => { if (gpsMarkerRef.current === marker) marker.openPopup(); };
+              if (propsRef.current.flyToRef?.current) map.once('moveend', open);
+              else open();
             }
           });
         }}

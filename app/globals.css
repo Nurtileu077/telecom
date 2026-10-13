@@ -560,6 +560,24 @@ body {
   border-radius: 6px;
   border: 1px solid var(--border);
 }
+/* Точность — слева от кнопки, а не под ней: под кнопкой на телефоне
+   стоят подложки, и подпись легла бы прямо на них. */
+.map-gps-note {
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-right: 6px;
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--bg-surface);
+  padding: 4px 7px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
 .stepper-dot {
   width: 22px;
   height: 22px;
