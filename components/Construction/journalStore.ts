@@ -10,8 +10,13 @@ import { haversineM } from '@/components/Network/KMeans';
 import { splitRoute, joinRoutes, joinedName, splitNames, lineMatch } from './routeEdit';
 import { pointAtDistanceM, routeLengthM, type SectionProgress } from './routeProgress';
 import {
-  shiftsOnRoute, stopPositionM, stopForRunStart, crewLabel, describeRunPlaced, type RunStart,
+  shiftsOnRoute, stopPositionM, stopForRunStart, crewLabel, crewOf, describeRunPlaced,
+  type RunStart,
 } from './shiftPlace';
+import { shiftLines } from './shiftLines';
+import { stopMismatch, describeStopMismatch } from './stopCheck';
+import { nearestOnRoute } from './measureTool';
+import { SHIFT_SNAP_M } from './shiftMeasure';
 import {
   SNP_PROJECT_ID, currentProjectId, projectMeta, scopedKey, newerProject,
   type BuildProject,
@@ -2560,6 +2565,61 @@ export function placeRunFrom(
     text: describeRunPlaced({
       crewName, fromM: r.fromM, to: back ? ctx.from : ctx.to, deviationM: r.deviationM,
     }),
+  };
+}
+
+/**
+ * Колонну перетащили по её линии — это поправка «остановились здесь».
+ *
+ * Инженер передвигал метку колонны с 3-го км на 9-й, а назавтра система
+ * снова считала от 3-го: метка двигала карточку колонны, а счёт по линии
+ * брал место из смен, и поправка забывалась. Теперь перетаскивание по
+ * линии ставит отметку рукой последней смене колонны: от неё и красится,
+ * и считается следующая смена. Цифры смены не меняются; правка ложится в
+ * журнал изменений с прежней отметкой, и её можно вернуть. Если отметка
+ * разошлась с метрами смены больше чем на 3 %, это сказано сразу.
+ *
+ * Метку бросили далеко от линии — это не поправка места, а переброска
+ * колонны: тогда ответ — ошибка, и место колонны двигают по-старому.
+ */
+export function moveShiftStop(
+  base: JournalState,
+  entryId: string,
+  routeId: string,
+  point: { lat: number; lon: number },
+  ctx: { author: string; back?: boolean },
+): { state: JournalState; text: string } | { error: string } {
+  const route = base.planRoutes.find((r) => r.id === routeId);
+  const entry = base.ground.find((e) => e.id === entryId);
+  if (!route || !entry) return { error: 'Трассы или смены уже нет — обновите карту.' };
+  const hit = nearestOnRoute(point, route.coords);
+  if (!hit || hit.deviationM > SHIFT_SNAP_M) {
+    return { error: 'Метка далеко от линии колонны — место смены не правим.' };
+  }
+  const crewName = crewLabel(entry);
+  const beforeAt = shiftLines(base).placement(routeId)?.endByCrew.get(crewOf(entry));
+  const stop: ShiftStop = {
+    routeId, lat: hit.lat, lon: hit.lon, manual: true, ...(ctx.back ? { back: true } : {}),
+  };
+  const kmText = (m: number) => `${(m / 1000).toFixed(2).replace('.', ',')} км`;
+  const state = setRunStart(base, entryId, stop, {
+    author: ctx.author,
+    target: route.name || route.uchastok || 'трасса',
+    detail: `${crewName ? `«${crewName}», ` : ''}смена ${entry.date.split('-').reverse().join('.')}: `
+      + `остановились ${beforeAt !== undefined ? `не на ${kmText(beforeAt)}, а ` : ''}на ${kmText(hit.atM)}`,
+  });
+  const placed = shiftLines(state).placement(routeId)?.placed.find((p) => p.entryId === entryId);
+  const mm = placed && placed.prevM !== undefined
+    ? stopMismatch({
+      beforeM: placed.prevM, atM: placed.back ? placed.fromM : placed.toM,
+      meters: placed.meters, drillM: entry.drillM, back: placed.back,
+    })
+    : null;
+  const head = `Место смены ${entry.date.split('-').reverse().join('.')}${crewName ? ` «${crewName}»` : ''}`
+    + ` — ${kmText(hit.atM)}: следующие смены считаются отсюда.`;
+  return {
+    state,
+    text: mm ? `${head} ${describeStopMismatch(mm, { crewName: crewName || undefined })}` : head,
   };
 }
 

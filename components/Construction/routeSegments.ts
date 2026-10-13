@@ -4,8 +4,10 @@ import {
 import { pointAtDistanceM, segMeters } from './routeProgress';
 import { ellipsoidM, type Metric } from '@/lib/geodesy';
 import {
-  placeShifts, shiftIndex, unplacedRuns, type PlacedShift, type UnplacedRun,
+  placeShifts, shiftIndex, unplacedRuns, crewLabel, type PlacedShift, type UnplacedRun,
 } from './shiftPlace';
+import { placementMismatches, type ShiftMismatch } from './stopCheck';
+import { shiftLines, type ShiftLinesContext } from './shiftLines';
 import { lineIndex } from './routeMain';
 
 /**
@@ -166,6 +168,11 @@ export interface RouteWork {
   segments: RouteSegment[];
   /** Метры без места: карта показывает их долей по всей линии. */
   unplaced: RouteUnplaced[];
+  /**
+   * Смены, у которых «остановились здесь» разошлось с метрами больше чем
+   * на 3 %: показываются на карточке трассы и в «Проверках».
+   */
+  mismatches: ShiftMismatch[];
 }
 
 /**
@@ -195,12 +202,14 @@ export function routeWork(
 
   const segments: RouteSegment[] = [];
   const unplaced: RouteUnplaced[] = [];
+  const mismatches: ShiftMismatch[] = [];
   for (const r of routes) {
     const kato = katoByRouteId.get(r.id) ?? katoByStop.get(r.id);
     const shifts = onRoute(r.id, kato);
     if (shifts.length === 0) continue;
     const pl = placeShifts(r, shifts);
     segments.push(...methodSegments(r, pl.placed));
+    mismatches.push(...placementMismatches(r.id, pl, shifts, crewLabel));
     if (pl.unplaced.length) {
       const byMethod: Partial<Record<LayMethod, number>> = {};
       for (const u of pl.unplaced) {
@@ -218,5 +227,19 @@ export function routeWork(
       });
     }
   }
-  return { segments, unplaced };
+  return { segments, unplaced, mismatches };
+}
+
+/**
+ * Работа по трассам всего журнала — тем же расчётом, что и карта: с
+ * привязкой трасс к сёлам (и тёзками) по обводкам, папкам и проколам.
+ * Нужна экранам журнала, которым карта своих слоёв не передаёт.
+ */
+export function journalRouteWork(j: ShiftLinesContext): RouteWork {
+  const views = shiftLines(j).views;
+  return routeWork(
+    j.planRoutes,
+    new Map(views.filter((v) => v.kato).map((v) => [v.id, v.kato as string])),
+    j.ground,
+  );
 }

@@ -75,6 +75,12 @@ export interface PlacedShift {
   toM: number;
   /** Шли к началу линии: смена начата у `toM`, кончена у `fromM`. */
   back?: boolean;
+  /**
+   * Где колонна стояла до этой смены, если место у смены названо рукой, а
+   * у колонны оно уже было: по ним видно, сошлась ли отметка с метрами
+   * (см. stopCheck).
+   */
+  prevM?: number;
   /** Метры смены как записаны — в линию они могут и не влезть. */
   meters: number;
   byMethod: DailyWorkEntry['byMethod'];
@@ -160,7 +166,9 @@ export function placeShifts(
       // с другого конца села, и закрасить за неё чужой кусок нельзя.
       for (const p of waiting) drop(p, crew);
       pending.delete(crew);
+      const prev = cursor.get(crew);
       put(e, crew, back ? hit.atM + m : hit.atM - m, m, back);
+      if (prev !== undefined) placed[placed.length - 1].prevM = prev;
       continue;
     }
 

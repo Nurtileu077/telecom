@@ -52,6 +52,7 @@ import { snpMapPoints, type SnpMapPoint } from '@/components/Construction/snpMap
 import { effectiveProgress } from '@/components/Construction/stageDerive';
 import { placeCrews, type CrewPlacement, type CrewTrip } from '@/components/Construction/crewPlace';
 import type { RunStart } from '@/components/Construction/shiftPlace';
+import type { ShiftMismatch } from '@/components/Construction/stopCheck';
 import { crewsFromJournal } from '@/components/Construction/crewDerive';
 import { areaMapItems, type AreaMapItem } from '@/components/Construction/areaProgress';
 import {
@@ -71,7 +72,7 @@ import {
   addPlanRoutes, addDeviation, updateRouteCoords, deleteRoute,
   removePlanSource, removeAreaSource, updateAreaCoords, renameArea, removeArea,
   addDrawnArea, upsertObject, splitPlanRoute, joinPlanRoutes,
-  reversePlanRoute, swapRouteEnds, placeRunFrom, setMainRoute, bindRouteVillage,
+  reversePlanRoute, swapRouteEnds, placeRunFrom, setMainRoute, bindRouteVillage, moveShiftStop,
 } from '@/components/Construction/journalStore';
 import { polylineLengthM } from '@/components/Construction/planImport';
 import {
@@ -188,6 +189,8 @@ export default function HomePage() {
   const [routeSegs, setRouteSegs] = useState<RouteSegment[]>([]);
   // Пройдено, а где — в сменах не названо: на карте это доля штрихом.
   const [routeUnplaced, setRouteUnplaced] = useState<RouteUnplaced[]>([]);
+  /** Отметки «остановились здесь», разошедшиеся с метрами смен. */
+  const [routeMismatches, setRouteMismatches] = useState<ShiftMismatch[]>([]);
   // Чем красить трассу: пройденным этапом или способом прокладки.
   const [routeColorMode, setRouteColorMode] = useState<RouteColorMode>('stage');
   useEffect(() => { setRouteColorMode(loadRouteColorMode()); }, []);
@@ -253,6 +256,7 @@ export default function HomePage() {
     );
     setRouteSegs(work.segments);
     setRouteUnplaced(work.unplaced);
+    setRouteMismatches(work.mismatches);
     setSiteObjects(j.objects);
     // Снимки с координатами — отдельный слой: спрашивают «что тут было»,
     // показывая пальцем в место, а не называя запись, к которой они
@@ -775,12 +779,41 @@ export default function HomePage() {
     if (ok) say(res.text, 4000);
   }, [requestPickOnMap, refreshJournalLayers, persist, say]);
 
-  /** Перетащили колонну на карте — сохраняем новое место. */
+  /**
+   * Перетащили колонну на карте.
+   *
+   * По её линии — это поправка «остановились здесь» последней смены: от
+   * неё считается и красится следующая. Раньше метка двигала только
+   * карточку колонны, и назавтра счёт снова шёл от прежнего места. В
+   * сторону от линии — колонну перебросили, место хранится у карточки.
+   */
   const handleMoveCrew = useCallback((id: string, lat: number, lon: number) => {
-    const next = moveCrew(loadJournal(), id, lat, lon);
+    const j = loadJournal();
+    const c = placeCrews(withAutoCrews(j), j).find((x) => x.id === id);
+    const at = c?.placement;
+    if (at?.routeId && at.entryId) {
+      const res = moveShiftStop(j, at.entryId, at.routeId, { lat, lon }, {
+        author: getActorName() || 'Без имени', back: at.back,
+      });
+      if (!('error' in res)) {
+        const ok = persist(res.state);
+        refreshJournalLayers();
+        if (ok) say(res.text, 7000);
+        return;
+      }
+    }
+    if (!c || c.derived) {
+      // Выведенной по журналу колонне карточки нет — переброску некуда
+      // записать. Метка вернётся на место, и об этом сказано.
+      refreshJournalLayers();
+      say('Колонна выведена по журналу: её место — по сменам. Поправить его можно, '
+        + 'перетащив метку вдоль её линии.', 5000);
+      return;
+    }
+    const next = moveCrew(j, id, lat, lon);
     persist(next);
     setCrews(placedCrews({ ...next, crews: placeCrews(withAutoCrews(next), next) }));
-  }, []);
+  }, [refreshJournalLayers, say]);
   const [showProjects, setShowProjects] = useState(false);
   const [showCatalog, setShowCatalog] = useState(false);
   const [showAddSub, setShowAddSub] = useState<{ lat: number; lon: number } | null>(null);
@@ -1842,6 +1875,7 @@ export default function HomePage() {
             offlineTiles={building}
             routeSegments={conLayers.plan ? routeSegs : EMPTY_LAYER}
             routeUnplaced={conLayers.plan ? routeUnplaced : EMPTY_LAYER}
+            routeMismatches={conLayers.plan ? routeMismatches : EMPTY_LAYER}
             routeColorMode={routeColorMode}
             playbackMoves={playbackMoves}
             playbackDate={playbackDate}

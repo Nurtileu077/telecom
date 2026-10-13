@@ -446,6 +446,8 @@ interface Props {
    * начало линии, ни куда-либо ещё: показываем их долей штрихом.
    */
   routeUnplaced?: import('@/components/Construction/routeSegments').RouteUnplaced[];
+  /** Смены, у которых отметка «остановились здесь» разошлась с метрами. */
+  routeMismatches?: import('@/components/Construction/stopCheck').ShiftMismatch[];
   routeColorMode?: 'stage' | 'method';
   /** Вчерашний день в движении: откуда куда дошли колонны. */
   playbackMoves?: import('@/components/Construction/playback').DayMove[];
@@ -1697,9 +1699,12 @@ export default function LeafletMap(props: Props) {
             </div>`,
         });
 
-        // Выведенную колонну таскать нечего: её место считается по журналу,
-        // и ручной сдвиг некуда записать — карточки в справочнике нет.
-        const draggable = !!propsRef.current.onMoveCrew && !c.derived;
+        // Колонну на линии тащат вдоль линии — это поправка «остановились
+        // здесь» её последней смены, и записать её есть куда даже у
+        // выведенной по журналу. Выведенную без места на линии таскать
+        // нечего: ручной сдвиг некуда записать — карточки в справочнике нет.
+        const onLine = !!c.placement?.routeId && !!c.placement.entryId;
+        const draggable = !!propsRef.current.onMoveCrew && (!c.derived || onLine);
         const m = L.marker([c.lat, c.lon], { icon, draggable, zIndexOffset: 800 });
 
         const roster = c.members.length === 0
@@ -1749,7 +1754,12 @@ export default function LeafletMap(props: Props) {
                  </div>`
               : ''}
             ${routeLinks(c.lat as number, c.lon as number)}
-            ${draggable ? '<div style="margin-top:6px;font-size:10px;color:#64748b">Перетащите метку, чтобы перебросить колонну</div>' : ''}
+            ${draggable
+              ? `<div style="margin-top:6px;font-size:10px;color:#64748b">${onLine
+                ? 'Перетащите метку вдоль её линии — поправите «остановились здесь» последней смены'
+                  + (c.derived ? '' : '; в сторону от линии — перебросите колонну')
+                : 'Перетащите метку, чтобы перебросить колонну'}</div>`
+              : ''}
           </div>`);
 
         if (draggable) {
@@ -1935,6 +1945,12 @@ export default function LeafletMap(props: Props) {
       const unplacedByRoute = new Map(
         (propsRef.current.routeUnplaced ?? []).map((u) => [u.routeId, u]),
       );
+      const mismatchesByRoute = new Map<string, string[]>();
+      for (const mm of propsRef.current.routeMismatches ?? []) {
+        const list = mismatchesByRoute.get(mm.routeId) ?? [];
+        list.push(mm.text);
+        mismatchesByRoute.set(mm.routeId, list);
+      }
 
       // Стрелки и подписи — это маркеры, а их на сотне трасс набираются
       // тысячи. Рисуем только то, что сейчас на экране, и с общим потолком:
@@ -2065,6 +2081,19 @@ export default function LeafletMap(props: Props) {
               + '</div>'
               + bindButtons(choices.filter((c) => c.kato !== r.kato), 'Нет, села ')
             : '';
+        // Отметки, разошедшиеся с метрами смен: поправку «остановились
+        // здесь» видно и после сохранения, а не только в форме в тот вечер.
+        const mismatches = mismatchesByRoute.get(r.id) ?? [];
+        const mismatchNote = mismatches.length
+          ? `<div style="margin-top:4px;font-size:11px;color:#fbbf24;max-width:260px">`
+            + `Отметка расходится с метрами смены: ${mismatches.length}</div>`
+            + mismatches.slice(-3).map((t) => (
+              `<div style="margin-top:2px;font-size:10.5px;color:#e2e8f0;max-width:260px">${esc(t)}</div>`
+            )).join('')
+            + (mismatches.length > 3
+              ? `<div style="margin-top:2px;font-size:10px;color:#94a3b8">Остальные — в «Проверках» журнала.</div>`
+              : '')
+          : '';
         line.bindTooltip(
           `${esc(title)} · ${esc(stageLabel)}${r.lengthM ? ` · ${(r.lengthM / 1000).toFixed(2)} км` : ''}`
           + (hatchArr
@@ -2080,6 +2109,7 @@ export default function LeafletMap(props: Props) {
           + villageNote
           + mainNote
           + unplacedNote
+          + mismatchNote
           + (r.snp ? `<span style="font-size:11px">${esc(r.snp)}</span><br/>` : '')
           + `<span style="font-size:11px">${(r.lengthM / 1000).toFixed(3)} км</span>`
           // Длина трассы и длина кабеля — разные числа, и путают их
@@ -3341,7 +3371,7 @@ export default function LeafletMap(props: Props) {
   useEffect(() => {
     renderPlanRoutes();
   }, [props.planRoutes, props.drillLines, props.routeSegments, props.routeUnplaced,
-    props.routeColorMode, mapReady]);
+    props.routeMismatches, props.routeColorMode, mapReady]);
   useEffect(() => { renderRouteEdit(); }, [props.editingRouteId, props.planRoutes, mapReady]);
   useEffect(() => { renderAreaEdit(); }, [props.editingAreaId, props.areas, mapReady]);
   // Карточка контура меняется вместе с режимом правки: кнопка должна

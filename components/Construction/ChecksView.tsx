@@ -4,6 +4,7 @@ import { AlertTriangle, MapPin, Trash2, Check, Undo2 } from 'lucide-react';
 import type { JournalState } from './journalStore';
 import { findOverlaps } from './overlaps';
 import { formatMeters } from './mapDecor';
+import { journalRouteWork } from './routeSegments';
 
 /**
  * Проверки по тому, что загружено.
@@ -45,6 +46,14 @@ export default function ChecksView({
 
   const doubleCountedM = pairs.reduce((s, p) => s + p.sharedM, 0);
 
+  // Отметки «остановились здесь», разошедшиеся с метрами смен: поправку
+  // точки должно быть видно и назавтра, а не только в форме в тот вечер.
+  const mismatches = useMemo(
+    () => journalRouteWork(journal).mismatches
+      .slice().sort((a, b) => b.date.localeCompare(a.date)),
+    [journal],
+  );
+
   const trash = [...journal.trash].sort((a, b) => b.at.localeCompare(a.at));
 
   return (
@@ -78,6 +87,43 @@ export default function ChecksView({
               </button>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Где отметка «остановились здесь» разошлась с метрами смены. */}
+      {mismatches.length > 0 && (
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-3 space-y-1.5">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={16} className="text-[var(--warn)]" />
+            <div className="text-[13px] font-semibold text-[var(--text)]">
+              Отметка расходится с метрами смены: {mismatches.length}
+            </div>
+          </div>
+          <div className="text-[11.5px] text-[var(--text-muted)]">
+            Больше чем на 3 %. Сами ничего не правим: метры идут в акт, точка
+            говорит, где копали, — какая из цифр верна, знает тот, кто там был.
+          </div>
+          {mismatches.slice(0, 15).map((m) => {
+            const route = byId.get(m.routeId);
+            return (
+              <div key={m.entryId} className="flex items-start gap-2">
+                <span className="text-[11.5px] text-[var(--text)] min-w-0 flex-1">
+                  {route && (
+                    <span className="block text-[10.5px] text-[var(--text-muted)] truncate">
+                      {route.name || route.uchastok || 'Трасса'}
+                    </span>
+                  )}
+                  {m.text}
+                </span>
+                {route && (
+                  <button type="button" className="btn btn-ghost btn-icon shrink-0"
+                          title="Показать трассу на карте" onClick={() => onShow(route.coords)}>
+                    <MapPin size={14} />
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 

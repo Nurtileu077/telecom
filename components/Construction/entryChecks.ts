@@ -2,6 +2,7 @@ import type { DailyWorkEntry, LayMethod } from '@/types/construction';
 import { LAY_METHOD_LABEL } from '@/types/construction';
 import { normName } from './areaImport';
 import { entryMeters, entryHasWork } from './entriesTable';
+import { marksMismatch } from './stopCheck';
 
 /**
  * Проверки перед сохранением смены.
@@ -101,6 +102,19 @@ export function checkEntry(
         hint: 'Так бывает, но чаще это опечатка.',
       });
     }
+  }
+
+  // Метки трубы подтверждают метраж — или нет. Расхождение больше 3 %
+  // видно сразу, а не через месяц при сверке с расходом бухт.
+  const marks = marksMismatch(total, entry.ductMarks);
+  if (marks) {
+    out.push({
+      level: 'check',
+      text: `По меткам трубы ушло ${Math.round(marks.marksM).toLocaleString('ru')} м,`
+        + ` а в смене ${Math.round(total).toLocaleString('ru')} м — расходится больше чем на 3 %.`,
+      hint: 'Метки считаем с метки на метку: «4000 — 2490» — это 1 510 м. Если в траншее '
+        + 'не одна труба, по меткам выйдет кратно больше — тогда это не ошибка.',
+    });
   }
 
   // Глубину и материалы проверяют свои правила; здесь — только то, что

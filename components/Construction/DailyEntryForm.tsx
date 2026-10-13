@@ -22,6 +22,7 @@ import {
 import { routeEnds, placeNames, routeViews } from './routeStyle';
 import { effectiveProgress } from './stageDerive';
 import { lineIndex, crewLineIn } from './routeMain';
+import { stopMismatch, describeStopMismatch } from './stopCheck';
 import { checkEntry, saveBlocker } from './entryChecks';
 import { isIdleShift, entryHasWork } from './entriesTable';
 import { downtimeReasons } from './dayPlan';
@@ -429,6 +430,22 @@ export default function DailyEntryForm({
     });
   }, [sectionRoute, sectionEnds, proposedStop, picked, totalMeters, contractor, column]);
 
+  /**
+   * Точку поставили рукой, а прошлое место колонны известно: сошлась ли
+   * она с метрами смены. Больше 3 % — говорим до сохранения, и назавтра
+   * то же видно на карточке трассы и в «Проверках».
+   */
+  const stopIssue = useMemo(() => {
+    if (!picked || !proposedStop || proposedStop.from !== 'place') return null;
+    const m = stopMismatch({
+      beforeM: proposedStop.beforeM, atM: picked.atM, meters: totalMeters,
+      drillM: numOf(drillM), back: proposedStop.back,
+    });
+    return m ? describeStopMismatch(m, { crewName: crewLabel({ contractor, column }) || undefined }) : null;
+    // numOf — чистое преобразование поля
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [picked, proposedStop, totalMeters, drillM, contractor, column]);
+
   // Подрядчик по району — подсказка, а не автозаполнение: район может вести
   // субподрядчик, и решать должен человек.
   const suggested = useMemo(
@@ -469,10 +486,14 @@ export default function DailyEntryForm({
       operations: Object.keys(ops).length ? ops : undefined,
       materials: {},
       downtime: downtime.trim() || undefined,
+      // Метки трубы — для проверки: подтверждают ли они метры смены.
+      ductMarks: ductMarks
+        .filter((m) => m.coil.trim())
+        .map((m) => ({ coil: m.coil.trim(), meters: Math.round(numOf(m.meters)) })),
       createdAt: '', updatedAt: '',
     };
   }, [date, uchastok, smu, contractor, column, oblast, kato, byMethod, drillM, drillCount,
-    openCrossings, blowingM, totalMkt, operations, downtime, entryId]);
+    openCrossings, blowingM, totalMkt, operations, downtime, entryId, ductMarks]);
 
   // Исправление без причины не уходит: проверяющему нужно понимать, что чинят.
   const blocker = saveBlocker(candidate, { correcting, reason });
@@ -958,6 +979,18 @@ export default function DailyEntryForm({
                   ? 'text-[var(--warn)]' : 'text-[var(--text-muted)]'}`}>
                   {stopText}
                 </div>
+                {stopIssue && (
+                  <div className="flex flex-col gap-1">
+                    <div className="text-[10.5px] text-[var(--warn)] leading-snug">{stopIssue}</div>
+                    {/* Ошиблись точкой — вернуть счёт по метрам; ошиблись
+                        метрами — поправить их выше. Сами не правим ни то,
+                        ни другое. */}
+                    <button type="button" className="btn btn-ghost text-[10.5px] self-start"
+                            onClick={() => { setStopPoint(null); setStopConfirmed(true); }}>
+                      Точку — по метрам смены
+                    </button>
+                  </div>
+                )}
                 <div className="flex gap-1.5">
                   {!stopConfirmed && (
                     <button type="button" className="btn btn-primary text-[10.5px]"
