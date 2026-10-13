@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import * as segmentsModule from './routeSegments';
 import {
-  routeSegments, sliceByDistance, segmentTotals, kksPoints, METHOD_COLOR, routeWork,
+  routeSegments, sliceByDistance, segmentTotals, METHOD_COLOR, routeWork,
 } from './routeSegments';
 import { routeLengthM } from './routeProgress';
 import type { PlanRoute, DailyWorkEntry } from '@/types/construction';
@@ -140,11 +141,19 @@ describe('отрезки там, где копали', () => {
     expect(segs[0].toM).toBeCloseTo(5000, -1);
   });
 
-  it('ККС ставится в конце куска по колодцам там, где он лежит', () => {
+  /**
+   * Синий квадрат «ККС — досюда по колодцам» ставил расчёт, а не человек
+   * с объекта: конец куска по дневным метрам мог лежать за километр от
+   * настоящего колодца.
+   */
+  it('кусок по колодцам ложится отрезком, а ККС на его конце расчёт не выдумывает', () => {
     const segs = routeSegments(route(), [
       stoppedAt(day('2026-09-10', { 'сущ_канализация': 700 }), lonAt(5000)),
     ]);
-    expect(kksPoints(segs)[0].atM).toBeCloseTo(5000, -1);
+    expect(segs).toHaveLength(1);
+    expect(segs[0].method).toBe('сущ_канализация');
+    expect(segs[0].toM).toBeCloseTo(5000, -1);
+    expect(Object.keys(segmentsModule)).not.toContain('kksPoints');
   });
 });
 
@@ -195,7 +204,7 @@ describe('работа по всем трассам', () => {
   });
 });
 
-describe('сводка и ККС', () => {
+describe('сводка по способам', () => {
   it('складывает метры по способам, больший сверху', () => {
     const segs = routeSegments(route(), [
       confirmed(day('2026-09-10', { 'кабелеукладчик': 400 })),
@@ -205,21 +214,6 @@ describe('сводка и ККС', () => {
     expect(totals[0].method).toBe('бар');
     expect(totals[0].meters).toBe(900);
     expect(totals[0].color).toBe(METHOD_COLOR['бар']);
-  });
-
-  it('ККС — конец куска по существующей канализации', () => {
-    const segs = routeSegments(route(), [
-      confirmed(day('2026-09-10', { 'сущ_канализация': 700 })),
-      day('2026-09-11', { 'бар': 300 }),
-    ]);
-    const pts = kksPoints(segs);
-    expect(pts).toHaveLength(1);
-    expect(pts[0].atM).toBe(700);
-  });
-
-  it('без колодцев отметок ККС нет', () => {
-    const segs = routeSegments(route(), [day('2026-09-10', { 'бар': 300 })]);
-    expect(kksPoints(segs)).toHaveLength(0);
   });
 });
 

@@ -1,4 +1,4 @@
-import { LayMethod } from '@/types/construction';
+import { LayMethod, SITE_OBJECT_SPECS } from '@/types/construction';
 import { routeLengthM, segMeters } from './routeProgress';
 import { sliceByDistance, METHOD_COLOR } from './routeSegments';
 import { ConstructionLayers, RouteColorMode } from './mapLayers';
@@ -311,7 +311,10 @@ export function mapLegend(
   const marks: LegendItem[] = [];
   if (layers.objects) {
     marks.push(
-      { kind: 'square', color: '#38bdf8', label: 'ККС', note: 'досюда по колодцам' },
+      // ККС — только отмеченные человеком: с объекта или в файле проекта.
+      // Расчётный квадрат «досюда по колодцам» убран: он ставился по
+      // дневным метрам и мог стоять за километр от колодца.
+      { kind: 'dot', color: SITE_OBJECT_SPECS.kks.color, label: 'ККС', note: 'отмечен человеком, не расчётом' },
       { kind: 'dot', color: '#facc15', label: 'Муфта' },
       { kind: 'pin', color: '#e2e8f0', label: 'Конечная точка', note: 'АТС, ФАП, школа' },
     );

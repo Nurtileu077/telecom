@@ -23,7 +23,7 @@ import {
 import { moveToBounds } from './smoothMove';
 import { GLYPH_FALLBACK, isGlyphName } from '@/lib/glyphs';
 import {
-  METHOD_COLOR, METHOD_LABEL, kksPoints,
+  METHOD_COLOR, METHOD_LABEL,
 } from '@/components/Construction/routeSegments';
 import {
   problemSpots, nearbyIncidents, incidentHours, SAME_SPOT_M,
@@ -2230,28 +2230,10 @@ export default function LeafletMap(props: Props) {
           group.addLayer(seg);
         }
 
-        // ККС: досюда по колодцам, дальше по земле.
-        for (const k of kksPoints(segments)) {
-          const m = L.marker([k.lat, k.lon], {
-            zIndexOffset: 550,
-            icon: L.divIcon({
-              className: '',
-              iconSize: [16, 16],
-              iconAnchor: [8, 8],
-              html: `<div style="width:12px;height:12px;border-radius:2px;
-                     background:#0c1018;border:2px solid #38bdf8;
-                     box-shadow:0 0 6px #38bdf899"></div>`,
-            }),
-          });
-          m.bindTooltip('ККС — досюда по колодцам', { sticky: true, className: 'text-xs' });
-          m.bindPopup(
-            '<b style="color:#38bdf8">ККС</b>'
-            + `<br/><span style="font-size:11px">Досюда по существующей канализации, `
-            + `${Math.round(k.atM).toLocaleString('ru')} м от начала</span>`
-            + '<br/><span style="font-size:11px">Дальше — по земле</span>',
-          );
-          group.addLayer(m);
-        }
+        // Расчётного «ККС — досюда по колодцам» больше нет: конец куска
+        // по колодцам считается по дневным метрам и мог стоять за
+        // километр от настоящего колодца. ККС рисует слой объектов — те,
+        // что отметил человек: с объекта или в файле проекта.
       }
 
       // Проколы линией: у ГНБ есть вход и выход, и на карте это отрезок,

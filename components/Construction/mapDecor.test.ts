@@ -5,6 +5,7 @@ import {
 } from './mapDecor';
 import { routeLengthM } from './routeProgress';
 import { DEFAULT_CONSTRUCTION_LAYERS } from './mapLayers';
+import { SITE_OBJECT_SPECS } from '@/types/construction';
 
 /** Прямая на восток: полградуса долготы под Кокшетау — примерно 34 км. */
 const EAST: [number, number][] = [[53, 69], [53, 69.5]];
@@ -190,6 +191,20 @@ describe('mapLegend', () => {
   it('трассу выключили — и легенда молчит про трассу', () => {
     const groups = mapLegend({ ...DEFAULT_CONSTRUCTION_LAYERS, plan: false }, 'stage');
     expect(groups.some((g) => g.title.startsWith('Трасса'))).toBe(false);
+  });
+
+  /**
+   * Синий квадрат «ККС — досюда по колодцам» ставил расчёт, а не человек
+   * с объекта, и он мог стоять за километр от настоящего колодца.
+   */
+  it('ККС в легенде — тот, что отметил человек, а не «досюда по колодцам»', () => {
+    for (const mode of ['stage', 'method'] as const) {
+      const kks = mapLegend(DEFAULT_CONSTRUCTION_LAYERS, mode)
+        .flatMap((g) => g.items).filter((i) => i.label === 'ККС');
+      expect(kks).toHaveLength(1);
+      expect(kks[0].note).toBe('отмечен человеком, не расчётом');
+      expect(kks[0].color).toBe(SITE_OBJECT_SPECS.kks.color);
+    }
   });
 });
 
