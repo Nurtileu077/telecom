@@ -61,6 +61,7 @@ import { htmlToPdfBlob, pdfFileName } from '@/lib/pdf';
 import { shareDocument } from '@/lib/supabase';
 import { journalCloudEnabled } from './journalRemote';
 import { periodDoc, sectionDoc, type DocScope, type SharedDoc } from './docShare';
+import { rangeText } from './moneyPeriod';
 import { currentProjectId, projectMeta } from './projects';
 import {
   LINK_LIVES, DEFAULT_LINK_LIFE, lifeByKey, linkMessage, validFor,
@@ -952,7 +953,7 @@ export default function DocsView({
       <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-3 space-y-2">
         <div className="text-[13px] font-semibold text-[var(--text)]">За период</div>
         <div className="text-[11.5px] text-[var(--text-muted)]">
-          {from} — {to}
+          {rangeText({ from, to })}
           {/* Область и подрядчик — те же, что попадут в отчёт и в его
               ссылку: видно, чей отчёт собирается, до того как он ушёл. */}
           {area ? ` · ${area}` : ''}

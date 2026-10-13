@@ -37,6 +37,10 @@ describe('withDefaults', () => {
     expect(withDefaults({ contractNumber: '14', contractDate: '2026-03-12' }))
       .toMatchObject({ contractNumber: '14', contractDate: '2026-03-12' });
   });
+
+  it('отчётный период с 26-го не теряется при записи реквизитов', () => {
+    expect(withDefaults({ periodStartDay: 26 }).periodStartDay).toBe(26);
+  });
 });
 
 describe('binLooksWrong', () => {

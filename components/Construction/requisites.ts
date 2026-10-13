@@ -49,6 +49,13 @@ export interface Requisites {
   /** Номер и дата договора — их пишут в шапке акта. */
   contractNumber?: string;
   contractDate?: string;
+  /**
+   * С какого числа закрывают отчётный месяц: 1 — календарный, 26 — с
+   * 26-го по 25-е. Это условие договора, а не настройка экрана: расчёт
+   * за «сентябрь» на двух устройствах должен браться за одни и те же
+   * даты, поэтому оно лежит здесь и уезжает на обмен с реквизитами.
+   */
+  periodStartDay?: number;
   updatedAt?: string;
 }
 
@@ -92,6 +99,9 @@ export function withDefaults(r?: Partial<Requisites> | null): Requisites {
     customer: { ...DEFAULT_REQUISITES.customer, ...(r?.customer ?? {}) },
     contractNumber: r?.contractNumber,
     contractDate: r?.contractDate,
+    // Без этого поля экран реквизитов при записи терял бы отчётный
+    // период, выбранный на «Расчётах»: он пишет то, что вернули отсюда.
+    periodStartDay: r?.periodStartDay,
     updatedAt: r?.updatedAt,
   };
 }

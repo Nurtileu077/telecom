@@ -13,6 +13,7 @@ import {
   type PayLine, type RateDraft,
 } from './payroll';
 import { useT } from '@/components/Layout/LangProvider';
+import { rangeText } from './moneyPeriod';
 
 /**
  * Деньги с подрядчиками.
@@ -140,7 +141,7 @@ export default function PayrollView({
 
   async function copySummary() {
     const text = [
-      `${current}, период ${result.from} — ${result.to}`,
+      `${current}, период ${rangeText({ from: result.from, to: result.to })}`,
       payrollSummary(result),
       '',
       ...result.lines.map((l) => {
@@ -190,7 +191,10 @@ export default function PayrollView({
       <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-3 space-y-2">
         <div className="flex items-baseline gap-2 flex-wrap">
           <span className="text-[13px] font-semibold text-[var(--text)]">{current}</span>
+          {/* Период называем в самом расчёте: его копируют и пересылают, и
+              «за какие числа» должно ехать вместе с суммой. */}
           <span className="text-[11px] text-[var(--text-muted)]">
+            {rangeText({ from: result.from, to: result.to })} ·{' '}
             {result.shifts} смен · {Math.round(result.meters).toLocaleString('ru')} м
             {result.idleShifts > 0 && ` · простой — ${result.idleShifts} смен`}
           </span>
@@ -201,7 +205,7 @@ export default function PayrollView({
             </button>
             <ExportButton
               compact
-              name={`Расчёт ${current}`}
+              name={`Расчёт ${current} ${rangeText({ from: result.from, to: result.to })}`}
               rows={result.lines}
               columns={PAY_COLUMNS}
               footer={{ 'Работа': 'Начислено', 'Сумма': result.accrued }}

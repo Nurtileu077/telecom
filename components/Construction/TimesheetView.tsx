@@ -8,6 +8,7 @@ import {
   type TimesheetRow,
 } from './timesheet';
 import { useT } from '@/components/Layout/LangProvider';
+import { rangeText } from './moneyPeriod';
 
 /**
  * Табель.
@@ -57,7 +58,9 @@ export default function TimesheetView({ rows, crews, from, to, onCopied }: Props
   );
 
   async function copy() {
-    const text = timesheetToText(table);
+    // За какие числа — первой строкой: табель пересылают, и без дат он
+    // спорит с табелем бухгалтера, закрытым другим месяцем.
+    const text = `Табель за ${rangeText({ from: from ?? '', to: to ?? '' })}\n${timesheetToText(table)}`;
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
@@ -91,7 +94,7 @@ export default function TimesheetView({ rows, crews, from, to, onCopied }: Props
             <Copy size={13} />{copied ? 'Скопировано' : 'Табель в чат'}
           </button>
           <ExportButton
-            name="Табель"
+            name={`Табель ${rangeText({ from: from ?? '', to: to ?? '' })}`}
             rows={table}
             columns={TIMESHEET_COLUMNS}
             footer={{

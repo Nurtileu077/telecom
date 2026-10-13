@@ -65,6 +65,11 @@ import {
   type SavedFilter,
 } from '@/lib/shortcuts';
 import PayrollView from './PayrollView';
+import MoneyPeriodBar from './MoneyPeriodBar';
+import {
+  startDayOf, defaultPeriod, periodRange, monthChoices, upToToday, type MoneyPeriod,
+} from './moneyPeriod';
+import { withDefaults } from './requisites';
 import ResourcesView from './ResourcesView';
 import PlanView from './PlanView';
 import SiteRecordsView from './SiteRecordsView';
@@ -805,6 +810,29 @@ export default function ConstructionPanel({
     return f;
   }, [period, oblast, smu, anchor]);
 
+  /**
+   * Период денег и документов — свой, не сводки.
+   *
+   * Расчёт, табель и пакет закрывают месяцем, а брали «30 дней до последней
+   * смены» сводки, причём переключателя у них не было: в расчёт за сентябрь
+   * молча шёл хвост августа. Не выбран руками — месяц последней смены.
+   */
+  const startDay = startDayOf(journal.requisites?.periodStartDay);
+  const [moneyPick, setMoneyPick] = useState<MoneyPeriod | null>(null);
+  const today = localDay();
+  const moneyPeriod = useMemo(
+    () => moneyPick ?? defaultPeriod(anchor, today, startDay),
+    [moneyPick, anchor, today, startDay],
+  );
+  const moneyRange = useMemo(
+    () => upToToday(periodRange(moneyPeriod, startDay), today, anchor),
+    [moneyPeriod, startDay, today, anchor],
+  );
+  const moneyMonths = useMemo(() => {
+    const first = journal.ground.reduce((m, e) => (e.date && (!m || e.date < m) ? e.date : m), '');
+    return monthChoices(first, anchor > today ? anchor : today, startDay);
+  }, [journal.ground, anchor, today, startDay]);
+
   const ground = useMemo(() => journal.ground.filter((e) => matchesFilter(e, filter)), [journal.ground, filter]);
   const drills = useMemo(() => journal.drills.filter((e) => matchesFilter(e, filter)), [journal.drills, filter]);
   const totals = useMemo(() => groundTotals(ground), [ground]);
@@ -967,6 +995,9 @@ export default function ConstructionPanel({
   // который ничего не делает, хуже отсутствующего: он врёт о том, что
   // цифры на экране отфильтрованы.
   const usesPeriod = view === 'summary' || view === 'entries' || view === 'deviations';
+  // Экраны, которые закрывают месяцем: у них свой период вместо «30 дней».
+  const usesMoneyPeriod = view === 'payroll' || view === 'timesheet' || view === 'docs'
+    || view === 'resources';
   // Область сужает журнал целиком, поэтому переключатель нужен везде,
   // где этот журнал показывают. В заявках его нет: там очередь на
   // подтверждение, а не разрез по местам.
@@ -1228,6 +1259,23 @@ export default function ConstructionPanel({
                 </button>
               ))}
             </div>
+          )}
+          {usesMoneyPeriod && (
+            <MoneyPeriodBar
+              period={moneyPeriod}
+              range={moneyRange}
+              startDay={startDay}
+              months={moneyMonths}
+              onChange={setMoneyPick}
+              // Реквизиты субподрядчику не приходят: его отчётный период
+              // задаёт генподрядчик, а не он сам.
+              onStartDay={JOURNAL_ROLES[role].ownContractorOnly ? undefined : (day) => {
+                const base = loadJournal();
+                if (persist(setRequisites(base, { ...withDefaults(base.requisites), periodStartDay: day }))) {
+                  setFlash(day === 1 ? 'Месяц — календарный' : `Отчётный месяц — с ${day}-го`);
+                }
+              }}
+            />
           )}
           {usesOblast && (
             <select value={oblast} onChange={(e) => setOblast(e.target.value)}
@@ -1545,8 +1593,8 @@ export default function ConstructionPanel({
           <ResourcesView
             journal={scoped}
             requests={scoped.requests}
-            from={filter.from}
-            to={filter.to}
+            from={moneyRange.from || undefined}
+            to={moneyRange.to || undefined}
             author={actor}
             onFlash={setFlash}
             onAddRequest={(r) => persist(upsertRequest(loadJournal(), r))}
@@ -1556,8 +1604,8 @@ export default function ConstructionPanel({
         ) : view === 'payroll' ? (
           <PayrollView
             journal={scoped}
-            from={filter.from}
-            to={filter.to}
+            from={moneyRange.from || undefined}
+            to={moneyRange.to || undefined}
             author={actor}
             onFlash={setFlash}
             onAddRate={(r) => persist(upsertRate(loadJournal(), r))}
@@ -1570,8 +1618,8 @@ export default function ConstructionPanel({
             journal={scoped}
             places={mapPlaces}
             routeBind={routeBind}
-            from={filter.from ?? ''}
-            to={filter.to ?? anchor ?? ''}
+            from={moneyRange.from}
+            to={moneyRange.to || anchor || ''}
             // Чем сужен `scoped`: отчёт области и отчёт подрядчика должны
             // называть себя и получать свою ссылку, а не ложиться в общий.
             oblast={oblast || undefined}
@@ -1620,8 +1668,12 @@ export default function ConstructionPanel({
           />
         ) : view === 'timesheet' ? (
           <TimesheetView
-            rows={ground}
+            // Журнал области, а не сводки: СМУ и «30 дней» сводки здесь не
+            // видны и сужать табель молча не должны.
+            rows={scoped.ground}
             crews={placed}
+            from={moneyRange.from || undefined}
+            to={moneyRange.to || undefined}
             onCopied={(n) => setFlash(`Табель скопирован: ${n} строк`)}
           />
         ) : view === 'checks' ? (
