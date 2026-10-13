@@ -199,6 +199,38 @@ describe('авария находит свою смену', () => {
     expect(c.methodMixed).toBe(true);
   });
 
+  it('все смены линии легли в другие места — по журналу здесь не копали, и никого не называем', () => {
+    // Обрыв на 1-м км, а копали 2–3,5 км и 7–9 км: место обеих смен названо.
+    const c = incidentContext(inc({ lat: 51.5, lon: lonAt(1000) }), ctx({
+      ground: [july, august], planRoutes: [route], progress,
+    }));
+    expect(c.routeName).toBe('ОМ — Еленовка');
+    expect(c.builtFrom).toBe('elsewhere');
+    expect(c.contractor).toBeUndefined();
+    expect(c.column).toBeUndefined();
+    expect(c.method).toBeUndefined();
+    expect(c.builtAt).toBeUndefined();
+    expect(c.builtTo).toBeUndefined();
+    expect(c.crews).toBeUndefined();
+    // Проектная глубина — ожидание для построенного, а построенным место не названо.
+    expect(c.depthM).toBeUndefined();
+  });
+
+  it('у части смен линии место не названо — кандидаты только они, а не те, что копали в другом месте', () => {
+    const lost = g({
+      id: 'lost', date: '2026-09-01', contractor: 'Тас', column: '3-колонна',
+      byMethod: { 'бар': 600 },
+    });
+    const c = incidentContext(inc({ lat: 51.5, lon: lonAt(1000) }), ctx({
+      ground: [july, august, lost], planRoutes: [route], progress,
+    }));
+    expect(c.builtFrom).toBe('village');
+    // Единственная смена без места — она и названа, но как «работали», а не «копали здесь».
+    expect(c.contractor).toBe('Тас');
+    expect(c.method).toBe('Бар');
+    expect(c.builtAt).toBe('2026-09-01');
+  });
+
   it('авария в стороне от линий — линию не выдумываем, сведения по селу', () => {
     const c = incidentContext(inc({ lat: 51.6, lon: lonAt(3000) }), ctx({
       ground: [july], planRoutes: [route], progress,

@@ -294,6 +294,15 @@ function IncidentCard({ incident, journal, open, onToggle, onEdit, onRemove, onC
                 : 'Выше — то, что было одно на всё село.'}
             </p>
           )}
+          {/* Место всех смен линии названо, и сюда не легла ни одна: кого-то
+              называть значило бы приписать аварию тем, кто здесь не копал. */}
+          {ctx.builtFrom === 'elsewhere' && (
+            <p className="text-[11px] text-[var(--warn)]">
+              По журналу это место не копали: все смены линии легли в другие её
+              места. Кто здесь работал, не известно. Если копали и здесь —
+              проверьте отметки «остановились здесь» у смен этой линии.
+            </p>
+          )}
           {ctx.deviation && (
             <div className="flex items-start gap-1.5 text-[11px] text-[var(--warn)]">
               <AlertTriangle size={12} className="shrink-0 mt-0.5" />

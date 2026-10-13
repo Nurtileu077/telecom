@@ -83,9 +83,11 @@ export interface IncidentContext {
   /**
    * Откуда известно, как строили: 'place' — смена, закрасившая это место
    * на линии; 'village' — по селу: место смен на линии не названо, и
-   * сказать можно только то, что в селе было одно на всех.
+   * сказать можно только то, что в селе было одно на всех; 'elsewhere' —
+   * место всех смен линии названо, и это место среди них не значится: по
+   * журналу здесь не копали.
    */
-  builtFrom?: 'place' | 'village';
+  builtFrom?: 'place' | 'village' | 'elsewhere';
   /** Линия под аварией и место на ней, метры от начала. */
   routeName?: string;
   atM?: number;
@@ -142,7 +144,14 @@ function crewsOf(shifts: DailyWorkEntry[]): string[] {
 function builtHere(
   i: Incident,
   ctx: IncidentContextInput,
-): { shift?: DailyWorkEntry; routeName: string; atM: number; lineShifts: DailyWorkEntry[] } | null {
+): {
+  shift?: DailyWorkEntry;
+  routeName: string;
+  atM: number;
+  lineShifts: DailyWorkEntry[];
+  /** Смены линии, место которых не названо, — только они и могли копать здесь. */
+  unplaced: DailyWorkEntry[];
+} | null {
   const routes = ctx.planRoutes ?? [];
   if (routes.length === 0) return null;
   let best: { route: PlanRoute; atM: number; dev: number } | null = null;
@@ -162,11 +171,16 @@ function builtHere(
   const cover = (pl?.placed ?? [])
     .filter((p) => p.fromM - 1 <= best!.atM && best!.atM <= p.toM + 1)
     .sort((a, b) => a.date.localeCompare(b.date))[0];
+  // Линии нет места (меньше двух точек) — место ни одной смены не известно.
+  const unknownIds = pl
+    ? new Set(pl.unplaced.map((u) => u.entryId))
+    : new Set(lineShifts.map((e) => e.id));
   return {
     shift: cover ? byId.get(cover.entryId) : undefined,
     routeName: best.route.name || best.route.uchastok || 'трасса',
     atM: best.atM,
     lineShifts,
+    unplaced: lineShifts.filter((e) => unknownIds.has(e.id)),
   };
 }
 
@@ -177,8 +191,10 @@ function builtHere(
  * строили — по смене, закрасившей это место на линии. Если место смен не
  * названо, говорим только то, что в селе было одно на всех (один способ,
  * один подрядчик), а иначе перечисляем, кто там работал, — без «это
- * они». Чего не нашли — того не пишем: «глубина 1,2 м» или «копал такой-то»
- * без основания в такой карточке опаснее пустоты.
+ * они». Если место всех смен линии названо, а это место не закрашено ни
+ * одной, — по журналу здесь не копали, и никого не называем. Чего не
+ * нашли — того не пишем: «глубина 1,2 м» или «копал такой-то» без
+ * основания в такой карточке опаснее пустоты.
  */
 export function incidentContext(
   i: Incident,
@@ -235,9 +251,19 @@ export function incidentContext(
     out.builtAt = e.date;
     out.builtFrom = 'place';
     built = true;
+  } else if (here && here.lineShifts.some(laid) && !here.unplaced.some(laid)) {
+    // Место каждой смены линии названо, и ни одна сюда не легла: обрыв на
+    // 3-м км, а по журналу копали 5–9 км. Раньше карточка шла дальше по
+    // селу и называла подрядчика, способ и даты «строили …» — то есть
+    // приписывала аварию тем, кто здесь по журналу не копал. Не знаем —
+    // так и пишем; проектную глубину тоже не ставим: она ожидание для
+    // построенного места, а построенным это место журнал не называет.
+    out.builtFrom = 'elsewhere';
   } else {
     // Место смен на линии не названо — по линии, а нет линии — по селу.
-    const pool = (here?.lineShifts.length ? here.lineShifts : ctx.ground.filter((e) => (
+    // Смены линии с названным местом здесь не копали: кандидаты — только
+    // те, чьё место не известно.
+    const pool = (here?.lineShifts.length ? here.unplaced : ctx.ground.filter((e) => (
       (i.kato && e.kato === i.kato)
       || (!!i.uchastok && e.uchastok.trim().toLowerCase() === i.uchastok.trim().toLowerCase())
     ))).filter(laid);
@@ -256,7 +282,7 @@ export function incidentContext(
     }
   }
 
-  if (out.depthM === undefined && (built || obj)) {
+  if (out.depthM === undefined && (built || obj) && out.builtFrom !== 'elsewhere') {
     // Проектная глубина — не факт, а ожидание. Так и подписываем.
     out.depthM = DESIGN_DEPTH_M;
     out.depthFrom = 'проект';
